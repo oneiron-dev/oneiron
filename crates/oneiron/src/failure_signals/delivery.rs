@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use super::Tier1FailureCount;
 use super::code_fix::CodeFixExport;
 use super::held::{BatchSend, HeldBatch};
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -33,9 +34,7 @@ use crate::outbound::{
     OutboundIntentDraft, OutboundIntentTrigger, connector_actor_id,
 };
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    encode_standing_outbound_grant_body, standing_outbound_grant_ids_for_principal,
-    standing_outbound_grant_in_txn,
+    StandingOutboundGrantScope, standing_outbound_grants_for_principal_in_txn,
 };
 use crate::{Result, Vault};
 
@@ -44,11 +43,6 @@ pub const FAILURE_SIGNALS_CHANNEL: &str = "failure_signals";
 /// Its one verb.
 pub const FAILURE_SIGNALS_SEND_VERB: &str = "send";
 pub const FAILURE_SIGNAL_BATCH_VERSION: u16 = 1;
-
-/// Origin recorded on the participation grant. The mint is the
-/// deployment's participation, not an ask escalator.
-const PARTICIPATION_COMPONENT: &str = "failure_signals.participation";
-const PARTICIPATION_ACTION: &str = "export";
 
 /// What one delivery carries, as the publisher receives it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -215,14 +209,14 @@ impl Vault {
         let config = self.config.failure_signals;
         let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
         if !config.exports() {
-            self.keep_failure_signal_participation(sender, false, now)?;
+            self.keep_failure_signal_participation(None, sender, false)?;
             // Drops whatever still waits: it may not leave now.
             self.retire_failure_signal_batch(false)?;
             self.pending_code_fix_records(0)?;
             return Ok(FailureSignalDelivery::Idle);
         }
         let send = if let Some(send) = self.carried_failure_signal_batch(target, sender, now)? {
-            self.keep_failure_signal_participation(sender, true, now)?;
+            self.keep_failure_signal_participation(None, sender, true)?;
             send
         } else {
             let counts = self.export_tier1_failure_counts()?;
@@ -230,7 +224,7 @@ impl Vault {
             if counts.is_empty() && code_fix.is_empty() {
                 return Ok(FailureSignalDelivery::Idle);
             }
-            self.keep_failure_signal_participation(sender, true, now)?;
+            self.keep_failure_signal_participation(None, sender, true)?;
             let floor = self.store.clock.ulid()?;
             let training = config.permits_training();
             let held = HeldBatch::mint(target, training, counts, code_fix, floor, now)?;
@@ -298,18 +292,41 @@ impl Vault {
     /// Keeps the participation grant in step with the owner's switch, with
     /// no transport and no destination (FIX 1884): a deployment that stopped
     /// exporting has its grant revoked even when no sender runs, and one
-    /// that exports holds one grant under the current policy. Nothing is
-    /// sent, and a stopped deployment drops the batch it carried (FIX 6679).
-    /// `now` is seconds since the epoch.
+    /// that exports keeps the one grant it holds under the current policy;
+    /// only the owner's act mints it
+    /// ([`Self::reconcile_failure_signal_participation_as_owner`]). Nothing
+    /// is sent, and a stopped deployment drops the batch it carried (FIX
+    /// 6679). The grant's rows take their times from the engine clock.
     ///
     /// # Errors
     ///
     /// Storage and policy errors.
-    pub fn reconcile_failure_signal_participation(&self, now: u64) -> Result<()> {
+    pub fn reconcile_failure_signal_participation(&self, _now: u64) -> Result<()> {
         let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
         let on = self.config.failure_signals.exports();
         let _pass = self.store.diagnostics.failure_signals.lock_delivery();
-        self.keep_failure_signal_participation(sender, on, now)?;
+        self.keep_failure_signal_participation(None, sender, on)?;
+        if on {
+            return Ok(());
+        }
+        self.retire_failure_signal_batch(false)
+    }
+
+    /// [`Self::reconcile_failure_signal_participation`] as the owner's act:
+    /// under `owner`'s proof a deployment that exports also gets its
+    /// participation grant minted when it holds none.
+    ///
+    /// # Errors
+    ///
+    /// The owner's revalidation, storage and policy errors.
+    pub fn reconcile_failure_signal_participation_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+    ) -> Result<()> {
+        let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
+        let on = self.config.failure_signals.exports();
+        let _pass = self.store.diagnostics.failure_signals.lock_delivery();
+        self.keep_failure_signal_participation(Some(owner), sender, on)?;
         if on {
             return Ok(());
         }
@@ -318,75 +335,49 @@ impl Vault {
 
     /// Keeps the participation grant in step with `on`: one active grant
     /// under the current policy while it holds, none once it stops. A grant
-    /// a policy change left behind is revoked and minted afresh.
+    /// a policy change left behind is revoked; a missing one is minted
+    /// afresh when `owner` is present, and the engine's own pass, with no
+    /// owner, mints none.
     fn keep_failure_signal_participation(
         &self,
+        owner: Option<&AuthenticatedOwner>,
         sender: EntityId,
         on: bool,
-        now: u64,
     ) -> Result<()> {
         let principal = sender.to_hex();
+        let wanted = StandingOutboundGrantScope::Channel {
+            channel: FAILURE_SIGNALS_CHANNEL.to_owned(),
+        };
         self.with_write_txn_grouped(|txn| {
             let floor =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
             let mut current = false;
             let mut stale = Vec::new();
-            for id in standing_outbound_grant_ids_for_principal(&self.store, txn, &principal)? {
-                let Some(grant) = standing_outbound_grant_in_txn(&self.store, txn, &id)? else {
-                    continue;
-                };
-                if grant.origin_component_id != PARTICIPATION_COMPONENT
-                    || grant.status != StandingOutboundGrantStatus::Active
-                {
+            for grant in
+                standing_outbound_grants_for_principal_in_txn(&self.store, txn, &principal)?
+            {
+                if !grant.is_active() || grant.scope != wanted {
                     continue;
                 }
                 if on && !current && grant.is_active_under_policy(&floor) {
                     current = true;
                 } else {
-                    stale.push((id, grant));
+                    stale.push(grant);
                 }
             }
-            for (id, grant) in stale {
-                let data = encode_standing_outbound_grant_body(&grant.revoked(now)?)?;
-                self.apply_standing_outbound_grant_body(txn, &id, now, data)?;
+            for grant in &stale {
+                self.withdraw_standing_outbound_grant_in_txn(txn, owner, grant)?;
             }
-            if on && !current {
-                let grant = StandingOutboundGrant {
-                    authority_scope: crate::federation::scope_codec::effect_preset(),
-                    principal_ref: principal.clone(),
-                    origin_component_id: PARTICIPATION_COMPONENT.to_owned(),
-                    origin_action_id: PARTICIPATION_ACTION.to_owned(),
-                    origin_receipt_ref: None,
-                    scope: StandingOutboundGrantScope::Channel {
-                        channel: FAILURE_SIGNALS_CHANNEL.to_owned(),
-                    },
-                    status: StandingOutboundGrantStatus::Active,
-                    created_at: now,
-                    revoked_at: None,
-                    last_used_at: None,
-                    binding_diff_handle: participation_binding_handle(&principal),
-                    read_frontier_hash: floor,
-                };
-                grant.validate()?;
-                let data = encode_standing_outbound_grant_body(&grant)?;
-                self.apply_standing_outbound_grant_body(txn, &EntityId::now(), now, data)?;
+            if let Some(owner) = owner.filter(|_| on && !current) {
+                self.mint_standing_outbound_grant_in_txn(
+                    txn,
+                    owner,
+                    EntityId::now(),
+                    &principal,
+                    wanted.clone(),
+                )?;
             }
             Ok(())
         })
     }
-}
-
-/// Content address of the participation decision behind the grant, under
-/// its own domain tag so it can never be replayed as another grant's.
-fn participation_binding_handle(principal: &str) -> Vec<u8> {
-    let mut hasher = blake3::Hasher::new();
-    for part in [
-        b"oneiron.gate.standing_outbound_grant.failure_signals.v1".as_slice(),
-        principal.as_bytes(),
-        PARTICIPATION_COMPONENT.as_bytes(),
-    ] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
-    }
-    hasher.finalize().as_bytes().to_vec()
 }

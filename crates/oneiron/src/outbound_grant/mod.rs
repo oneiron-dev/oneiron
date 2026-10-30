@@ -1,21 +1,19 @@
-//! Standing outbound-grant records for OF-367 RS6.2/RS6.5.
+//! Standing outbound grants for OF-367 RS6.2/RS6.5.
 //!
-//! These are engine-authored, vault-resident grant claims minted from OF-336
-//! consent escalators or bundle approvals. They intentionally have no expiry
-//! field: policy-floor staleness and explicit revocation are the invalidation
-//! paths.
+//! A standing outbound grant is a standing consent Grant row (DEC-0006): the
+//! owner mints it, its scope dial is its bound's one spelling, and it lives
+//! until revoked, which fails it closed at once. Coverage of an effect is
+//! the bound's containment of that effect. A channel identity's envelope
+//! grant is its autonomy row's own Grant; only the atomic envelope door
+//! here admits against it.
 
-mod codec;
+mod bound;
 mod consume;
-mod grant;
-mod index;
-mod mint;
-mod scope;
+mod doors;
 mod verb_class;
 
-pub use self::codec::{
-    OUTBOUND_GRANT_BODY_KEYS, OUTBOUND_GRANT_SCHEMA_VERSION, decode_standing_outbound_grant_body,
-    encode_standing_outbound_grant_body,
+pub use self::bound::{
+    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
 };
 pub use self::consume::{
     CHANNEL_IDENTITY_GRANT_USAGE_PREFIX, CHANNEL_IDENTITY_WINDOW_WAIT_REASON,
@@ -25,32 +23,14 @@ pub(crate) use self::consume::{
     ChannelIdentityGrantAdmission, ChannelIdentityGrantReservation, ChannelIdentityGrantRetention,
     admit_channel_identity_grant_in_txn,
 };
-pub use self::grant::{StandingOutboundGrant, StandingOutboundGrantStatus};
-pub use self::scope::{
-    BookingPageInviteGrantMintIntent, ScopedMcpGrantMintIntent, StandingOutboundGrantScope,
+pub(crate) use self::doors::{
+    standing_outbound_grant_in_txn, standing_outbound_grants_for_principal_in_txn,
+    standing_outbound_grants_in_txn,
 };
-
-pub(crate) use self::codec::{
-    OUTBOUND_GRANT_FIELDS_FULL, OUTBOUND_GRANT_FIELDS_MINIMAL, OUTBOUND_GRANT_FIELDS_STANDARD,
-    validate_standing_outbound_grant_body_bytes,
-};
-use self::index::standing_outbound_grant_principal_index_key;
-pub(crate) use self::index::{
-    standing_outbound_grant_ids_for_principal, standing_outbound_grant_principal_index_entity_id,
-    standing_outbound_grant_principal_index_prefix,
-};
-pub(crate) use self::mint::standing_outbound_grant_in_txn;
 
 #[cfg(test)]
 mod tests;
 
-// The flat outbound_grant.rs module used to provide these names to the sibling
-// test module through `use super::*`: the private codec/scope helpers the
-// tests name bare, its own private crate/std import header, and every
-// outbound-grant-internal item the tests name bare. After the directory split
-// the seam re-imports both so `tests.rs` resolves exactly as it did before.
-#[cfg(test)]
-use self::{codec::*, scope::*};
 #[cfg(test)]
 use crate::entity_id::EntityId;
 #[cfg(test)]
@@ -63,5 +43,3 @@ use crate::outbound_consent::{DataClass, ScopedMcpGrantRef};
 use rmpv::Value;
 #[cfg(test)]
 use std::io::Cursor;
-
-pub(crate) use self::index::rebuild_checkpoint_grant_index;

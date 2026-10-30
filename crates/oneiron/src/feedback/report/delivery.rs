@@ -310,7 +310,7 @@ impl Vault {
         now: u64,
     ) -> Result<ReportDeliveryPass> {
         self.require_coach_attempt(admitted, COACH_FEEDBACK_DELIVERY_FACET)?;
-        self.keep_signature_participation(transport.destination().as_ref(), now)?;
+        self.keep_signature_participation(None, transport.destination().as_ref())?;
         let mut pass = ReportDeliveryPass::default();
         let mut after = None;
         loop {

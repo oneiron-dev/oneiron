@@ -3,9 +3,10 @@
 //! leave. While both are on, the vault keeps one standing channel grant for
 //! the signature sender's own derived principal, so the ordinary gate admits
 //! its sends by principal with no per-send ask; once either stops, the grant
-//! is revoked. Under the outbound writer, admission and every live retry
-//! also recheck the lane's custody and both switches. The bundle send's
-//! one-time approval is never involved.
+//! is revoked. The grant is a standing consent Grant row: only the owner's
+//! proof mints it, and the engine's own run only revokes. Under the outbound
+//! writer, admission and every live retry also recheck the lane's custody
+//! and both switches. The bundle send's one-time approval is never involved.
 
 use super::super::store;
 use super::wire::wire_signature;
@@ -13,19 +14,13 @@ use super::{
     DELIVERIES, ENDPOINTS, ReportDeliveryKey, ReportDeliveryOutcome, ReportPublisherEndpoint,
     SENDER, UNSUPPORTED_CHANNELS, publisher_of,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::edit_distance::publisher::publisher_enabled_in_txn;
 use crate::outbound::{PublisherSignatureAuthorization, connector_actor_id};
 use crate::outbound_grant::{
-    StandingOutboundGrant, StandingOutboundGrantScope, StandingOutboundGrantStatus,
-    encode_standing_outbound_grant_body, standing_outbound_grant_ids_for_principal,
-    standing_outbound_grant_in_txn,
+    StandingOutboundGrantScope, standing_outbound_grants_for_principal_in_txn,
 };
 use crate::{EntityId, Result, Vault};
-
-/// Origin recorded on the participation grant: the owner's participation,
-/// not an ask escalator.
-const PARTICIPATION_COMPONENT: &str = "feedback_signature.participation";
-const PARTICIPATION_ACTION: &str = "send";
 
 impl Vault {
     /// "Help improve Oneiron" and the ED-08 publisher dial, read now.
@@ -37,75 +32,77 @@ impl Vault {
         ))
     }
 
+    /// The owner's act behind signature participation: keeps the standing
+    /// channel grant in step under `owner`'s proof, minting it while both
+    /// switches are on and `destination` takes signatures.
+    ///
+    /// # Errors
+    ///
+    /// The owner's revalidation, storage and policy errors.
+    pub fn keep_report_signature_participation(
+        &self,
+        owner: &AuthenticatedOwner,
+        destination: Option<&ReportPublisherEndpoint>,
+    ) -> Result<()> {
+        self.keep_signature_participation(Some(owner), destination)
+    }
+
     /// Keeps the participation grant in step, once per run: one active
     /// channel grant for the signature sender while both switches are on and
     /// this host has a destination that takes signatures, and none
     /// otherwise. A grant a policy or destination change left behind is
-    /// revoked and minted afresh. The bundle send's approval is untouched.
+    /// revoked; a missing one is minted afresh when `owner` is present, and
+    /// the engine's own run, with no owner, mints none. The bundle send's
+    /// approval is untouched.
     pub(super) fn keep_signature_participation(
         &self,
+        owner: Option<&AuthenticatedOwner>,
         destination: Option<&ReportPublisherEndpoint>,
-        now: u64,
     ) -> Result<()> {
         let (participation, publisher_dial) = self.signature_switches()?;
-        let channel = destination
+        let wanted = destination
             .filter(|destination| {
                 participation
                     && publisher_dial
                     && !UNSUPPORTED_CHANNELS.contains(&destination.channel.as_str())
             })
-            .map(|destination| destination.channel.clone());
+            .map(|destination| StandingOutboundGrantScope::Channel {
+                channel: destination.channel.clone(),
+            });
         let principal = connector_actor_id(SENDER)?.to_hex();
         self.with_write_txn_grouped(|txn| {
             let floor =
                 crate::gate::resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?;
             let mut current = false;
             let mut stale = Vec::new();
-            for id in standing_outbound_grant_ids_for_principal(&self.store, txn, &principal)? {
-                let Some(grant) = standing_outbound_grant_in_txn(&self.store, txn, &id)? else {
-                    continue;
-                };
-                if grant.origin_component_id != PARTICIPATION_COMPONENT
-                    || grant.status != StandingOutboundGrantStatus::Active
+            for grant in
+                standing_outbound_grants_for_principal_in_txn(&self.store, txn, &principal)?
+            {
+                if !grant.is_active()
+                    || !matches!(grant.scope, StandingOutboundGrantScope::Channel { .. })
                 {
                     continue;
                 }
-                let fits = channel.as_ref().is_some_and(|channel| {
-                    matches!(
-                        &grant.scope,
-                        StandingOutboundGrantScope::Channel { channel: scoped } if scoped == channel
-                    )
-                });
-                if fits && !current && grant.is_active_under_policy(&floor) {
+                if wanted.as_ref() == Some(&grant.scope)
+                    && !current
+                    && grant.is_active_under_policy(&floor)
+                {
                     current = true;
                 } else {
-                    stale.push((id, grant));
+                    stale.push(grant);
                 }
             }
-            for (id, grant) in stale {
-                let data = encode_standing_outbound_grant_body(&grant.revoked(now)?)?;
-                self.apply_standing_outbound_grant_body(txn, &id, now, data)?;
+            for grant in &stale {
+                self.withdraw_standing_outbound_grant_in_txn(txn, owner, grant)?;
             }
-            if let Some(channel) = channel.as_ref().filter(|_| !current) {
-                let grant = StandingOutboundGrant {
-                    authority_scope: crate::federation::scope_codec::effect_preset(),
-                    principal_ref: principal.clone(),
-                    origin_component_id: PARTICIPATION_COMPONENT.to_owned(),
-                    origin_action_id: PARTICIPATION_ACTION.to_owned(),
-                    origin_receipt_ref: None,
-                    scope: StandingOutboundGrantScope::Channel {
-                        channel: channel.clone(),
-                    },
-                    status: StandingOutboundGrantStatus::Active,
-                    created_at: now,
-                    revoked_at: None,
-                    last_used_at: None,
-                    binding_diff_handle: participation_binding_handle(&principal),
-                    read_frontier_hash: floor,
-                };
-                grant.validate()?;
-                let data = encode_standing_outbound_grant_body(&grant)?;
-                self.apply_standing_outbound_grant_body(txn, &EntityId::now(), now, data)?;
+            if let (Some(owner), Some(scope)) = (owner, wanted.filter(|_| !current)) {
+                self.mint_standing_outbound_grant_in_txn(
+                    txn,
+                    owner,
+                    EntityId::now(),
+                    &principal,
+                    scope,
+                )?;
             }
             Ok(())
         })
@@ -158,19 +155,4 @@ impl Vault {
             && self.config.failure_signals.exports()
             && publisher_enabled_in_txn(self, txn)?)
     }
-}
-
-/// Content address of the participation decision behind the grant, under
-/// its own domain tag so it can never be replayed as another grant's.
-fn participation_binding_handle(principal: &str) -> Vec<u8> {
-    let mut hasher = blake3::Hasher::new();
-    for part in [
-        b"oneiron.gate.standing_outbound_grant.feedback_signature.v1".as_slice(),
-        principal.as_bytes(),
-        PARTICIPATION_COMPONENT.as_bytes(),
-    ] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
-    }
-    hasher.finalize().as_bytes().to_vec()
 }
