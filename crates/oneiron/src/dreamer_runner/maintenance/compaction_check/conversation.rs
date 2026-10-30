@@ -255,10 +255,7 @@ pub(super) async fn run_conversation_check(
         verdict.spend.note_before_error(ctx);
         return Err(error);
     }
-    Ok(DreamerAttemptExecution::Completed {
-        completed_units: verdict.spend.units,
-        step_hashes: Vec::new(),
-    })
+    Ok(verdict.spend.completed())
 }
 
 /// Reads the landing's receipt, the summary's words and the span, and
