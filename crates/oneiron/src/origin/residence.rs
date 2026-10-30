@@ -451,6 +451,13 @@ impl Vault {
                 "mirror is read-only; import through the authoritative origin",
             )));
         }
+        // An erased writer's saved permits stop with it; an effect already
+        // applied settles before this rule is asked (FIX 10000).
+        if row.writer == ORIGIN_ERASED_WRITER {
+            return Ok(Some(Error::Refused(
+                ORIGIN_WRITER_ERASED_REFUSAL.to_owned(),
+            )));
+        }
         let txn = self.store.env.read_txn()?;
         if AUTHORITY_PERMIT
             .get(&self.store, &txn, &publication)?
