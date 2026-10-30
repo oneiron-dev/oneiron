@@ -19,7 +19,7 @@ use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
 use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
+use crate::run_tree::{RunTreeNode, RunTreeStatus, render_run_tree};
 
 use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
@@ -65,7 +65,9 @@ fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
             cancel_rejection_pathology(record).map(|pathology| (attempt_hex(record.id), pathology))
         })
         .collect();
-    let tree = RunTreeAdapter::new(vault).read()?;
+    // The tree renders from the rows this scan already read: one decode of
+    // the ledger per board read, not two, and one snapshot (FIX 11318).
+    let tree = render_run_tree(records)?;
     let mut nodes = Vec::new();
     collect_run_tree_nodes(&tree.roots, &mut nodes);
     let mut realizing: BTreeMap<String, Vec<JobPresence>> = BTreeMap::new();
