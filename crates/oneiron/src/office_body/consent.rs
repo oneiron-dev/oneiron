@@ -607,6 +607,10 @@ pub(super) fn settle_in_txn(
     }
     close_if_done(&mut record, at, reason);
     PROPOSALS.put(&vault.store, wtxn, &key, &record)?;
+    // FIX 2691: the record rides beside its artifact, into each live window
+    // that carries it once this write commits.
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, wtxn, BTreeSet::from([*artifact]));
     Ok((record, landed))
 }
 

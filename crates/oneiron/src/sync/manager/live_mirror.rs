@@ -225,6 +225,13 @@ impl WindowManager {
                 &key,
                 rows,
             );
+            // FIX 2691: and a proposal that waited for its artifact's row.
+            crate::sync::office_proposals::merge_committed_office_proposals(
+                &self.vault,
+                &window.doc,
+                &key,
+                rows,
+            );
             if !carriers.is_empty()
                 && key.world().is_none()
                 && let Err(error) = crate::sync::room_facts::mirror_carriers(
