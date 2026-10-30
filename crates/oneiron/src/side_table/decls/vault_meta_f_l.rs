@@ -382,8 +382,9 @@ side_tables! {
     /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
     /// deletion receipt completes (OF-470 C4). Key: id16 (record).
     LEGAL_HOLD_ERASE_LINK: VaultMeta b"legal_hold:erase_link:v1:" Named;
-    /// The owner-visible legal-hold log: ids, times and reason codes only (OF-470 C3). Key: id16
-    /// (hold) + u64be (sequence).
+    /// Customer holds' legal-hold log: ids, times and reason codes only (OF-470 C3). A host
+    /// order's events are in `LEGAL_HOLD_HOST_EVENT`; the owner reads those through
+    /// `LegalHold::owner_may_see`. Key: id16 (hold) + u64be (sequence).
     LEGAL_HOLD_EVENT: VaultMeta b"legal_hold:event:v1:" Named;
     /// The host orders an owner's confirmed erase met (OF-470 C4). Host-only and runtime-tier:
     /// no checkpoint image carries it. Key: id16 (record).
