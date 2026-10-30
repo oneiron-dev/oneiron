@@ -58,7 +58,10 @@ pub(super) fn read(
     Ok(runs)
 }
 impl Store {
+    /// The runs a turn made, read once the detached writes queued so far are
+    /// decided (FIX 12023).
     pub fn retrieval_runs_by_turn(&self, turn: &[u8; 16]) -> Result<Vec<RetrievalRunId>> {
+        self.wait_for_deferred_commits();
         read(self, &self.env.read_txn()?, turn)
     }
 }

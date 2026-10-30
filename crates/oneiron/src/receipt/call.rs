@@ -12,12 +12,13 @@
 //! reply says so, rather than carrying a ref.
 //!
 //! A transport's reply does not wait for that row's commit (Engine ruling
-//! 10-30 23:09, [`Vault::record_call_receipt_deferred_commit`]): the row is
-//! staged in the vault's group commit, in arrival order and through the
-//! side-row wall, before the reply, and commits with that group after it. A
-//! crash can lose the last receipts of calls whose answers already went out;
-//! a clean close keeps them, and a lookup of a ref reads its row once that
-//! commit is decided.
+//! 10-30 23:09, [`Vault::record_call_receipt_deferred_commit`]), nor for the
+//! writer (FIX 12023): the ref is minted before the reply and the row queues
+//! in the vault's group commit as a detached write, in arrival order; it is
+//! staged through the side-row wall and committed with a group after the
+//! reply. A crash can lose the last receipts of calls whose answers already
+//! went out; a clean close keeps them, and a lookup of a ref reads its row
+//! once that commit is decided.
 //!
 //! A reply no credential attributed (a pre-auth refusal, a protocol-only
 //! reply) is recorded too, attributed to the connection it arrived on: its
@@ -48,6 +49,7 @@
 //! captured states none, and is never read as equal to another.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
@@ -56,7 +58,7 @@ use crate::memory::{
 };
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
-use crate::store::Rows;
+use crate::store::DetachedWrite;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Result, Vault};
 
@@ -384,6 +386,11 @@ fn bounded(mut text: String) -> String {
     text
 }
 
+/// The `call:<32hex>` ref of the receipt `id` names.
+fn call_receipt_ref(id: &EntityId) -> String {
+    format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex())
+}
+
 /// The id a `call:<32hex>` ref names; `None` for anything else.
 fn call_receipt_id(receipt_ref: &str) -> Option<EntityId> {
     let hex = receipt_ref.strip_prefix(CALL_RECEIPT_REF_PREFIX)?;
@@ -446,15 +453,17 @@ impl Vault {
         self.with_write_txn_grouped(|txn| self.record_call_receipt_in_txn(txn, input))
     }
 
-    /// [`Self::record_call_receipt`] for a transport's reply path, without
-    /// waiting for the row's commit and its data sync (Engine ruling 10-30
-    /// 23:09). The row is staged in the vault's group commit in arrival
-    /// order, its id, time and side-row wall included, and the ref comes back
-    /// once it is staged: a receipt refused there is refused before the
-    /// reply, as before. The group's leader commits it after the reply. A
-    /// crash before that commit loses the receipt of a call whose answer
-    /// already went out; a clean close keeps it, and a lookup of the ref
-    /// waits for it ([`Memory::call_receipt`]).
+    /// [`Self::record_call_receipt`] for a transport's reply path, waiting
+    /// for neither the writer nor the row's stage nor its commit (Engine
+    /// ruling 10-30 23:09; FIX 12023). The receipt's id, and so its ref, is
+    /// minted here from the vault's id source, as the row would mint it, and
+    /// the row queues as a detached write in the vault's group commit, in
+    /// arrival order: its time and side-row wall are taken when a group runs
+    /// it, after the reply, and that group commits it. A receipt the wall
+    /// refuses then is rolled back and said in a warn by name; the reply
+    /// carried its ref already. A crash before that commit loses the receipt
+    /// of a call whose answer already went out; a clean close keeps it, and a
+    /// lookup of the ref waits for it ([`Memory::call_receipt`]).
     ///
     /// The write carries its own row only: the general write door's
     /// per-write work (waiting scan checks, found-key notices, owed rederives
@@ -463,16 +472,19 @@ impl Vault {
     ///
     /// # Errors
     ///
-    /// The clock's, the side-row wall's and storage errors met while the row
-    /// is staged.
-    pub fn record_call_receipt_deferred_commit(&self, input: CallReceiptInput) -> Result<String> {
-        self.store.group_write_deferred_commit(|txn| {
-            let _active_write_txn = crate::store::active_write_txn_guard();
-            match self.record_call_receipt_in_txn(txn, input) {
-                Ok(receipt_ref) => Rows::Commit(receipt_ref),
-                Err(error) => Rows::Discard(Err(error)),
-            }
-        })
+    /// The id source's errors.
+    pub fn record_call_receipt_deferred_commit(
+        self: &Arc<Self>,
+        input: CallReceiptInput,
+    ) -> Result<String> {
+        let id = self.store.clock.entity_id()?;
+        let receipt_ref = call_receipt_ref(&id);
+        self.store.group_write_detached(DetachedWrite::of_vault(
+            "call receipt",
+            self,
+            move |vault, txn| vault.put_call_receipt_in_txn(txn, id, input).map(|_| None),
+        ));
+        Ok(receipt_ref)
     }
 
     /// [`Self::record_call_receipt`] inside `txn`, for a writer whose own
@@ -484,7 +496,18 @@ impl Vault {
         input: CallReceiptInput,
     ) -> Result<String> {
         let id = self.store.clock.entity_id()?;
-        let receipt_ref = format!("{CALL_RECEIPT_REF_PREFIX}{}", id.to_hex());
+        self.put_call_receipt_in_txn(txn, id, input)
+    }
+
+    /// Writes the receipt `id` names inside `txn`, through the side-row wall,
+    /// stamped with the vault clock now; returns its ref.
+    fn put_call_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: EntityId,
+        input: CallReceiptInput,
+    ) -> Result<String> {
+        let receipt_ref = call_receipt_ref(&id);
         let mut served = input.served;
         served.truncate(MAX_CALL_RECEIPT_SERVED);
         let action_digest = input

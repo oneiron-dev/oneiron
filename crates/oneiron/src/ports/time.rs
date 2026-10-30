@@ -1,5 +1,7 @@
 //! Per-store clock and id source. No process-global clock or counter.
 use crate::error::{Error, Result};
+use crate::store::{AfterCommit, DetachedWrite, StoreCore};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -48,6 +50,13 @@ pub struct StoreClock {
     /// The highest authorization lease this store has read or committed
     /// (FIX 11664); 0 until it first reads one.
     lease: Arc<Mutex<u64>>,
+    /// The latest time an authorization decision took after this store's
+    /// lease lapsed (FIX 12023); 0 until one does. A decision in a snapshot
+    /// read before that lease's renewal commits may stand there.
+    judged: Arc<AtomicU64>,
+    /// A lapsed lease's renewal is queued and not yet decided (FIX 12023):
+    /// one at a time.
+    renewal: Arc<AtomicBool>,
     last_id: Arc<Mutex<u128>>,
 }
 impl std::fmt::Debug for StoreClock {
@@ -76,6 +85,8 @@ impl StoreClock {
             ids,
             floor: Arc::new(Mutex::new(0)),
             lease: Arc::new(Mutex::new(0)),
+            judged: Arc::new(AtomicU64::new(0)),
+            renewal: Arc::new(AtomicBool::new(false)),
             last_id: Arc::new(Mutex::new(0)),
         }
     }
@@ -141,6 +152,22 @@ impl StoreClock {
             .map_err(|_| Error::InvariantViolation("clock lease lock poisoned"))?;
         *known = (*known).max(lease);
         Ok(())
+    }
+    /// Takes `now` as the time of an authorization decision made after the
+    /// lease lapsed (FIX 12023), never below one this store took before.
+    fn judge(&self, now: u64) -> u64 {
+        self.judged.fetch_max(now, Ordering::AcqRel).max(now)
+    }
+    /// The latest time a decision took after the lease lapsed; 0 for none.
+    fn judged(&self) -> u64 {
+        self.judged.load(Ordering::Acquire)
+    }
+    /// The renewal of a lapsed lease, when none is queued (FIX 12023):
+    /// `None` while another is.
+    fn claim_lease_renewal(&self) -> Option<LeaseRenewal> {
+        (!self.renewal.swap(true, Ordering::AcqRel)).then(|| LeaseRenewal {
+            clock: self.clone(),
+        })
     }
     /// The floor this store has observed; 0 when it has observed none.
     fn observed_floor(&self) -> u64 {
@@ -247,9 +274,10 @@ pub(crate) fn job_recorded_at_in_txn(
 
 /// How far ahead of its observation an authorization decision commits the
 /// vault's clock (FIX 11664; Engine 04:02, 5 s): while a store's clock stays
-/// under the lease it committed, its reads judge without taking the writer.
-/// Recalls come seconds apart, so a shorter lease would still write on
-/// almost every one.
+/// under the lease it committed, its reads judge without a write. Recalls
+/// come seconds apart, so a shorter lease would still write on almost every
+/// one. Past it, they judge without waiting for the writer too, and the
+/// lease's renewal is queued (FIX 12023).
 pub(crate) const AUTHORIZATION_LEASE_SECS: u64 = 5;
 
 /// The committed clock floor and authorization lease: the floor is the
@@ -290,62 +318,113 @@ fn put_clock_floor_in_txn(
 }
 
 /// The time a decision in this authorization snapshot judges at. Callers
-/// must commit `Store::authorization_now` before opening that snapshot. A
-/// store that observed the clock judges at what it observed, held between
-/// the committed floor and the committed bound (the floor, or the lease
-/// when later), so its times stay exact under a lease and never stand above
-/// what the vault committed (FIX 11664); one that has observed none judges
-/// at the committed floor.
+/// call `Store::authorization_now` before opening that snapshot. A store
+/// that observed the clock judges at what it observed, held between the
+/// committed floor and the committed bound: the floor, or the lease when
+/// later, or, while a lapsed lease's renewal has not committed, the time of
+/// this store's last decision since it lapsed (FIX 12023). So its times stay
+/// exact under a lease, never stand above what the vault committed or this
+/// store already judged (FIX 11664), and never go back. One that has
+/// observed none judges at the committed floor.
 pub(crate) fn authorization_floor_in_txn(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<u64> {
     let (floor, lease) = clock_floor_and_lease_in_txn(store, txn)?;
-    Ok(match store.clock().observed_floor() {
+    let clock = store.clock();
+    Ok(match clock.observed_floor() {
         0 => floor,
-        observed => observed.clamp(floor, floor.max(lease)),
+        observed => observed.clamp(floor, floor.max(lease).max(clock.judged())),
     })
 }
 
 impl crate::store::Store {
-    /// Commit the authorization observation before any read decision may use it.
-    /// Call this before opening the decision's read transaction.
+    /// The time an authorization decision judges at. Call this before
+    /// opening the decision's read transaction.
+    ///
+    /// Under the lease this store committed, the observation is already
+    /// bounded by what the vault holds: no write (FIX 11664). Once the lease
+    /// has lapsed (FIX 12023, Engine ruling 10-31), the decision judges at
+    /// this store's clock now, held at the vault's committed floor and at
+    /// every decision this store took before, so it never stands below
+    /// either, and it does not wait for the writer: the floor and lease rows
+    /// its own writer committed here before are renewed by a detached write,
+    /// which commits with the next group after the decision. The lease is
+    /// held from that commit, not from its queueing, so it keeps its 5 s;
+    /// one renewal is queued at a time.
     pub(crate) fn authorization_now(&self) -> Result<u64> {
         let clock = crate::store::ManifestDbs::clock(self);
-        // Under the lease this store committed, the observation is already
-        // bounded by what the vault holds: no writer (FIX 11664).
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
-        // A preliminary read would consume one reader slot per concurrent
-        // caller before writers serialize, exhausting small reader budgets.
-        // Persist ONLY clock authority here: a read must not also commit the
-        // floor of IDs allocated in RAM but not yet used by a mutation.
-        let mut txn = self.env.write_txn()?;
-        let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
-        let now = clock.observe_leased_floor(persisted, lease)?;
-        // A lease another handle committed may already cover it.
-        let leased = if lease >= now {
-            lease
-        } else {
-            now.saturating_add(AUTHORIZATION_LEASE_SECS)
+        // One short snapshot reads the committed floor, and ends before the
+        // decision opens its own: it holds no reader slot while a writer is
+        // waited for.
+        let now = {
+            let txn = self.env.read_txn()?;
+            let (persisted, lease) = clock_floor_and_lease_in_txn(self, &txn)?;
+            clock.observe_leased_floor(persisted, lease)?
         };
-        let changed = (now, leased) != (persisted, lease);
-        if changed {
-            put_clock_floor_in_txn(self, &mut txn, now, leased)?;
+        let judged = clock.judge(now);
+        if let Some(renewal) = clock.claim_lease_renewal() {
+            self.group_write_detached(
+                DetachedWrite::of_core("authorization lease renewal", move |core, txn| {
+                    renew_authorization_lease_in_txn(core, txn, renewal)
+                })
+                .replay_only(),
+            );
         }
-        let id = self.env.info().last_txn_id + 1;
-        txn.commit()?;
-        clock.hold_lease(leased)?;
-        // A floor-only commit changes no Dreamer input (FIX 11568); an empty
-        // one moves no txn id and is never noted.
-        if changed {
-            crate::store::ManifestDbs::diagnostics(self)
-                .replay_only_commits
-                .note(id);
-        }
-        Ok(now)
+        Ok(judged)
     }
+}
+
+/// A lapsed lease's queued renewal (FIX 12023). It holds the store's one
+/// renewal flag until it drops, so a renewal that committed, failed or was
+/// lost lets the next lapsed decision queue another.
+struct LeaseRenewal {
+    clock: StoreClock,
+}
+
+impl LeaseRenewal {
+    /// What runs once the renewal's group commit is decided: `lease` held
+    /// from that commit, when the renewal's rows landed.
+    fn hold_on_commit(self, lease: u64) -> AfterCommit {
+        Box::new(move |landed| {
+            if landed && let Err(error) = self.clock.hold_lease(lease) {
+                tracing::warn!(%error, "a renewed authorization lease was not held");
+            }
+        })
+    }
+}
+
+impl Drop for LeaseRenewal {
+    fn drop(&mut self) {
+        self.clock.renewal.store(false, Ordering::Release);
+    }
+}
+
+/// A lapsed lease's renewal, in its group's transaction (FIX 12023): the
+/// clock floor and lease rows the decision's own writer committed before,
+/// read and observed here. Only clock authority: never the floor of ids
+/// allocated in RAM but not yet used by a mutation.
+fn renew_authorization_lease_in_txn(
+    core: &StoreCore,
+    txn: &mut heed::RwTxn<'_>,
+    renewal: LeaseRenewal,
+) -> Result<Option<AfterCommit>> {
+    let dbs = core.canonical_dbs();
+    let (persisted, lease) = clock_floor_and_lease_in_txn(&dbs, txn)?;
+    let now = core.clock.observe_leased_floor(persisted, lease)?;
+    // A lease another handle committed may already cover it.
+    let leased = if lease >= now {
+        lease
+    } else {
+        now.saturating_add(AUTHORIZATION_LEASE_SECS)
+    };
+    if (now, leased) != (persisted, lease) {
+        put_clock_floor_in_txn(&dbs, txn, now, leased)?;
+    }
+    Ok(Some(renewal.hold_on_commit(leased)))
 }
 
 pub(crate) const ID_FLOOR: &[u8] = b"ports:id_floor:v1";
