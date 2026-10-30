@@ -32,10 +32,11 @@ use oneiron::llm::decision::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::skill_optimize::{
     GoalAxisBandit, GoalAxisBandits, GoalAxisSpec, HeldOutReplayCase, HeldOutReplayNotes,
-    HonestyReplay, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
-    register_held_out_replay_scorer, skill_edit_goal,
+    HonestyReplay, JudgeRubric, SkillOptimizeDecisions, SkillReplayResponses, judge_incumbent,
+    judge_rubric, register_held_out_replay_scorer, skill_edit_goal,
 };
 use oneiron::{EntityId, Error, ModelId, Result, Vault};
+use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -87,6 +88,10 @@ fn judge_name(pin: &ProviderPin) -> String {
 pub struct JournalRow {
     pub at: u64,
     pub revision: String,
+    /// The pin of the judge rubric in force when the question was journaled,
+    /// beside `revision` (the algorithm and wording): the rubric text's
+    /// BLAKE3, lower hex; `None` while no rubric is in force (FIX 3585).
+    pub judge_rubric_digest: Option<String>,
     pub question: DecisionQuestion,
     pub decision: TypedDecision,
     /// The rows the decision's inputs were read from, as its caller
@@ -337,6 +342,8 @@ impl ServeReplayJudge {
         let row = JournalRow {
             at: now(),
             revision: self.revision.clone(),
+            judge_rubric_digest: judge_rubric(&self.vault)?
+                .map(|rubric| bytes_to_hex_lower(&rubric.digest)),
             question: question.clone(),
             decision: decision.clone(),
             decision_sources,
@@ -374,6 +381,12 @@ impl HeldOutReplayNotes for ServeReplayJudge {
 
     fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
         self.response_basis(receipts)
+    }
+
+    /// The rubric every replay state and response score reads, for the
+    /// tradeoff question (FIX 3584).
+    fn rubric(&self) -> Result<Option<JudgeRubric>> {
+        ServeReplayJudge::rubric(self)
     }
 
     /// A decision whose caller handed no input rows: its sources are

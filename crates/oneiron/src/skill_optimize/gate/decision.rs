@@ -237,6 +237,7 @@ fn rule_on_proposal(
                     return Ok(Prepared::Ruled(Box::new(standing)));
                 }
                 Ok(Prepared::Score(Box::new(ScoreInputs {
+                    judge_rubric_digest: judge_rubric_digest_in_txn(vault, &*wtxn)?,
                     outcomes,
                     proposal: staged,
                     target,
@@ -286,6 +287,7 @@ fn rule_on_proposal(
     let anchor = anchor_score(
         &crate::skill_optimize::labels::skill_label_anchor(vault, inputs.target)?,
         incumbent.as_ref().map(|incumbent| incumbent.judge.as_str()),
+        judge_revision,
     );
     // Pair responses by their common-rubric scores and freeze the preference
     // before either version's instructions or a label is read; both share it.
@@ -297,6 +299,7 @@ fn rule_on_proposal(
         &inputs.outcomes,
         &blind,
         anchor,
+        inputs.judge_rubric_digest.clone(),
     )?;
     let goal_axes = score_goal_axes(
         scorer,
@@ -353,6 +356,10 @@ fn rule_on_proposal(
             || goal_definition_in_txn(vault, wtxn, &target)?.goal_id != basis.goal_id
         {
             return Err(retry("goal definition moved while the scorer was thinking"));
+        }
+        // The rubric pin the measurements record is the one every judgment read.
+        if judge_rubric_digest_in_txn(vault, &*wtxn)? != measurements.judge_rubric_digest {
+            return Err(retry("the judge rubric moved while the scorer was thinking"));
         }
         // The concurrent duplicate: two deliveries that both got past the read
         // above serialize HERE, and the second one finds the first's row.
@@ -435,6 +442,8 @@ struct ScoreInputs {
     outcomes: Vec<(String, bool)>,
     basis: ScoredBasis,
     goal_definition: GoalDefinition,
+    /// The judge rubric's pin in force when scoring began (FIX 3585).
+    judge_rubric_digest: Option<String>,
 }
 
 /// The one place a durable ruling becomes the caller's answer.
