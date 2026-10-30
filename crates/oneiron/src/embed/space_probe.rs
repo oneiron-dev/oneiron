@@ -203,10 +203,10 @@ pub(crate) fn space_probes_in_txn(
 }
 
 impl Vault {
-    /// Stores one probe; every target, its document and every source it names must be a stored
-    /// record, read in the write, so no erased row's words come back (FIX 9829), and a media
-    /// query a stored ASSET holding inline image or audio. The write checks the owner's proof
-    /// again (FIX 8200).
+    /// Stores one probe; every target, its document and every source it names must be a live
+    /// record, read in the write, so no erased row's words come back (FIX 9829, FIX 11173),
+    /// and a media query a stored ASSET holding inline image or audio. The write checks the
+    /// owner's proof again (FIX 8200).
     pub fn put_space_probe(
         &self,
         owner: &AuthenticatedOwner,
@@ -223,7 +223,7 @@ impl Vault {
             .chain(&probe.source_refs)
             .chain(std::iter::once(&document))
         {
-            if self.store.port_entity_record(&wtxn, row)?.is_none() {
+            if !dependencies::source_row_is_live_in(self, &wtxn, row)? {
                 return Err(Error::EntityNotFound);
             }
         }
@@ -282,11 +282,12 @@ impl Vault {
     }
 
     /// [`Self::author_space_probes`] with the host's media egress gate (FIX 6743): an author at
-    /// a third party writes image and audio probes only from the documents `egress` allows
-    /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
-    /// asked again right before its bytes go to the author; the rest stay unsent and are
-    /// counted [`SpaceProbeReport::withheld`]. A text author, or one on this device or the
-    /// owner's server, reads as it does without a gate.
+    /// a third party, or on the owner's server with a gate, writes image and audio probes only
+    /// from the documents `egress` allows ([`EgressPredicate::decide_media`]) that no
+    /// device-local world keeps (DEC-0005), each asked again right before its bytes go to the
+    /// author; the rest stay unsent and are counted [`SpaceProbeReport::withheld`]. A text
+    /// author, one on this device, or one on the owner's server with no gate reads as it does
+    /// without a gate.
     ///
     /// # Errors
     ///
@@ -299,11 +300,15 @@ impl Vault {
         max_items: usize,
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<SpaceProbeReport> {
-        let gated = author.locality() == EmbedderLocality::ThirdParty && kind != InputKind::Text;
-        let egress = match egress {
+        let gated = matches!(
+            author.locality(),
+            EmbedderLocality::ThirdParty | EmbedderLocality::OwnerServer
+        ) && kind != InputKind::Text;
+        let egress = match (author.locality(), egress) {
             _ if !gated => None,
-            Some(egress) => Some(egress),
-            None => {
+            (EmbedderLocality::OwnerServer, egress) => egress,
+            (_, Some(egress)) => Some(egress),
+            _ => {
                 return Err(Error::InvalidConfig(
                     "a third-party probe author has no egress grant for stored media".into(),
                 ));

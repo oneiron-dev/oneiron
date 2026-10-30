@@ -242,9 +242,9 @@ impl Vault {
     /// is passed over: its own writes land in base, or keep nothing.
     ///
     /// The egress and route checks are [`Self::reconcile_media_embeddings_admitted`]'s, judged
-    /// on the room's view: a third-party embedder reads only what `egress` allows and no
-    /// device-local world keeps. A document the model refuses by its content is kept in
-    /// `refusals` for the room's life, never in the vault.
+    /// on the room's view: a third-party embedder, or one on the owner's server with a gate,
+    /// reads only what `egress` allows and no device-local world keeps. A document the model
+    /// refuses by its content is kept in `refusals` for the room's life, never in the vault.
     ///
     /// # Errors
     ///
@@ -349,7 +349,7 @@ impl Vault {
         if documents.is_empty() {
             return Ok(());
         }
-        let outcomes = self.embed_documents(embedder, &documents, Some(session))?;
+        let outcomes = self.embed_documents(embedder, &documents, Some(session), egress)?;
         for ((document, turn), outcome) in documents.iter().zip(&turns).zip(outcomes) {
             let (vector, provenance) = match outcome {
                 Ok(answer) => answer,

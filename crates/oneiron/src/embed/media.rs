@@ -222,8 +222,8 @@ impl Vault {
     /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
     /// asked again right before its bytes leave ([`MediaEmbedder::embed_each_released`]); the
     /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on the
-    /// owner's server reads through `egress` when the host gives one (FIX 9830), and one on
-    /// this device reads as it does without a gate.
+    /// owner's server with a gate reads through `egress` (FIX 9830), at scan and again at
+    /// send; with none, and one on this device, reads as it does without a gate.
     ///
     /// # Errors
     ///
@@ -274,7 +274,7 @@ impl Vault {
             return Ok(report);
         }
 
-        let outcomes = self.embed_documents(embedder, &pending, None)?;
+        let outcomes = self.embed_documents(embedder, &pending, None, egress)?;
         // A model that has embedded nothing here may be refusing them all for a reason of its
         // own; no document is blamed for that.
         if report.already_embedded == 0
@@ -404,20 +404,32 @@ impl Vault {
     }
 
     /// Each pending document's outcome from `embedder`, in order, read outside any
-    /// transaction. A model at a third party is sent each request only once the vault
-    /// releases its documents, as `session`'s room reads them or base with none: none is one
-    /// a device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
+    /// transaction. A model at a third party, or on the owner's server with a gate, is sent
+    /// each request only once the vault releases its documents: the gate allows each one
+    /// again and, as `session`'s room reads them or base with none, none is one a
+    /// device-local world keeps (DEC-0005). A refusal sends nothing more and fails the call.
     /// Each vector keeps the mark of the answer that carried it (FIX 7796).
     pub(super) fn embed_documents(
         &self,
         embedder: &dyn MediaEmbedder,
         pending: &[PendingMedia],
         session: Option<&OffRecordSession<'_>>,
+        egress: Option<&dyn EgressPredicate>,
     ) -> Result<Vec<MediaOutcome>> {
         let inputs: Vec<MediaEmbeddingInput<'_>> =
             pending.iter().map(PendingMedia::input).collect();
-        let outcomes = if embedder.locality() == EmbedderLocality::ThirdParty {
+        let outcomes = if let Some(egress) = egress {
             embedder.embed_each_released(&inputs, &|rows| {
+                for input in &inputs {
+                    if rows.contains(&input.entity_id)
+                        && egress.decide_media(input) != EgressDecision::Allow
+                    {
+                        return Err(Error::UpstreamToolFailure {
+                            tool: "media-embedder-remote",
+                            code: "media_egress".to_owned(),
+                        });
+                    }
+                }
                 if self.media_rows_may_leave(session, rows)? {
                     Ok(())
                 } else {
