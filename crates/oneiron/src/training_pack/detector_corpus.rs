@@ -154,9 +154,8 @@ impl DetectorCorpusRef {
             if line.is_empty() {
                 continue;
             }
-            let row: TargetRowInput = serde_json::from_slice(line).map_err(|error| {
-                invalid(&format!("detector rows line {}: {error}", index + 1))
-            })?;
+            let row: TargetRowInput = serde_json::from_slice(line)
+                .map_err(|error| invalid(&format!("detector rows line {}: {error}", index + 1)))?;
             row.check(question)?;
             if !ids.insert(row.row.clone()) {
                 return Err(invalid(&format!("detector row {:?} repeats", row.row)));
