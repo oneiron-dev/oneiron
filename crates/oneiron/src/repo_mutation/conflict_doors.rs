@@ -3,6 +3,7 @@ use super::git::{
     admitted_repo_ref, git_common_dir, require_pinned_head, resolve_mutable_repo_root,
 };
 use super::proposal::{RepoProposalOperation, RepoProposalStatus, invalid};
+use super::received_file::tree::{prepare_received_files_commit, received_tree_edits};
 use super::snapshot::capture_repo_snapshot;
 use super::worktree::{prepare_commit_file_through_queue_worktree, remove_queue_worktree};
 use crate::codebase::RepoRef;
@@ -50,6 +51,16 @@ impl Vault {
                 ));
             }
         }
+        // The base and each side are pinned before its worktree goes, so the
+        // recorded conflict's commits stay inspectable, as the queue's are
+        // (FIX 8834).
+        let wire = GitWire::new(self)?;
+        let pinned_repo = wire.open_repo(canonical.clone(), &root)?;
+        let base_head = snapshot
+            .head
+            .clone()
+            .ok_or_else(|| invalid("conflict base has no HEAD commit"))?;
+        let _pinned = wire.write_keep_ref(&pinned_repo, &GitOid::parse_hex(base_head)?, 0)?;
         let mut sides = Vec::new();
         for row in &proposals {
             let message = super::trailer::commit_message_with_provenance_trailer(
@@ -59,7 +70,11 @@ impl Vault {
             let (path, content) = row.ordinary_file()?;
             let prepared =
                 prepare_commit_file_through_queue_worktree(&root, path, content, &message)?;
-            remove_queue_worktree(&root, &prepared.worktree_path)?;
+            let pinned = GitOid::parse_hex(prepared.new_head.clone())
+                .and_then(|side| wire.write_keep_ref(&pinned_repo, &side, 0));
+            let removed = remove_queue_worktree(&root, &prepared.worktree_path);
+            let _pinned = pinned?;
+            removed?;
             sides.push(prepared.new_head);
         }
         super::conflict::record_repo_conflict_checked(
@@ -97,12 +112,24 @@ impl Vault {
             .map(|id| self.repo_proposal(*id)?.ok_or(crate::Error::EntityNotFound))
             .collect::<Result<Vec<_>>>()?;
         for row in &rows {
+            // A whole-file proposal writes a shared path; a source-bound
+            // received bundle writes one among its files (FIX 9976).
+            let shares = match row.operation {
+                RepoProposalOperation::CommitFile => row
+                    .ordinary_file()
+                    .is_ok_and(|(path, _)| overlap.paths.iter().any(|shared| shared == path)),
+                RepoProposalOperation::ReceivedFiles { .. } => {
+                    row.is_source_bound_received()
+                        && row
+                            .paths()
+                            .iter()
+                            .any(|path| overlap.paths.iter().any(|shared| shared == path))
+                }
+                _ => false,
+            };
             if !super::oplog::same_repository(repo.repo_ref(), &RepoRef::parse(&row.repo)?)
                 || row.pre_action_fork_hash != overlap.snapshot
-                || !matches!(row.operation, RepoProposalOperation::CommitFile)
-                || !row
-                    .ordinary_file()
-                    .is_ok_and(|(path, _)| overlap.paths.iter().any(|shared| shared == path))
+                || !shares
             {
                 return Err(invalid(
                     "queue conflict source is not a same-base proposal of the overlap",
@@ -160,19 +187,26 @@ impl Vault {
     }
 }
 
-/// Each source's commit on the historical base `root`, in source order.
+/// Each source's commit on the historical base `root`, in source order: a
+/// whole-file proposal's one file with its provenance trailer, or a received
+/// bundle's whole tree change under its own message, as it would land.
 fn queue_conflict_sides(
     root: &std::path::Path,
     rows: &[super::proposal::RepoProposal],
 ) -> Result<Vec<GitOid>> {
     let mut sides = Vec::new();
     for row in rows {
-        let message = super::trailer::commit_message_with_provenance_trailer(
-            &row.message,
-            Some(row.provenance_claim),
-        )?;
-        let (path, content) = row.ordinary_file()?;
-        let prepared = prepare_commit_file_through_queue_worktree(root, path, content, &message)?;
+        let prepared = if row.is_source_bound_received() {
+            let edits = received_tree_edits(&row.files)?;
+            prepare_received_files_commit(root, &edits, &row.message)?
+        } else {
+            let message = super::trailer::commit_message_with_provenance_trailer(
+                &row.message,
+                Some(row.provenance_claim),
+            )?;
+            let (path, content) = row.ordinary_file()?;
+            prepare_commit_file_through_queue_worktree(root, path, content, &message)?
+        };
         remove_queue_worktree(root, &prepared.worktree_path)?;
         sides.push(GitOid::parse_hex(prepared.new_head)?);
     }

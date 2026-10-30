@@ -179,11 +179,11 @@ pub enum ChannelIdentitySelectionError {
 
 /// The six compiled vault defaults, in canonical order.
 ///
-/// The two rows that route to assets the owner cannot cheaply replace — the
-/// owner's own delegated account and the companion face reserved for personal
-/// ties — ship non-amendable, so an agent adds its own scoped rows instead of
-/// quietly rewriting vault law. Nothing is banned: an owner may edit or unlock
-/// every row, and an exact-identity override is always canonical.
+/// Every row ships agent-amendable, including the two that route to assets the
+/// owner cannot cheaply replace — the owner's own delegated account and the
+/// companion face reserved for personal ties — so an agent may amend them like
+/// the other built-in rows. An owner may edit or unlock every row, and an
+/// exact-identity override is always canonical.
 #[must_use]
 pub fn builtin_channel_identity_selection_rules() -> [ChannelIdentitySelectionRule; 6] {
     [
@@ -191,7 +191,7 @@ pub fn builtin_channel_identity_selection_rules() -> [ChannelIdentitySelectionRu
             "builtin.work_deal",
             RelationshipContext::WorkDeal,
             ChannelIdentityFace::DelegatedOwnerAccount,
-            false,
+            true,
         ),
         builtin_rule(
             "builtin.scheduling_logistics",
@@ -215,7 +215,7 @@ pub fn builtin_channel_identity_selection_rules() -> [ChannelIdentitySelectionRu
             "builtin.personal_friends",
             RelationshipContext::PersonalFriends,
             ChannelIdentityFace::CompanionIdentity,
-            false,
+            true,
         ),
         builtin_rule(
             "builtin.group_space",

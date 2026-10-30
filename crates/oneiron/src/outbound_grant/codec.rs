@@ -588,8 +588,9 @@ pub(super) fn refs_match(candidate: &str, target: &str) -> bool {
     candidate.trim() == target.trim()
 }
 
+/// Whether `verb` is a member of the send class.
 pub(super) fn is_send_class_verb(verb: &str) -> bool {
-    verb.trim() == SEND_VERB_CLASS
+    super::verb_class::verb_in_class(SEND_VERB_CLASS, verb)
 }
 
 pub(super) fn is_mcp_channel(channel: &str) -> bool {

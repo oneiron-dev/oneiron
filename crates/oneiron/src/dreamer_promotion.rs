@@ -363,9 +363,8 @@ impl crate::dreamer_consolidation::ConsolidationSink for PromotionWriterSink<'_>
         self.outcome.rejected.extend(outcome.rejected);
         // The write's one error carries its door's typed kind (FIX 9429)
         // and, when the gate refused it, the gate's codes (FIX 10355).
-        let refusal = refused.then(|| {
-            attempt_sink::write_refusal(&outcome.rejected_kinds, &outcome.rejected_gates)
-        });
+        let refusal = refused
+            .then(|| attempt_sink::write_refusal(&outcome.rejected_kinds, &outcome.rejected_gates));
         self.outcome.rejected_kinds.extend(outcome.rejected_kinds);
         self.outcome.rejected_gates.extend(outcome.rejected_gates);
         if let Some(refusal) = refusal {

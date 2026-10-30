@@ -238,7 +238,7 @@ pub fn live_weave_lens_request(
 /// on the row. A refused plan gets [`WEAVE_LENS_PLAN_REPAIRS`] repair turns;
 /// then its refusal lands on the row instead. A period re-rendered, withheld,
 /// already rendered or refused since it was queued is owed nothing, and
-/// neither is one whose skill is retired.
+/// neither is one whose skill is retired or whose lens pack is not Active.
 pub async fn run_weave_lens(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
@@ -256,7 +256,6 @@ pub async fn run_weave_lens(
     if stored.rendered_at != rendered_at || stored.lens.is_some() || stored.lens_refused.is_some() {
         return owed_nothing();
     }
-    let skill = crate::claim::weave_report_skill_id()?;
     // The render reads the skill's pack and the period's report: both
     // declared before either reads (FIX 7019, 7073).
     super::declare_attempt_reads(
@@ -267,17 +266,26 @@ pub async fn run_weave_lens(
             ReadSetProducer::DREAMER_WEAVE_REPORT,
         ],
     );
-    let loaded = match ctx.vault.load_attempt_skill_pack(
-        record.id,
-        &skill,
-        record.lease_owner.as_deref().unwrap_or_default(),
-        record.attempt_count,
-        model.model.as_str(),
-        ctx.now_ms / 1_000,
-    ) {
-        Ok(loaded) => loaded,
+    // The skill is the weave lens pack's: a pack not installed Active, or a
+    // lens that no longer mounts, renders nothing.
+    let Some((lens, skill)) = crate::claim::weave_report_lens(ctx.vault)? else {
+        return owed_nothing();
+    };
+    let loaded = match ctx.vault.render_mounted_lens(&lens, || {
+        ctx.vault.load_attempt_skill_pack(
+            record.id,
+            &skill,
+            record.lease_owner.as_deref().unwrap_or_default(),
+            record.attempt_count,
+            model.model.as_str(),
+            ctx.now_ms / 1_000,
+        )
+    }) {
+        Ok(Some(loaded)) => loaded,
         // A retired, unapproved or deleted skill renders nothing.
-        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return owed_nothing(),
+        Ok(None) | Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => {
+            return owed_nothing();
+        }
         Err(error) => return Err(error),
     };
     let Some(instruction) = loaded

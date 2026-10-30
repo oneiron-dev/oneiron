@@ -1911,7 +1911,7 @@ export interface FacadeResults {
   "vault.code.origin.publications": Facade.OriginPublicationsView;
   "vault.code.checkout.bind": Facade.CheckoutDoorBinding;
   "vault.code.checkout.claim": Facade.CheckoutLeaseView;
-  "vault.code.checkout.get": Facade.CheckoutLeaseView;
+  "vault.code.checkout.get": Facade.ScopedReadResult<Facade.CheckoutLeaseView | null>;
   "vault.code.checkout.renew": Facade.CheckoutLeaseView;
   "vault.code.checkout.reclaim": Facade.CheckoutLeaseView;
   "vault.code.checkout.takeover": Facade.CheckoutLeaseView;
@@ -3162,7 +3162,7 @@ export const FACADE_CATALOG: { readonly [V in FacadeVerb]: FacadeVerbMeta } = {
   "vault.code.snapshots.get": { description: "Read the file manifest of one code snapshot, pinned by its imported artifact and fork hash. Owner only. Files carry blob hashes, not document versions, and the scope key is an index key, not a grant.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.snapshots.read": { description: "Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.symbols.definitions": { description: "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language.", scope: "Read", proposes: false, hostDoor: true, section: false },
-  "vault.code.merge_queue.enqueue": { description: "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.", scope: "Write", proposes: false, hostDoor: true, section: false },
+  "vault.code.merge_queue.enqueue": { description: "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.merge_queue.stage": { description: "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move.", scope: "Write", proposes: false, hostDoor: true, section: false },
   "vault.code.merge_queue.observe": { description: "Read the queue head and green Git commits, the named batches in request order and the stored contract verdicts they name. Owner only. It never recovers or settles, and a verdict is no check execution receipt.", scope: "Read", proposes: false, hostDoor: true, section: false },
   "vault.code.merge_queue.requeue_survivors": { description: "Queue the proposals a diagnosed red batch did not quarantine as a new batch, keeping the red batch and its quarantine. Owner only. No durable parent or child link is written.", scope: "Write", proposes: false, hostDoor: true, section: false },
@@ -5600,7 +5600,7 @@ export function facadeTree<K extends FacadeReturn, O = RequestInit>(invoke: Faca
           read: (input: Facade.CodeSnapshotReadRequest, options?: O): FacadeReturns<"vault.code.snapshots.read">[K] => invoke("vault.code.snapshots.read", input, options, newInvocation()),
         },
         merge_queue: {
-          /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
+          /** Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
           enqueue: (input: Facade.MergeQueueEnqueueRequest, options?: O): FacadeReturns<"vault.code.merge_queue.enqueue">[K] => invoke("vault.code.merge_queue.enqueue", input, options, newInvocation()),
           /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
           stage: (input: Facade.MergeQueueBatchRequest, options?: O): FacadeReturns<"vault.code.merge_queue.stage">[K] => invoke("vault.code.merge_queue.stage", input, options, newInvocation()),
