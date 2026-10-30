@@ -34,6 +34,10 @@ use crate::error::{Error, ErrorKind};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_COMM_RECORD;
 
+pub(crate) use super::inbound_events::{
+    record_comm_inbound_reply_in_txn, record_comm_inbound_stop_in_txn,
+};
+
 #[derive(Debug, Clone, Copy)]
 pub(super) enum ProjectorAction {
     UpsertLastTouch,
@@ -304,40 +308,6 @@ pub fn record_comm_inbound_reply(
         CommEventKind::InboundReply,
         occurred_at,
     )
-}
-
-/// [`record_comm_inbound_reply`] in the caller's write, so the event lands
-/// with the inbound admission that took the message, or not at all. The
-/// channel class is normalized first. A party key or channel class the comm
-/// family cannot hold records nothing: the message is admitted either way.
-pub(crate) fn record_comm_inbound_reply_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    party: &str,
-    channel_class: &str,
-    occurred_at: u64,
-) -> crate::error::Result<()> {
-    let channel_class = normalize_channel_class(channel_class);
-    if validate_key_string(party).is_err() || validate_channel_class(&channel_class).is_err() {
-        return Ok(());
-    }
-    resolve_or_create_party_in_txn(vault, wtxn, party)
-        .and_then(|party_ref| {
-            put_source_event_in_txn(
-                vault,
-                wtxn,
-                party_ref,
-                CommEventKind::InboundReply,
-                Some(channel_class.as_str()),
-                None,
-                occurred_at,
-            )
-        })
-        .map(|_| ())
-        .map_err(|error| match error {
-            CommError::Engine(error) => error,
-            _ => Error::InvalidClaimBody("inbound reply comm record refused"),
-        })
 }
 
 /// Records an inbound restrictive STOP event without directly writing claims.
