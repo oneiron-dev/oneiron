@@ -320,7 +320,7 @@ pub(crate) async fn create_core_conversation(
     // plain put names none.
     let members = !body.member_ids.is_empty();
     let actor = members
-        .then(|| super::conversation_members::actor(&auth, request.actor))
+        .then(|| conversation_creator(&server, &auth, request.actor))
         .transpose()?;
     let input = ConversationCreateInput {
         id: req.id,
@@ -372,6 +372,24 @@ pub(crate) async fn create_core_conversation(
         entity_type: ENTITY_TYPE_CONVERSATION,
         item,
     }))
+}
+
+/// Who authors a memberful conversation create: the actor the request or
+/// the credential's principal binds, as before; for a caller that binds
+/// neither, the host's bound actor, the owner its host action acts as (FIX
+/// 9154), never an actor-less write. Any other caller is refused as before.
+fn conversation_creator(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    requested: Option<oneiron::EntityId>,
+) -> Result<oneiron::WriteActor, ApiError> {
+    if requested.is_none()
+        && auth.principal_ref().is_none()
+        && let Some(Ok(action)) = super::host_action::host_action_of(server.vault(), auth)
+    {
+        return Ok(action.actor());
+    }
+    super::conversation_members::actor(auth, requested)
 }
 
 /// A core write row's action output, as its receipt.
