@@ -200,6 +200,8 @@ struct Sent {
         reason = "its Drop unregisters the call's device update row"
     )]
     registration: Option<updates::Registration>,
+    /// Holds non-updates foreground presence until the call itself ends.
+    _foreground: Option<updates::Foreground>,
 }
 
 /// How a call's start ended.
@@ -231,7 +233,7 @@ async fn begin(
         workspace_mib: Some(0),
     };
     let mut work = worker_host::admit_bound_work(&route.worker, context, envelope);
-    let _foreground = if work.is_foreground() {
+    let foreground = if work.is_foreground() {
         match work.device() {
             Some(device) => Some(updates::foreground_arrival(device).await),
             None => None,
@@ -333,6 +335,13 @@ async fn begin(
                 })
             });
             call.set_grant(grant);
+            // A registration carries updates-capable foreground presence.
+            // Otherwise keep the arrival guard in Sent until the call ends.
+            let foreground = if registration.is_none() {
+                foreground
+            } else {
+                None
+            };
             Ok(Begun::Sent(Sent {
                 call,
                 tie: Tie {
@@ -340,6 +349,7 @@ async fn begin(
                     epoch,
                 },
                 registration,
+                _foreground: foreground,
             }))
         }
         Err(Start::Refused(refusal)) => {
@@ -384,7 +394,10 @@ async fn execute(
             Ok(Event::Admitted(mark)) => report(&route, &mark),
             Ok(Event::Scheduled(ack)) => report_stats(&route, ack.stats.as_ref()),
             Ok(Event::FirstToken | Event::Token { .. }) => {}
-            Err(Cut(error)) => return Err(error),
+            Err(Cut(error)) => {
+                refresh_after_cut(&route);
+                return Err(error);
+            }
         }
     };
     report(&route, &last);
@@ -520,9 +533,22 @@ fn report_stats(route: &NativeRoute, stats: Option<&JsonValue>) {
         worker_host::report_device_stats(&route.worker.spec().worker_id, stats);
     }
     if let Some(activity) = stats.and_then(activity_of) {
-        worker_host::register_device_executor(&route.worker.spec().worker_id, activity.is_idle());
-        route.worker.report(activity);
+        worker_host::report_device_activity(&route.worker, activity);
     }
+}
+
+/// Re-polls after a Cut so a stale mid-call busy row cannot block idle-stop
+/// or pressure victim discovery. A dead worker's supervisor owns its truth.
+fn refresh_after_cut(route: &NativeRoute) {
+    let Some((socket, _)) = route.launch() else {
+        return;
+    };
+    let route = route.clone();
+    tokio::spawn(async move {
+        if let Some(activity) = activity(&socket).await {
+            worker_host::report_device_activity(&route.worker, activity);
+        }
+    });
 }
 
 /// What the worker holds now, from a cheap `stats` on its socket: the
@@ -731,6 +757,7 @@ impl Live {
                     self.finish(last);
                 }
                 Err(Cut(error)) => {
+                    refresh_after_cut(&self.route);
                     self.finished = true;
                     self.pending.push_back(Err(error));
                 }

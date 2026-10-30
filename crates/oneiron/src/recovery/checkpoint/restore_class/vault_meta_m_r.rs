@@ -181,6 +181,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROPOSAL_ACTOR_COUNT, CONTENT),
     (&t::PROPOSAL_RECEIPT_HISTORY, CONTENT),
     (&t::PROPOSAL_SUBMISSION, CONTENT),
+    // A cached stamp token follows the image's token claims (FIX 10930): the restore's
+    // actor sweep drops an erased actor's again, and a writer checks its claim on each read.
+    (&t::PROVENANCE_ACTOR_STAMP_TOKEN, CONTENT),
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),

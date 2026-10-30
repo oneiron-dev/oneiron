@@ -253,3 +253,20 @@ fn dev_partition_reading(
     }
     Ok(reading)
 }
+
+/// The attempt row behind each receipt of an in-hand set (FIX 7102): a pack
+/// receipt id is `attempt:` and its attempt's hex, which reads back as that
+/// attempt's row id. `None` when any receipt names no row. Capture only: the
+/// set is read, never refused; the caller unions it with its other sets.
+pub(super) fn attempt_row_ids(receipts: &HashSet<String>) -> Option<Vec<EntityId>> {
+    let mut ids = Vec::with_capacity(receipts.len());
+    for receipt in receipts {
+        let hex = receipt.strip_prefix("attempt:")?;
+        let id = EntityId::from_hex(hex).ok()?;
+        if id.to_hex() != hex {
+            return None;
+        }
+        ids.push(id);
+    }
+    Some(ids)
+}

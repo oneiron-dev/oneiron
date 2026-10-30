@@ -11,14 +11,6 @@ use std::{
     ops::Range,
 };
 
-/// Caller-resolved XML counts a package carries as policy data. Both are
-/// observations: no reader refuses a part for its depth or node count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct XmlLimits {
-    pub max_depth: usize,
-    pub max_nodes: usize,
-}
-
 #[derive(Debug)]
 pub(super) struct Node<'a> {
     pub name: &'a str,
@@ -304,21 +296,20 @@ unsafe extern "C" fn doctype(
     unsafe { &mut *user.cast::<State<'_>>() }.reject("DTD is not supported");
 }
 
+/// The most source one `XML_Parse` call takes (FIX 10591, 10658). Expat
+/// reads an input's length as a `c_int`, so a part of any length is passed
+/// in chunks of this size, well within it; Expat's byte indices count from
+/// the part's first byte across every chunk.
+const XML_CHUNK: usize = 64 << 20;
+
 impl<'a> ValidatedXmlPart<'a> {
-    /// Parse `source` through the operation's port: Expat's own buffers,
-    /// sized by the source, then the arena as it grows, are reserved before
-    /// they are allocated.
+    /// Parse `source` through the operation's port, one [`XML_CHUNK`] at a
+    /// time: before each chunk the operation's checkpoint runs and Expat's
+    /// own buffer is reserved for it, and the arena is reserved as it grows.
     pub(in crate::retained_opc) fn parse(source: &'a [u8], resources: &Resources) -> Result<Self> {
         std::str::from_utf8(source).map_err(|_| Error::Edit("non-UTF8 XML"))?;
-        let size =
-            c_int::try_from(source.len()).map_err(|_| Error::Edit("XML input size limit"))?;
-        resources.checkpoint()?;
-        let mut hold = resources.hold();
-        // Expat's own buffers, as long as the source: an estimate, nothing of
-        // it measured before the parser runs.
-        hold.take_estimate(wide(source.len()), 0)?;
-        // A non-null native parser lives through XML_Parse and is freed by
-        // OwnedParser even if validation refuses the part.
+        // A non-null native parser lives through every XML_Parse call and is
+        // freed by OwnedParser even if validation refuses the part.
         // SAFETY: constant is a NUL-terminated encoding label for Expat.
         let ptr = unsafe { ffi::XML_ParserCreateNS(c"UTF-8".as_ptr(), b'|' as c_char) };
         if ptr.is_null() {
@@ -331,13 +322,12 @@ impl<'a> ValidatedXmlPart<'a> {
             nodes: Vec::new(),
             stack: Vec::new(),
             signature: false,
-            hold,
+            hold: resources.hold(),
             error: None,
         };
-        // SAFETY: callbacks borrow `state` only while this synchronous parse
-        // executes. Expat owns `parser` exclusively until OwnedParser drops.
-        let result = unsafe {
-            ffi::XML_SetUserData(parser.0, (&raw mut state).cast());
+        // SAFETY: the handlers are plain function pointers; none runs until
+        // XML_Parse. Expat owns `parser` exclusively until OwnedParser drops.
+        unsafe {
             ffi::XML_SetXmlDeclHandler(parser.0, Some(declaration));
             ffi::XML_SetElementHandler(parser.0, Some(start), Some(end));
             ffi::XML_SetCharacterDataHandler(parser.0, Some(characters));
@@ -347,12 +337,45 @@ impl<'a> ValidatedXmlPart<'a> {
             ffi::XML_SetStartDoctypeDeclHandler(parser.0, Some(doctype));
             ffi::XML_SetExternalEntityRefHandler(parser.0, Some(refuse_external_entity));
             ffi::XML_SetParamEntityParsing(parser.0, 0);
-            ffi::XML_Parse(parser.0, source.as_ptr().cast(), size, 1)
-        };
-        if let Some(error) = state.error {
-            return Err(error);
         }
-        if result != 1 || !state.stack.is_empty() || state.nodes.is_empty() {
+        // An empty part still makes one final call, so Expat rejects it.
+        let mut at = 0_usize;
+        loop {
+            let end = source.len().min(at.saturating_add(XML_CHUNK));
+            let chunk = &source[at..end];
+            let last = end == source.len();
+            resources.checkpoint()?;
+            // Expat copies each chunk into its buffer before it parses it.
+            // The first chunk's copy is measured; each later chunk is taken
+            // again as an estimate, for the unparsed tail Expat carries
+            // beside it, so a part reserves at most its own length.
+            let measured = if at == 0 { wide(chunk.len()) } else { 0 };
+            state.hold.take_estimate(wide(chunk.len()), measured)?;
+            // SAFETY: the user data is a pointer to `state` taken here, after
+            // its last direct use; callbacks borrow it only while this
+            // synchronous call executes. `chunk` lives through the call and
+            // is at most XML_CHUNK bytes, within c_int.
+            let result = unsafe {
+                ffi::XML_SetUserData(parser.0, (&raw mut state).cast());
+                ffi::XML_Parse(
+                    parser.0,
+                    chunk.as_ptr().cast(),
+                    chunk.len() as c_int,
+                    c_int::from(last),
+                )
+            };
+            if let Some(error) = state.error.take() {
+                return Err(error);
+            }
+            if result != 1 {
+                return Err(Error::Edit("malformed or unsupported XML"));
+            }
+            if last {
+                break;
+            }
+            at = end;
+        }
+        if !state.stack.is_empty() || state.nodes.is_empty() {
             return Err(Error::Edit("malformed or unsupported XML"));
         }
         Ok(Self {

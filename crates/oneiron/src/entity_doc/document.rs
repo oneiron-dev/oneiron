@@ -4,6 +4,8 @@ use super::doc_actor::DocActor;
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::ActorStamp;
+use crate::provenance::made_by::{MadeBy, MadeByClass};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::write_envelope::WriteActor;
 use loro::{
@@ -47,39 +49,74 @@ impl Birth {
 }
 
 /// One document, with stable cursor identity and an actor on every local commit.
+///
+/// A commit names its writer by the actor's opaque stamp token
+/// ([`ActorStamp`], FIX 10930), never the actor's id; the birth map names the
+/// birth actor.
 pub struct EntityDoc {
     pub(crate) doc: LoroDoc,
     birth: Birth,
 }
 
 impl EntityDoc {
-    /// Creates the first commit from the original text and birth provenance.
-    pub fn open(entity: EntityId, initial: &str, actor: WriteActor, at: u64) -> Result<Self> {
-        Self::open_initialized(LoroDoc::new(), entity, initial, actor, at, |_| Ok(()), None)
+    /// Creates the first commit from the original text and birth provenance:
+    /// `writer` is the birth actor and its stamp token (FIX 10930).
+    pub fn open(
+        entity: EntityId,
+        initial: &str,
+        writer: (WriteActor, ActorStamp),
+        at: u64,
+    ) -> Result<Self> {
+        Self::open_born(entity, initial, writer, at, None)
+    }
+
+    /// [`Self::open`] for a row that already holds its birth: `born`, its
+    /// `RowBirth.made_by`, is the birth commit's receipt when it names this
+    /// birth's actor at its time (FIX 10929).
+    pub(super) fn open_born(
+        entity: EntityId,
+        initial: &str,
+        writer: (WriteActor, ActorStamp),
+        at: u64,
+        born: Option<&MadeBy>,
+    ) -> Result<Self> {
+        let birth = BirthCommit::Stamp(writer.1, born);
+        Self::open_with(
+            LoroDoc::new(),
+            entity,
+            initial,
+            writer.0,
+            at,
+            |_| Ok(()),
+            birth,
+        )
     }
 
     pub(super) fn open_with_metadata(
         entity: EntityId,
         initial: &str,
         metadata: &std::collections::BTreeMap<String, Vec<u8>>,
-        actor: WriteActor,
+        writer: (WriteActor, ActorStamp),
         at: u64,
+        born: Option<&MadeBy>,
     ) -> Result<Self> {
-        Self::open_initialized(
+        Self::open_with(
             LoroDoc::new(),
             entity,
             initial,
-            actor,
+            writer.0,
             at,
             |doc| {
                 Self::replace_metadata(doc, metadata)?;
                 Self::set_record_fields(doc, &metadata.keys().cloned().collect::<Vec<_>>())
             },
-            None,
+            BirthCommit::Stamp(writer.1, born),
         )
     }
 
-    // The caller may bind the fresh peer before choosing the birth timestamp.
+    /// A birth whose commit is the caller's own `message`, a proposal
+    /// artifact's receipted stamp. The caller may bind the fresh peer before
+    /// choosing the birth timestamp.
     pub(crate) fn open_initialized(
         doc: LoroDoc,
         entity: EntityId,
@@ -87,7 +124,35 @@ impl EntityDoc {
         actor: WriteActor,
         at: u64,
         initialize: impl FnOnce(&LoroDoc) -> Result<()>,
-        message: Option<&str>,
+        message: &str,
+    ) -> Result<Self> {
+        let birth = BirthCommit::Message(message);
+        Self::open_with(doc, entity, initial, actor, at, initialize, birth)
+    }
+
+    /// [`Self::open_born`] on `doc`, after `initialize`: the engine stamp,
+    /// its receipt `born` as [`Self::open_born`] takes it (FIX 10929).
+    pub(super) fn open_initialized_born(
+        doc: LoroDoc,
+        entity: EntityId,
+        initial: &str,
+        writer: (WriteActor, ActorStamp),
+        at: u64,
+        initialize: impl FnOnce(&LoroDoc) -> Result<()>,
+        born: Option<&MadeBy>,
+    ) -> Result<Self> {
+        let birth = BirthCommit::Stamp(writer.1, born);
+        Self::open_with(doc, entity, initial, writer.0, at, initialize, birth)
+    }
+
+    fn open_with(
+        doc: LoroDoc,
+        entity: EntityId,
+        initial: &str,
+        actor: WriteActor,
+        at: u64,
+        initialize: impl FnOnce(&LoroDoc) -> Result<()>,
+        commit: BirthCommit<'_>,
     ) -> Result<Self> {
         doc.set_record_timestamp(true);
         let birth = Birth {
@@ -100,22 +165,24 @@ impl EntityDoc {
             .insert(0, initial)
             .map_err(|_| invalid("document birth text"))?;
         initialize(&doc)?;
-        if let Some(message) = message {
-            let timestamp =
-                i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
-            doc.commit_with(
-                CommitOptions::new()
-                    .commit_msg(message)
-                    .timestamp(timestamp),
-            );
-        } else {
-            stamp(&doc, actor, at, "birth")?;
+        match commit {
+            BirthCommit::Message(message) => {
+                let timestamp =
+                    i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
+                doc.commit_with(
+                    CommitOptions::new()
+                        .commit_msg(message)
+                        .timestamp(timestamp),
+                );
+            }
+            BirthCommit::Stamp(stamp, born) => stamp_birth(&doc, (actor, stamp), at, born)?,
         }
         Ok(Self { doc, birth })
     }
 
     /// Fresh value document for canonical recovery. Old frontiers are not
-    /// imported; an erased birth actor stays no one.
+    /// imported; an erased birth actor stays no one. Its commit restates the
+    /// row's birth (FIX 10929).
     pub(crate) fn rebuild_value(
         entity: EntityId,
         text: &str,
@@ -135,7 +202,7 @@ impl EntityDoc {
                 .insert(0, text)
                 .map_err(|_| invalid("document recovery text"))?;
         }
-        doc.commit();
+        restate_birth(&doc);
         Ok(Self { doc, birth })
     }
 
@@ -177,29 +244,30 @@ impl EntityDoc {
         export_snapshot(&self.doc)
     }
 
-    /// Applies and stamps one actor's operations. Pending partial work is stamped
-    /// even on error. Vault transactions use private scratch docs and roll back
-    /// failed calls, so this cannot leak an uncommitted cache mutation.
+    /// Applies one actor's operations and stamps them with its token `stamp`
+    /// (FIX 10930). Pending partial work is stamped even on error. Vault
+    /// transactions use private scratch docs and roll back failed calls, so
+    /// this cannot leak an uncommitted cache mutation.
     pub fn edit_as(
         &mut self,
-        actor: WriteActor,
+        stamp: ActorStamp,
         at: u64,
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
-        self.edit_with(actor, at, &[], edit)
+        self.edit_with(stamp, at, &[], edit)
     }
 
     /// [`Self::edit_as`], its receipt naming `sources`, the rows its writer
     /// read for it (FIX 7790).
     pub(super) fn edit_with(
         &mut self,
-        actor: WriteActor,
+        stamp: ActorStamp,
         at: u64,
         sources: &[EntityId],
         edit: impl FnOnce(&LoroText) -> Result<()>,
     ) -> Result<()> {
         let result = edit(&self.doc.get_text(BODY));
-        stamp_with(&self.doc, actor, at, "edit", sources)?;
+        stamp_with(&self.doc, stamp, at, "edit", sources)?;
         result
     }
 
@@ -278,35 +346,92 @@ pub(super) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result
         .map_err(|_| invalid("document metadata write"))
 }
 
-pub(super) fn stamp(doc: &LoroDoc, actor: WriteActor, at: u64, verb: &str) -> Result<()> {
-    stamp_with(doc, actor, at, verb, &[])
+/// How a document's birth commit is spelled.
+enum BirthCommit<'a> {
+    /// The caller's own message: a proposal artifact's receipted stamp.
+    Message(&'a str),
+    /// The engine stamp naming the birth actor's token, with the row's own
+    /// birth envelope as its receipt when it names this birth (FIX 10929),
+    /// else the generic receipt.
+    Stamp(ActorStamp, Option<&'a MadeBy>),
+}
+
+/// Commits `doc`'s pending operations under the engine stamp naming the
+/// writer's token `stamp` (FIX 10930), through the operation `verb`.
+pub(super) fn stamp(doc: &LoroDoc, stamp: ActorStamp, at: u64, verb: &str) -> Result<()> {
+    stamp_with(doc, stamp, at, verb, &[])
 }
 
 /// [`stamp`], its receipt naming `sources`, the rows its writer read for it.
 pub(super) fn stamp_with(
     doc: &LoroDoc,
-    actor: WriteActor,
+    stamp: ActorStamp,
     at: u64,
     verb: &str,
     sources: &[EntityId],
 ) -> Result<()> {
-    // Sequence-bearing messages prevent Loro from folding two calls by the same
-    // actor into one change. Peer bindings remain the authority for remote stamps.
-    let stamped = format!(
-        "{STAMP} {verb} actor={}.{} op={:?}",
-        actor.entity_ref().to_hex(),
-        crate::edit_distance::actor_class_token(actor.actor_class()),
-        doc.oplog_vv()
-    );
+    let stamped = stamp_head(doc, stamp, verb);
     // The commit carries its made_by receipt (FIX 7790).
-    let message = super::commit_receipts::receipted(&stamped, actor, at, verb, sources)?;
+    let message = super::commit_receipts::receipted(&stamped, stamp, at, verb, sources)?;
+    commit_at(doc, &message, at)
+}
+
+/// The birth commit's stamp, naming the birth actor's token. Its receipt is
+/// `born`, the row's own birth envelope, when that names this birth's actor
+/// at its time with a class the actor may hold, so the reader vouches for it
+/// as for any receipt (FIX 10929); otherwise the generic receipt. The
+/// envelope is written naming the token in its actor's place (FIX 10930).
+fn stamp_birth(
+    doc: &LoroDoc,
+    (actor, stamp): (WriteActor, ActorStamp),
+    at: u64,
+    born: Option<&MadeBy>,
+) -> Result<()> {
+    let names_this_birth = |made_by: &&MadeBy| {
+        made_by.process.actor == actor.entity_ref()
+            && made_by.at == at
+            && made_by.process.is_valid()
+            && (made_by.process.class != MadeByClass::Stated
+                || actor.actor_class() == crate::EdgeActorClass::Human)
+    };
+    let Some(made_by) = born.filter(names_this_birth) else {
+        return stamp_with(doc, stamp, at, "birth", &[]);
+    };
+    let mut made_by = made_by.clone();
+    made_by.process.actor = stamp.token;
+    let stamped = stamp_head(doc, stamp, "birth");
+    let message = super::commit_receipts::receipted_as(&stamped, &made_by)?;
+    commit_at(doc, &message, at)
+}
+
+/// The engine stamp before its receipt, naming the writer's token and class
+/// (FIX 10930). Sequence-bearing messages prevent Loro from folding two
+/// calls by the same actor into one change. Peer bindings remain the
+/// authority for remote stamps.
+fn stamp_head(doc: &LoroDoc, stamp: ActorStamp, verb: &str) -> String {
+    format!(
+        "{STAMP} {verb} actor={}.{} op={:?}",
+        stamp.token.to_hex(),
+        crate::edit_distance::actor_class_token(stamp.class),
+        doc.oplog_vv()
+    )
+}
+
+fn commit_at(doc: &LoroDoc, message: &str, at: u64) -> Result<()> {
     let at = i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
-    doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
+    doc.commit_with(CommitOptions::new().commit_msg(message).timestamp(at));
     Ok(())
 }
 
+/// Commits what canonical recovery replayed into `doc`: the commit restates
+/// the row's birth and names no one (FIX 10929).
+pub(super) fn restate_birth(doc: &LoroDoc) {
+    doc.commit_with(CommitOptions::new().commit_msg(super::commit_receipts::ROW_BIRTH_RESTATED));
+}
+
 /// Persisted operation attribution resolved through the existing peer binding
-/// ladder. A commit message alone never authenticates its claimed actor.
+/// ladder. A commit message alone never authenticates its claimed actor; its
+/// stamp token resolves to the actor its claim names (FIX 10930).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TextChange {
     pub actor: Option<WriteActor>,
@@ -333,18 +458,7 @@ impl crate::Vault {
                 let at =
                     u64::try_from(meta.timestamp).map_err(|_| invalid("document timestamp"))?;
                 let actor = match parse_stamp(meta.message.as_deref()) {
-                    Stamped::Live(actor) => {
-                        if crate::edit_distance::peer_actor_stamp_is_honored(
-                            self,
-                            meta.id.peer,
-                            at,
-                            &actor,
-                        )? {
-                            Some(actor)
-                        } else {
-                            crate::edit_distance::peer_actor_at(self, meta.id.peer, at)?
-                        }
-                    }
+                    Stamped::Live(stamp) => stamped_writer(self, meta.id.peer, at, stamp)?,
                     // An erased stamp names no one, and no binding of its
                     // peer speaks for it.
                     Stamped::Erased => None,
@@ -362,10 +476,33 @@ impl crate::Vault {
     }
 }
 
+/// Who a live stamp's change is attributed to: the actor its token resolves
+/// to, when the writing peer's binding vouches for that actor, else the
+/// peer's own binding. A token nothing here resolves names no one, as an
+/// erased stamp does: its actor was erased (FIX 10930).
+fn stamped_writer(
+    vault: &crate::Vault,
+    peer: u64,
+    at: u64,
+    stamp: ActorStamp,
+) -> Result<Option<WriteActor>> {
+    let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)? else {
+        return Ok(None);
+    };
+    if actor.actor_class() == stamp.class
+        && crate::edit_distance::peer_actor_stamp_is_honored(vault, peer, at, &actor)?
+    {
+        return Ok(Some(actor));
+    }
+    crate::edit_distance::peer_actor_at(vault, peer, at)
+}
+
 /// What one commit message says of its actor (FIX 6072, Engine R2).
 pub(super) enum Stamped {
-    /// A live actor's engine stamp.
-    Live(WriteActor),
+    /// An engine stamp naming its writer's token and class (FIX 10930),
+    /// which the token's claim resolves to the actor, or to no one once the
+    /// actor is erased.
+    Live(ActorStamp),
     /// An engine stamp whose actor was erased: no one.
     Erased,
     /// No engine stamp: the peer binding may name the actor.
@@ -382,23 +519,23 @@ pub(super) fn parse_stamp(message: Option<&str>) -> Stamped {
         return Stamped::Erased;
     }
     match (EntityId::from_hex(id), stamp_class(tail)) {
-        (Ok(id), Some(class)) => Stamped::Live(WriteActor::new(id, class)),
+        (Ok(token), Some(class)) => Stamped::Live(ActorStamp { token, class }),
         _ => Stamped::NotStamped,
     }
 }
 
-/// The actor class a stamp names after its id: `.<class>`, to the next
+/// The actor class a stamp names after its token: `.<class>`, to the next
 /// space.
 fn stamp_class(tail: &str) -> Option<crate::EdgeActorClass> {
     let class = tail.strip_prefix('.')?.split(' ').next()?;
     crate::edit_distance::actor_class_from_token(class)
 }
 
-/// `message` cut around its actor id, when it is an engine stamp spelled
-/// as [`stamp`] writes it (`oneiron.entity_doc.v1 <verb> actor=<id>.<class>
-/// op=...`, single spaced, then its receipt): the message before the id, the
-/// id (an actor's, or [`ERASED_CALL_IDENTITY`]), and the rest from the class
-/// on.
+/// `message` cut around its actor token, when it is an engine stamp spelled
+/// as [`stamp`] writes it (`oneiron.entity_doc.v1 <verb> actor=<token>.<class>
+/// op=...`, single spaced, then its receipt): the message before the token,
+/// the token (an actor's, spelled as an id, or [`ERASED_CALL_IDENTITY`]), and
+/// the rest from the class on.
 pub(super) fn cut_stamp(message: &str) -> Option<(&str, &str, &str)> {
     let rest = message.strip_prefix(STAMP)?.strip_prefix(' ')?;
     let (verb, rest) = rest.split_once(' ')?;

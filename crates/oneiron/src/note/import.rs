@@ -396,6 +396,8 @@ impl Vault {
             }));
         }
         let actor = WriteActor::new(author, EdgeActorClass::System);
+        // A title's commit names the import MACHINE's stamp token (FIX 10930).
+        let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
         for id in ids {
             if self.local_hard_delete_marker_exists_in_txn(txn, id)?
                 || self.get_raw_in(txn, id)?.is_some()
@@ -468,7 +470,7 @@ impl Vault {
                         title,
                         &mut crate::batch::secret_scan::Lifted::default(),
                     )?;
-                    doc.set_title(&admitted, &actor)?;
+                    doc.set_title(&admitted, stamp)?;
                     super::operations::record_authorship(
                         &doc,
                         &super::NoteAuthorship {
@@ -478,6 +480,7 @@ impl Vault {
                             grant: None,
                             command_hash: *blake3::hash(title.as_bytes()).as_bytes(),
                         },
+                        stamp,
                     )?;
                 }
                 super::document_store::persist_authoritative(self, txn, &doc)

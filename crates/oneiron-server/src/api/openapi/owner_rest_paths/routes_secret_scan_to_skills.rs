@@ -44,7 +44,8 @@ use crate::api::owner_routes::skill_judge_routes::{
     bind_goal_project_body_schema, goal_axis_report_schema, goal_revision_schema,
     judge_swap_pick_schema, judge_swap_policy_schema, measure_body_schema, pair_pick_body_schema,
     person_time_total_schema, record_person_time_body_schema, response_pair_pick_schema,
-    swap_pick_body_schema, tradeoff_pick_body_schema, tradeoff_settled_schema,
+    swap_pick_body_schema, tradeoff_pick_body_schema, tradeoff_resolve_body_schema,
+    tradeoff_settled_schema,
 };
 use crate::owner::secrets::{
     custody_rotated_schema, reenter_kept_value_body_schema, register_secret_body_schema,
@@ -282,6 +283,14 @@ pub(super) fn merge(spec: &mut Value) {
         "/v1/owner/skills/judge/tradeoff-asks/pick",
         "post",
         tradeoff_pick_body_schema(),
+        tradeoff_settled_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/skills/judge/tradeoff-asks/resolve",
+        "post",
+        tradeoff_resolve_body_schema(),
         tradeoff_settled_schema(),
         &[],
     );

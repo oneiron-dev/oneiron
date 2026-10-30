@@ -260,6 +260,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.optimize.preferences.set`
 - `vault.skills.optimize.tradeoff_asks`
 - `vault.skills.optimize.tradeoff_asks.pick`
+- `vault.skills.optimize.tradeoff_asks.resolve`
 - `vault.skills.governance.get`
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
@@ -1075,6 +1076,7 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
+- `vault.consolidation.candidate_decisions`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
 - `vault.consolidation.frontier`

@@ -63,6 +63,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
     let mut vault_config = config.base_vault_config();
+    // The supervisor delivered this vault's data key at boot (FIX 4531).
+    vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
     // takes the managed default, and unset training follows the export.

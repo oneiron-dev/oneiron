@@ -512,6 +512,11 @@ side_tables! {
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
         => crate::gate::proposal_observation::erase_submission_actor_in_txn;
+    /// This device's cache of an actor's opaque stamp token (FIX 10930): the id of its
+    /// `actor.stamp_token` claim, which a commit message names in place of the actor; an erase
+    /// of the actor drops it. Key: id16 (actor); value: id16 (token).
+    PROVENANCE_ACTOR_STAMP_TOKEN: VaultMeta b"provenance:actor_stamp_token:v1:" Raw
+        => crate::provenance::erase_actor_stamp_cache_in_txn;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
