@@ -1164,6 +1164,13 @@ impl SimpleRuntime {
                     ..ErrorDetails::default()
                 },
             })?;
+        // The package copy, the encoded snapshot and the compressed blob are
+        // each reserved before they are allocated (FIX 10657): the copy and
+        // the encoding at their measured sizes, the blob as it grows.
+        let operation = crate::admission::Operation::current();
+        let mut hold = operation.hold();
+        hold.take(crate::admission::wide(package_bytes.len()))
+            .map_err(resource_error)?;
         let persisted = PersistedEditSnapshot {
             blob_schema_version: SNAPSHOT_BLOB_SCHEMA_VERSION,
             canonical,
@@ -1172,24 +1179,36 @@ impl SimpleRuntime {
             meta,
             diagnostics,
         };
-        let encoded = bincode::serialize(&persisted).map_err(|source| RuntimeError {
+        let serialization_error = |source: bincode::Error| RuntimeError {
             code: ErrorCode::InternalError,
             message: format!("snapshot blob serialization failed: {source}"),
             details: ErrorDetails {
                 context: Some(handle.0.clone()),
                 ..ErrorDetails::default()
             },
-        })?;
-        zstd::stream::encode_all(Cursor::new(encoded), SNAPSHOT_BLOB_ZSTD_LEVEL).map_err(|source| {
-            RuntimeError {
+        };
+        let encoded_len = bincode::serialized_size(&persisted).map_err(serialization_error)?;
+        hold.take(encoded_len).map_err(resource_error)?;
+        let mut encoded = Vec::with_capacity(usize::try_from(encoded_len).unwrap_or(usize::MAX));
+        bincode::serialize_into(&mut encoded, &persisted).map_err(serialization_error)?;
+        drop(persisted);
+        let mut blob = crate::admission::HeldBuffer::new(operation.hold());
+        let compressed =
+            zstd::stream::copy_encode(Cursor::new(encoded), &mut blob, SNAPSHOT_BLOB_ZSTD_LEVEL);
+        // A refused growth of the blob is returned below as the refusal.
+        if let Err(source) = compressed
+            && crate::admission::Refusal::from_io(&source).is_none()
+        {
+            return Err(RuntimeError {
                 code: ErrorCode::InternalError,
                 message: format!("snapshot blob compression failed: {source}"),
                 details: ErrorDetails {
                     context: Some(handle.0.clone()),
                     ..ErrorDetails::default()
                 },
-            }
-        })
+            });
+        }
+        blob.into_inner().map_err(resource_error)
     }
 
     /// Re-hydrate a blob produced by [`Self::export_snapshot_blob`] into
@@ -6046,8 +6065,9 @@ pub(crate) fn serialize_canonical_docx(
 
     // --- Streaming XML output for document.xml ---
     // Instead of building the entire body tree in memory and then serializing,
-    // we stream each block element-by-element using the XmlWriter.
-    let mut w = XmlWriter::new();
+    // we stream each block element-by-element using the XmlWriter, its buffer
+    // reserved through the operation as it grows (FIX 10657).
+    let mut w = XmlWriter::held(crate::admission::Operation::current().hold());
     xml_write::write_ooxml_root_start(&mut w, "w:document", &root).map_err(map_xml_write_error)?;
     // `<w:background>` (CT_Document, ISO 29500-1 §17.2.1) precedes `<w:body>`.
     if let Some(bg) = &doc.document_background {
@@ -6442,7 +6462,7 @@ pub(crate) fn serialize_canonical_docx(
         let part_path = relationship_target_to_part_path(&header.part_name);
         let root = load_story_template_root(&base_pkg, &target_archive, &part_path)?;
         let root_tag = story_root_tag(&root);
-        let mut hw = XmlWriter::new();
+        let mut hw = XmlWriter::held(crate::admission::Operation::current().hold());
         xml_write::write_ooxml_root_start(&mut hw, &root_tag, &root)
             .map_err(map_xml_write_error)?;
         // Bookmark ids pair per part: each header gets its own policy.
@@ -6486,7 +6506,7 @@ pub(crate) fn serialize_canonical_docx(
         let part_path = relationship_target_to_part_path(&footer.part_name);
         let root = load_story_template_root(&base_pkg, &target_archive, &part_path)?;
         let root_tag = story_root_tag(&root);
-        let mut fw = XmlWriter::new();
+        let mut fw = XmlWriter::held(crate::admission::Operation::current().hold());
         xml_write::write_ooxml_root_start(&mut fw, &root_tag, &root)
             .map_err(map_xml_write_error)?;
         // Bookmark ids pair per part: each footer gets its own policy.
@@ -7648,6 +7668,10 @@ impl DocxRuntime for SimpleRuntime {
             })?;
         }
 
+        // The exported copy, reserved before it is allocated (FIX 10657).
+        let mut hold = crate::admission::Operation::current().hold();
+        hold.take(crate::admission::wide(bytes.len()))
+            .map_err(resource_error)?;
         Ok(bytes.as_ref().to_vec())
     }
 
@@ -11175,6 +11199,11 @@ pub(crate) fn map_package_error(err: crate::docx_package::PackageError) -> Runti
 }
 
 fn map_xml_write_error(err: std::io::Error) -> RuntimeError {
+    // A refused growth of the streamed part's buffer is the work's memory,
+    // typed as such (FIX 10657).
+    if let Some(refusal) = crate::admission::Refusal::from_io(&err) {
+        return resource_error(refusal);
+    }
     RuntimeError {
         code: ErrorCode::InvalidDocx,
         message: format!("XML streaming write error: {err}"),
