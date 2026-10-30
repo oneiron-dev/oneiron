@@ -39,6 +39,7 @@ use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
 use crate::gate::delegation_chain::evaluate_with_delegation_chain;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
+use crate::gate::weave_grant::{GATE_REASON_ALLOW_WEAVE_GRANT, landing_weave_grant_in_txn};
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome};
 use crate::store::{
     GateDecisionId, GateDecisionRecord, PendingGateConsentRecord, Store, TrayRemoval,
@@ -525,6 +526,19 @@ fn check_claim_policy_for_write_with_record_inner(
             }
         }
 
+        // FIX 3433: an Allow landing past Proposed under the owner's
+        // auto-weave Grant records that Grant and a positive reason. It
+        // changes no verdict; any other landing records as before.
+        let weave_grant = if decision.outcome() == GateOutcome::Allow
+            && !attach_critical_confirm
+            && owner_write.is_none()
+            && !verified_close
+        {
+            landing_weave_grant_in_txn(store, &*wtxn, writing, body)?
+        } else {
+            None
+        };
+
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
         let created_at = mutation_recorded_at;
@@ -557,6 +571,11 @@ fn check_claim_policy_for_write_with_record_inner(
                 }))
                 .chain(decision.delegation_narrowing_receipt())
                 .chain(checker_receipt_reasons)
+                .chain(
+                    weave_grant
+                        .as_ref()
+                        .map(|_| GATE_REASON_ALLOW_WEAVE_GRANT.to_owned()),
+                )
                 .collect(),
             system_notices: Vec::new(),
             actor_class: input.actor.actor_class.clone(),
@@ -564,7 +583,7 @@ fn check_claim_policy_for_write_with_record_inner(
             content_kind: input.content_kind.as_str().to_owned(),
             policy_manifest_version: input.policy_manifest_version,
             claim_id: Some(*id.as_bytes()),
-            grant_ref: None,
+            grant_ref: weave_grant,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
             context: decision_context::claim_decision_context(
