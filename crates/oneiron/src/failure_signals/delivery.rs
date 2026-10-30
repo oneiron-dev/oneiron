@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use super::Tier1FailureCount;
 use super::code_fix::CodeFixExport;
 use super::held::{BatchSend, HeldBatch};
-use crate::consent::AuthenticatedOwner;
+use crate::consent::{DerivedGrantOrigin, DerivedGrantSetting};
 use crate::entity_id::EntityId;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchError,
@@ -209,14 +209,14 @@ impl Vault {
         let config = self.config.failure_signals;
         let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
         if !config.exports() {
-            self.keep_failure_signal_participation(None, sender, false)?;
+            self.keep_failure_signal_participation(sender, false)?;
             // Drops whatever still waits: it may not leave now.
             self.retire_failure_signal_batch(false)?;
             self.pending_code_fix_records(0)?;
             return Ok(FailureSignalDelivery::Idle);
         }
         let send = if let Some(send) = self.carried_failure_signal_batch(target, sender, now)? {
-            self.keep_failure_signal_participation(None, sender, true)?;
+            self.keep_failure_signal_participation(sender, true)?;
             send
         } else {
             let counts = self.export_tier1_failure_counts()?;
@@ -224,7 +224,7 @@ impl Vault {
             if counts.is_empty() && code_fix.is_empty() {
                 return Ok(FailureSignalDelivery::Idle);
             }
-            self.keep_failure_signal_participation(None, sender, true)?;
+            self.keep_failure_signal_participation(sender, true)?;
             let floor = self.store.clock.ulid()?;
             let training = config.permits_training();
             let held = HeldBatch::mint(target, training, counts, code_fix, floor, now)?;
@@ -292,11 +292,9 @@ impl Vault {
     /// Keeps the participation grant in step with the owner's switch, with
     /// no transport and no destination (FIX 1884): a deployment that stopped
     /// exporting has its grant revoked even when no sender runs, and one
-    /// that exports keeps the one grant it holds under the current policy;
-    /// only the owner's act mints it
-    /// ([`Self::reconcile_failure_signal_participation_as_owner`]). Nothing
-    /// is sent, and a stopped deployment drops the batch it carried (FIX
-    /// 6679). The grant's rows take their times from the engine clock.
+    /// that exports holds one grant under the current policy. Nothing is
+    /// sent, and a stopped deployment drops the batch it carried (FIX 6679).
+    /// The grant's rows take their times from the engine clock.
     ///
     /// # Errors
     ///
@@ -305,28 +303,7 @@ impl Vault {
         let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
         let on = self.config.failure_signals.exports();
         let _pass = self.store.diagnostics.failure_signals.lock_delivery();
-        self.keep_failure_signal_participation(None, sender, on)?;
-        if on {
-            return Ok(());
-        }
-        self.retire_failure_signal_batch(false)
-    }
-
-    /// [`Self::reconcile_failure_signal_participation`] as the owner's act:
-    /// under `owner`'s proof a deployment that exports also gets its
-    /// participation grant minted when it holds none.
-    ///
-    /// # Errors
-    ///
-    /// The owner's revalidation, storage and policy errors.
-    pub fn reconcile_failure_signal_participation_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-    ) -> Result<()> {
-        let sender = connector_actor_id(FAILURE_SIGNALS_CHANNEL)?;
-        let on = self.config.failure_signals.exports();
-        let _pass = self.store.diagnostics.failure_signals.lock_delivery();
-        self.keep_failure_signal_participation(Some(owner), sender, on)?;
+        self.keep_failure_signal_participation(sender, on)?;
         if on {
             return Ok(());
         }
@@ -335,15 +312,9 @@ impl Vault {
 
     /// Keeps the participation grant in step with `on`: one active grant
     /// under the current policy while it holds, none once it stops. A grant
-    /// a policy change left behind is revoked; a missing one is minted
-    /// afresh when `owner` is present, and the engine's own pass, with no
-    /// owner, mints none.
-    fn keep_failure_signal_participation(
-        &self,
-        owner: Option<&AuthenticatedOwner>,
-        sender: EntityId,
-        on: bool,
-    ) -> Result<()> {
+    /// a policy change left behind is revoked and minted afresh, carrying
+    /// out the owner's export switch.
+    fn keep_failure_signal_participation(&self, sender: EntityId, on: bool) -> Result<()> {
         let principal = sender.to_hex();
         let wanted = StandingOutboundGrantScope::Channel {
             channel: FAILURE_SIGNALS_CHANNEL.to_owned(),
@@ -366,12 +337,18 @@ impl Vault {
                 }
             }
             for grant in &stale {
-                self.withdraw_standing_outbound_grant_in_txn(txn, owner, grant)?;
+                self.withdraw_standing_outbound_grant_in_txn(txn, None, grant)?;
             }
-            if let Some(owner) = owner.filter(|_| on && !current) {
-                self.mint_standing_outbound_grant_in_txn(
+            if on && !current {
+                // The switch lives in the deployment's configuration, which
+                // names no setter, so the stamp takes the vault's owner.
+                self.mint_derived_outbound_grant_in_txn(
                     txn,
-                    owner,
+                    DerivedGrantOrigin::FailureSignalParticipation,
+                    &DerivedGrantSetting {
+                        receipt_ref: export_setting_ref(self.config.failure_signals).to_owned(),
+                        setter: None,
+                    },
                     EntityId::now(),
                     &principal,
                     wanted.clone(),
@@ -379,5 +356,16 @@ impl Vault {
             }
             Ok(())
         })
+    }
+}
+
+/// The configuration key that decides the export switch the participation
+/// grant carries out: the owner's explicit choice when it made one, else the
+/// deployment tier's default ([`crate::config::failure_signals::default_exports`]).
+fn export_setting_ref(config: crate::config::failure_signals::FailureSignalConfig) -> &'static str {
+    if config.export_opt_in.is_some() {
+        "config.failure_signals.export_opt_in"
+    } else {
+        "config.failure_signals.deployment"
     }
 }

@@ -3,10 +3,11 @@
 //! leave. While both are on, the vault keeps one standing channel grant for
 //! the signature sender's own derived principal, so the ordinary gate admits
 //! its sends by principal with no per-send ask; once either stops, the grant
-//! is revoked. The grant is a standing consent Grant row: only the owner's
-//! proof mints it, and the engine's own run only revokes. Under the outbound
-//! writer, admission and every live retry also recheck the lane's custody
-//! and both switches. The bundle send's one-time approval is never involved.
+//! is revoked. The grant is a standing consent Grant row the run derives
+//! from the owner's two settings, stamped with the owner they belong to.
+//! Under the outbound writer, admission and every live retry also recheck the
+//! lane's custody and both switches. The bundle send's one-time approval is
+//! never involved.
 
 use super::super::store;
 use super::wire::wire_signature;
@@ -14,13 +15,18 @@ use super::{
     DELIVERIES, ENDPOINTS, ReportDeliveryKey, ReportDeliveryOutcome, ReportPublisherEndpoint,
     SENDER, UNSUPPORTED_CHANNELS, publisher_of,
 };
-use crate::consent::AuthenticatedOwner;
-use crate::edit_distance::publisher::publisher_enabled_in_txn;
+use crate::consent::{DerivedGrantOrigin, DerivedGrantSetting};
+use crate::edit_distance::publisher::{publisher_dial_row_ref_in_txn, publisher_enabled_in_txn};
 use crate::outbound::{PublisherSignatureAuthorization, connector_actor_id};
 use crate::outbound_grant::{
     StandingOutboundGrantScope, standing_outbound_grants_for_principal_in_txn,
 };
 use crate::{EntityId, Result, Vault};
+
+/// The setting the participation grant's receipt names when no vault row
+/// holds the ED-08 publisher dial: its compiled default. "Help improve
+/// Oneiron" is deployment configuration and has no row either.
+const PUBLISHER_DIAL_COMPILED_REF: &str = "edit_distance.publisher.compiled_default";
 
 impl Vault {
     /// "Help improve Oneiron" and the ED-08 publisher dial, read now.
@@ -32,31 +38,14 @@ impl Vault {
         ))
     }
 
-    /// The owner's act behind signature participation: keeps the standing
-    /// channel grant in step under `owner`'s proof, minting it while both
-    /// switches are on and `destination` takes signatures.
-    ///
-    /// # Errors
-    ///
-    /// The owner's revalidation, storage and policy errors.
-    pub fn keep_report_signature_participation(
-        &self,
-        owner: &AuthenticatedOwner,
-        destination: Option<&ReportPublisherEndpoint>,
-    ) -> Result<()> {
-        self.keep_signature_participation(Some(owner), destination)
-    }
-
     /// Keeps the participation grant in step, once per run: one active
     /// channel grant for the signature sender while both switches are on and
     /// this host has a destination that takes signatures, and none
     /// otherwise. A grant a policy or destination change left behind is
-    /// revoked; a missing one is minted afresh when `owner` is present, and
-    /// the engine's own run, with no owner, mints none. The bundle send's
-    /// approval is untouched.
+    /// revoked and minted afresh, carrying out the owner's settings. The
+    /// bundle send's approval is untouched.
     pub(super) fn keep_signature_participation(
         &self,
-        owner: Option<&AuthenticatedOwner>,
         destination: Option<&ReportPublisherEndpoint>,
     ) -> Result<()> {
         let (participation, publisher_dial) = self.signature_switches()?;
@@ -93,12 +82,21 @@ impl Vault {
                 }
             }
             for grant in &stale {
-                self.withdraw_standing_outbound_grant_in_txn(txn, owner, grant)?;
+                self.withdraw_standing_outbound_grant_in_txn(txn, None, grant)?;
             }
-            if let (Some(owner), Some(scope)) = (owner, wanted.filter(|_| !current)) {
-                self.mint_standing_outbound_grant_in_txn(
+            if let Some(scope) = wanted.filter(|_| !current) {
+                // The publisher dial's row is the owner's setting this grant
+                // carries out; it names no setter, so the stamp takes the
+                // vault's owner.
+                let receipt_ref = publisher_dial_row_ref_in_txn(self, txn)?
+                    .unwrap_or_else(|| PUBLISHER_DIAL_COMPILED_REF.to_owned());
+                self.mint_derived_outbound_grant_in_txn(
                     txn,
-                    owner,
+                    DerivedGrantOrigin::SignatureParticipation,
+                    &DerivedGrantSetting {
+                        receipt_ref,
+                        setter: None,
+                    },
                     EntityId::now(),
                     &principal,
                     scope,
