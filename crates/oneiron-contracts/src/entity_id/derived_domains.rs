@@ -258,6 +258,12 @@ pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
 /// FIX 9554). Parts: the annotated row's entity type, its id.
 pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
 
+/// A channel-identity autonomy handle (`channel_identity_autonomy::codec::address`,
+/// FIX 9675): a read or action envelope, a read or action grant, an autonomy
+/// mode, a graduation scope or evidence row, a space-posting envelope. Parts:
+/// the row kind, the MessagePack bytes of the row's value.
+pub const CHANNEL_IDENTITY_AUTONOMY: &[u8] = b"oneiron/channel-identity-autonomy/v1";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
 pub(crate) const ALL: [&[u8]; 57] = [
