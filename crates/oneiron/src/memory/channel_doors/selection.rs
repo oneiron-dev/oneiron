@@ -47,14 +47,14 @@ pub struct ChannelSelectionUpdateRequest {
 
 /// Semantic face classification for a selection question, never send
 /// authority. Shape and active state are read from live engine records.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSelectionCandidateInput {
     pub identity_ref: EntityId,
     pub face: ChannelIdentityFace,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ChannelSelectionRequest {
     pub relationship: RelationshipContext,
