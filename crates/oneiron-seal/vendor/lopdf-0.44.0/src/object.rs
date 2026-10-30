@@ -1048,7 +1048,7 @@ impl Stream {
             {
                 return Err(DecompressError::MemoryLimitExceeded { limit: max }.into());
             }
-            let spent = decode_admission::capacity_bytes(&output);
+            let spent = output.capacity();
             output = decoded;
             decode_admission::release(admission, spent);
             input = &output;
@@ -1486,7 +1486,7 @@ impl Stream {
                     / 8;
                 let decoded = png::decode_frame_admitted(data.as_slice(), bytes_per_pixel, pixels_per_row, admission)?;
                 // The undecoded rows are dropped here; their bytes go back (FIX 8448).
-                let spent = decode_admission::capacity_bytes(&data);
+                let spent = data.capacity();
                 data = decoded;
                 decode_admission::release(admission, spent);
             }
