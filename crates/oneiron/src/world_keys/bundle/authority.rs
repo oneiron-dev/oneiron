@@ -28,9 +28,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use oneiron_crypto::HybridSecretKey;
 use zeroize::Zeroizing;
 
+#[cfg(feature = "sync")]
+use super::WorldCapsuleImport;
 use super::{
     Cursor, Kind, OpenedKeyPads, OpenedVaultBundle, SealPlan, SealedBundleGeneration, SealedObject,
-    WorldCapsuleImport, open_outer, parse_frame, put_counted, seal_outer, seal_slots,
+    open_outer, parse_frame, put_counted, seal_outer, seal_slots,
 };
 use crate::Vault;
 use crate::authority::{AuthorityEntryHash, authority_entry_hash, decode_authority_log_entry_body};
