@@ -121,8 +121,8 @@ pub(super) fn link(database: &'static str, key: &[u8], value: &[u8]) -> Option<L
 }
 
 /// The rows of `links` that link to one of `gone`, by database.
-pub(super) fn dependents<'a>(
-    links: impl IntoIterator<Item = &'a Link>,
+pub(super) fn dependents(
+    links: &[&Link],
     gone: &BTreeSet<OwnerRef>,
 ) -> BTreeMap<&'static str, BTreeSet<Vec<u8>>> {
     let mut rows: BTreeMap<&'static str, BTreeSet<Vec<u8>>> = BTreeMap::new();

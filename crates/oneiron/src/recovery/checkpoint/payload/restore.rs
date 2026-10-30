@@ -77,7 +77,7 @@ pub(in crate::recovery::checkpoint) fn open_image_payload(
     let opened: BTreeSet<OwnerRef> = access
         .iter()
         .enumerate()
-        .filter(|(_, access)| matches!(access, CompartmentAccess::Open(_)))
+        .filter(|(_, answer)| matches!(answer, CompartmentAccess::Open(_)))
         .filter_map(|(index, _)| owner(index))
         .collect();
     let unopened = unavailable(&held, &opened);
