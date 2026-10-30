@@ -12878,8 +12878,9 @@ class CodeViewMaterializeRequest(TypedDict):
 class CodeViewFile(TypedDict):
     path: str
     content_hash_blake3: str
-    frontier: CodeDocumentFrontier
-    text_sha256: str
+    frontier: NotRequired[CodeDocumentFrontier | None]
+    text_sha256: NotRequired[str | None]
+    git_oid: NotRequired[str | None]
 class CodeWorkingView(TypedDict):
     view: EntityId
     repo: EntityId

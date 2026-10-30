@@ -40753,10 +40753,16 @@ pub struct CodeViewFile {
     pub path: String,
     #[serde(rename = "content_hash_blake3")]
     pub content_hash_blake3: String,
-    #[serde(rename = "frontier")]
-    pub frontier: CodeDocumentFrontier,
-    #[serde(rename = "text_sha256")]
-    pub text_sha256: String,
+    #[serde(rename = "frontier", default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<CodeDocumentFrontier>,
+    #[serde(
+        rename = "text_sha256",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub text_sha256: Option<String>,
+    #[serde(rename = "git_oid", default, skip_serializing_if = "Option::is_none")]
+    pub git_oid: Option<String>,
 }
 
 /// `oneiron::memory::code_view_doors::types::CodeWorkingView`.

@@ -3214,7 +3214,7 @@ class Oneiron:
             """Read one UTF-8 file and its SHA-256 from the frozen blobs of a pinned code snapshot, never from the folder on disk. Owner only."""
     class _VaultCodeMergeQueueVerbs:
         def enqueue(self, spec: Facade.MergeQueueEnqueueRequest) -> Facade.MergeQueueBatchView:
-            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            """Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
         def stage(self, spec: Facade.MergeQueueBatchRequest) -> Facade.MergeQueueBatchView:
             """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""
         def observe(self, spec: Facade.MergeQueueObserveRequest) -> Facade.MergeQueueObservation:
