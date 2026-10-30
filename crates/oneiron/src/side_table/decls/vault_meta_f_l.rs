@@ -314,6 +314,8 @@ side_tables! {
     ATTEMPT_ANNOTATION_HOLD: VaultMeta b"job:annotation_hold:v1:" Raw;
     /// Attempt kind to attempt ids, empty markers. Key: u64be len + kind + id16.
     ATTEMPT_KIND_INDEX: VaultMeta b"job:kind_index:v1:" Raw;
+    /// A row's run-tree parent to the row, empty markers. Key: parent id16 + child id16.
+    ATTEMPT_PARENT_CHILD_INDEX: VaultMeta b"job:parent_child:v1:" Raw;
     /// Retried attempt to its retries, empty markers. Key: parent id16 + child id16.
     ATTEMPT_RETRY_CHILD_INDEX: VaultMeta b"job:retry_child:v1:" Raw;
     /// Run id to queued attempt ids. Key: u64be len + string + id16.

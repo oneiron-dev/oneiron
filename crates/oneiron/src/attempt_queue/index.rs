@@ -2,9 +2,12 @@
 //! kind's rows, a task's rows, a try's retries or the rows an annotation holds
 //! reads those rows by key and decodes no others. A row's kind, `task_ref` and
 //! `retry_of` are set when it is created; a compacted lineage's relink is the
-//! one rewrite.
+//! one rewrite. FIX 11970: a row's run-tree children too, so a reader that
+//! wants one TASK's tree walks it down by key; a row's run-tree parent moves
+//! when a placement, a relink or a payload rebind changes it.
 
 use crate::error::{Error, Result};
+use crate::run_tree::effective_parent;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 
@@ -17,6 +20,9 @@ const TASK: SideTable<Vec<u8>, (), Raw> = SideTable::new(&side_table::ATTEMPT_TA
 /// Key: parent id16 + child id16.
 const RETRY_CHILD: SideTable<(AttemptId, AttemptId), (), Raw> =
     SideTable::new(&side_table::ATTEMPT_RETRY_CHILD_INDEX);
+/// Key: parent id16 + child id16.
+const PARENT_CHILD: SideTable<(AttemptId, AttemptId), (), Raw> =
+    SideTable::new(&side_table::ATTEMPT_PARENT_CHILD_INDEX);
 /// Key: id16.
 const ANNOTATION_HOLD: SideTable<AttemptId, (), Raw> =
     SideTable::new(&side_table::ATTEMPT_ANNOTATION_HOLD);
@@ -42,7 +48,7 @@ fn task_key(record: &AttemptRecord) -> Option<Vec<u8>> {
     Some(key)
 }
 
-/// Writes the kind, task and retry-child entries of a newly created `record`.
+/// Writes the kind, task, retry-child and parent-child entries of a newly created `record`.
 pub(super) fn put_created_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -55,10 +61,14 @@ pub(super) fn put_created_in_txn(
     if let Some(parent) = record.retry_of {
         RETRY_CHILD.put(store, wtxn, &(parent, record.id), &())?;
     }
+    if let Some(parent) = effective_parent(record) {
+        PARENT_CHILD.put(store, wtxn, &(parent, record.id), &())?;
+    }
     Ok(())
 }
 
-/// Deletes every entry of a deleted `record`: its kind, task, retry-child and hold entries.
+/// Deletes every entry of a deleted `record`: its kind, task, retry-child, parent-child and
+/// hold entries.
 pub(super) fn delete_deleted_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
@@ -70,6 +80,9 @@ pub(super) fn delete_deleted_in_txn(
     }
     if let Some(parent) = record.retry_of {
         RETRY_CHILD.delete(store, wtxn, &(parent, record.id))?;
+    }
+    if let Some(parent) = effective_parent(record) {
+        PARENT_CHILD.delete(store, wtxn, &(parent, record.id))?;
     }
     ANNOTATION_HOLD.delete(store, wtxn, &record.id)?;
     Ok(())
@@ -88,6 +101,27 @@ pub(super) fn move_retry_child_in_txn(
     }
     if let Some(parent) = to {
         RETRY_CHILD.put(store, wtxn, &(parent, child), &())?;
+    }
+    Ok(())
+}
+
+/// Moves `child`'s parent-child entry from the run-tree parent `from` to the run-tree parent
+/// `to`; equal parents leave the entry as it is.
+pub(super) fn move_parent_child_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    child: AttemptId,
+    from: Option<AttemptId>,
+    to: Option<AttemptId>,
+) -> Result<()> {
+    if from == to {
+        return Ok(());
+    }
+    if let Some(parent) = from {
+        PARENT_CHILD.delete(store, wtxn, &(parent, child))?;
+    }
+    if let Some(parent) = to {
+        PARENT_CHILD.put(store, wtxn, &(parent, child), &())?;
     }
     Ok(())
 }
@@ -139,6 +173,19 @@ pub(super) fn retry_child_ids_in_txn(
         .collect())
 }
 
+/// The ids of every row whose run-tree parent is `parent`, in id order.
+pub(super) fn parent_child_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    parent: AttemptId,
+) -> Result<Vec<AttemptId>> {
+    Ok(PARENT_CHILD
+        .scan_keys(store, txn, parent.as_bytes())?
+        .into_iter()
+        .map(|(_, child)| child)
+        .collect())
+}
+
 /// Marks `id` as paused for an annotation hold.
 pub(super) fn put_annotation_hold_in_txn(
     store: &Store,
@@ -166,11 +213,12 @@ pub(super) fn annotation_hold_ids_in_txn(
     ANNOTATION_HOLD.scan_keys(store, txn, &[])
 }
 
-/// Deletes every entry of the four indexes, for a restore that rebuilds them.
+/// Deletes every entry of the five indexes, for a restore that rebuilds them.
 pub(super) fn clear_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
     KIND.delete_from(store, wtxn, &[])?;
     TASK.delete_from(store, wtxn, &[])?;
     RETRY_CHILD.delete_from(store, wtxn, &[])?;
+    PARENT_CHILD.delete_from(store, wtxn, &[])?;
     ANNOTATION_HOLD.delete_from(store, wtxn, &[])?;
     Ok(())
 }

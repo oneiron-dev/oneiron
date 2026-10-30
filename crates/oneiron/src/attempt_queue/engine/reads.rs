@@ -1,6 +1,6 @@
 //! Point/list/dedupe reads plus retry-chain and dreamer-root walks.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 
 use crate::attempt_queue::encoding::{
     DedupeIndexKeys, decode_record, ready_at, ready_key, validate_dedupe_record,
@@ -306,6 +306,37 @@ impl AttemptQueue<'_> {
             }
         }
         warn_erased_rows("working_rows_in_txn", erased);
+        records.sort_by(attempt_record_order);
+        Ok(records)
+    }
+
+    /// One TASK's working rows and their run-tree descendants, breadth first (FIX 11970).
+    pub(crate) fn task_subtree_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        task_ref: &str,
+    ) -> Result<Vec<AttemptRecord>> {
+        let ids = crate::attempt_queue::index::task_ids_in_txn(self.store, txn, task_ref)?;
+        let mut records: Vec<AttemptRecord> = self
+            .working_rows_in_txn(txn, ids)?
+            .into_iter()
+            .filter(|record| record.task_ref.as_deref() == Some(task_ref))
+            .collect();
+        let mut seen: HashSet<AttemptId> = records.iter().map(|record| record.id).collect();
+        let mut pending: VecDeque<AttemptId> = records.iter().map(|record| record.id).collect();
+        let mut descendants = Vec::new();
+        while let Some(parent) = pending.pop_front() {
+            for child in
+                crate::attempt_queue::index::parent_child_ids_in_txn(self.store, txn, parent)?
+            {
+                if seen.insert(child) {
+                    descendants.push(child);
+                    pending.push_back(child);
+                }
+            }
+        }
+        // Each row is decoded once: the TASK's own above, its descendants here.
+        records.extend(self.working_rows_in_txn(txn, descendants)?);
         records.sort_by(attempt_record_order);
         Ok(records)
     }

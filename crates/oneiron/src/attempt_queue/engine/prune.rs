@@ -181,7 +181,15 @@ impl AttemptQueue<'_> {
             row.retry_of,
             parent,
         )?;
+        let from = crate::run_tree::effective_parent(&row);
         row.retry_of = parent;
+        crate::attempt_queue::index::move_parent_child_in_txn(
+            self.store,
+            wtxn,
+            row.id,
+            from,
+            crate::run_tree::effective_parent(&row),
+        )?;
         row.folded_retries = row.folded_retries.saturating_add(folded);
         let encoded = self.encode_in_txn(wtxn, &mut row)?;
         self.store
