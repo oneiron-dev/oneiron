@@ -66,8 +66,13 @@ impl Vault {
             artifact: *artifact,
             package_limits: self.docedit_package_limits()?,
         };
-        let run = review_slides(&base, &effective)?;
-        if let Some(proposal) = &run.proposal {
+        // The deck's live body as the review starts (FIX 2115).
+        let judged_live = self.office_body_pin(artifact)?;
+        let mut run = review_slides(&base, &effective)?;
+        if let Some(proposal) = &mut run.proposal {
+            for row in &mut proposal.manifest.slide_judgments {
+                row.judged_live.clone_from(&judged_live);
+            }
             self.measure_pptx_comment_patches(proposal);
         }
         Ok(run)
