@@ -218,6 +218,8 @@ impl Anchor {
 /// The body-frontier anchor (ARCH-0075 section 4): where an anchored unit
 /// stands in its artifact's live body. Live edits move no version, so the
 /// thread follows the body here and lands on the version an export makes.
+/// A deck's locator names the node, not the file's ids: its slide's
+/// position at `frontier` and, as `shape_id`, its node id (FIX 12264).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct BodyAnchor {

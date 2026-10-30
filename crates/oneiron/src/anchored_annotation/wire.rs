@@ -129,6 +129,8 @@ pub struct AnnotationAnchorView {
 
 /// A body-frontier anchor: the live body's frontier and the unit's locator
 /// in the body there. Live edits move it; an export lands it on a version.
+/// A deck's locator holds the slide's position there and, as `shape_id`,
+/// the node's id in the body.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct AnnotationBodyAnchorView {
     pub frontier: Vec<u8>,
