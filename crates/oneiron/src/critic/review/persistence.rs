@@ -485,6 +485,25 @@ pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDiss
     })
 }
 
+/// The actor that wrote `verdict`'s review: its principal, as the class it
+/// authenticated as. It writes the outcome an anchored settlement no owner
+/// decided gives a critique of that review (FIX 12106).
+pub(super) fn review_actor_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    verdict: &EntityId,
+) -> Result<WriteActor> {
+    let hash = result_hash(vault, txn, verdict)?;
+    let stored = RESULT
+        .get(&vault.store, txn, &hash)?
+        .ok_or(Error::EntityNotFound)?;
+    let class = stored
+        .principal_class
+        .and_then(crate::EdgeActorClass::try_from_u8)
+        .ok_or_else(|| invalid_critic_config("review keeps no principal class"))?;
+    Ok(WriteActor::new(stored.principal, class))
+}
+
 fn result_hash(vault: &Vault, txn: &heed::RoTxn<'_>, verdict: &EntityId) -> Result<[u8; 32]> {
     let pointer = RESULT_ID
         .get(&vault.store, txn, verdict)?
@@ -506,16 +525,47 @@ pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
                 .values()
                 .any(|state| state.question.is_some())
         })
-        .map(|(_, stored)| {
-            Ok(ReviewResult {
-                verdict_claim: EntityId::from_hex(&stored.verdict)?,
-                triage: stored.triage,
-                artifacts: stored.artifacts,
-                receipts: Vec::new(),
-                spawn_attempt: stored.spawn_attempt,
-            })
-        })
+        .map(|(_, stored)| stored_result(stored))
         .collect()
+}
+
+/// Each stored review with its in-scope critiques that carry a prediction
+/// but keep no standing question yet: the dissent an overruling outcome may
+/// still owe (FIX 12105).
+pub(super) fn reviews_with_unkept_dissent(
+    vault: &Vault,
+) -> Result<Vec<(ReviewResult, Vec<String>)>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut unkept = Vec::new();
+    for (_, stored) in RESULT.scan_from(&vault.store, &txn, &[])? {
+        let artifacts: Vec<String> = stored
+            .artifacts
+            .iter()
+            .filter(|artifact| {
+                !artifact.out_of_scope
+                    && artifact.prediction.is_some()
+                    && stored
+                        .dissent
+                        .get(&artifact.artifact_id)
+                        .is_none_or(|state| state.question.is_none())
+            })
+            .map(|artifact| artifact.artifact_id.clone())
+            .collect();
+        if !artifacts.is_empty() {
+            unkept.push((stored_result(stored)?, artifacts));
+        }
+    }
+    Ok(unkept)
+}
+
+fn stored_result(stored: StoredReview) -> Result<ReviewResult> {
+    Ok(ReviewResult {
+        verdict_claim: EntityId::from_hex(&stored.verdict)?,
+        triage: stored.triage,
+        artifacts: stored.artifacts,
+        receipts: Vec::new(),
+        spawn_attempt: stored.spawn_attempt,
+    })
 }
 
 /// The persisted review `verdict` of `target`, read back through its

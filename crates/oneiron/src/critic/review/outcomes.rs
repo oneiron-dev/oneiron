@@ -18,7 +18,7 @@ pub fn record_review_outcome(
             vault,
             txn,
             &result.verdict_claim,
-            actor,
+            OutcomeWriter::Owner(actor),
             artifact_id,
             source,
             accepted,
@@ -31,16 +31,28 @@ pub fn record_review_outcome(
     Ok(outcome)
 }
 
+/// Who writes a critique's outcome claim.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum OutcomeWriter {
+    /// The owner's own act: an active human owner, checked here.
+    Owner(WriteActor),
+    /// An anchored settlement no owner decided, such as a held-out team
+    /// outcome (FIX 12106): the review's own principal, the actor that wrote
+    /// the review and its automatic outcomes.
+    Review,
+}
+
 /// [`record_review_outcome`] in the caller's transaction, every check read in
 /// its snapshot, for a caller whose own write settles the outcome (FIX 2970).
 /// It keeps no dissent: an overruled critique's dissent opens writes of its
-/// own, which [`record_review_outcome`] runs after its commit.
+/// own, which [`record_review_outcome`] runs after its commit and the
+/// measured-state sweep keeps for every other writer (FIX 12105).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_review_outcome_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     verdict_claim: &EntityId,
-    actor: WriteActor,
+    writer: OutcomeWriter,
     artifact_id: &str,
     source: ReliabilityOutcomeSource,
     accepted: bool,
@@ -75,14 +87,15 @@ pub(super) fn record_review_outcome_in_txn(
             "outcome does not cite this persisted review",
         ));
     }
-    if actor.actor_class() != crate::EdgeActorClass::Human
-        || crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
-            .is_err()
-    {
-        return Err(invalid_critic_config(
-            "review outcome requires an active human owner",
-        ));
-    }
+    let actor = match writer {
+        OutcomeWriter::Owner(actor) if active_owner(vault, txn, actor) => actor,
+        OutcomeWriter::Owner(_) => {
+            return Err(invalid_critic_config(
+                "review outcome requires an active human owner",
+            ));
+        }
+        OutcomeWriter::Review => review_actor_in_txn(vault, txn, verdict_claim)?,
+    };
     let outcome_value = value_of(&(source, accepted))?;
     let outcome_key = format!("{}:{artifact_id}", verdict_claim.to_hex());
     let mut existing = None;
@@ -147,6 +160,13 @@ pub(super) fn record_review_outcome_in_txn(
         )?;
     }
     Ok(id)
+}
+
+/// Whether `actor` is an active human owner of the vault.
+fn active_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> bool {
+    actor.actor_class() == crate::EdgeActorClass::Human
+        && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
+            .is_ok()
 }
 
 pub(super) fn calibration_receipt(verdict: &EntityId, artifact: &str) -> String {
