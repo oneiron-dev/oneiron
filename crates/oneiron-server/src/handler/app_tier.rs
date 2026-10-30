@@ -35,7 +35,8 @@ pub(super) async fn handle_sync_message(
             super::lfs_chunks::handle(server, payload, direct_tx, conn_state, session_gone).await
         }
         SyncMessage::AssetBody { tag, payload } => {
-            super::asset_bodies::handle(server, conn_state, tag, &payload, direct_tx)
+            super::asset_bodies::handle(server, conn_state, tag, payload, direct_tx)
+                .await
                 .map(ControlFlow::Continue)
         }
         SyncMessage::LeafKey { tag, payload } => {
