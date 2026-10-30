@@ -1,5 +1,7 @@
 //! Approved-proposal token, actor binding, and the outbound adapter.
 
+use std::collections::BTreeMap;
+
 use rmpv::Value;
 
 use crate::Vault;
@@ -11,6 +13,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
 
+use super::reminder::ReminderRef;
+use super::reminder_wording::{pinned_content_ref, split_wording_pin};
 use super::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_TRIGGER, CommitmentWakeDue,
     CommitmentWakePhase, KEY_CHANNEL, KEY_CONTENT_REF, KEY_DEDUPE_KEY, KEY_DUE_AT, KEY_FIRE_AT,
@@ -354,6 +358,23 @@ pub fn schedule_approved_commitment_wake(
     facade: &Memory<'_>,
     approved: ApprovedCommitmentWake,
 ) -> MemoryResult<OutboundIntentReceipt> {
+    schedule_approved_commitment_wake_with_wording(facade, approved, None)
+}
+
+/// [`schedule_approved_commitment_wake`] for an approval that names the
+/// reminder wording the owner saw: `seen_wording`, the BLAKE3 hash of its
+/// text. A reminder's send pins those words; with none named, it pins the
+/// wording filed for it now, or the fixed wording when none is filed
+/// (FIX 12239).
+///
+/// # Errors
+///
+/// As [`schedule_approved_commitment_wake`].
+pub fn schedule_approved_commitment_wake_with_wording(
+    facade: &Memory<'_>,
+    approved: ApprovedCommitmentWake,
+    seen_wording: Option<[u8; 32]>,
+) -> MemoryResult<OutboundIntentReceipt> {
     let current = approved_commitment_wake(facade.vault(), &approved.proposal_claim_id)
         .map_err(|_| stale_commitment_wake_token())?;
     if current != approved {
@@ -370,12 +391,21 @@ pub fn schedule_approved_commitment_wake(
     // window can read local time (OF-187): the offset in force now.
     let context =
         super::reminder::reminder_schedule_context(facade.vault(), crate::unix_seconds_now());
+    let content_ref = match approved.content_ref {
+        Some(content_ref) if ReminderRef::parse(&content_ref).is_some() => {
+            let pin = facade
+                .vault()
+                .commitment_reminder_wording_pin(&content_ref, seen_wording)?;
+            Some(pinned_content_ref(&content_ref, pin))
+        }
+        other => other,
+    };
     let draft = OutboundDraftInput {
         verb: approved.verb,
         channel: approved.channel,
         target: approved.target,
         on_behalf_of: approved.on_behalf_of,
-        content_ref: approved.content_ref,
+        content_ref,
         idempotency_key: Some(approved.idempotency_key),
         dedupe_key: approved.dedupe_key,
         trigger: COMMITMENT_WAKE_TRIGGER.to_owned(),
@@ -400,6 +430,18 @@ pub fn schedule_approved_commitment_wakes(
     vault: &Vault,
     claims: &[EntityId],
 ) -> Vec<(EntityId, MemoryResult<OutboundIntentReceipt>)> {
+    schedule_approved_commitment_wakes_with_wordings(vault, claims, &BTreeMap::new())
+}
+
+/// [`schedule_approved_commitment_wakes`] for an approval that names, per
+/// proposal claim, the BLAKE3 hash of the reminder wording the owner saw:
+/// each such reminder's send pins those words
+/// ([`schedule_approved_commitment_wake_with_wording`]).
+pub fn schedule_approved_commitment_wakes_with_wordings(
+    vault: &Vault,
+    claims: &[EntityId],
+    seen_wordings: &BTreeMap<EntityId, [u8; 32]>,
+) -> Vec<(EntityId, MemoryResult<OutboundIntentReceipt>)> {
     let dreamer = vault.dreamer_authority().ok();
     claims
         .iter()
@@ -422,7 +464,11 @@ pub fn schedule_approved_commitment_wakes(
                         .filter(|actor| actor.entity_ref() == approved.bound_actor)
                         .map_or(crate::EdgeActorClass::Agent, crate::WriteActor::actor_class);
                     let facade = vault.memory(approved.bound_actor, class);
-                    schedule_approved_commitment_wake(&facade, approved)
+                    schedule_approved_commitment_wake_with_wording(
+                        &facade,
+                        approved,
+                        seen_wordings.get(id).copied(),
+                    )
                 });
             Some((*id, scheduled))
         })
@@ -437,9 +483,10 @@ pub fn schedule_approved_commitment_wakes(
 /// executor asks this before every attempt, the first and each retry. Some
 /// proposal about that commitment must still be active and approved, its
 /// commitment live, and its phase key, delivery fields and author the ones
-/// the send carries. A retraction, a revoked approval or a closed commitment
-/// therefore stops a send that has not crossed yet. Any other send is not this
-/// check's to judge.
+/// the send carries; a reminder's content ref is compared without the
+/// wording pin its approval added. A retraction, a revoked approval or a
+/// closed commitment therefore stops a send that has not crossed yet. Any
+/// other send is not this check's to judge.
 pub(crate) fn scheduled_commitment_wake_authorised(
     vault: &Vault,
     task: &crate::outbound::ConnectorSendTask,
@@ -470,7 +517,12 @@ pub(crate) fn scheduled_commitment_wake_authorised(
             && intent.channel == approved.channel
             && intent.target == approved.target
             && intent.on_behalf_of == approved.on_behalf_of
-            && intent.content_ref == approved.content_ref
+            && (intent.content_ref == approved.content_ref
+                || intent
+                    .content_ref
+                    .as_deref()
+                    .map(|content_ref| split_wording_pin(content_ref).0)
+                    == approved.content_ref.as_deref())
             && intent.dedupe_key == approved.dedupe_key
         {
             return Ok(true);

@@ -12,6 +12,8 @@
 //! may be any text, a `run_ref` among it, so one read as the other would let
 //! one run's id select another.
 
+use std::collections::BTreeMap;
+
 use oneiron::claim::{CallerLocality, ClaimBody};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
@@ -287,6 +289,31 @@ pub(crate) fn resolve(
     action: GateConsentBundleAction,
     destination: impl Into<ReadDestination>,
 ) -> OwnerResult<RunResolved> {
+    resolve_with_wordings(
+        vault,
+        owner,
+        run,
+        bundle_id,
+        action,
+        destination,
+        &BTreeMap::new(),
+    )
+}
+
+/// [`resolve`], naming the reminder wordings the owner saw: per proposal
+/// claim id, the BLAKE3 hash (64 hex) of the wording text. An approved
+/// reminder's send pins those words; one not named pins the wording filed
+/// when the approval lands (FIX 12239).
+pub(crate) fn resolve_with_wordings(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    run: RunName<'_>,
+    bundle_id: &str,
+    action: GateConsentBundleAction,
+    destination: impl Into<ReadDestination>,
+    reminder_wordings: &BTreeMap<String, String>,
+) -> OwnerResult<RunResolved> {
+    let seen_wordings = seen_reminder_wordings(reminder_wordings)?;
     let destination = destination.into();
     let expected = parse_bundle_id(bundle_id)?;
     let run_id = run_named(vault, run)?;
@@ -314,9 +341,10 @@ pub(crate) fn resolve(
     // its outbound intent now, after the approval committed.
     let commitment_wakes = match receipt.action {
         GateConsentBundleAction::Approve => {
-            oneiron::commitment_wake::schedule_approved_commitment_wakes(
+            oneiron::commitment_wake::schedule_approved_commitment_wakes_with_wordings(
                 vault,
                 &receipt.member_claim_ids,
+                &seen_wordings,
             )
         }
         _ => Vec::new(),
@@ -353,6 +381,23 @@ pub(crate) fn resolve(
             .collect(),
         commitment_wakes,
     })
+}
+
+/// The reminder wordings an approval names: proposal claim id to the
+/// BLAKE3 hash of the wording text the owner saw.
+fn seen_reminder_wordings(
+    wordings: &BTreeMap<String, String>,
+) -> OwnerResult<BTreeMap<EntityId, [u8; 32]>> {
+    wordings
+        .iter()
+        .map(|(claim, hash)| -> OwnerResult<(EntityId, [u8; 32])> {
+            let claim = super::entity_id("reminder_wordings key", claim)?;
+            let hash = blake3::Hash::from_hex(hash).map_err(|_| {
+                OwnerError::Invalid("a reminder_wordings hash must be 64 hex characters".into())
+            })?;
+            Ok((claim, *hash.as_bytes()))
+        })
+        .collect()
 }
 
 fn parse_bundle_id(value: &str) -> OwnerResult<[u8; 32]> {
