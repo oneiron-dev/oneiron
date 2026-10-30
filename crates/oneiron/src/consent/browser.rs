@@ -83,9 +83,10 @@ impl BrowserSendScope {
     /// Whether standing `grant` covers a send of `class` from this scope
     /// (FIX 10422): an action grant of that class whose whole bound holds
     /// the send. Its actor must be this scope's actor, of its class where
-    /// the grant names one; a project it names must be this scope's, so a
-    /// scope whose project is unknown is outside it; an audience it names
-    /// must hold this scope's audience, where it knows one. Its budget is
+    /// the grant names one; a project it names must be this scope's, where
+    /// it knows one; an audience it names must hold this scope's audience,
+    /// where it knows one. A run whose host knows no project keeps today's
+    /// cover on that axis (restriction rubric 1, FIX 11906). Its budget is
     /// not read here: that is the reviewed batch its caller runs the class
     /// under.
     #[must_use]
@@ -106,8 +107,8 @@ impl BrowserSendScope {
     /// `project:` ones standing for this scope's project and its
     /// `audience:` ones for this scope's audience where it knows one; the
     /// project as its target; and the envelope's own budget, so the budget
-    /// never decides cover. `None` where the envelope names a project and
-    /// this scope knows none.
+    /// never decides cover. Where this scope knows no project or audience,
+    /// the envelope's own selectors and target stand on that axis.
     fn send_bound(&self, class: &str, envelope: &ActionEnvelope) -> Option<GrantBound> {
         let names = |prefix: &str| {
             envelope
@@ -120,13 +121,15 @@ impl BrowserSendScope {
             .selectors()
             .iter()
             .filter(|selector| {
-                !selector.starts_with(PROJECT_SELECTOR)
+                !(project.is_some() && selector.starts_with(PROJECT_SELECTOR))
                     && !(self.audience.is_some() && selector.starts_with(AUDIENCE_SELECTOR))
             })
             .cloned()
             .collect();
-        if names(PROJECT_SELECTOR) {
-            selectors.push(format!("{PROJECT_SELECTOR}{}", project.as_deref()?));
+        if names(PROJECT_SELECTOR)
+            && let Some(project) = &project
+        {
+            selectors.push(format!("{PROJECT_SELECTOR}{project}"));
         }
         if names(AUDIENCE_SELECTOR)
             && let Some(audience) = &self.audience
@@ -134,8 +137,8 @@ impl BrowserSendScope {
             selectors.push(format!("{AUDIENCE_SELECTOR}{audience}"));
         }
         let mut send = ActionEnvelope::new(selectors).ok()?;
-        if let Some(project) = project {
-            send = send.with_target(project).ok()?;
+        if let Some(target) = project.or_else(|| envelope.target().map(str::to_owned)) {
+            send = send.with_target(target).ok()?;
         }
         if let Some(budget) = envelope.budget() {
             send = send.with_budget(budget);
