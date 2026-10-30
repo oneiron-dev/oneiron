@@ -33,7 +33,7 @@ mod parent_retry;
 pub(crate) use parent_retry::has_unresolved_parent_for_source_in_txn;
 pub(in crate::sync) use parent_retry::{
     ParentOutcome, defer_spawned_by, has_pending_source_in_txn, retry_in_txn,
-    submit as submit_parent_in_txn,
+    submit as submit_parent_in_txn, wake_in_txn as wake_parent_retry_in_txn,
 };
 mod recovery;
 pub(crate) use recovery::preflight_canonical_recovery;
