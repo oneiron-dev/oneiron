@@ -100,9 +100,11 @@ fn deliverable_critics(reviews: &[ReviewResult]) -> Vec<TeamCritic> {
 /// An owner verdict scores as one, a held-out outcome as a held-out eval;
 /// any other anchor names its critics and scores none. Each lands in its
 /// own savepoint, so one that does not land never fails the settlement it
-/// rides, and a critique already scored by this outcome is scored once. An
-/// overruled critique's dissent is kept by the measured-state sweep
-/// (FIX 12105).
+/// rides. A critique already scored by this outcome is scored once; one
+/// another outcome scored is scored again, and this outcome supersedes that
+/// one (FIX 12160). An outcome the write gate holds gets its evidence at the
+/// measured-state sweep after its release (FIX 12159), and that sweep keeps
+/// an overruled critique's dissent (FIX 12105).
 pub(crate) fn record_deliverable_outcomes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
