@@ -32,16 +32,16 @@ pub struct ResolvedConnectorManifest {
 }
 impl ResolvedConnectorManifest {
     /// Resolve local references and composition before any comparison or
-    /// consent-visible use. Unsupported or cyclic references refuse admission.
+    /// consent-visible use. Unsupported or cyclic references refuse admission;
+    /// how many tools, permissions or triggers it declares never does (FIX
+    /// 8684): admission measures those counts ([`Self::admission_counts`]).
     pub fn resolve(mut tools: Vec<ConnectorToolSchema>) -> Result<Self> {
-        if tools.is_empty() || tools.len() > 4096 {
+        if tools.is_empty() {
             return Err(invalid());
         }
         for tool in &mut tools {
             if tool.name.trim().is_empty()
                 || tool.name.len() > 256
-                || tool.permissions.len() > 4096
-                || tool.triggers.len() > 4096
                 || tool
                     .permissions
                     .iter()
@@ -78,22 +78,32 @@ impl ResolvedConnectorManifest {
     pub fn declares_elicitation(&self) -> bool {
         self.elicitation
     }
-    /// Mutable admission capacity comes from a vault policy snapshot. It is
-    /// deliberately NOT used by persisted-body validation: later policy
-    /// tightening cannot make an already admitted key unreadable.
-    pub(crate) fn validate_admission(
+    /// Each counted collection of the manifest beside the vault policy's
+    /// quota for it, as `(quota, measured)`: its tools, and the most
+    /// permissions and the most triggers one tool declares. The quotas are
+    /// work thresholds, never refusals (FIX 8758): admission measures them
+    /// and serves the whole manifest. Persisted-body validation never reads
+    /// them, so later policy tightening cannot make an admitted key
+    /// unreadable.
+    pub(crate) fn admission_counts(
         &self,
         quotas: crate::gate::ConnectorAdmissionQuotas,
-    ) -> Result<()> {
-        if self.tools.len() > quotas.max_tools
-            || self.tools.iter().any(|tool| {
-                tool.permissions.len() > quotas.max_permissions_per_tool
-                    || tool.triggers.len() > quotas.max_triggers_per_tool
-            })
-        {
-            return Err(invalid());
-        }
-        Ok(())
+    ) -> [(u64, u64); 3] {
+        let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
+        let most = |of: fn(&ConnectorToolSchema) -> usize| {
+            count(self.tools.iter().map(of).max().unwrap_or(0))
+        };
+        [
+            (count(quotas.max_tools), count(self.tools.len())),
+            (
+                count(quotas.max_permissions_per_tool),
+                most(|tool| tool.permissions.len()),
+            ),
+            (
+                count(quotas.max_triggers_per_tool),
+                most(|tool| tool.triggers.len()),
+            ),
+        ]
     }
     pub fn tools(&self) -> &[ConnectorToolSchema] {
         &self.tools

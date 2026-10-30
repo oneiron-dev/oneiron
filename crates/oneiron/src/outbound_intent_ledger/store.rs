@@ -13,6 +13,7 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 
 mod approval;
 pub(crate) mod checkpoint;
+pub(super) mod payload_erase;
 pub(super) mod pending;
 mod remote_task;
 mod transition;
@@ -159,7 +160,8 @@ pub(super) fn ledger_rows<'txn>(
 /// which was never admitted for transport, and the `exclude`d attempt (an
 /// exact retry's own row). Server and tool compare as the capability lookup spells them
 /// (trimmed, ASCII case folded). A row that does not decode counts as well:
-/// an accounting gap never opens a bound.
+/// an accounting gap never opens a bound. So does a call a restore holds no
+/// record of, through its unavailable row (FIX 6260).
 pub(crate) fn admitted_calls_since_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -189,7 +191,10 @@ pub(crate) fn admitted_calls_since_in_txn(
             admitted = admitted.saturating_add(1);
         }
     }
-    Ok(admitted)
+    // A call a restore holds no record of still counts (FIX 6260).
+    let unavailable =
+        checkpoint::unavailable_calls_since_in_txn(vault, txn, server, tool, since_ms, exclude)?;
+    Ok(admitted.saturating_add(unavailable))
 }
 
 /// Decodes one raw row already read by a full-table walk ([`ledger_rows`]). Shares the
@@ -701,19 +706,22 @@ fn put_ledger_record(
 }
 
 /// Writes an actor's erase of `record` past the side-row wall (FIX 9283): what
-/// [`crate::side_table::ErasedForm`] leaves of it.
+/// [`crate::side_table::ErasedForm`] leaves of it. The call's checkpoint
+/// compartment is erased with it (KS7-4b), so no old checkpoint opens the
+/// request either.
 pub(super) fn put_erased_record(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     record: IntentLedgerRecord,
 ) -> crate::Result<()> {
-    let id = record.id;
+    let (id, attempt_id, call_seq) = (record.id, record.attempt_id, record.call_seq);
     LEDGER.put_erased(
         &vault.store,
         wtxn,
         &id,
         crate::side_table::Erased::of(record)?,
-    )
+    )?;
+    payload_erase::erase_call_compartment_in_txn(vault, wtxn, &attempt_id, call_seq)
 }
 
 pub(crate) fn force_sync(vault: &Vault) -> IntentLedgerResult<()> {

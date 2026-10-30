@@ -332,6 +332,11 @@ impl<'a, 't> ProjectReader<'a, 't> {
         Ok(own)
     }
 
+    /// Whether this reader keeps a decision for `id`, stored or missing.
+    pub(super) fn has_decided(&self, id: EntityId) -> bool {
+        self.decided.borrow().contains_key(&id)
+    }
+
     fn decide_alone(&self, id: EntityId) -> Result<Rc<Decided>> {
         let facts = self.facts(id)?.ok_or_else(invalid)?;
         let cx = FoldCx::new(self, id, &facts.held);

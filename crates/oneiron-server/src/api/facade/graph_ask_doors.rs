@@ -10,7 +10,10 @@
 //! reads every unit under the credential's own lane, so a narrowed slip asks
 //! inside its narrowing. The standing-question rows store a principal, with
 //! the class it authenticated as (FIX 1588), that the pump answers for later,
-//! so they refuse a narrowed record scope.
+//! and the caller's own lane, frozen (OF-506, FIX 1857): create and edit save
+//! the version under it, so a narrowed credential's question reads inside its
+//! narrowing. The rows that read around that lane still refuse a narrowed
+//! record scope.
 //!
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
@@ -21,16 +24,17 @@
 use std::sync::Arc;
 
 mod question_answers;
+mod saved_lane;
 
 pub(crate) use self::question_answers::vault_questions_answers;
 
 use oneiron::llm::decision::questions::{
     AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext,
     OutcomeWindowClose, QuestionRecord, QuestionScheduleHead, ScheduledBackfill, calibration_pairs,
-    closed_outcome_windows, create_question, edit_question, outcome_labels, pause_question,
-    project_bound_outcomes, question_call_budget, read_question, read_question_schedule,
-    refresh_artifact_question_now, refresh_standing_question_with, run_graph_ask_receipted,
-    schedule_backfill, select_graph_units_by_type, standing_ask_route,
+    closed_outcome_windows, outcome_labels, pause_question, project_bound_outcomes,
+    question_call_budget, read_question, read_question_schedule, refresh_artifact_question_now,
+    refresh_standing_question_with, run_graph_ask_receipted, schedule_backfill,
+    select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
@@ -222,13 +226,9 @@ async fn vault_questions_create_answer(
     let mut definition = input.definition;
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
+    let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionRecord> {
-        Ok(create_question(
-            server.vault(),
-            asker,
-            definition,
-            oneiron_vault_contract::now_ts(),
-        )?)
+        saved_lane::create_under_caller_lane(&server, &auth, asker, definition, VERB)
     })
     .await
     .map_err(|_| internal(VERB))?
@@ -260,15 +260,17 @@ async fn vault_questions_edit_answer(
     let mut definition = input.definition;
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
+    let auth = auth.clone();
     super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionRecord> {
-        Ok(edit_question(
-            server.vault(),
+        saved_lane::edit_under_caller_lane(
+            &server,
+            &auth,
             asker,
             input.id,
             input.expected_version,
             definition,
-            oneiron_vault_contract::now_ts(),
-        )?)
+            VERB,
+        )
     })
     .await
     .map_err(|_| internal(VERB))?

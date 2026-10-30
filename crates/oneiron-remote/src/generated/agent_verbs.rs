@@ -186,6 +186,9 @@ impl OneironClient {
                 "self.grants.ask" => remote_agent_verb_output::<oneiron::memory::GrantAskReceipt>(
                     client, verb, &input,
                 ),
+                "self.grants.asked" => remote_agent_verb_output::<oneiron::memory::GrantAskedPage>(
+                    client, verb, &input,
+                ),
                 "vault.companions.access_requests.answer" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::CompanionAccessRequestAnswered,
                 >(client, verb, &input),
@@ -592,6 +595,9 @@ impl OneironClient {
                 "vault.turn_programs.disarm" => {
                     remote_agent_verb_output::<bool>(client, verb, &input)
                 }
+                "vault.turn_programs.rebind" => remote_agent_verb_output::<
+                    oneiron::dreamer_runner::TurnProgramRebindReceipt,
+                >(client, verb, &input),
                 "self.saved_query.create" => remote_agent_verb_output::<
                     oneiron::campaign::surface::SavedQueryRecordView,
                 >(client, verb, &input),
@@ -4364,6 +4370,18 @@ impl OneironClient {
         })?;
         self.typed_agent_verb("self.grants.ask", value)
     }
+    pub fn self_grants_asked(
+        &self,
+        input: &oneiron::memory::GrantAskedRequest,
+    ) -> Result<oneiron::memory::GrantAskedPage, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.grants.asked", value)
+    }
     pub fn vault_companions_access_requests_answer(
         &self,
         input: &oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest,
@@ -6080,6 +6098,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.turn_programs.disarm", value)
+    }
+    pub fn vault_turn_programs_rebind(
+        &self,
+        input: &oneiron::dreamer_runner::TurnProgramRebindRequest,
+    ) -> Result<oneiron::dreamer_runner::TurnProgramRebindReceipt, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.turn_programs.rebind", value)
     }
     pub fn self_saved_query_create(
         &self,

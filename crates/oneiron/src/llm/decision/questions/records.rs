@@ -300,6 +300,13 @@ pub struct QuestionRecord {
     /// from the principal's entity type. None on an internal one-off record,
     /// which keeps no authenticated asker.
     pub asker_class: Option<QuestionAskerClass>,
+    /// The read lane the asker saved this version under, frozen (OF-506, FIX
+    /// 1857): the engine mints it at each create and edit from the asker's
+    /// own live lane, never from the definition, and every later read of the
+    /// question rebuilds inside it ([`crate::claim::FrozenReadLane`]). An
+    /// internal one-off record, and a question no caller's lane saved, keeps
+    /// the principal's own.
+    pub read_lane: crate::claim::FrozenReadLane,
 }
 
 /// An asker's authenticated actor class, as a question version keeps it.

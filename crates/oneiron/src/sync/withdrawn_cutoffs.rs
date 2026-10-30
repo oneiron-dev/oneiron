@@ -4,7 +4,9 @@
 //! are this machine's rows. Another machine of the owner's that holds the
 //! withdrawn body keeps it in its history and sends it, unless the cutoff
 //! reaches it too. So each cutoff rides the windows that carry its artifact,
-//! in their `withdrawn_cutoffs` map under the artifact's id.
+//! in their `withdrawn_cutoffs` map under the artifact's id, with what stands
+//! in for it: an epoch summary's keyframe, or a withdrawn reply copy's Shell,
+//! its header alone (FIX 931).
 //!
 //! - Egress mirrors this vault's cutoff of each artifact a window carries,
 //!   and raises a carried cutoff that is lower. No cutoff is ever lowered.
@@ -34,9 +36,13 @@ use super::bridge::BRIDGE_ORIGIN;
 use super::loro_support::{map_delete, map_get_bytes, map_insert_bytes};
 use super::types::WindowKey;
 use crate::Vault;
-use crate::deletion::WithdrawnReplacement;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::deletion::{WithdrawnCutoff, WithdrawnReplacement};
+use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::ports::EntityStoreRead;
+use crate::store::Store;
 
 /// The window root map that carries withdrawn-generation cutoffs.
 pub(crate) const WITHDRAWN_CUTOFFS_MAP: &str = "withdrawn_cutoffs";
@@ -47,8 +53,9 @@ pub(in crate::sync) const EPOCH_FLOOR: &str = "epoch_floor/";
 /// One row of a window's cutoff map.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CarriedCutoff {
-    /// The newest withdrawn generation of an artifact.
-    Withdrawn(EntityId, u64),
+    /// The newest withdrawn generation of an artifact and what stands in for
+    /// it.
+    Withdrawn(EntityId, WithdrawnCutoff),
     /// A session's epoch floor: the removed epoch and the turn it ended at.
     EpochFloor(EntityId, u64, u64),
 }
@@ -90,9 +97,10 @@ fn filed_under(key: &str, unnamed: &'static str) -> Result<EntityId> {
 }
 
 /// Admits one insert into a window's cutoff map: the newest withdrawn
-/// generation of the artifact it is filed under, eight bytes big-endian, or
-/// a session's epoch floor filed under `epoch_floor/` and the session's id,
-/// its epoch and the turn it ended at, eight bytes big-endian each.
+/// generation of the artifact it is filed under and its replacement, as one
+/// encoded [`WithdrawnCutoff`], or a session's epoch floor filed under
+/// `epoch_floor/` and the session's id, its epoch and the turn it ended at,
+/// eight bytes big-endian each.
 pub(crate) fn admit_withdrawn_cutoff_carrier(
     map_key: &str,
     value: &LoroValue,
@@ -110,9 +118,9 @@ pub(crate) fn admit_withdrawn_cutoff_carrier(
             decode_floor(bytes.as_slice()).ok_or_else(|| refused("not an epoch floor"))?;
         return Ok(CarriedCutoff::EpochFloor(id, epoch, turn_end));
     }
-    let generation =
-        decode_generation(bytes.as_slice()).ok_or_else(|| refused("not a generation"))?;
-    Ok(CarriedCutoff::Withdrawn(id, generation))
+    let cutoff =
+        WithdrawnCutoff::decode(bytes.as_slice()).ok_or_else(|| refused("not a cutoff"))?;
+    Ok(CarriedCutoff::Withdrawn(id, cutoff))
 }
 
 /// [`admit_withdrawn_cutoff_carrier`] over every row `map` holds.
@@ -132,28 +140,28 @@ pub(crate) fn admit_withdrawn_cutoff_map(map: &LoroMap) -> Result<Vec<CarriedCut
 }
 
 /// Writes into `doc` this vault's cutoff of each artifact whose carrier the
-/// window's `entities` map holds, where the window carries none or a lower
-/// one. Returns whether it wrote; the caller commits.
+/// window's `entities` map holds, where the window carries none, a lower one
+/// or one that does not decode. Returns whether it wrote; the caller commits.
 pub(crate) fn mirror_withdrawn_cutoffs(
     doc: &LoroDoc,
-    cutoffs: &BTreeMap<EntityId, u64>,
+    cutoffs: &BTreeMap<EntityId, WithdrawnCutoff>,
 ) -> Result<bool> {
     if cutoffs.is_empty() {
         return Ok(false);
     }
     let entities = doc.get_map("entities");
     let mut wrote = false;
-    for (id, generation) in cutoffs {
+    for (id, cutoff) in cutoffs {
         let hex = id.to_hex();
         if entities.get(&hex).is_none() {
             continue;
         }
         let map = doc.get_map(WITHDRAWN_CUTOFFS_MAP);
-        let carried = map_get_bytes(&map, &hex).and_then(|bytes| decode_generation(&bytes));
-        if carried.is_some_and(|carried| carried >= *generation) {
+        let carried = map_get_bytes(&map, &hex).and_then(|bytes| WithdrawnCutoff::decode(&bytes));
+        if carried.is_some_and(|carried| carried.generation >= cutoff.generation) {
             continue;
         }
-        map_insert_bytes(&map, &hex, &generation.to_be_bytes())?;
+        map_insert_bytes(&map, &hex, &cutoff.encode())?;
         wrote = true;
     }
     Ok(wrote)
@@ -268,20 +276,21 @@ fn raise_epoch_floors(vault: &Vault, carried: &BTreeMap<EntityId, (u64, u64)>) -
 }
 
 /// Stages the historical sweep's obligation for each carried cutoff above
-/// this vault's own, in one write, so ingest refuses the withdrawn body as it
-/// does where the withdrawal ran. A cutoff at or below the one held here is
-/// owed or done already: a repeat stages nothing, and none is lowered. Each
-/// carried epoch floor raises this vault's ([`raise_epoch_floors`]). A row of
-/// a carried generation or older that still holds its words here is withdrawn
-/// in the same write, as the withdrawal that cut it off withdrew it there.
+/// this vault's own, with the replacement it carries, in one write, so ingest
+/// refuses the withdrawn body as it does where the withdrawal ran. A cutoff at
+/// or below the one held here is owed or done already: a repeat stages
+/// nothing, and none is lowered. Each carried epoch floor raises this vault's
+/// ([`raise_epoch_floors`]). A row of a carried generation or older that
+/// still holds its words here is withdrawn in the same write, as the
+/// withdrawal that cut it off withdrew it there: an epoch summary keeps its
+/// keyframe, and a Shell's record keeps its header.
 pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<()> {
-    let mut newest = BTreeMap::new();
+    let mut newest: BTreeMap<EntityId, WithdrawnCutoff> = BTreeMap::new();
     let mut floors = BTreeMap::new();
     for row in carried {
         match *row {
-            CarriedCutoff::Withdrawn(id, generation) => {
-                let held = newest.entry(id).or_insert(generation);
-                *held = (*held).max(generation);
+            CarriedCutoff::Withdrawn(id, cutoff) => {
+                newest.entry(id).or_insert(cutoff).raise(cutoff);
             }
             CarriedCutoff::EpochFloor(session, epoch, turn_end) => {
                 let held = floors.entry(session).or_insert((epoch, turn_end));
@@ -294,12 +303,11 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
         let rtxn = vault.store.env.read_txn()?;
         let mut pending = Vec::new();
         let mut resident = false;
-        for (id, generation) in &newest {
-            if unseen(vault, &rtxn, id, *generation)? {
-                pending.push((*id, *generation));
+        for (id, cutoff) in &newest {
+            if unseen(vault, &rtxn, id, cutoff.generation)? {
+                pending.push((*id, *cutoff));
             }
-            resident |=
-                crate::ports::holds_withdrawn_generation_in(&vault.store, &rtxn, id, *generation)?;
+            resident |= holds_withdrawn_words_in(&vault.store, &rtxn, id, *cutoff)?;
         }
         (pending, resident)
     };
@@ -308,17 +316,17 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
     }
     vault.with_write_txn_grouped(|wtxn| {
         let at = crate::ports::job_recorded_at_in_txn(&vault.store, wtxn)?;
-        for (id, generation) in &pending {
+        for (id, cutoff) in &pending {
             // Another door may have staged it since the read.
-            if !unseen(vault, wtxn, id, *generation)? {
+            if !unseen(vault, wtxn, id, cutoff.generation)? {
                 continue;
             }
             crate::deletion::enqueue_withdrawn_generation_in_txn(
                 &vault.store,
                 wtxn,
                 id,
-                *generation,
-                WithdrawnReplacement::EpochKeyframe,
+                cutoff.generation,
+                cutoff.replacement,
                 at,
             )?;
             tracing::info!(
@@ -328,14 +336,9 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
         }
         // A row of a withdrawn generation already materialized here loses its
         // words whichever carrier won its key, on every delivery of the
-        // cutoff: a repeat finds the keyframe and writes nothing.
-        for (id, generation) in &newest {
-            if crate::ports::withdraw_received_epoch_generation_in_txn(
-                &vault.store,
-                wtxn,
-                id,
-                *generation,
-            )? {
+        // cutoff: a repeat finds the keyframe or the Shell and writes nothing.
+        for (id, cutoff) in &newest {
+            if withdraw_resident_words_in_txn(&vault.store, wtxn, id, *cutoff)? {
                 tracing::info!(
                     entity = %id.to_hex(),
                     "withdrawn generation cutoff from another machine; its resident words are scrubbed"
@@ -346,13 +349,101 @@ pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) 
     })
 }
 
+/// Whether `id` still holds words here of a generation `cutoff` withdrew, in
+/// the form its replacement names.
+fn holds_withdrawn_words_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    cutoff: WithdrawnCutoff,
+) -> Result<bool> {
+    match cutoff.replacement {
+        WithdrawnReplacement::EpochKeyframe => {
+            crate::ports::holds_withdrawn_generation_in(store, txn, id, cutoff.generation)
+        }
+        WithdrawnReplacement::Shell => {
+            crate::deletion::holds_withdrawn_record_in(store, txn, id, cutoff.generation)
+        }
+    }
+}
+
+/// Withdraws `id`'s resident words as [`holds_withdrawn_words_in`] finds
+/// them; whether it did.
+fn withdraw_resident_words_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    cutoff: WithdrawnCutoff,
+) -> Result<bool> {
+    match cutoff.replacement {
+        WithdrawnReplacement::EpochKeyframe => {
+            crate::ports::withdraw_received_epoch_generation_in_txn(
+                store,
+                wtxn,
+                id,
+                cutoff.generation,
+            )
+        }
+        WithdrawnReplacement::Shell => {
+            crate::deletion::withdraw_received_record_in_txn(store, wtxn, id, cutoff.generation)
+        }
+    }
+}
+
 /// Whether `generation` of `id` is newer than every withdrawn generation this
 /// vault owes or has fenced.
 fn unseen(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId, generation: u64) -> Result<bool> {
     Ok(
         crate::deletion::withdrawn_generation_cutoff_in_txn(&vault.store, txn, id)?
-            .is_none_or(|held| held < generation),
+            .is_none_or(|held| held.generation < generation),
     )
+}
+
+/// Whether `id` stands here as a withdrawn generation's Shell (FIX 931): a
+/// header-only row whose generation a Shell cutoff covers. Its words are gone
+/// with its body, so no structural edge of it can be proved from that body.
+/// The cutoff is read first: an id without one reads no row.
+pub(crate) fn withdrawn_shell_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(cutoff) = crate::deletion::withdrawn_generation_cutoff_in_txn(store, txn, id)? else {
+        return Ok(false);
+    };
+    if cutoff.replacement != WithdrawnReplacement::Shell {
+        return Ok(false);
+    }
+    let Some(raw) = store.port_entity_raw(txn, id)? else {
+        return Ok(false);
+    };
+    Ok(raw.len() == ENTITY_METADATA_HEADER_LEN
+        && EntityMetadataHeader::parse(&raw)
+            .is_some_and(|header| header.learned_at <= cutoff.generation))
+}
+
+/// Whether a received conversation-DAG edge touches a withdrawn Shell here
+/// ([`withdrawn_shell_in`]): no body proves it, and its carrier is no peer's
+/// fault, so it waits in its window, neither written nor refused, as an edge
+/// of an absent endpoint does. Every other edge takes its ordinary path.
+pub(crate) fn withdrawn_shell_edge_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    kind: EdgeKind,
+    src: &EntityId,
+    tgt: &EntityId,
+) -> Result<bool> {
+    if !matches!(
+        kind,
+        EdgeKind::ChildOf
+            | EdgeKind::Parent
+            | EdgeKind::SpawnedBy
+            | EdgeKind::RepliesTo
+            | EdgeKind::AddressedTo
+    ) {
+        return Ok(false);
+    }
+    Ok(withdrawn_shell_in(store, txn, src)? || withdrawn_shell_in(store, txn, tgt)?)
 }
 
 /// Stages every cutoff window `doc` carries, and raises this vault's floor

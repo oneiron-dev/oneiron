@@ -448,6 +448,14 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        AuthorityOp::SlipGrantRevoke { grant_ref } => (
+            Revoke,
+            "slip_grant_revoke",
+            OpFields {
+                grant_ref: Some(grant_ref.to_hex()),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::FederationConfirm(action) => (
             Confirm,
             "federation_confirm",
