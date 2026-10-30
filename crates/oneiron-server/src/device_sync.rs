@@ -523,6 +523,22 @@ impl Link {
                     tracing::info!(%home, "device sync reconnects on its renewed credential");
                 }
             }
+            // The renewed run takes an admission of its own, as every run
+            // between freezes does: the old one goes first, and a vault
+            // frozen meanwhile is waited out (FIX 5127).
+            _admitted = None;
+            _admitted = match self.freeze.admit() {
+                Some(admitted) => Some(admitted),
+                None => {
+                    tracing::info!(%home, "device sync paused: the vault is frozen for reap");
+                    let Some(admitted) = self.freeze.resumed(&mut stop).await else {
+                        tracing::info!(%home, "device sync stopped");
+                        return;
+                    };
+                    tracing::info!(%home, "device sync resumes: the vault thawed");
+                    Some(admitted)
+                }
+            };
         }
     }
 }

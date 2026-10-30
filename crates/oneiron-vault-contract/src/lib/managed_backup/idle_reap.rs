@@ -65,8 +65,9 @@ pub struct IdleReapWire {
 pub struct IdleReapInFlight {
     /// The owner's foreground work: served requests other than reads, a
     /// held MCP socket's receipts, voice calls and live voice sessions,
-    /// device sync connections, relay deletes, mutating ctl requests and
-    /// agent runs.
+    /// relay deletes, mutating ctl requests and agent runs. A device sync
+    /// run is not counted here: it pauses for the freeze, and `quiescent`
+    /// waits for its end (FIX 5127).
     pub owner_write: u64,
     /// Tagging passes.
     pub background_tagging: u64,
