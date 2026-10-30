@@ -277,6 +277,10 @@ impl Memory<'_> {
                 staged,
                 now,
             )?;
+            // The approval's commit carries its consolidation debt (FIX 11858).
+            if dreamer_run {
+                self.vault.owe_settled_claim_vads_in_txn(txn, &[staged])?;
+            }
             *consolidate = dreamer_run.then_some(staged);
         }
         let approval = if approve {
@@ -365,6 +369,10 @@ impl Memory<'_> {
             (None, _) => None,
             (Some(approval), ConflictSettlement::Keep(selector)) => {
                 let approved = approval.approved().ok_or_else(not_approved)?;
+                if approved.dreamer_run {
+                    self.vault
+                        .owe_settled_claim_vads_in_txn(txn, &[approved.claim])?;
+                }
                 *consolidate = approved.dreamer_run.then_some(approved.claim);
                 let mut record = decision(
                     actor,
