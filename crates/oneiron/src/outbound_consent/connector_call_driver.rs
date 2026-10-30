@@ -15,6 +15,7 @@ use crate::memory::Memory;
 use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, OutboundToolDescriptor, abandon_record,
 };
+use crate::secret_custody::SecretUseSend;
 
 use super::authority::OutboundBindingAuthority;
 use super::connector_call::{
@@ -80,6 +81,18 @@ pub(super) enum Step {
         next_eligible_at: u64,
         reasons: Vec<String>,
     },
+}
+
+/// What a held `self.use` call's resumed send came to, as its host saw it
+/// (FIX 2822): a pass that presented nothing sent nothing; one the
+/// connector answered, its questions included, was answered; any other
+/// presented send failed.
+fn resumed_send(stepped: &Result<Step, IntentLedgerError>, presented: bool) -> SecretUseSend {
+    match stepped {
+        _ if !presented => SecretUseSend::NotSent,
+        Ok(Step::Delivered { .. } | Step::AwaitingInput { .. }) => SecretUseSend::Answered,
+        _ => SecretUseSend::Failed,
+    }
 }
 
 fn held(reason: &str) -> Step {
@@ -198,20 +211,43 @@ impl Vault {
             .into_iter()
             .chain(pending.grant.map(|grant| grant.grant()));
         pending.list_rows(named.collect::<Vec<_>>());
-        // A call that names a custody record sends with it or not at all.
+        // A held `self.use` call a resume sends writes that send's own use
+        // records: its intent before the pass, its outcome after, from what
+        // the host saw (FIX 2822). A live use's own records keep its pass.
+        let resumed_use = match (call_ref, &pending.secret_use) {
+            (Some(_), Some(secret_use)) if !pending.live_use => Some(secret_use.clone()),
+            _ => None,
+        };
+        // A call that names a custody record sends with it or not at all;
+        // one its use's own run found, through that run's seat (FIX 8334).
         let mut scope_evidence = None;
-        let step = if host.present_credential(pending.credential, pending.grant) {
-            // A call its row already holds resumes through the ledger row it
-            // admitted, if any; only a call with none resolves and prepares
-            // live.
-            let resumed = match call_ref {
-                Some(_) => self.resume_connector_call_intent(&pending, host)?,
+        let run = pending
+            .secret_use
+            .as_ref()
+            .and_then(|secret_use| secret_use.run);
+        let step = if host.present_credential(pending.credential, pending.grant, run) {
+            let intent = match &resumed_use {
+                Some(secret_use) => {
+                    let _ = host.take_sent_presentation();
+                    Some(self.begin_resumed_secret_use(secret_use)?)
+                }
                 None => None,
             };
-            match resumed {
-                Some(step) => step,
-                None => self.connector_call_step(&mut pending, host, &mut scope_evidence)?,
+            let stepped =
+                self.presented_step(call_ref.is_some(), &mut pending, host, &mut scope_evidence);
+            // An error after the intent still writes its outcome.
+            if let (Some(secret_use), Some(intent)) = (&resumed_use, intent) {
+                let presented = host.take_sent_presentation();
+                let send = resumed_send(&stepped, presented.is_some());
+                if let Err(error) =
+                    self.finish_resumed_secret_use(secret_use, intent, send, presented)
+                {
+                    // The intent stays pending, sent or not unknown; the
+                    // call's row and ledger go on as they are.
+                    tracing::warn!(%error, "resumed secret use outcome not written");
+                }
             }
+            stepped?
         } else {
             refused(CONNECTOR_CALL_CREDENTIAL_UNSUPPORTED)
         };
@@ -420,6 +456,27 @@ impl Vault {
             }
         };
         Ok((outcome, rows))
+    }
+
+    /// One pass once its credential is presented: a call its row already
+    /// holds (`held`) resumes through the ledger row it admitted, if any;
+    /// only a call with none resolves and prepares live.
+    fn presented_step<H: ConnectorCallHost>(
+        &self,
+        held: bool,
+        pending: &mut PendingConnectorCall,
+        host: &mut H,
+        scope_evidence: &mut Option<ConnectorScopeEvidence>,
+    ) -> Result<Step, IntentLedgerError> {
+        let resumed = if held {
+            self.resume_connector_call_intent(pending, host)?
+        } else {
+            None
+        };
+        match resumed {
+            Some(step) => Ok(step),
+            None => self.connector_call_step(pending, host, scope_evidence),
+        }
     }
 
     /// One pass: route, grant, governing key, approved schema, prepare,

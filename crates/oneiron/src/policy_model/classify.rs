@@ -261,6 +261,8 @@ impl Vault {
         // Appended last, as everywhere: an audit row must never become the
         // single body a caller surfaces.
         system_notices.extend(policy_model_rationale_notice(
+            &self.store,
+            &wtxn,
             verdict,
             PolicyPlane::OwnerPolicy,
             None,

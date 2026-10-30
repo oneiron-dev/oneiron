@@ -14,7 +14,8 @@ use oneiron_authority::authority::{CustodyRegisterCheck, CustodyUncheckedReason}
 
 use super::super::owner_door::recheck_manifest_snapshot_in_txn;
 use super::input::{
-    Attached, AttachedManifest, attach_no_manifest, attach_published_manifests, attach_unread,
+    Attached, AttachedManifest, Attachment, attach_no_manifest, attach_published_manifests,
+    attach_unread,
 };
 use crate::Vault;
 use crate::authority::OwnerWorkRefusal;
@@ -142,20 +143,20 @@ fn unchecked(reason: CustodyUncheckedReason, refs: Vec<String>) -> CustodyRegist
     CustodyRegisterCheck::Unchecked { reason, refs }
 }
 
-/// The input a recorder records for a sealed register whose surface stated
-/// no `manifest_ref`, and what it attached for its holder (CALLS
-/// CUSTODY_MANIFEST_UNSTATED_MULTI): the envelope with every secret manifest
-/// the vault publishes, else with the "no manifest" mark, or the "unread"
-/// mark when they cannot be read. It never refuses a register for its
-/// manifests and never leaves one out: past one row's bound the input
-/// travels in numbered parts.
+/// What a recorder attaches around the envelope of `len` bytes of a sealed
+/// register whose surface stated no `manifest_ref`, and what it attached
+/// for its holder (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI): every secret
+/// manifest the vault publishes, else the "no manifest" mark, or the
+/// "unread" mark when they cannot be read. It never refuses a register for
+/// its manifests and never leaves one out: past one row's bound the input
+/// travels in numbered parts, its envelope read where it lies (FIX 11140).
 ///
 /// # Errors
 /// Only an attachment past its own frame (a length beyond a `u32`).
 pub(super) fn unstated_input(
     vault: &Vault,
-    envelope: &[u8],
-) -> Result<(Vec<u8>, CustodyManifestCheck)> {
+    len: u64,
+) -> Result<(Attachment, CustodyManifestCheck)> {
     match CUSTODY_MANIFEST_UNSTATED_MULTI {
         CustodyManifestUnstatedMulti::AttachEveryPublishedHolderSelects => {
             match vault.published_origin_secret_manifests() {
@@ -167,7 +168,7 @@ pub(super) fn unstated_input(
                                 (manifest.manifest_ref.as_str(), manifest.text.as_str())
                             })
                             .collect();
-                        attach_published_manifests(envelope, &attached)?
+                        attach_published_manifests(len, &attached)?
                     };
                     let refs = published
                         .into_iter()
@@ -176,7 +177,7 @@ pub(super) fn unstated_input(
                     Ok((input, CustodyManifestCheck::Published(refs)))
                 }
                 Ok(_) => Ok((
-                    attach_no_manifest(envelope)?,
+                    attach_no_manifest(len)?,
                     CustodyManifestCheck::Judged(unchecked(
                         CustodyUncheckedReason::NonePublished,
                         Vec::new(),
@@ -189,7 +190,7 @@ pub(super) fn unstated_input(
                          is taken without a manifest check"
                     );
                     Ok((
-                        attach_unread(envelope)?,
+                        attach_unread(len)?,
                         CustodyManifestCheck::Judged(unchecked(
                             CustodyUncheckedReason::Unread,
                             Vec::new(),
