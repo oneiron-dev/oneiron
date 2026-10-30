@@ -637,6 +637,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.lenses.propose", post(facade_route))
+        .route("/vault.lenses.propose_from_pack", post(facade_route))
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))
         .route("/vault.lenses.list", post(facade_route))

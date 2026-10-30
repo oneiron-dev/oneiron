@@ -4956,6 +4956,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_lenses_propose_from_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.propose_from_pack", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_activate(
         &self,
         input: serde_json::Value,
