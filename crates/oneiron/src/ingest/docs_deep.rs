@@ -8,11 +8,21 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, HexId, LegacyJson, Raw, SideTable};
 use crate::write_envelope::WriteActor;
-use crate::{EntityId, TimeRange, Vault};
+use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::{Duration, Instant};
 
-const MAX_DEEP_CLAIMS: usize = 256;
+mod review;
+pub use review::{DocsDeepReview, DocsDeepReviewClaim};
+
+/// The source segments one batch extracts before its claims are written in a
+/// writer transaction of their own; other writers take turns between batches.
+const DEEP_BATCH_SEGMENTS: usize = 32;
+
+/// How long one deep-ingest call keeps starting batches. Past it the call
+/// returns its receipt with the segment the next call resumes from.
+const DEEP_INGEST_DEADLINE: Duration = Duration::from_secs(60);
 
 // These keys retain the existing lower-case hex spelling and JSON value encoding.
 const DEEP_CEILINGS: SideTable<HexId, DeepCeiling, LegacyJson> =
@@ -49,6 +59,12 @@ pub struct DocsDeepReceipt {
     pub derivation: DocsDerivationEnvelope,
     pub trigger: DocsDeepTrigger,
     pub claim_refs: Vec<String>,
+    /// The first source segment no batch has extracted yet when the call's
+    /// deadline passed; `None` once every segment has been. The next call
+    /// for this revision and extractor resumes there.
+    pub resume_segment: Option<usize>,
+    /// The derived claims as the owner reviews them: one exact batch.
+    pub review: DocsDeepReview,
 }
 
 pub(super) struct DeepApproval<'a> {
@@ -57,13 +73,19 @@ pub(super) struct DeepApproval<'a> {
     pub(super) project_id: EntityId,
 }
 
-struct PreparedDeepClaim {
-    id: EntityId,
-    chunk: EntityId,
-    segment_hash: String,
-    source_record_id: String,
-    predicate: String,
-    value: Value,
+/// One extracted claim beside its segment's block, text and source hash.
+type SegmentClaim = (String, String, String, DocsDeepClaim);
+
+/// The source revision a deep ingest read, and one batch's segment span.
+struct DeepBatch<'a> {
+    corpus: &'a str,
+    page: &'a str,
+    hash: &'a str,
+    approval_digest: &'a str,
+    project_id: EntityId,
+    start: usize,
+    end: usize,
+    segments: usize,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -278,6 +300,12 @@ impl Vault {
 
     /// Internal read-triggered door binds the observed source revision and
     /// the acting reader to both the model-input and writer snapshots.
+    ///
+    /// Every valid claim the extractor finds is kept. Segments are extracted
+    /// in batches of [`DEEP_BATCH_SEGMENTS`], each written in its own writer
+    /// transaction with the receipt naming the next segment; once
+    /// [`DEEP_INGEST_DEADLINE`] has passed no further batch starts, and a
+    /// later call for the same revision and extractor resumes there.
     pub(crate) fn deep_ingest_docs_asset_checked(
         &self,
         owner: &AuthenticatedOwner,
@@ -290,7 +318,8 @@ impl Vault {
         if extractor.binding().trim().is_empty() {
             return Err(invalid("docs deep extractor needs a binding"));
         }
-        let (text, corpus, page, hash, approval_digest, project_id) = {
+        let started = Instant::now();
+        let (text, corpus, page, hash, approval_digest, project_id, mut next) = {
             let txn = self.store.env.read_txn()?;
             let owner_actor = owner.revalidate_in_txn(self, &txn)?;
             if let Some((reader, _)) = read
@@ -303,18 +332,71 @@ impl Vault {
             if read.is_some_and(|(_, expected)| expected != hash) {
                 return Err(invalid("docs source changed since authorized expansion"));
             }
+            let mut next = 0;
             if let Some(receipt) = self.deep_receipt_in(&txn, asset)?
                 && receipt.derivation.source_hash == hash
                 && receipt.derivation.producer == extractor.binding()
             {
                 self.require_live_deep_receipt(&txn, &receipt)?;
-                return Ok(receipt);
+                match receipt.resume_segment {
+                    None => return Ok(receipt),
+                    Some(resume) => next = resume,
+                }
             }
-            (text, corpus, page, hash, approval_digest, project_id)
+            (text, corpus, page, hash, approval_digest, project_id, next)
         };
-        // Model work never holds the LMDB writer slot. Every quote is checked
-        // against the corresponding unmodified source unit before admission.
-        let prepared = prepare_deep_claims(&text, extractor)?;
+        let segments = docs_semantic_segments(&text);
+        loop {
+            let end = next.saturating_add(DEEP_BATCH_SEGMENTS).min(segments.len());
+            // Model work never holds the LMDB writer slot. Every quote is
+            // checked against the corresponding unmodified source unit first.
+            let prepared =
+                prepare_deep_claims(segments.get(next..end).unwrap_or_default(), extractor)?;
+            let batch = DeepBatch {
+                corpus: &corpus,
+                page: &page,
+                hash: &hash,
+                approval_digest: &approval_digest,
+                project_id,
+                start: next,
+                end,
+                segments: segments.len(),
+            };
+            let receipt = self.write_deep_batch(
+                owner,
+                asset,
+                trigger,
+                extractor.binding(),
+                now,
+                read,
+                &batch,
+                prepared,
+            )?;
+            match receipt.resume_segment {
+                Some(resume) if started.elapsed() < DEEP_INGEST_DEADLINE => next = resume,
+                _ => return Ok(receipt),
+            }
+        }
+    }
+
+    /// Writes one batch's claims in a writer transaction of its own, after
+    /// checking the source revision is still the one extracted, and stores
+    /// the receipt with the segment the next batch starts at.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "owner proof, asset, trigger, producer, write time, scoped reader, batch span and its extracted claims are distinct inputs"
+    )]
+    fn write_deep_batch(
+        &self,
+        owner: &AuthenticatedOwner,
+        asset: EntityId,
+        trigger: DocsDeepTrigger,
+        producer: &str,
+        now: u64,
+        read: Option<(&crate::claim::ScopedRead<'_>, &str)>,
+        batch: &DeepBatch<'_>,
+        prepared: Vec<SegmentClaim>,
+    ) -> Result<DocsDeepReceipt> {
         let mut txn = self.store.env.write_txn()?;
         let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         if let Some((reader, _)) = read
@@ -322,176 +404,115 @@ impl Vault {
         {
             return Err(invalid("docs source no longer readable by scoped actor"));
         }
-        let (
-            _,
-            current_corpus,
-            current_page,
-            current_hash,
-            current_approval_digest,
-            current_project,
-        ) = self.deep_source_in(&txn, asset, owner_actor)?;
+        let (_, corpus, page, hash, approval_digest, project_id) =
+            self.deep_source_in(&txn, asset, owner_actor)?;
         if (
-            current_corpus.as_str(),
-            current_page.as_str(),
-            current_hash.as_str(),
-        ) != (corpus.as_str(), page.as_str(), hash.as_str())
-            || current_approval_digest != approval_digest
-            || current_project != project_id
+            corpus.as_str(),
+            page.as_str(),
+            hash.as_str(),
+            approval_digest.as_str(),
+        ) != (batch.corpus, batch.page, batch.hash, batch.approval_digest)
+            || project_id != batch.project_id
         {
             return Err(invalid("docs source changed during deep ingest; retry"));
         }
-        if let Some(previous) = self.deep_receipt_in(&txn, asset)? {
-            if previous.derivation.source_hash == hash
-                && previous.derivation.producer == extractor.binding()
+        let mut receipt = match self.deep_receipt_in(&txn, asset)? {
+            Some(previous)
+                if previous.derivation.source_hash == batch.hash
+                    && previous.derivation.producer == producer =>
             {
-                self.require_live_deep_receipt(&txn, &previous)?;
-                return Ok(previous);
-            }
-            for reference in &previous.claim_refs {
-                let id = EntityId::from_hex(reference)?;
-                if self.get_claim_in_txn(&txn, &id)?.is_some_and(|body| {
-                    body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
-                }) {
-                    self.retract_claim_in_txn(&mut txn, &id, now)?;
+                match previous.resume_segment {
+                    // Another call finished this revision meanwhile.
+                    None => {
+                        self.require_live_deep_receipt(&txn, &previous)?;
+                        return Ok(previous);
+                    }
+                    Some(resume) if resume == batch.start => previous,
+                    Some(_) => return Err(invalid("docs deep ingest moved meanwhile; retry")),
                 }
             }
-        }
-        let mut receipt = DocsDeepReceipt {
-            derivation: DocsDerivationEnvelope {
-                source_ref: asset.to_hex(),
-                source_hash: hash.clone(),
-                producer: extractor.binding().to_owned(),
-                source: "imported".into(),
-                derived_kind: "ner_claims".into(),
-            },
-            trigger,
-            claim_refs: Vec::new(),
+            previous => {
+                if batch.start != 0 {
+                    return Err(invalid("docs deep receipt replaced meanwhile; retry"));
+                }
+                if let Some(previous) = previous {
+                    for reference in &previous.claim_refs {
+                        let id = EntityId::from_hex(reference)?;
+                        if self.get_claim_in_txn(&txn, &id)?.is_some_and(|body| {
+                            body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+                        }) {
+                            self.retract_claim_in_txn(&mut txn, &id, now)?;
+                        }
+                    }
+                }
+                DocsDeepReceipt {
+                    derivation: DocsDerivationEnvelope {
+                        source_ref: asset.to_hex(),
+                        source_hash: batch.hash.to_owned(),
+                        producer: producer.to_owned(),
+                        source: "imported".into(),
+                        derived_kind: "ner_claims".into(),
+                    },
+                    trigger,
+                    claim_refs: Vec::new(),
+                    resume_segment: Some(0),
+                    review: DocsDeepReview::proposed(),
+                }
+            }
         };
-        let actor = WriteActor::new(owner_actor, EdgeActorClass::Human);
-        let mut claims = Vec::new();
+        let mut claims = Vec::with_capacity(prepared.len());
+        let mut edges = Vec::with_capacity(prepared.len());
         for (block, segment_text, segment_hash, claim) in prepared {
-            let chunk = self.deep_chunk_in(&txn, asset, &corpus, &page, &block, &segment_text)?;
-            claims.push(PreparedDeepClaim {
-                id: EntityId::now(),
-                chunk,
+            let chunk =
+                self.deep_chunk_in(&txn, asset, batch.corpus, batch.page, &block, &segment_text)?;
+            let id = EntityId::now();
+            edges.push((id, chunk));
+            claims.push(DocsDeepReviewClaim {
+                claim_ref: id.to_hex(),
+                chunk_ref: chunk.to_hex(),
                 segment_hash,
                 source_record_id: format!(
-                    "{}:{hash}:{}:{}",
+                    "{}:{}:{producer}:{}",
                     chunk.to_hex(),
-                    extractor.binding(),
+                    batch.hash,
                     source_hash(&claim.quote)
                 ),
                 predicate: claim.predicate,
                 value: claim.value,
+                learned_at: now,
             });
         }
-        // Follow the import-batch Gate door, Proposed first. The stored bulk act
-        // approved reading this source revision and deriving from it; it never
-        // saw what the extractor would say, so it approves no derived claim.
-        // A claim the Gate pends waits in the owner's tray for its own review.
-        // One the Gate admits with no tray row is written again as `Auto`
-        // through the same Gate only when the policy trusts its source for
-        // `Auto`; otherwise it stays `Proposed`.
-        let mut writes = Vec::new();
-        for claim in &claims {
-            let admission = super::ImportedEvidenceAdmission::proposed(
-                super::DOCS_EXPORT_SOURCE_ID,
-                claim.id,
-                super::ImportedEvidenceEntityResolution::subject(asset),
-                actor,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            );
-            let (candidate, envelope) = super::admission::imported_candidate(
-                &claim.predicate,
-                super::admission::json_to_msgpack_value(&claim.value),
-                &claim.source_record_id,
-                &admission,
-            )?;
-            let v = rmpv::Value::from;
-            let rmpv::Value::Map(mut evidence) = super::admission::imported_evidence_value(
-                super::DOCS_EXPORT_SOURCE_ID,
-                &claim.source_record_id,
-            ) else {
-                unreachable!("imported evidence is a map")
-            };
-            evidence.push((
-                v("derivation"),
-                rmpv::Value::Map(vec![
-                    (v("source_ref"), rmpv::Value::from(claim.chunk.to_hex())),
-                    (v("source_hash"), v(claim.segment_hash.as_str())),
-                    (v("producer"), v(extractor.binding())),
-                    (v("source"), v("imported")),
-                    (v("derived_kind"), v("ner_claim")),
-                    (v("approval_digest"), v(approval_digest.as_str())),
-                ]),
-            ));
-            let candidate = candidate
-                .with_scope(rmpv::Value::Map(vec![(
-                    v("scopeProjectId"),
-                    rmpv::Value::Binary(project_id.as_bytes().to_vec()),
-                )]))
-                .with_evidence(rmpv::Value::Map(evidence));
-            writes.push((claim.id, candidate, envelope, admission));
-        }
-        let mut builder = self.batch_in();
-        for (id, candidate, envelope, admission) in &writes {
-            builder = builder.claim_candidate(
-                id,
-                candidate.clone(),
-                envelope,
-                admission.occurred,
-                admission.learned_at,
-            );
-        }
-        builder.apply(&mut txn)?;
-        let policy = crate::gate::resolve_policy_manifest(&self.store, &txn)?;
-        let mut admitted = self.batch_in();
-        let mut any_admitted = false;
-        for (id, candidate, envelope, admission) in &writes {
-            if self.store.pending_gate_consent_in_txn(&txn, id)?.is_none()
-                && self.get_claim_in_txn(&txn, id)?.is_some_and(|landed| {
-                    crate::gate::claim_source_trust_admits_auto(&landed, envelope, &policy)
-                })
-            {
-                any_admitted = true;
-                admitted = admitted.claim_candidate(
-                    id,
-                    candidate.clone(),
-                    &envelope.clone().with_approval(ClaimApprovalStatus::Auto),
-                    admission.occurred,
-                    admission.learned_at,
-                );
-            }
-        }
-        if any_admitted {
-            admitted.apply(&mut txn)?;
-        }
-        self.persist_deep_claim_dependencies(&mut txn, &claims, asset, &mut receipt)?;
+        let write = review::DeepWrite {
+            asset,
+            project_id,
+            approval_digest: batch.approval_digest,
+            producer,
+            actor: WriteActor::new(owner_actor, EdgeActorClass::Human),
+        };
+        self.admit_deep_claims_in_txn(&mut txn, owner_actor, &write, &mut receipt.review, &claims)?;
+        self.persist_deep_claim_dependencies(&mut txn, &edges, asset, &mut receipt)?;
+        receipt.resume_segment = (batch.end < batch.segments).then_some(batch.end);
+        DEEP_RECEIPTS.put(&self.store, &mut txn, &HexId(asset), &receipt)?;
         txn.commit()?;
         Ok(receipt)
     }
 
     /// Binds each admitted claim to its chunk and its root asset in the
-    /// dependency index, names it on the receipt, and stores the receipt.
+    /// dependency index and names it on the receipt.
     fn persist_deep_claim_dependencies(
         &self,
         txn: &mut heed::RwTxn<'_>,
-        claims: &[PreparedDeepClaim],
+        claims: &[(EntityId, EntityId)],
         asset: EntityId,
         receipt: &mut DocsDeepReceipt,
     ) -> Result<()> {
-        for claim in claims {
-            crate::ports::record_derived_edge_in_txn(&self.store, txn, &claim.id, &claim.chunk)?;
+        for (claim, chunk) in claims {
+            crate::ports::record_derived_edge_in_txn(&self.store, txn, claim, chunk)?;
             // The dependency index is one hop, not recursive. Bind the root
             // asset too, so deleting it invalidates the derived claim directly.
-            crate::ports::record_derived_edge_in_txn(&self.store, txn, &claim.id, &asset)?;
-            receipt.claim_refs.push(claim.id.to_hex());
+            crate::ports::record_derived_edge_in_txn(&self.store, txn, claim, &asset)?;
+            receipt.claim_refs.push(claim.to_hex());
         }
-        DEEP_RECEIPTS.put(&self.store, txn, &HexId(asset), receipt)?;
         Ok(())
     }
 
@@ -543,6 +564,10 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         receipt: &DocsDeepReceipt,
     ) -> Result<()> {
+        // The owner's decline retracted a declined batch's claims; it stands.
+        if receipt.review.decision == ClaimApprovalStatus::Rejected {
+            return Ok(());
+        }
         for reference in &receipt.claim_refs {
             let id = EntityId::from_hex(reference)?;
             if crate::ports::stale_in_txn(&self.store, txn, &id)?
@@ -638,23 +663,20 @@ impl Vault {
     }
 }
 
-/// Every claim the extractor finds in `text`, each checked against its
+/// Every claim the extractor finds in `segments`, each checked against its
 /// unmodified source unit, with its block, source text and source hash.
 fn prepare_deep_claims(
-    text: &str,
+    segments: &[DocsSegment],
     extractor: &dyn DocsDeepExtractor,
-) -> Result<Vec<(String, String, String, DocsDeepClaim)>> {
+) -> Result<Vec<SegmentClaim>> {
     let mut prepared = Vec::new();
-    for segment in docs_semantic_segments(text) {
-        for claim in extractor.extract(&segment)? {
+    for segment in segments {
+        for claim in extractor.extract(segment)? {
             if claim.quote.trim().is_empty() || !segment.text.contains(&claim.quote) {
                 return Err(invalid("docs deep claim lacks a source quote"));
             }
             if claim.predicate == crate::claim::KEY_VALUE_PREDICATE {
                 return Err(invalid("keyed claim requires its owned write door"));
-            }
-            if prepared.len() == MAX_DEEP_CLAIMS {
-                return Err(invalid("docs deep claim ceiling exceeded"));
             }
             prepared.push((
                 segment.block.clone(),

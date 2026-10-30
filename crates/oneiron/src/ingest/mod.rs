@@ -17,7 +17,10 @@ pub use docs::{
     docs_semantic_segments,
 };
 pub(crate) use docs_deep::invalidate_docs_source_before_put;
-pub use docs_deep::{DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepTrigger};
+pub use docs_deep::{
+    DocsDeepClaim, DocsDeepExtractor, DocsDeepReceipt, DocsDeepReview, DocsDeepReviewClaim,
+    DocsDeepTrigger,
+};
 pub use docs_import::{
     DocsDerivationEnvelope, DocsImportCeiling, DocsImportReceipt, DocsInjectionClassifier,
     DocsSummaryModel,
