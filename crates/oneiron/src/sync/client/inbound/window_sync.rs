@@ -422,10 +422,13 @@ impl SyncClient {
                     &evidence,
                     own_device.as_ref(),
                 )?;
+                // The pass goes on in arrival order: a ready update never
+                // waits on an unresolved one staged before it, and one an
+                // import resolved is taken on the next pass of this drain,
+                // its deadline (FIX 8863).
                 self.staged_world_updates.remove(index);
                 healed.push(key);
                 progressed = true;
-                break;
             }
             if !progressed {
                 break;
