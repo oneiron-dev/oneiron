@@ -24,7 +24,6 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oneiron::federation::{REMOVAL_EXPORT_RETAIN_SECS, RemovalExportCopy};
@@ -39,7 +38,9 @@ use crate::commands::credential_file::PairedCredentialFile;
 use crate::handler::mesh::MeshHost;
 use crate::server::HousekeepingAdmission;
 
+mod import_gate;
 mod kept_files;
+use import_gate::ImportGate;
 use kept_files::{remove_imported, remove_lapsed};
 
 /// The first wait after a failed session (a call).
@@ -58,57 +59,6 @@ const ACK_PATH: &str = "/v1/shared/removal-delivery/ack";
 /// (FIX 6909): `true` once frozen, and closed by the thaw that starts the
 /// next.
 pub(super) type FreezeEpoch = Arc<dyn Fn() -> watch::Receiver<bool> + Send + Sync>;
-
-/// The admission each import takes (FIX 11796), noting each import the
-/// reap freeze refuses, and the freeze's epoch, whose thaw takes those
-/// archives in again in the same run (FIX 12154).
-struct ImportGate {
-    admit: HousekeepingAdmission,
-    refused: Arc<AtomicBool>,
-    freeze: Option<FreezeEpoch>,
-}
-
-impl ImportGate {
-    /// `admit`, the host's gate, with each refusal noted; `freeze`, the
-    /// host's freeze epoch where it has one.
-    fn new(admit: HousekeepingAdmission, freeze: Option<FreezeEpoch>) -> Self {
-        let refused = Arc::new(AtomicBool::new(false));
-        let noted = Arc::clone(&refused);
-        let admit: HousekeepingAdmission = Arc::new(move || {
-            let admission = admit();
-            if admission.is_none() {
-                noted.store(true, Ordering::SeqCst);
-            }
-            admission
-        });
-        Self {
-            admit,
-            refused,
-            freeze,
-        }
-    }
-
-    /// Returns once an import the freeze refused may be tried again: the
-    /// freeze has lifted. Pending while none was refused, or with no epoch
-    /// to watch. Cancel-safe: it only reads the epoch.
-    async fn thawed(&self) {
-        match &self.freeze {
-            Some(epoch) if self.refused.load(Ordering::SeqCst) => {
-                // A thaw closes the frozen epoch; an epoch that reads
-                // unpaused holds no freeze.
-                let _ = epoch().wait_for(|paused| !*paused).await;
-            }
-            _ => std::future::pending().await,
-        }
-    }
-
-    /// Takes in again, the freeze lifted, the archives kept on disk.
-    async fn retry(&self, vault: &Arc<oneiron::Vault>, credential_file: &Path, archives: &Path) {
-        self.refused.store(false, Ordering::SeqCst);
-        tracing::info!("the reap freeze lifted; kept removal archives are taken in again");
-        import_kept(vault, &self.admit, credential_file, archives).await;
-    }
-}
 
 /// The running receiver.
 pub(super) struct Receiver {
@@ -237,8 +187,8 @@ fn mesh_host(url: &str) -> String {
 
 /// Sessions back to back until `stop`, waiting after each failed one, once
 /// the archives an earlier run kept but did not import are taken in. When
-/// the reap freeze that refused an import lifts, the session in flight is
-/// dropped and the kept archives are taken in again (FIX 12154).
+/// the reap freeze that refused an import lifts, the kept archives are taken
+/// in again beside the session in flight, which runs on (FIX 12154).
 async fn receive(
     base: reqwest::Url,
     vault: Arc<oneiron::Vault>,
@@ -270,18 +220,10 @@ async fn receive(
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
-            () = gate.thawed() => None,
             session = session(&client, &base, &vault, admit, &credential_file, &archives) => {
-                Some(session)
+                session
             }
-        };
-        let Some(session) = session else {
-            tokio::select! {
-                biased;
-                _ = &mut stop => return,
-                () = gate.retry(&vault, &credential_file, &archives) => {}
-            }
-            continue;
+            never = gate.retry_after_thaws(&vault, &credential_file, &archives) => match never {},
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -291,6 +233,9 @@ async fn receive(
                     biased;
                     _ = &mut stop => return,
                     () = tokio::time::sleep(wait) => {}
+                    never = gate.retry_after_thaws(&vault, &credential_file, &archives) => {
+                        match never {}
+                    }
                 }
                 wait = (wait * 2).min(REMOVAL_DELIVERY_RETRY_MAX);
             }
@@ -300,8 +245,8 @@ async fn receive(
 
 /// Sessions over the mesh back to back until `stop`, waiting after each
 /// failed one, as at the home's URL, once the archives an earlier run kept
-/// but did not import are taken in, and again when the reap freeze that
-/// refused an import lifts (FIX 12154).
+/// but did not import are taken in, and again, beside the session in flight,
+/// when the reap freeze that refused an import lifts (FIX 12154).
 #[cfg(feature = "mesh")]
 async fn receive_mesh(
     dialer: Arc<dyn oneiron::sync::SyncDialer>,
@@ -323,7 +268,6 @@ async fn receive_mesh(
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
-            () = gate.thawed() => None,
             session = session_mesh(
                 dialer.as_ref(),
                 &host,
@@ -331,15 +275,8 @@ async fn receive_mesh(
                 admit,
                 &credential_file,
                 &archives,
-            ) => Some(session),
-        };
-        let Some(session) = session else {
-            tokio::select! {
-                biased;
-                _ = &mut stop => return,
-                () = gate.retry(&vault, &credential_file, &archives) => {}
-            }
-            continue;
+            ) => session,
+            never = gate.retry_after_thaws(&vault, &credential_file, &archives) => match never {},
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -349,6 +286,9 @@ async fn receive_mesh(
                     biased;
                     _ = &mut stop => return,
                     () = tokio::time::sleep(wait) => {}
+                    never = gate.retry_after_thaws(&vault, &credential_file, &archives) => {
+                        match never {}
+                    }
                 }
                 wait = (wait * 2).min(REMOVAL_DELIVERY_RETRY_MAX);
             }
