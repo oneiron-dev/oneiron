@@ -35,7 +35,7 @@ use crate::anchored_annotation::ReanchorSummary;
 use crate::blob_artifact::read_blob_artifact_head_in_txn;
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::paragraph_review::carry_paragraph_judgments;
-use crate::edit_roundtrip::pptx::{PptxAuthor, PptxCommentTarget};
+use crate::edit_roundtrip::pptx::PptxAuthor;
 use crate::edit_roundtrip::slides_review::{
     SlideNow, SlideRenderer, SlideReviewError, SlideReviewImage, SlideReviewLabels,
     SlideReviewRequest, SlideReviewUnit, carry_slide_judgments, deck_slides_now,
@@ -1251,36 +1251,26 @@ impl Vault {
                 let bytes = self
                     .read_blob_artifact_version(&wake.artifact, head.version)?
                     .ok_or(Error::EntityNotFound)?;
-                let slides = deck_slides_now(&bytes, self.docedit_package_limits()?)?;
-                // A slide gone from the head has nothing to ask of.
-                let targets: Vec<PptxCommentTarget> = wake
-                    .answers
-                    .iter()
-                    .filter_map(|answer| match &answer.unit {
-                        WithdrawnUnit::Slide {
-                            part,
-                            sld_id,
-                            shape,
-                        } => slides
-                            .iter()
-                            .find(|slide| slide.part == *part && slide.sld_id == *sld_id)
-                            .map(|slide| PptxCommentTarget {
-                                slide: slide.slide,
-                                slide_creation_id: slide.creation_id,
-                                shape_creation_id: shape.clone(),
-                                shape_fingerprint: None,
-                            }),
-                        _ => None,
-                    })
-                    .collect();
+                // A live deck is asked as it renders at its head; the comments
+                // still land on the version (FIX 11981).
+                let live = self.live_head_deck(&wake.artifact)?;
+                let targets = live::reask_slide_targets(
+                    wake,
+                    &bytes,
+                    live.as_ref().map(|(_, deck)| deck.as_slice()),
+                    self.docedit_package_limits()?,
+                )?;
                 if targets.is_empty() {
                     return Ok((Reasked::Nothing, reask_ref));
                 }
                 let renderer = renderer.ok_or_else(|| {
                     Error::InvalidConfig("no slide renderer on this host".to_owned())
                 })?;
-                let numbers: Vec<u64> = targets.iter().map(|target| target.slide).collect();
-                let images = renderer.render(&bytes, &numbers)?;
+                let numbers: Vec<u64> = targets.iter().map(|(_, number)| *number).collect();
+                let rendered = live
+                    .as_ref()
+                    .map_or(bytes.as_slice(), |(_, deck)| deck.as_slice());
+                let images = renderer.render(rendered, &numbers)?;
                 if images.len() != targets.len() {
                     return Err(Error::InvalidConfig(
                         "the slide renderer returned the wrong number of images".to_owned(),
@@ -1289,7 +1279,7 @@ impl Vault {
                 let units: Vec<SlideReviewUnit> = targets
                     .into_iter()
                     .zip(images)
-                    .map(|(target, image)| SlideReviewUnit {
+                    .map(|((target, _), image)| SlideReviewUnit {
                         target,
                         image: SlideReviewImage::Rendered(image),
                         renderer: renderer.name().to_owned(),
@@ -1316,8 +1306,15 @@ impl Vault {
                     // The comment writer stamps epoch milliseconds.
                     at: now.saturating_mul(1000),
                 };
+                let shown = live.as_ref().map(|(pin, deck)| (pin, deck.as_slice()));
                 let run = self
-                    .review_blob_artifact_slides_at(&wake.artifact, head.version, &bytes, &request)
+                    .review_blob_artifact_slides_at(
+                        &wake.artifact,
+                        head.version,
+                        &bytes,
+                        shown,
+                        &request,
+                    )
                     .map_err(|error| match error {
                         SlideReviewError::Vault(error) => error,
                         other => Error::InvalidConfig(other.to_string()),

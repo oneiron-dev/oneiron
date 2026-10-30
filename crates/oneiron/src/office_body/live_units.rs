@@ -10,9 +10,15 @@
 //! paragraph's text, kind and lock; a sheet's cells, its rows and columns;
 //! what a slide shows; a folder file whole. An ask made before the body was
 //! imported compares against the body as imported.
+//!
+//! An ask of an artifact that has a live body reads its units there, at the
+//! head, with the pin it reads them at (FIX 11981): a sheet's cells, a
+//! document's paragraphs, a file's whole text, a deck as it renders.
 
 use super::*;
-use oneiron_docedit::live::{LiveDeck, NodeKind};
+use crate::edit_roundtrip::{CellRef, CellValue};
+use crate::secret_custody::SecretSight;
+use oneiron_docedit::live::{LiveDeck, NodeId, NodeKind, TextBody};
 use std::collections::BTreeMap;
 
 /// Where one live office body stood: its head's frontier and the commits on
@@ -255,6 +261,152 @@ impl Vault {
             .is_some_and(|(was, now)| was.get_deep_value() != now.get_deep_value()))
     }
 
+    /// The cells of the sheet named `sheet` of `artifact`'s live workbook at
+    /// its head, a formula's by its last computed value, with the pin they
+    /// were read at. `None` when it has no live workbook; a sheet the body
+    /// does not hold has no cells.
+    pub(crate) fn live_head_cells(
+        &self,
+        artifact: &EntityId,
+        sheet: &str,
+    ) -> Result<Option<(LivePin, BTreeMap<CellRef, CellValue>)>> {
+        let Some((OfficeBodyKind::Xlsx, pin, doc)) = self.live_head(artifact)? else {
+            return Ok(None);
+        };
+        let cells: BTreeMap<CellRef, CellValue> = xlsx::read(&doc)?
+            .sheets
+            .into_iter()
+            .find(|entry| entry.name == sheet)
+            .map(|entry| {
+                entry
+                    .cells
+                    .into_iter()
+                    .map(|((row, col), cell)| (CellRef { col, row }, cell_value(cell)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Some((pin, cells)))
+    }
+
+    /// The paragraphs of `artifact`'s live document at its head, with the pin
+    /// they were read at. `None` when it has no live document.
+    pub(crate) fn live_head_blocks(
+        &self,
+        artifact: &EntityId,
+    ) -> Result<Option<(LivePin, Vec<BodyBlock>)>> {
+        let Some((OfficeBodyKind::Docx, pin, doc)) = self.live_head(artifact)? else {
+            return Ok(None);
+        };
+        Ok(Some((pin, docx::read(&doc)?.blocks)))
+    }
+
+    /// `artifact`'s live body at its head read whole, as a folder ask reads
+    /// a file's text, with the pin it was read at: a document's paragraphs
+    /// and table cells, a workbook's cells by address, a deck's texts in tree
+    /// order. A reader `sight` does not let see a lifted secret reads its
+    /// handle. `None` when it has no live body.
+    pub(crate) fn live_head_text(
+        &self,
+        artifact: &EntityId,
+        sight: SecretSight,
+    ) -> Result<Option<(LivePin, String)>> {
+        let Some((kind, pin, doc)) = self.live_head(artifact)? else {
+            return Ok(None);
+        };
+        let text = match kind {
+            OfficeBodyKind::Docx => docx::read(&doc)?
+                .blocks
+                .into_iter()
+                .flat_map(|block| std::iter::once(block.text).chain(block.cells.into_values()))
+                .filter(|text| !text.trim().is_empty())
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            OfficeBodyKind::Xlsx => {
+                let body = xlsx::read(&doc)?;
+                body.sheets
+                    .iter()
+                    .flat_map(|sheet| {
+                        sheet.cells.values().filter_map(move |cell| {
+                            let value = match &cell.value {
+                                XlsxValue::Blank => return None,
+                                XlsxValue::Number(number) => number.to_string(),
+                                XlsxValue::Text(text) | XlsxValue::Error(text) => text.clone(),
+                                XlsxValue::Bool(value) => value.to_string(),
+                            };
+                            Some(format!("{}!{}: {value}", sheet.name, cell.address))
+                        })
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            OfficeBodyKind::Pptx => {
+                let deck = self
+                    .read_pptx_body(artifact, Some(pin.frontier.as_slice()))?
+                    .deck;
+                deck.descendants(NodeId(0))
+                    .iter()
+                    .filter_map(|node| deck.texts.get(node).map(TextBody::plain))
+                    .filter(|text| !text.trim().is_empty())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            }
+        };
+        let text = match sight {
+            SecretSight::Masked => self
+                .typed_body_lifted_keys(artifact)?
+                .masked(&text)
+                .unwrap_or(text),
+            SecretSight::Owner | SecretSight::Granted => text,
+        };
+        Ok(Some((pin, text)))
+    }
+
+    /// `artifact`'s live deck projected at its head as an export would write
+    /// it, nothing landed, with the pin read before it: what a re-ask renders
+    /// and reads. `None` when it has no live deck, or the deck does not
+    /// project, which leaves the ask on the head version as before.
+    pub(crate) fn live_head_deck(&self, artifact: &EntityId) -> Result<Option<(LivePin, Vec<u8>)>> {
+        {
+            let txn = self.store.env.read_txn()?;
+            if SOURCES
+                .get(&self.store, &txn, artifact)?
+                .is_none_or(|source| source.kind != OfficeBodyKind::Pptx)
+            {
+                return Ok(None);
+            }
+        }
+        let Some(pin) = self.office_body_pin(artifact)? else {
+            return Ok(None);
+        };
+        Ok(self
+            .export_pptx_body(artifact)
+            .ok()
+            .map(|export| (pin, export.outcome.bytes)))
+    }
+
+    /// `artifact`'s live body at its head, its kind and its pin, read in one
+    /// transaction. `None` when it has none.
+    fn live_head(&self, artifact: &EntityId) -> Result<Option<(OfficeBodyKind, LivePin, LoroDoc)>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(source) = SOURCES.get(&self.store, &txn, artifact)? else {
+            return Ok(None);
+        };
+        let read = found(typed_body_in_txn(
+            &self.store,
+            &txn,
+            artifact,
+            source.kind.schema(),
+            None,
+        ))?;
+        Ok(read.map(|(head, doc)| {
+            let pin = LivePin {
+                frontier: head.frontier,
+                commits: head.commits,
+            };
+            (source.kind, pin, doc)
+        }))
+    }
+
     /// `artifact`'s live body of `kind` at `then` and at its head, when it
     /// moved since. `None` when it has no such body, has not moved, or its
     /// history no longer reads at `then`, which compares as unmoved, as an
@@ -323,6 +475,25 @@ fn deck_slides(deck: &LiveDeck) -> Result<BTreeMap<(String, u32), [u8; 32]>> {
         );
     }
     Ok(slides)
+}
+
+/// A live cell as an ask reads a saved one: a formula by its last computed
+/// value.
+fn cell_value(cell: BodyCell) -> CellValue {
+    let value = match cell.value {
+        XlsxValue::Blank => CellValue::Blank,
+        XlsxValue::Number(number) => CellValue::Number(number),
+        XlsxValue::Text(text) => CellValue::Text(text),
+        XlsxValue::Bool(value) => CellValue::Bool(value),
+        XlsxValue::Error(error) => CellValue::Error(error),
+    };
+    match cell.formula {
+        Some(expr) => CellValue::Formula {
+            expr,
+            cached: Some(Box::new(value)),
+        },
+        None => value,
+    }
 }
 
 /// `read` with a body that is gone, or whose artifact no longer stands, as

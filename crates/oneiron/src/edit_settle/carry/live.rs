@@ -7,13 +7,19 @@
 //! changed there, by the rules the version half keeps: a sheet row's read
 //! cells, its header or its answer cell, a paragraph's text, a slide's
 //! content, a folder file whole.
+//!
+//! A wake asks a live deck's slides again as the deck renders at its head
+//! (FIX 11981); every other unit's ask reads the live body itself.
 
-use super::WithdrawReason;
+use super::{UnitWithdrawal, WithdrawReason, WithdrawnUnit};
 use crate::Vault;
+use crate::edit_roundtrip::pptx::PptxCommentTarget;
+use crate::edit_roundtrip::slides_review::{SlideNow, deck_slides_now};
 use crate::edit_roundtrip::{EditProposal, SheetAnswerBundle, SheetCellAnswer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::office_body::{LiveChange, LivePin, LiveSheet};
+use oneiron_docedit::retained_opc::Limits;
 
 /// The live half of a sheet answer split: the workbook's sheet and each
 /// folder answer's file, where their live bodies moved since the ask.
@@ -105,6 +111,56 @@ pub(super) fn judged_live(artifact: EntityId, proposal: &EditProposal) -> Vec<(E
                 }),
         )
         .collect()
+}
+
+/// The slides `wake` asks again, each with the number it renders at: found
+/// on the head version `bytes`, where its comment lands, and on `shown`, a
+/// live deck's projection at its head, when the deck is asked as it renders
+/// there (FIX 11981). A slide gone from either has nothing to ask of.
+pub(super) fn reask_slide_targets(
+    wake: &UnitWithdrawal,
+    bytes: &[u8],
+    shown: Option<&[u8]>,
+    limits: Limits,
+) -> Result<Vec<(PptxCommentTarget, u64)>> {
+    let slides = deck_slides_now(bytes, limits)?;
+    let shown = shown
+        .map(|deck| deck_slides_now(deck, limits))
+        .transpose()?;
+    Ok(wake
+        .answers
+        .iter()
+        .filter_map(|answer| {
+            let WithdrawnUnit::Slide {
+                part,
+                sld_id,
+                shape,
+            } = &answer.unit
+            else {
+                return None;
+            };
+            let at = |slides: &[SlideNow]| {
+                slides
+                    .iter()
+                    .find(|slide| slide.part == *part && slide.sld_id == *sld_id)
+                    .map(|slide| (slide.slide, slide.creation_id))
+            };
+            let (slide, slide_creation_id) = at(slides.as_slice())?;
+            let number = match &shown {
+                Some(shown) => at(shown.as_slice())?.0,
+                None => slide,
+            };
+            Some((
+                PptxCommentTarget {
+                    slide,
+                    slide_creation_id,
+                    shape_creation_id: shape.clone(),
+                    shape_fingerprint: None,
+                },
+                number,
+            ))
+        })
+        .collect())
 }
 
 /// The receipt's view of a live pin: its commit count and frontier.

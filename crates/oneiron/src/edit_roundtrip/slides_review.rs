@@ -364,6 +364,11 @@ pub struct SlideReviewBase<'a> {
     /// pinned to the frontier on its receipt, and what a rendered image is of.
     pub artifact: EntityId,
     pub package_limits: Limits,
+    /// The deck each unit's text is read from when it is not `bytes`: a live
+    /// deck's projection at its head, which the units' images were rendered
+    /// from (FIX 11981). A unit is found there by its slide part and id; its
+    /// comment still lands on `bytes`.
+    pub shown: Option<&'a [u8]>,
 }
 
 /// One typed ask, whose principal and display configuration are fixed by the
