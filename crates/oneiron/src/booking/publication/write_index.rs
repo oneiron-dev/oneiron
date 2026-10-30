@@ -55,21 +55,6 @@ pub(crate) fn index_publication_in_txn(
     page: EntityId,
     claim: EntityId,
 ) -> Result<()> {
-    index_publication_by_owner_in_txn(vault, txn, page, claim, None)
-}
-
-/// [`index_publication_in_txn`] under the owner's proof the publication
-/// write carries, when it carries one: that proof mints the page's invite
-/// grant. A publication with no proof bound indexes the page and mints no
-/// grant; the owner mints it through
-/// [`crate::booking::mint_publish_page_invite_grant`].
-pub(crate) fn index_publication_by_owner_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    page: EntityId,
-    claim: EntityId,
-    owner: Option<&crate::consent::AuthenticatedOwner>,
-) -> Result<()> {
     let mut value = page.as_bytes().to_vec();
     value.extend_from_slice(claim.as_bytes());
     TOKEN_INDEX.put(
@@ -85,17 +70,52 @@ pub(crate) fn index_publication_by_owner_in_txn(
     PROTECTED_CLAIM.put(&vault.store, txn, &claim, &())?;
     // Publishing is the owner act that lets the page's confirmed bookings
     // carry invites (FIX 7849): a published page's one standing invite grant
-    // is minted here, in the owner's own write, bound to the publishing owner.
-    if let Some(owner) = owner
-        && let Some(body) = vault.get_claim_in_txn(&*txn, &claim)?
+    // is minted here, in the owner's own write, bound to the publishing owner
+    // and stamped with them, the publication its receipt's setting.
+    if let Some(body) = vault.get_claim_in_txn(&*txn, &claim)?
         && let Some(publisher) = publication_owner(&body)
         && decode_public_booking_page_value(&body.value).is_ok_and(|value| value.published)
     {
         crate::booking::invite_grant::mint_page_invite_grant_in_txn(
-            vault, txn, owner, page, publisher,
+            vault,
+            txn,
+            page,
+            publisher,
+            &publication_setting(claim, Some(publisher)),
         )?;
     }
     Ok(())
+}
+
+/// The owner's setting a page's invite grant carries out: the page's indexed
+/// publication claim, and the owner its write envelope names. `None`: no
+/// publication is indexed for the page.
+pub(crate) fn publication_setting_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    page: EntityId,
+) -> Result<Option<crate::consent::DerivedGrantSetting>> {
+    let token = crate::booking::PublicBookingPageToken::for_page(page).0;
+    let Some((_, claim)) = indexed_publication(vault, txn, &token)? else {
+        return Ok(None);
+    };
+    let setter = vault
+        .get_claim_in_txn(txn, &claim)?
+        .as_ref()
+        .and_then(publication_owner);
+    Ok(Some(publication_setting(claim, setter)))
+}
+
+/// The setting record of one publication claim, as a derived grant's
+/// receipt names it.
+fn publication_setting(
+    claim: EntityId,
+    setter: Option<EntityId>,
+) -> crate::consent::DerivedGrantSetting {
+    crate::consent::DerivedGrantSetting {
+        receipt_ref: format!("claim:{}", claim.to_hex()),
+        setter,
+    }
 }
 
 pub(super) fn indexed_publication(
