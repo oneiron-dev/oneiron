@@ -255,6 +255,51 @@ pub(super) fn snapshot_policy(policy: &crate::config::models::snapshots::Snapsho
     let _ = policy;
 }
 
+/// Whether replacement or teardown stopped the queue this worker's launch
+/// binds. A missing worker, launch, device or queue is not a stopped queue.
+pub(super) fn device_stopped(worker_id: &str) -> bool {
+    let Some(host) = HOST.get() else {
+        return false;
+    };
+    let device = host
+        .lock()
+        .get(worker_id)
+        .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone());
+    let Some(device) = device else {
+        return false;
+    };
+    host.admissions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&device)
+        .is_some_and(|admission| admission.is_stopped())
+}
+
+/// Stops and removes a replaced worker's old device queue only when no hosted
+/// row still binds that device. The shared ledger stays for cross-runtime use.
+fn stop_device_admission_if_unused(host: &WorkerHost, device: &str) {
+    let workers = host.lock();
+    let still_bound = workers.values().any(|hosted| {
+        hosted
+            .row
+            .launch
+            .as_ref()
+            .and_then(|launch| launch.device.as_deref())
+            == Some(device)
+    });
+    if still_bound {
+        return;
+    }
+    let admission = host
+        .admissions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .remove(device);
+    if let Some(admission) = admission {
+        admission.stop();
+    }
+}
+
 /// The device ledger of the device managed worker `worker_id` launches on,
 /// when its launch names one: what a snapshot transfer may take there.
 #[cfg(unix)]
@@ -438,7 +483,14 @@ pub(super) fn configure(
                         slot,
                     };
                     match workers.insert(row.id.clone(), hosted) {
-                        Some(old) => replaced.push((old.worker, worker.clone())),
+                        Some(old) => {
+                            let old_device = old
+                                .row
+                                .launch
+                                .as_ref()
+                                .and_then(|launch| launch.device.clone());
+                            replaced.push((old.worker, worker.clone(), old_device));
+                        }
                         None => started.push(worker.clone()),
                     }
                     worker
@@ -451,9 +503,12 @@ pub(super) fn configure(
         host.begin(&worker);
     }
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-        for (old, new) in replaced {
+        for (old, new, old_device) in replaced {
             runtime.spawn(async move {
                 old.retire().await;
+                if let Some(device) = old_device {
+                    stop_device_admission_if_unused(host, &device);
+                }
                 host.begin(&new);
             });
         }

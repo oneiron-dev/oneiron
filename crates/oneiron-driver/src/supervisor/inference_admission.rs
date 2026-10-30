@@ -499,6 +499,15 @@ impl DeviceAdmission {
         self.changed.notify_waiters();
     }
 
+    /// Whether actual worker replacement or teardown has stopped this queue.
+    #[must_use]
+    pub fn is_stopped(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopped
+    }
+
     /// Fit, else idle unload, then an approved smaller profile, then wait.
     /// Unknown capacity has already admitted inside `grant`.
     pub fn resolve_pressure(self: &Arc<Self>, ticket: &WorkTicket) -> PressureDecision {

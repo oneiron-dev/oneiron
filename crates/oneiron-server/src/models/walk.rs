@@ -292,6 +292,9 @@ pub(super) fn failure_kind(error: &LlmError) -> &'static str {
         // A typed cut names its cause as its class (FIX 10403).
         LlmError::Retryable(RetryableLlmError::TransportFault(fault)) => fault.kind.as_str(),
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => "kept_on_device",
+        LlmError::Retryable(RetryableLlmError::DeviceAdmissionStopped) => {
+            "device_admission_stopped"
+        }
         LlmError::Fatal(FatalLlmError::InvalidRequest) => "invalid_request",
         LlmError::Fatal(FatalLlmError::InvalidRequestDetail { .. }) => "invalid_request",
         LlmError::Fatal(FatalLlmError::Auth) => "auth",
@@ -317,9 +320,9 @@ pub(super) fn provider_down(error: &LlmError) -> bool {
 /// A failure that ends the call as it came: the request itself failed (a
 /// 400, filtered content, a capability it needs), so the next offer would
 /// fail it too, or the run refused it, so the next rung's admission meets the
-/// same line, or an erase took its answer (FIX 6296). Every other failure
-/// hands the call on.
-pub(super) fn ends_call(error: &LlmError) -> bool {
+/// same line, an erase took its answer (FIX 6296), or its device queue stopped.
+/// Every other failure hands the call on.
+pub(crate) fn ends_call(error: &LlmError) -> bool {
     matches!(
         error,
         LlmError::Fatal(
@@ -329,5 +332,6 @@ pub(super) fn ends_call(error: &LlmError) -> bool {
                 | FatalLlmError::Unsupported(_)
                 | FatalLlmError::ResponseErased
         ) | LlmError::BudgetDenied(_)
+            | LlmError::Retryable(oneiron::RetryableLlmError::DeviceAdmissionStopped)
     )
 }

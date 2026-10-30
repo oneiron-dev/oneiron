@@ -119,6 +119,7 @@ pub use status::{
     SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus,
 };
 pub use token_ratio::TokenRatios;
+pub(crate) use walk::ends_call;
 pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
 // DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
 // with what a snapshot of it is kept and restored under.

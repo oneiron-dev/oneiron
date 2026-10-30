@@ -141,6 +141,8 @@ pub enum RetryableLlmError {
     /// result row and receipt that carry the error.
     #[error("stream cut ({0})")]
     TransportFault(TransportFault),
+    #[error("device admission stopped")]
+    DeviceAdmissionStopped,
 }
 
 /// What cut a call on its transport, as the transport typed it.

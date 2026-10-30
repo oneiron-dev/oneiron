@@ -239,9 +239,14 @@ async fn begin(
     } else {
         None
     };
-    work.wait_runnable()
-        .await
-        .map_err(|_| OpenAiCompatTransportError::Connection)?;
+    work.wait_runnable().await.map_err(|stop| match stop {
+        oneiron_driver::AdmissionStop::DeviceStopped => {
+            OpenAiCompatTransportError::DeviceAdmissionStopped
+        }
+        oneiron_driver::AdmissionStop::Deadline | oneiron_driver::AdmissionStop::Cancelled => {
+            OpenAiCompatTransportError::Connection
+        }
+    })?;
     let lease = route
         .worker
         .acquire()
@@ -260,10 +265,14 @@ async fn begin(
     }
     // Readiness is now proved, so take the execution grant before any
     // session op or generate. It and the worker lease share release custody.
-    let grant = work
-        .execution_grant()
-        .await
-        .map_err(|_| OpenAiCompatTransportError::Connection)?;
+    let grant = work.execution_grant().await.map_err(|stop| match stop {
+        oneiron_driver::AdmissionStop::DeviceStopped => {
+            OpenAiCompatTransportError::DeviceAdmissionStopped
+        }
+        oneiron_driver::AdmissionStop::Deadline | oneiron_driver::AdmissionStop::Cancelled => {
+            OpenAiCompatTransportError::Connection
+        }
+    })?;
     let schedule = work.schedule(grant.as_ref());
     let (conversation, params) = wire::split_request(body);
     let session = match segments {
