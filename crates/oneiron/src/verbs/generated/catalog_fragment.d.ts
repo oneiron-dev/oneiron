@@ -2516,7 +2516,7 @@ declare namespace Sdk {
   type CodeImportManifestFile = { git_oid: string; file: CodeSnapshotFile };
   type CodeImportManifestView = { manifest_ref: EntityId; digest: string; anchor: CodeImportAnchor; inventory_digest: string; files: CodeImportManifestFile[] };
   type CodeRepoImportState = "manifest_ready" | "held_baseline" | "held_review" | "promoted";
-  type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null };
+  type CodeRepoImportView = { manifest: CodeImportManifestView; state: CodeRepoImportState; baseline_revision?: EntityId | null; promotion_receipt?: EntityId | null; hold?: string | null };
   type CodeRepoGetRequest = { repo: EntityId };
   type CodeRepoImportLink = { manifest: EntityId; anchor: CodeImportAnchor };
   type MergeQueuePointersView = { repo: EntityId; head_commit: string; green_commit: string; pending_slow_batch_refs: string[] };

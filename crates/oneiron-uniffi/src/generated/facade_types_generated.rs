@@ -39154,6 +39154,8 @@ pub struct CodeRepoImportView {
         skip_serializing_if = "Option::is_none"
     )]
     pub promotion_receipt: Option<String>,
+    #[serde(rename = "hold", default, skip_serializing_if = "Option::is_none")]
+    pub hold: Option<String>,
 }
 
 /// `oneiron::memory::origin_doors::workbench_types::CodeRepoGetRequest`.
