@@ -75,6 +75,13 @@ pub(crate) struct ResultBodyPin {
     digest: Option<[u8; 32]>,
 }
 
+impl ResultBodyPin {
+    /// The body this pin holds; `None` for a pin on every body.
+    pub(crate) fn digest(&self) -> Option<[u8; 32]> {
+        self.digest
+    }
+}
+
 impl Drop for ResultBodyPin {
     fn drop(&mut self) {
         let mut counts = lock(&self.counts);

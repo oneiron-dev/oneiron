@@ -370,6 +370,19 @@ pub(super) fn epoch_summary_in(
         _ => Ok(false),
     }
 }
+/// Stages a stale mark for `id` at `revision` in `dbs`'s own `vault_meta`, so
+/// `id` reads withdrawn there: a room's epoch summary born from a source that
+/// no longer stands takes it in the room's view (FIX 3448).
+pub(crate) fn stage_stale_mark_in_txn(
+    dbs: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    revision: u64,
+) -> Result<()> {
+    dbs.vault_meta()
+        .put(txn, &stale_key(id), &revision.to_be_bytes())?;
+    Ok(())
+}
 pub(super) fn mark_stale_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     withdraw_in_txn(store, txn, id, &CarriedWorlds::default())
 }

@@ -165,6 +165,21 @@ pub(super) fn remove_unnamed(
         .is_some())
 }
 
+/// Removes the body of `entry` with its line index at once, while no reader
+/// in `pins` holds it: a body its own writer found nothing names, so no
+/// grace is owed (FIX 3633). `true` when it went.
+pub(super) fn remove_unnamed_now(
+    dir: &BodyDir,
+    entry: &BodyEntry,
+    pins: &ResultBodyPins,
+) -> Result<bool> {
+    let body = entry.body_name();
+    Ok(pins
+        .unless_pinned(&entry.digest, || unlink_named(dir, &body))
+        .transpose()?
+        .is_some())
+}
+
 /// Syncs `dir`, so the unlinks in it last.
 pub(super) fn sync_dir(dir: &BodyDir) -> Result<()> {
     fsync(&dir.dir).map_err(io)

@@ -367,6 +367,40 @@ pub fn restore_output(vault: &Vault, source: OutputRef) -> Result<Vec<u8>> {
         .ok_or(Error::CorruptedIndex("missing recoverable output"))
 }
 
+/// Bytes of a stored output a windowed read carries: the compaction window's
+/// for one observation.
+pub const OUTPUT_WINDOW_BYTES: usize = 256 * 1024;
+
+/// [`restore_output`] up to `cap` bytes (FIX 314): the whole body within
+/// them, else its first `cap` bytes, read by range, and a note naming the
+/// whole stored body. Nothing past `cap` is read.
+pub fn restore_output_window(vault: &Vault, source: OutputRef, cap: usize) -> Result<Vec<u8>> {
+    if source.byte_len <= cap as u64 {
+        return restore_output(vault, source);
+    }
+    if !output_clean(vault, source)? {
+        return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+            .as_bytes()
+            .to_vec());
+    }
+    // A ranged read checks the manifest it is given: this one names the
+    // path every context output's does.
+    let mut output = crate::code_run::CodeRunRawOutput::of_ref(source);
+    output.path = CONTEXT_OUTPUT_PATH.to_owned();
+    let mut head = vault
+        .read_code_run_raw_output_range(&output, 0, cap)?
+        .ok_or(Error::CorruptedIndex("missing recoverable output"))?;
+    let note = format!(
+        "\n[the first {} of {} bytes; the whole result is stored as output:blake3:{}:{}]",
+        head.len(),
+        source.byte_len,
+        crate::entity_id::bytes_to_hex_lower(&source.hash),
+        source.byte_len,
+    );
+    head.extend_from_slice(note.as_bytes());
+    Ok(head)
+}
+
 /// Whether the body `source` names may enter model context as it stands. A
 /// reference names bytes, not an occurrence, so no occurrence of them may
 /// carry a mark.
@@ -391,7 +425,8 @@ pub fn summarize_output(
     if !output_clean(vault, source)? {
         return Ok(crate::code_run::CODE_RUN_OUTPUT_PREVIEW_WITHHELD.to_owned());
     }
-    let bytes = restore_output(vault, source)?;
+    // A summary made already is one keyed read; the body is read only to
+    // make one (FIX 314).
     let key = (source.hash, *blake3::hash(recipe).as_bytes());
     {
         let txn = vault.store.env.read_txn()?;
@@ -399,6 +434,7 @@ pub fn summarize_output(
             return Ok(existing);
         }
     }
+    let bytes = restore_output(vault, source)?;
     let summary = summarize(&bytes)?;
     vault.with_write_txn_grouped(|txn| {
         if let Some(existing) = OUTPUT_SUMMARY.get(&vault.store, txn, &key)? {
