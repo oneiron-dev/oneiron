@@ -102,11 +102,7 @@ fn decode(bytes: &[u8]) -> Result<RoomSideRow> {
     if bytes.len() > MAX_ROW_BYTES {
         return Err(refused("too large"));
     }
-    let row = serde_json::from_slice(bytes).map_err(|_| refused("not a side row"))?;
-    if encode(&row)? != bytes {
-        return Err(refused("not in its one spelling"));
-    }
-    Ok(row)
+    erased::decode_held(bytes)
 }
 
 /// The key `row`, encoded as `bytes`, rides under: a cell's room and handle,
@@ -256,10 +252,13 @@ pub(crate) fn admit_room_fact_map(key: Option<&WindowKey>, map: &LoroMap) -> Res
 /// offer card is merged into the window's copy, and the merge written where
 /// the window lacks part of it. One this machine changed, `changed` or
 /// marked, is sent so; the mark orders no ballot, which settles by its own
-/// stamp (FIX 3324). Returns whether it wrote; the caller commits.
+/// stamp (FIX 3324). `window` is `doc`'s key, pinned history-free before a
+/// copy naming an erased actor changes (FIX 4872). Returns whether it
+/// wrote; the caller commits.
 pub(crate) fn mirror_room_facts(
     vault: &Vault,
     doc: &LoroDoc,
+    window: &WindowKey,
     id: &EntityId,
     entity_type: u8,
     changed: &[&str],
@@ -303,15 +302,19 @@ pub(crate) fn mirror_room_facts(
         return Ok(false);
     }
     let map = doc.get_map(ROOM_FACTS_MAP);
-    let mut wrote = false;
+    // FIX 4872: a window copy naming an actor this vault erased takes the
+    // export scrub's form first, the window pinned history-free.
+    let keys = rows
+        .iter()
+        .map(|row| encode(row).map(|bytes| carrier_key(row, &bytes)))
+        .chain(ours.iter().cloned().map(Ok))
+        .collect::<Result<Vec<_>>>()?;
+    let mut wrote = erased::settle_erased_copies(vault, &map, window, &keys)?;
     let mut seen = BTreeSet::new();
-    // FIX 4227: a window copy naming an actor this vault erased waits for
-    // the export scrub, which pins the window history-free first.
-    let rtxn = vault.store.env.read_txn()?;
     for row in &rows {
         let bytes = encode(row)?;
         let key = carrier_key(row, &bytes);
-        if !seen.insert(key.clone()) || erased::copy_names_erased(vault, &rtxn, &map, &key)? {
+        if !seen.insert(key.clone()) {
             continue;
         }
         if is_shared(&key) {
@@ -331,9 +334,7 @@ pub(crate) fn mirror_room_facts(
         wrote = true;
     }
     for cleared in ours {
-        if map_contains_binary(&map, &cleared)
-            && !erased::copy_names_erased(vault, &rtxn, &map, &cleared)?
-        {
+        if map_contains_binary(&map, &cleared) {
             map_delete(&map, &cleared)?;
             wrote = true;
         }
@@ -350,7 +351,7 @@ fn mirror_shared_row(map: &LoroMap, key: &str, row: &RoomSideRow, bytes: &[u8]) 
     if held.as_deref() == Some(bytes) {
         return Ok(false);
     }
-    let merged = match held.as_deref().map(decode) {
+    let merged = match held.as_deref().map(erased::decode_held) {
         Some(Ok(theirs)) => match merged_shared_row(&theirs, row) {
             Ok(merged) => encode(&merged)?,
             Err(reason) => {
@@ -376,6 +377,7 @@ fn mirror_shared_row(map: &LoroMap, key: &str, row: &RoomSideRow, bytes: &[u8]) 
 pub(crate) fn mirror_carriers(
     vault: &Vault,
     doc: &LoroDoc,
+    window: &WindowKey,
     carriers: &[(EntityId, u8)],
     changed: &[&str],
 ) -> Result<bool> {
@@ -387,7 +389,7 @@ pub(crate) fn mirror_carriers(
             continue;
         }
         carried = true;
-        wrote |= mirror_room_facts(vault, doc, id, *entity_type, changed)?;
+        wrote |= mirror_room_facts(vault, doc, window, id, *entity_type, changed)?;
     }
     if wrote {
         doc.commit_with(CommitOptions::new().origin(BRIDGE_ORIGIN));
@@ -680,7 +682,7 @@ pub(crate) fn scrub_room_facts(
     let mut places = Vec::new();
     map.for_each(|map_key, value| {
         if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
-            && let Some(place) = decode(&bytes).ok().and_then(|row| row.place())
+            && let Some(place) = erased::decode_held(&bytes).ok().and_then(|row| row.place())
         {
             places.push((map_key.to_owned(), place));
         }
@@ -859,7 +861,7 @@ impl Vault {
                 continue;
             };
             let _guard = materializer.lock();
-            match mirror_carriers(self, &window.doc, carriers, changed) {
+            match mirror_carriers(self, &window.doc, &window.key, carriers, changed) {
                 Ok(held) => carried |= held,
                 Err(error) => {
                     tracing::warn!(window = %window.key, error = %error, "room side rows not mirrored");

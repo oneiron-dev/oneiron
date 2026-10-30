@@ -2,20 +2,24 @@
 //! retained-memory line is charged (FIX 10104): every row's key and value at
 //! their capacity with its map node, the journal's slots, payloads and run
 //! tokens, the bookkeeping marks, and a live segment's preview, mutations and
-//! journal. A copy-on-write allocation two states share, or a run token many
-//! entries share, counts once. The room's byte budget is apart and keeps its
-//! exemptions: this counts what is held, never what the room may spend.
+//! journal, the states live snapshots read and the copies live promotion
+//! plans hold. A copy-on-write allocation two states share, or a run token
+//! many entries share, counts once. The room's byte budget is apart and keeps
+//! its exemptions: this counts what is held, never what the room may spend.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::mem::size_of;
 use std::sync::Arc;
 
-use super::super::journal::{JournalEntry, PublishedEntry};
+use super::super::journal::{JournalEntry, PromotePlan, PublishedEntry};
 use super::super::keyspace::{
     DupDelta, KeyspaceState, OverlayMutation, OverlayState, OverlayValue,
 };
+use super::held::Held;
 use super::segment::TxnSegment;
 use crate::batch::BatchOp;
+use crate::entity_id::EntityId;
+use crate::skill_attribution::RunWriteToken;
 
 /// A B-tree map or set entry's share of its node: room for a sparse node's
 /// unused slots, the node header and its edges (as the host's room entry
@@ -102,6 +106,23 @@ impl Retained {
         }
     }
 
+    /// What live snapshots and promotion plans hold: each snapshot's
+    /// state, each shared part once, and each plan's copies, its run
+    /// tokens once beside the journal's.
+    pub(super) fn held(&mut self, held: &Held) {
+        for state in &held.states {
+            self.state(state);
+        }
+        for plan in &held.plans {
+            self.add(plan.bytes);
+            for &(address, bytes) in &plan.tokens {
+                if self.first(address) {
+                    self.add(bytes);
+                }
+            }
+        }
+    }
+
     fn keyspace(&mut self, keyspace: &Arc<KeyspaceState>) {
         if !self.first(Arc::as_ptr(keyspace) as usize) {
             return;
@@ -173,6 +194,40 @@ pub(super) fn staged_entry_heap(entry: &JournalEntry) -> usize {
     size_of::<JournalEntry>()
         .saturating_add(op_heap(&entry.op))
         .saturating_add(token)
+}
+
+/// The heap a promotion plan copies out of the journal beyond its run
+/// tokens: each replay op's slot and payload at capacity, its in-room
+/// aliases, and the vectors of ids, windows, journal identities and run
+/// tokens it builds.
+pub(super) fn plan_heap(plan: &PromotePlan) -> usize {
+    let ops = plan.ops.iter().fold(
+        plan.ops.capacity().saturating_mul(size_of::<BatchOp>()),
+        |bytes, op| bytes.saturating_add(op_heap(op)),
+    );
+    let aliases = plan.temporary_short_ids.iter().fold(
+        plan.temporary_short_ids
+            .capacity()
+            .saturating_mul(size_of::<(EntityId, String)>()),
+        |bytes, (_, alias)| bytes.saturating_add(alias.capacity()),
+    );
+    ops.saturating_add(aliases)
+        .saturating_add(
+            plan.replayed
+                .capacity()
+                .saturating_mul(size_of::<EntityId>()),
+        )
+        .saturating_add(
+            plan.source_learned_at
+                .capacity()
+                .saturating_add(plan.cut_from.capacity())
+                .saturating_mul(size_of::<u64>()),
+        )
+        .saturating_add(
+            plan.source_runs
+                .capacity()
+                .saturating_mul(size_of::<Option<RunWriteToken>>()),
+        )
 }
 
 /// The heap one journaled op's payload holds, at capacity. A journal stages

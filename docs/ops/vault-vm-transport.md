@@ -100,6 +100,24 @@ credential.
   its socket errs) clears the revision, as a VM without one reads; a
   question still unanswered leaves the last answer standing. Restarting a
   companion that ended is the bootstrap's part.
+- Copies the carrier never agreed on (FIX 11074). When a member's origin
+  retires the agreed version and the other end holds a different copy, that
+  end takes the retirement for the agreed version and keeps its copy. It
+  answers `diverged_unagreed` with the copy's digest and length. Both ends
+  record the copy, and the carrier never removes it by itself. The
+  companion's `member_status` request lists each such copy (kind, member,
+  the end that holds it, both digests, the owner's answer), and each file
+  held back as `source_digest_mismatch` (FIX 11075). The engine raises one
+  inbox Ask per owner for each unanswered copy. `GET
+  /v1/owner/outbox/diverged` shows the copies with their cards, and `POST
+  /v1/owner/outbox/diverged` (`kind`, `member`, `held`, `answer`: `remove` or
+  `keep`) passes the owner's answer to the companion. The facade verbs
+  `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` take the
+  same page and answer, with their SDK and MCP doors (FIX 11739). The
+  carrier does it at its next turn. For a guest copy, `remove` deletes the file while it still
+  has that digest. For a host copy, the guest's next scan sends an ordinary
+  remove that names the digest. This change does not bump the outbox wire
+  revision: both carrier ends ship in one release.
 
 ## The channel
 

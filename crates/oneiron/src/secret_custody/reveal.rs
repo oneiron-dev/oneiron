@@ -26,9 +26,13 @@
 
 mod actor_erase;
 mod agent;
+mod close;
 mod file;
+mod notice;
 mod owner;
 mod person;
+mod replay;
+mod scope;
 mod types;
 
 use std::fmt;
@@ -39,9 +43,8 @@ use zeroize::Zeroizing;
 use super::doors::read_secret_custody_in_txn;
 use super::types::{CustodyClass, SecretCustodyStatus};
 use crate::consent::{
-    AudienceBound, ComposedEffect, ConsentDecision, DisclosureClass, DisclosureEnvelope,
-    EffectDigest, EffectFacts, EffectPlace, GrantBound, StandingConsentGrant, UndoFidelity,
-    evaluate_consent,
+    ComposedEffect, ConsentDecision, EffectDigest, EffectFacts, EffectPlace, GrantBound,
+    StandingConsentGrant, UndoFidelity, evaluate_consent,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
@@ -51,6 +54,7 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use crate::vault::Vault;
 
 pub(crate) use self::actor_erase::erase_reveal_actor_in_txn;
+pub(crate) use self::close::close_secret_reveals_in_txn;
 pub(super) use self::actor_erase::names_no_actor;
 pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
 pub use self::file::RepoFileRevealScope;
@@ -60,8 +64,8 @@ pub(crate) use self::file::{
 };
 pub use self::types::{
     HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance,
-    SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealDecision,
-    SecretRevealReceipt, SecretRevealState,
+    RevealGrantScope, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
+    SecretRevealCause, SecretRevealDecision, SecretRevealReceipt, SecretRevealState,
 };
 
 /// How long a pending reveal waits for its answer and its collection, in
@@ -131,6 +135,9 @@ pub(crate) struct RevealAsker {
     /// a run-bound secret's record names (FIX 8028); `None` for an asker no
     /// run binds.
     attempt: Option<crate::AttemptId>,
+    /// The task the asker's run works, its leased try's task ref: what a
+    /// grant of this task names (FIX 2354); `None` for an asker no task binds.
+    task: Option<String>,
 }
 
 impl RevealAsker {
@@ -142,7 +149,14 @@ impl RevealAsker {
             run,
             reader: None,
             attempt: None,
+            task: None,
         }
+    }
+
+    /// This asker with the task its leased try works, as the host bound it.
+    pub(crate) fn with_task(mut self, task: Option<String>) -> Self {
+        self.task = task;
+        self
     }
 
     /// This asker with the leased try its run's host binding holds.
@@ -280,6 +294,23 @@ struct RevealRow {
     /// reveal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     file: Option<FileSight>,
+    /// The inbox Asks this ask raised (FIX 2355), settled (seen and acked)
+    /// when the ask is answered, expires or is asked again; empty for a
+    /// reveal a standing grant covers. Notice ids only, never a value.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notices: Vec<EntityId>,
+    /// Why it closed with no value (FIX 8350).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    closed: Option<SecretRevealCause>,
+    /// The task and the leased try the asking run held: the reach a task's or
+    /// a run's grant names (FIX 2354).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    task: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    attempt: Option<crate::AttemptId>,
+    /// The reach of the standing grant that answered it (FIX 2354).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scope: Option<RevealGrantScope>,
 }
 
 /// The file an agent's read names: the artifact, its stored bytes' hash, and
@@ -441,6 +472,8 @@ impl RevealRow {
             asked_at: self.created_at,
             delivered_at: self.delivered_at,
             file: self.file.as_ref().map(|file| file.artifact),
+            cause: self.closed,
+            scope: self.scope,
         })
     }
 }
@@ -465,8 +498,9 @@ fn project_selector(project: Option<&EntityId>) -> String {
     )
 }
 
-/// The bound a reveal asks for. "Approve and stop asking" mints exactly this
-/// bound, so its reach is this connection × this class × this project.
+/// The bound a reveal asks for at its default reach. "Approve and stop
+/// asking" mints this bound unless the owner picks another reach (FIX 2354):
+/// this connection × this class × this project.
 pub(super) fn reveal_bound(
     connection: &str,
     class: CustodyClass,
@@ -475,17 +509,16 @@ pub(super) fn reveal_bound(
     disclosure_bound(connection, &reveal_class(class), project)
 }
 
-/// Shared class × connection × project bound for custody and PERSON claims.
+/// Shared class × connection × project bound for custody and PERSON claims,
+/// at this project's reach ([`scope`]).
 fn disclosure_bound(
     connection: &str,
     class: &str,
     project: Option<&EntityId>,
 ) -> Result<GrantBound> {
-    GrantBound::disclosure(
-        AudienceBound::singleton(connection)?,
-        DisclosureClass::new(class)?,
-        DisclosureEnvelope::new([project_selector(project)])?,
-    )
+    scope::project_reach(project)
+        .bound(connection, class, RevealGrantScope::Project)?
+        .ok_or(Error::InvariantViolation("a project's reach names its project"))
 }
 
 /// The registry ref of the standing grant that covers `bound` now, by the one

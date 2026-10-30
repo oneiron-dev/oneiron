@@ -186,17 +186,21 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         // A legal order binding the host keeps the record (WILL-PLAN L01
         // rows 01 and 03): its state, and the message naming its bound.
         ErrorKind::LegalHold => {
-            let state = match &error {
-                oneiron::Error::LegalHold(notice) => notice.state.as_str(),
-                _ => "legal_hold",
+            let (state, legal_hold) = match &error {
+                oneiron::Error::LegalHold(notice) => (notice.state.as_str(), Some(notice.clone())),
+                _ => ("legal_hold", None),
             };
-            ApiError::new(
+            let refusal = ApiError::new(
                 error.to_string(),
                 ApiErrorDetails::InvalidState {
                     state: Some(state.to_owned()),
                 },
                 [oneiron::error::LEGAL_HOLD_SUGGESTION],
-            )
+            );
+            match legal_hold {
+                Some(notice) => refusal.with_legal_hold(notice),
+                None => refusal,
+            }
         }
         // KS-6: a credential's custody key does not open, or custody could
         // not take a new one: the vault's state, as the facade answers it;

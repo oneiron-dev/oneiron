@@ -58,11 +58,8 @@ pub(crate) enum WeaveLensCaller {
     /// A weave Admin reads the Admin lens under its current Admin proof
     /// (OF-499 A3), on its own person's handle (`actor`). Only an explicit
     /// Admin request builds one, never a credential's membership; the
-    /// engine revalidates the proof in each read's own transaction.
-    #[expect(
-        dead_code,
-        reason = "L13's Admin step-up ingress (FIX 9431) is its first constructor"
-    )]
+    /// engine revalidates the proof in each read's own transaction. Built by
+    /// the Admin lens adapter (`api::facade`'s weave Admin doors).
     Admin {
         admin: AuthenticatedWeaveAdmin,
         auth: CoreAuth,
@@ -373,6 +370,7 @@ async fn render_listing(
                 binding: HostInferenceBinding::Advertised {
                     model: model.clone(),
                     locality,
+                    keyless: false,
                 },
                 extraction_egress: server.extraction_egress.as_deref(),
             },

@@ -74,8 +74,8 @@ pub(super) fn person(
         )
     };
     // A managed member with no slip of his own and no owner attestation,
-    // whom his supervisor signed this request for at a member door (FIX
-    // 1302 stage 1): that person's proof, judged as any other's.
+    // whom his supervisor signed this request, or his `/mcp` call, for at a
+    // member door (FIX 1302): that person's proof, judged as any other's.
     if let Some(person) = managed_person_proof(server, auth, verb) {
         return person.map_err(|_| refused());
     }
@@ -107,12 +107,12 @@ pub(super) fn person(
 }
 
 /// The proof of the person a supervisor-signed person action names for
-/// this request (FIX 1302 stage 1, `auth::managed_person`), at a member door
-/// it serves (`auth::MANAGED_PERSON_DOORS`): a live human person, as a slip
-/// holder's proof is, with no slip to bind, so the proof is this request's
-/// alone. The engine's roster, role and Grant checks then judge that person
-/// in the acting writer. `None` for any other caller or door, which keeps
-/// [`person`]'s own path.
+/// this request or his `/mcp` call (FIX 1302, `auth::managed_person`), at
+/// a member door it serves (`auth::MANAGED_PERSON_DOORS`): a live human
+/// person, as a slip holder's proof is, with no slip to bind, so the proof
+/// is this request's alone. The engine's roster, role and Grant checks then
+/// judge that person in the acting writer. `None` for any other caller or
+/// door, which keeps [`person`]'s own path.
 fn managed_person_proof(
     server: &SyncServer,
     auth: &CoreAuth,

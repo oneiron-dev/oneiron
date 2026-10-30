@@ -356,6 +356,10 @@ pub struct ApiError {
     details: Box<ApiErrorDetails>,
     /// Optional remediation hints for clients.
     suggestions: Vec<String>,
+    /// The legal-hold notice its producer supplied, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 /// The guidance a managed vault's attested holder gets at an owner door
@@ -376,6 +380,7 @@ impl ApiError {
             message: message.into(),
             details: Box::new(details),
             suggestions: suggestions.into_iter().map(Into::into).collect(),
+            legal_hold: None,
         }
     }
 
@@ -606,6 +611,18 @@ impl ApiError {
         )
     }
 
+    pub(crate) fn with_legal_hold(
+        mut self,
+        legal_hold: Box<oneiron::error::LegalHoldNotice>,
+    ) -> Self {
+        self.legal_hold = Some(legal_hold);
+        self
+    }
+
+    pub(crate) fn legal_hold(&self) -> Option<&oneiron::error::LegalHoldNotice> {
+        self.legal_hold.as_deref()
+    }
+
     pub const fn code(&self) -> ErrorCode {
         self.code
     }
@@ -638,6 +655,8 @@ impl<'de> Deserialize<'de> for ApiError {
             message: String,
             details: ApiErrorDetails,
             suggestions: Vec<String>,
+            #[serde(default)]
+            legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
         }
 
         let wire = Wire::deserialize(deserializer)?;
@@ -654,6 +673,7 @@ impl<'de> Deserialize<'de> for ApiError {
             message: wire.message,
             details: Box::new(wire.details),
             suggestions: wire.suggestions,
+            legal_hold: wire.legal_hold,
         })
     }
 }
@@ -682,6 +702,13 @@ pub struct ApiErrorEnvelopeBody {
     request_id: String,
     details: Box<ApiErrorDetails>,
     suggestions: Vec<String>,
+    #[serde(
+        default,
+        rename = "legal_hold",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 impl ApiErrorEnvelope {
@@ -694,6 +721,7 @@ impl ApiErrorEnvelope {
                 request_id: next_request_id(),
                 details: error.details,
                 suggestions: error.suggestions,
+                legal_hold: error.legal_hold,
             },
         }
     }

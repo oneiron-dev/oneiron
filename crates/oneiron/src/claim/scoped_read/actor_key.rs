@@ -65,6 +65,9 @@ pub struct ScopedReadActorKey {
     /// Set only on a due Owner schedule's owner key (FIX 1259); see
     /// [`Self::vault_owner_by_census`].
     owner_by_census: bool,
+    /// A saved lane's records caveat, carried with no proof (OF-506); see
+    /// [`Self::within_records`].
+    pub(super) record_bound: Option<std::collections::BTreeSet<String>>,
 }
 
 /// Where a read's caller sits relative to this device (DEC-0005). Only the
@@ -383,6 +386,7 @@ impl ScopedReadActorKey {
             host_action: None,
             owner_proof: None,
             owner_by_census: false,
+            record_bound: None,
         })
     }
 
@@ -422,6 +426,7 @@ impl ScopedReadActorKey {
             host_action: None,
             owner_proof: None,
             owner_by_census: false,
+            record_bound: None,
         }
     }
 
@@ -519,6 +524,17 @@ impl ScopedReadActorKey {
         self.owner.is_some()
     }
 
+    /// How a reader holding this key sees a stored key: as stored for the
+    /// vault owner's own key, as its handle for every other. A door derives
+    /// it from the key it reads under each time, never from a stored sight.
+    pub(crate) fn secret_sight(&self) -> crate::secret_custody::SecretSight {
+        if self.reads_as_vault_owner() {
+            crate::secret_custody::SecretSight::Owner
+        } else {
+            crate::secret_custody::SecretSight::Masked
+        }
+    }
+
     /// This key, bound to the credential it was presented with: every read
     /// checks `proof` as it checks any credential's, live (unexpired and
     /// unrevoked) in the read's own snapshot and within its records and
@@ -561,6 +577,30 @@ impl ScopedReadActorKey {
         self.worlds = Some(match self.worlds.take() {
             Some(held) => held.meet(&worlds),
             None => worlds,
+        });
+        self
+    }
+
+    /// This key held to `scope`, a saved lane's frozen read Scope (OF-506),
+    /// as every read door holds a credential's. It only narrows: it meets
+    /// any Scope the key already holds.
+    #[must_use]
+    pub(super) fn within_authority(mut self, scope: Scope) -> Self {
+        self.authority = Some(match self.authority.take() {
+            Some(held) => held.meet(&scope),
+            None => scope,
+        });
+        self
+    }
+
+    /// This key held to `records`, a saved lane's frozen records caveat
+    /// (OF-506): it reads only the rows named there, as the credential's own
+    /// caveat held it. It only narrows: it meets any bound the key holds.
+    #[must_use]
+    pub(super) fn within_records(mut self, records: &std::collections::BTreeSet<String>) -> Self {
+        self.record_bound = Some(match self.record_bound.take() {
+            Some(held) => held.intersection(records).cloned().collect(),
+            None => records.clone(),
         });
         self
     }

@@ -719,12 +719,7 @@ pub(super) fn finalize_receipt_scan(
             .retain(|receipt| index.receipt_matches_brief(receipt, job_ref));
     }
     if let Some(next) = scan.records.get(query.limit) {
-        let position = ReceiptScanPosition {
-            occurred_at: next.occurred_at,
-            receipt_kind: next.receipt_kind,
-            receipt_id: next.receipt_id.clone(),
-        };
-        scan.mark_incomplete().next_record = Some(position);
+        scan.mark_incomplete().next_record = Some(ReceiptScanPosition::of(next));
     }
     scan.records.truncate(query.limit);
     scan

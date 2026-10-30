@@ -215,7 +215,7 @@ impl Vault {
             }
             GitRefEnd::Tree(tree) => {
                 section.object("tree", tree);
-                wire.for_each_tree_path(handle, tree, &mut |item| {
+                wire.for_each_tree_path_retained(handle, tree, &mut |item| {
                     section.git_item(&item);
                     Ok(())
                 })?;

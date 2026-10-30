@@ -48,7 +48,7 @@ async fn vault_decisions_asks_answer_answer(
     const VERB: &str = "vault.decisions.asks.answer";
     let holder = holder(auth, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<DecisionAsk> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<DecisionAsk> {
         Ok(server
             .decision_host()
             .asks()
@@ -82,7 +82,7 @@ async fn vault_decisions_asks_climb_answer(
     const VERB: &str = "vault.decisions.asks.climb";
     let climber = holder(auth, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Option<ResolvedRole>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Option<ResolvedRole>> {
         Ok(server
             .decision_host()
             .asks()
@@ -117,7 +117,7 @@ async fn vault_decisions_asks_confirm_grant_answer(
     const VERB: &str = "vault.decisions.asks.confirm_grant";
     let owner = super::owner_binding::facade_owner(server, auth, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<DecisionAsk> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<DecisionAsk> {
         let (ask, _) =
             server
                 .decision_host()
@@ -153,7 +153,7 @@ async fn self_decisions_asks_answer(
     let holder = holder(auth, VERB)?.entity_ref();
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<DecisionAsk>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<DecisionAsk>> {
         let asks = server.vault().decision_asks_held_by(holder)?;
         // FIX 8174: the asks the caller's own lane reads whole, as
         // `GET /v1/core/decisions/asks` lists them.

@@ -424,6 +424,11 @@ pub struct ReceiptQuery {
     /// field: the served-form receipts of one asset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub asset_ref: Option<String>,
+    /// Exclusive cursor: only receipts after this position in newest-first
+    /// order, the last row of the page before (FIX 11297). A walk pages by it,
+    /// so no number of receipts sharing one second stops the walk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<ReceiptScanPosition>,
     #[serde(default = "default_receipt_query_limit")]
     pub limit: usize,
 }
@@ -438,6 +443,7 @@ impl Default for ReceiptQuery {
             start_at: None,
             end_at: None,
             asset_ref: None,
+            after: None,
             limit: DEFAULT_RECEIPT_QUERY_LIMIT,
         }
     }
@@ -489,6 +495,14 @@ impl ReceiptQuery {
         self
     }
 
+    /// Starts the query after `position`, the last receipt of the page
+    /// before, in newest-first order (FIX 11297).
+    #[must_use]
+    pub fn with_after(mut self, position: ReceiptScanPosition) -> Self {
+        self.after = Some(position);
+        self
+    }
+
     /// Adds inclusive Unix-second time bounds.
     #[must_use]
     pub const fn with_time_bounds(mut self, start_at: Option<u64>, end_at: Option<u64>) -> Self {
@@ -528,6 +542,11 @@ impl ReceiptQuery {
         }
         if let Some(asset_ref) = self.asset_ref.as_deref()
             && receipt.fields.get(FIELD_ASSET_REF).map(String::as_str) != Some(asset_ref)
+        {
+            return false;
+        }
+        if let Some(after) = &self.after
+            && !after.precedes(receipt)
         {
             return false;
         }
@@ -624,6 +643,30 @@ pub struct ReceiptScanPosition {
     pub occurred_at: u64,
     pub receipt_kind: ReceiptKind,
     pub receipt_id: String,
+}
+
+impl ReceiptScanPosition {
+    /// The position of `receipt` in newest-first receipt order.
+    #[must_use]
+    pub fn of(receipt: &ReceiptRecord) -> Self {
+        Self {
+            occurred_at: receipt.occurred_at,
+            receipt_kind: receipt.receipt_kind,
+            receipt_id: receipt.receipt_id.clone(),
+        }
+    }
+
+    /// Whether `receipt` comes after this position in newest-first order:
+    /// older, or as old and after it by kind, then id.
+    #[must_use]
+    pub fn precedes(&self, receipt: &ReceiptRecord) -> bool {
+        receipt
+            .occurred_at
+            .cmp(&self.occurred_at)
+            .then_with(|| self.receipt_kind.cmp(&receipt.receipt_kind))
+            .then_with(|| self.receipt_id.as_str().cmp(receipt.receipt_id.as_str()))
+            .is_lt()
+    }
 }
 
 impl ReceiptScan {

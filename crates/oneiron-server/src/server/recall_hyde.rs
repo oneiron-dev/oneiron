@@ -2,22 +2,33 @@
 //! outside every vault transaction. Completing it never writes vault content.
 use std::collections::BTreeMap;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+mod wait;
+pub(crate) use wait::{spawn_hyde_recall_mpsc, spawn_hyde_recall_oneshot};
 
 use oneiron::memory::{Effort, Memory, MemoryError, MemoryResult};
 use oneiron::query_expansion::host::*;
 use oneiron::query_expansion::{
     CompletionRequest, EvidenceVerdict, HydeBinding, HydeExpander, HydeExpansion, HydeRequest,
 };
+use oneiron::work_line::{LinePermit, TASK_WORK_WAIT, WorkLine};
 use oneiron::{EntityId, Error};
 
-/// Host work and its completion history are bounded together, per server instance.
+/// Active work and settled completion history are bounded separately, per server instance.
 const HOST_WORK_LIMIT: usize = 1024;
 
-#[derive(Default)]
 pub(crate) struct HydeHost {
     state: Mutex<HostState>,
     changed: Condvar,
+    active: WorkLine<[u8; 32]>,
+    queue_wait: Duration,
+}
+
+impl Default for HydeHost {
+    fn default() -> Self {
+        Self::new(TASK_WORK_WAIT)
+    }
 }
 
 #[derive(Default)]
@@ -37,6 +48,15 @@ struct Work {
 }
 
 impl HydeHost {
+    pub(crate) fn new(queue_wait: Duration) -> Self {
+        Self {
+            state: Mutex::new(HostState::default()),
+            changed: Condvar::new(),
+            active: WorkLine::new(None, HOST_WORK_LIMIT, queue_wait),
+            queue_wait,
+        }
+    }
+
     fn lock(&self) -> MemoryResult<MutexGuard<'_, HostState>> {
         self.state
             .lock()
@@ -175,18 +195,36 @@ impl HydeHost {
         if !effort.requires_rerank() {
             return Ok(None);
         }
-        let state = self.lock()?;
-        let Some(config) = state.binding.clone() else {
+        let (config, generation) = {
+            let state = self.lock()?;
+            (state.binding.clone(), state.generation)
+        };
+        let Some(config) = config else {
             return Ok(None);
         };
         let credential = memory.hyde_host_credential_key()?;
+        let wait = answer_at.map_or(self.queue_wait, |at| {
+            self.queue_wait
+                .min(at.saturating_duration_since(Instant::now()))
+        });
+        let permit = self
+            .active
+            .admit_blocking_for(credential, wait)
+            .map_err(|_| {
+                MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_INTERNAL,
+                    "HyDE host waited past its queue wait for a turn; nothing was started",
+                    &["Retry the call."],
+                )
+            })?;
         Ok(Some(QueuedHyde {
             host: Arc::clone(self),
             memory,
             config,
             answer_at,
             credential,
-            generation: state.generation,
+            generation,
+            _permit: permit,
         }))
     }
 }
@@ -198,6 +236,7 @@ pub(crate) struct QueuedHyde<'m, 'v> {
     answer_at: Option<Instant>,
     credential: [u8; 32],
     generation: u64,
+    _permit: LinePermit,
 }
 
 impl QueuedHyde<'_, '_> {
@@ -214,17 +253,22 @@ impl QueuedHyde<'_, '_> {
         if state.generation != self.generation {
             return Err(host_error());
         }
-        if state.work.len() >= HOST_WORK_LIMIT {
+        let settled = state
+            .work
+            .values()
+            .filter(|work| work.receipt.status != HydeHostStatus::Pending)
+            .count();
+        if settled >= HOST_WORK_LIMIT {
+            // Active work is bounded by the fair permit, not by receipt
+            // retention. A settled row may be evicted, never an active one or
+            // the caller's admission.
             let retired = state
                 .work
                 .iter()
                 .find(|(_, work)| !work.waiting && work.receipt.status != HydeHostStatus::Pending)
                 .map(|(id, _)| id.clone());
-            match retired {
-                Some(id) => {
-                    state.work.remove(&id);
-                }
-                None => return Err(Error::InvalidConfig("HyDE host queue is full".to_owned())),
+            if let Some(id) = retired {
+                state.work.remove(&id);
             }
         }
         let request_id = EntityId::now().to_hex();

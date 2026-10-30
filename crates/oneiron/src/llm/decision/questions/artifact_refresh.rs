@@ -27,7 +27,8 @@ pub(crate) use self::unit_receipts::artifact_unit_receipts;
 
 use serde::{Deserialize, Serialize};
 
-use super::refresh::{hold_failed, source_actor_key, standing_asker};
+use super::refresh::{hold_failed, standing_asker};
+use super::saved_reader::{SavedArtifactReads, saved_artifact_reads};
 use super::{records::*, store::*};
 use crate::blob_artifact::{ArtifactAskUnits, read_blob_artifact_head_in_txn};
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
@@ -364,21 +365,14 @@ impl Asking<'_> {
                 }
             }
         }
-        // Each read rechecks authority: the principal reads the artifact and its files.
+        // Each read rechecks authority: the principal reads the artifact and its
+        // files inside the lane the version was saved under (FIX 2116).
         let principal = self.record.principal;
-        let readable = {
-            let txn = vault.store.env.read_txn()?;
-            let key = source_actor_key(vault, &txn, principal, None)?
-                .require_access_grants(Some(principal));
-            let read = super::reader_authority::question_lane(vault, key);
-            let mut readable = BTreeSet::new();
-            for id in std::iter::once(&artifact).chain(&files) {
-                if read.entity_raw_live_in(&txn, id)?.is_some() {
-                    readable.insert(*id);
-                }
-            }
-            readable
-        };
+        let ids: Vec<EntityId> = std::iter::once(artifact)
+            .chain(files.iter().copied())
+            .collect();
+        let SavedArtifactReads { readable, sight } =
+            saved_artifact_reads(vault, principal, &self.record.read_lane, &ids)?;
         if !readable.contains(&artifact) {
             return Ok(None);
         }
@@ -400,7 +394,15 @@ impl Asking<'_> {
                 deadline: Instant::now() + ASK_DEADLINE,
                 run_ref: reference,
             };
-            ask_selection(vault, artifact, &selection, &files, only.as_ref(), ask)
+            ask_selection(
+                vault,
+                artifact,
+                &selection,
+                &files,
+                only.as_ref(),
+                ask,
+                sight,
+            )
         })
     }
 
@@ -602,7 +604,8 @@ pub enum ArtifactAskStanding {
 }
 
 /// The builder `selection` names, over the readable `files` of a folder ask, asking
-/// only the units in `only` when an arrival named them.
+/// only the units in `only` when an arrival named them; a folder ask reads its files
+/// under `sight`, the one its saved lane holds now.
 fn ask_selection(
     vault: &Vault,
     artifact: EntityId,
@@ -610,6 +613,7 @@ fn ask_selection(
     files: &[EntityId],
     only: Option<&Changed>,
     ask: ArtifactAsk<'_>,
+    sight: crate::secret_custody::SecretSight,
 ) -> Result<ArtifactAskRun> {
     match selection {
         Selection::SheetRows {
@@ -680,7 +684,7 @@ fn ask_selection(
                     sheet,
                     answer_col: *answer_col,
                     max_count_override: *max_count,
-                    sight: crate::secret_custody::SecretSight::Masked,
+                    sight,
                 },
             )
         }
