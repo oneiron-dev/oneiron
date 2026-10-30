@@ -226,11 +226,11 @@ impl Vault {
             learned_at: revision.finalized_at,
         };
         self.put_origin_publication_intent(&publication)?;
-        match authority {
+        let receipt = match authority {
             Some(lease) => self.publish_origin_ref_authorized(git, publication, lease),
             None => self.publish_origin_ref(git, publication),
-        }
-        .map(Ok)
+        }?;
+        Ok(Ok(receipt))
     }
 }
 
