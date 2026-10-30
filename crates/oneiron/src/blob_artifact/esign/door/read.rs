@@ -5,7 +5,6 @@
 //! unrestricted caller reads as before.
 use super::super::delivery_settlement::delivery_receipts_in;
 use super::super::document_view::{EsignDocumentTrail, EsignDocumentView, EsignSealTrail};
-use super::super::lane_scope::EsignScope;
 use super::super::ledger::trail_read_in;
 use super::super::seal::CANONICAL;
 use super::{
@@ -59,10 +58,10 @@ impl Memory<'_> {
     /// does. A document whose own trail does not read, or folds to no
     /// document, answers `trail` `unreadable` with that error, its seal
     /// attempts, manifest and delivery receipts still listed (FIX 6554). A
-    /// narrowed credential's lane judges the overlay before the queue is
-    /// read and again in the snapshot the rest reads, with every item its
-    /// trail names and every original and sealed artifact its manifest
-    /// names (FIX 6403).
+    /// narrowed credential's lane judges the overlay once, in the one
+    /// snapshot the queue, the trail, the manifest and the receipts read,
+    /// with every item its trail names and every original and sealed
+    /// artifact its manifest names (FIX 6403, FIX 11864).
     /// # Errors
     /// A `document_ref` that is no id, a document a narrowed lane does not
     /// reach in whole, or the store's own failure.
@@ -70,12 +69,10 @@ impl Memory<'_> {
         let document = document_id(&input.document_ref)?;
         let scope = self.esign_scope()?;
         let vault = self.vault();
-        if matches!(scope, EsignScope::Credential(_)) {
-            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-            scope.admit_in(&txn, document)?;
-        }
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        scope.admit_in(&txn, document)?;
         let attempts = crate::attempt_queue::AttemptQueue::new(vault)
-            .list_kind_bounded(super::super::ESIGN_SEAL_ATTEMPT_KIND, usize::MAX)?
+            .list_kind_bounded_in_txn(&txn, super::super::ESIGN_SEAL_ATTEMPT_KIND, usize::MAX)?
             .into_iter()
             .filter(|record| record.payload.as_slice() == document.as_bytes().as_slice())
             .map(|record| EsignSealAttemptView {
@@ -90,8 +87,6 @@ impl Memory<'_> {
                 last_error: record.last_error,
             })
             .collect();
-        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
-        scope.admit_in(&txn, document)?;
         let trail = match trail_read_in(vault, &txn, document)? {
             Ok((state, _, _)) => {
                 scope.admit_draft_in(&txn, &state.document)?;

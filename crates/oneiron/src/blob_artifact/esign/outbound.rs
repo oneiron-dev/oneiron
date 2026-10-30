@@ -191,8 +191,8 @@ enum NotApplied {
     /// A narrowed caller's lane no longer reaches the document or an
     /// original (FIX 6403).
     ScopeChanged,
-    /// The store's, the writer's or the lane read's own failure in a
-    /// narrowed caller's write (FIX 6403).
+    /// The store's, the writer's or the lane read's own failure (FIX 6403);
+    /// an unrestricted act's store failure too (FIX 11863).
     Failed(crate::Error),
 }
 impl From<crate::Error> for NotApplied {
@@ -202,17 +202,17 @@ impl From<crate::Error> for NotApplied {
 }
 impl OutboundExecutionSink for EsignSink<'_> {
     fn execute(&mut self, request: &OutboundExecutionRequest<'_>) -> OutboundExecutionOutcome {
-        let act = |txn: &mut heed::RwTxn<'_>| -> Result<EntityId> {
+        let act = |txn: &mut heed::RwTxn<'_>| -> std::result::Result<EntityId, NotApplied> {
             let id = EntityId::from_hex(&self.command.document)?;
             let marker = *blake3::hash(request.intent_ref.as_bytes()).as_bytes();
             let binding = request
                 .intent
                 .content_ref
                 .as_deref()
-                .ok_or_else(|| invalid("missing command binding"))?;
+                .ok_or(NotApplied::Refused)?;
             if let Some(prior) = DISPATCH_MARKER.get(&self.vault.store, txn, &marker)? {
                 if prior.binding != binding {
-                    return Err(invalid("dispatch replay binding changed"));
+                    return Err(NotApplied::Refused);
                 }
 
                 return Ok(id);
@@ -250,7 +250,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                     request.intent.on_behalf_of.as_deref(),
                 )?
             {
-                return Err(invalid("autonomous send is outside the principal envelope"));
+                return Err(NotApplied::Refused);
             }
             let mut state = if self.command.verb == EsignOutboundVerb::Void {
                 super::ledger::restrictive_state_in(self.vault, txn, id)?
@@ -258,15 +258,15 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 state_in(self.vault, txn, id)?
             };
             if state.document.recipients.len() != self.command.recipient_count {
-                return Err(invalid("recipient count changed"));
+                return Err(NotApplied::Refused);
             }
             for item in &state.document.items {
                 let item_id = EntityId::from_hex(&item.artifact_ref)?;
                 let original =
                     super::super::read_blob_artifact_head_in_txn(&self.vault.store, txn, &item_id)?
-                        .ok_or_else(|| invalid("missing original"))?;
+                        .ok_or(NotApplied::Refused)?;
                 if original.version != item.original_version {
-                    return Err(invalid("original PDF changed after admission"));
+                    return Err(NotApplied::Refused);
                 }
             }
             let recipients = match self.command.verb {
@@ -299,13 +299,13 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         || state.rejection.is_some()
                         || self.now >= state.document.expires_at
                     {
-                        return Err(invalid("document cannot be reminded"));
+                        return Err(NotApplied::Refused);
                     }
                     if let Some((recipient, rung)) = &self.reminder {
                         if super::lifecycle::reminder_due(self.vault, txn, id, recipient, self.now)?
                             != Some(*rung)
                         {
-                            return Err(invalid("reminder claim is no longer due"));
+                            return Err(NotApplied::Refused);
                         }
                         state = append(
                             self.vault,
@@ -324,9 +324,9 @@ impl OutboundExecutionSink for EsignSink<'_> {
                             let sent = super::ledger::events_in(self.vault, txn, id)?
                                 .into_iter()
                                 .find(|row| matches!(row.event, EsignEvent::Sent))
-                                .ok_or_else(|| invalid("pending document has no send claim"))?;
+                                .ok_or(NotApplied::Refused)?;
                             if self.now > sent.at.saturating_add(rules.reminder_cap_seconds) {
-                                return Err(invalid("reminder cap elapsed"));
+                                return Err(NotApplied::Refused);
                             }
                         }
                         state
@@ -351,7 +351,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                                 .command
                                 .reason
                                 .clone()
-                                .ok_or_else(|| invalid("void reason required"))?,
+                                .ok_or(NotApplied::Refused)?,
                         },
                         self.actor.clone(),
                         self.now,
@@ -404,11 +404,11 @@ impl OutboundExecutionSink for EsignSink<'_> {
         // FIX 6403: a narrowed caller's act lands through its content writer
         // on the document (its Grant at the document's position in a shared
         // vault, never a whole-vault one), its lane judged again there first.
+        // FIX 11863: the act tells its own refusal from the store's failure,
+        // so a store failure reads `esign_not_applied` with its error, never
+        // `esign_state_or_binding_changed`.
         let result = match &self.scope {
-            None => self
-                .vault
-                .with_write_txn_grouped(act)
-                .map_err(|_| NotApplied::Refused),
+            None => self.vault.try_with_write_txn_grouped(act),
             Some(scope) => EntityId::from_hex(&self.command.document)
                 .map_err(NotApplied::from)
                 .and_then(|document| {
@@ -418,7 +418,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                                 if !(scope.reaches)(txn)? {
                                     return Err(NotApplied::ScopeChanged);
                                 }
-                                act(txn).map_err(|_| NotApplied::Refused)
+                                act(txn)
                             })
                         })
                 }),
