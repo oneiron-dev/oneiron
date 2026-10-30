@@ -136,9 +136,9 @@ impl Vault {
 
     /// Mints the bounded booking-page invite grant for one published page.
     ///
-    /// Same shape as the two landed mints: resolve the policy floor on a read
-    /// transaction, build and validate the grant, then write it under the
-    /// existing `entities.get` already-exists guard. The caller owns
+    /// Same shape as the two landed mints: resolve the policy floor, build and
+    /// validate the grant, then write it under the existing `entities.get`
+    /// already-exists guard, all in one write transaction. The caller owns
     /// one-live-grant-per-page: `booking::mint_publish_page_invite_grant`
     /// looks up the principal index before it ever reaches this door, and
     /// derives `id` from the page so a second publish lands on
@@ -155,10 +155,28 @@ impl Vault {
         intent: &BookingPageInviteGrantMintIntent,
         created_at: u64,
     ) -> Result<StandingOutboundGrant> {
-        let policy = {
-            let rtxn = self.store.env.read_txn()?;
-            crate::gate::resolve_policy_manifest(&self.store, &rtxn)?
-        };
+        let mut wtxn = self.store.env.write_txn()?;
+        let grant =
+            self.mint_booking_page_invite_outbound_grant_in_txn(&mut wtxn, id, intent, created_at)?;
+        wtxn.commit()?;
+        Ok(grant)
+    }
+
+    /// [`Self::mint_booking_page_invite_outbound_grant`] inside the caller's
+    /// write transaction: the owner's publication write mints the page's
+    /// grant in the transaction that publishes the page (FIX 7849).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::mint_booking_page_invite_outbound_grant`].
+    pub(crate) fn mint_booking_page_invite_outbound_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        intent: &BookingPageInviteGrantMintIntent,
+        created_at: u64,
+    ) -> Result<StandingOutboundGrant> {
+        let policy = crate::gate::resolve_policy_manifest(&self.store, &*wtxn)?;
         let grant = StandingOutboundGrant {
             authority_scope: crate::federation::scope_codec::effect_preset(),
             principal_ref: intent.publisher_principal.to_hex(),
@@ -177,12 +195,10 @@ impl Vault {
         };
         grant.validate()?;
         let data = encode_standing_outbound_grant_body(&grant)?;
-        let mut wtxn = self.store.env.write_txn()?;
-        if self.store.port_entity_record(&wtxn, id)?.is_some() {
+        if self.store.port_entity_record(&*wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::OutboundGrantAlreadyExists));
         }
-        self.apply_standing_outbound_grant_body(&mut wtxn, id, created_at, data)?;
-        wtxn.commit()?;
+        self.apply_standing_outbound_grant_body(wtxn, id, created_at, data)?;
         Ok(grant)
     }
 
