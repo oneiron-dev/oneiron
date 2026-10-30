@@ -115,6 +115,7 @@ impl crate::memory::Memory<'_> {
         scope: &super::RecallScope,
         pin: &super::selection::RecallPin,
     ) -> MemoryResult<super::MemoryPack> {
+        let _l15 = crate::stage_timing::stage("recall.cut_pack");
         let worlds = self.recall_door_worlds(scope, pin)?;
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Surfaceable)?;
         let lane = match worlds {

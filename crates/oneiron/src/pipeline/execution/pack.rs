@@ -25,6 +25,7 @@ impl PipelineBuilder<'_> {
     /// the context-pack path consumes (gated scores + the claim bodies the
     /// D19 gate already decoded + the suppression count).
     pub(crate) fn run_for_pack(mut self) -> Result<PipelineOutput> {
+        let l15_pre = crate::stage_timing::stage("pipe.pre");
         // A project filter is the ingest door's project id, held to its
         // bounds before any index, expansion or telemetry work (H38).
         if let Some(project_id) = self.project_id_filter.as_deref() {
@@ -211,6 +212,7 @@ impl PipelineBuilder<'_> {
         // only in that clock score differently and must not collide on one
         // fork hash. An implicit wall clock stays unhashed, as pinned.
         let explicit_time_dependent_now = self.temporal_now;
+        drop(l15_pre);
 
         let (attempt, mut policy_trace) = self.run_retrieval_policy_attempts(
             occurred_range,
@@ -518,6 +520,8 @@ impl PipelineBuilder<'_> {
             // room has flipped. Canonical entries carry `None` and take the
             // unchanged base path.
             let provisional = telemetry_action == RetrievalAction::ContextPack;
+            let l15_telemetry_write =
+                crate::stage_timing::stage("pipe.telemetry_provisional_write");
             let write_result = match self.session {
                 Some(session) => session.register_run(&run_record, provisional),
                 None if provisional => self
@@ -526,6 +530,7 @@ impl PipelineBuilder<'_> {
                     .record_context_pack_provisional_retrieval_run(&run_record),
                 None => self.vault.store.record_retrieval_run(&run_record),
             };
+            drop(l15_telemetry_write);
             match write_result {
                 Ok(())
                     if self.session.is_some_and(
