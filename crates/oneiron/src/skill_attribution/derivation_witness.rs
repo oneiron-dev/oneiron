@@ -302,6 +302,23 @@ pub(super) fn landed_pairs_in_txn(
     pairs_in_txn(store, txn, attempt, generation, false)
 }
 
+/// The edges that landed late for every lease generation of `attempt`'s try,
+/// oldest generation first, read only through `txn`: the late landings its
+/// credit reconciles (FIX 11361 residual of CALL-B8). A row with an erased
+/// end, or that no longer decodes, names none.
+pub(super) fn landed_all_pairs_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+    last_generation: u32,
+) -> Result<Vec<(EntityId, EntityId)>> {
+    let mut pairs = Vec::new();
+    for generation in 0..=last_generation {
+        pairs.extend(pairs_in_txn(store, txn, attempt, generation, false)?);
+    }
+    Ok(pairs)
+}
+
 /// The derivations of `attempt`'s try `generation` whose `live` flag is
 /// `live`, with both ends standing.
 fn pairs_in_txn(
