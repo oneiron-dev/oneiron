@@ -15,7 +15,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::gate::{ConsolidationReader, claim_consolidation_eligible_in_txn};
 use crate::identity_topology::EntityLifecycleState;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON};
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 
@@ -24,7 +24,12 @@ use super::{
     validate_actor_confidence_prior_claim_structure, validate_provider_key,
 };
 
-/// Disposable per-provider shortcut to the entity id of the actor PERSON
+/// The entity types a provider actor is stored as: a channel actor is a
+/// MACHINE (`channel_identity::actors`), and a provider with no channel actor
+/// gets a PERSON when its first prior is written.
+pub(crate) const PROVIDER_ACTOR_ENTITY_TYPES: [u8; 2] = [ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON];
+
+/// Disposable per-provider shortcut to the entity id of the provider actor
 /// carrying a given `provider_key`. Key: `sha256(provider)`.
 pub(super) const PROVIDER_ACTOR_INDEX: SideTable<[u8; 32], EntityId, Raw> =
     SideTable::new(&side_table::PROVIDER_ACTOR_INDEX);
@@ -63,11 +68,12 @@ const PROVIDER_ACTOR_BODY_KEY: &str = "provider_key";
 ///
 /// * **Cache-valid.** The cached head id must still resolve to an active
 ///   `actor.confidence_prior` CLAIM that passes the prior-structure validator
-///   and carries a unit-interval value. Its subject projects to an active PERSON
-///   carrying this exact `provider_key`. The head is re-selected over that actor's
-///   direct priors plus the cached claim's own subject shell on every read, so
-///   a same-owner supersession is observed immediately and a cached row naming
-///   an older but still-valid head cannot pin the answer.
+///   and carries a unit-interval value. Its subject projects to an active
+///   provider actor carrying this exact `provider_key`. The head is
+///   re-selected over that actor's direct priors plus the cached claim's own
+///   subject shell on every read, so a same-owner supersession is observed
+///   immediately and a cached row naming an older but still-valid head cannot
+///   pin the answer.
 /// * **Stale or missing.** The shortcut teaches nothing, so truth decides:
 ///   every active actor carrying the key is enumerated, the actor shortcut is
 ///   repaired to the lexicographically smallest of them, and the newest prior
@@ -337,7 +343,7 @@ fn projected_prior_owner_in_txn(
     ))
 }
 
-/// Whether `id` is CURRENTLY an active PERSON entity whose body names exactly
+/// Whether `id` is CURRENTLY an active provider actor whose body names exactly
 /// `provider`. Redirect shells (`Merged` / `Split`) are not active actors.
 fn active_actor_provider_key_matches_in_txn(
     vault: &Vault,
@@ -361,7 +367,7 @@ fn actor_provider_key_matches_in_txn(
         return Ok(false);
     };
 
-    if raw.entity_type != ENTITY_TYPE_PERSON {
+    if !PROVIDER_ACTOR_ENTITY_TYPES.contains(&raw.entity_type) {
         return Ok(false);
     }
     Ok(provider_key_from_actor_body(raw.body.get(0..).unwrap_or(&[])).as_deref() == Some(provider))
@@ -375,7 +381,7 @@ struct ProviderActors {
     unresolved: Vec<EntityId>,
 }
 
-/// Every ACTIVE PERSON entity whose body carries exactly `provider_key ==
+/// Every ACTIVE provider actor whose body carries exactly `provider_key ==
 /// provider`, sorted and deduplicated.
 ///
 /// Matching shells contribute priors only through an active matching head;
@@ -383,8 +389,8 @@ struct ProviderActors {
 /// and the ones it left unresolved are carried apart (FIX 10053).
 /// The full-scan truth source, run on a stale shortcut, a miss, or before a write.
 /// Malformed and unrelated bodies are IGNORED rather than fatal: the PERSON
-/// type index is shared with every other person in the vault, and one
-/// undecodable neighbour must not deny a provider its prior.
+/// and MACHINE type indexes are shared with every other person and machine in
+/// the vault, and one undecodable neighbour must not deny a provider its prior.
 fn provider_actors_for_key_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -392,18 +398,17 @@ fn provider_actors_for_key_in_txn(
 ) -> Result<ProviderActors> {
     let mut actors = Vec::new();
     let mut shells = Vec::new();
-    for entry in vault
-        .store
-        .port_entity_ids_by_type(rtxn, ENTITY_TYPE_PERSON, None)?
-    {
-        let id = entry?;
-        if !actor_provider_key_matches_in_txn(vault, rtxn, &id, provider)? {
-            continue;
-        }
-        if vault.entity_lifecycle_state_in_txn(rtxn, &id)? == EntityLifecycleState::Active {
-            actors.push(id);
-        } else {
-            shells.push(id);
+    for kind in PROVIDER_ACTOR_ENTITY_TYPES {
+        for entry in vault.store.port_entity_ids_by_type(rtxn, kind, None)? {
+            let id = entry?;
+            if !actor_provider_key_matches_in_txn(vault, rtxn, &id, provider)? {
+                continue;
+            }
+            if vault.entity_lifecycle_state_in_txn(rtxn, &id)? == EntityLifecycleState::Active {
+                actors.push(id);
+            } else {
+                shells.push(id);
+            }
         }
     }
     actors.sort_unstable();
@@ -522,10 +527,12 @@ pub(super) fn prior_claims_for_actor_in_txn(
 /// Resolves the provider actor, minting one only when TRUTH — not the
 /// shortcut — says none exists.
 ///
-/// The mint is behind the resolver on purpose: an upgraded vault whose actor
-/// row was never written already HAS its actor in the graph, and minting a
-/// second one there would fork the provider's belief history across two PERSON
-/// entities that only a merge could ever rejoin.
+/// The mint is behind the resolver on purpose: a provider whose actor row was
+/// never indexed already HAS its actor in the graph (a registered channel's
+/// MACHINE actor among them), and minting a second one there would fork the
+/// provider's belief history across two entities that only a merge could ever
+/// rejoin. The minted actor is a PERSON: it belongs to a provider with no
+/// channel actor.
 pub(super) fn resolve_or_create_provider_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -579,7 +586,7 @@ pub(super) fn resolve_or_create_provider_actor_in_txn(
 
 /// The provider's actor, validated against live truth and repaired on miss.
 ///
-/// A cached id is honoured only while it still names an ACTIVE PERSON carrying
+/// A cached id is honoured only while it still names an ACTIVE provider actor carrying
 /// this exact `provider_key`; anything else (absent row, malformed bytes, wrong
 /// entity type, redirect shell, rewritten body) routes to the full scan, which
 /// picks the lexicographically SMALLEST active actor and rewrites the shortcut
@@ -622,7 +629,7 @@ pub(super) fn provider_key_hash(provider: &str) -> [u8; 32] {
     Sha256::digest(provider.as_bytes()).into()
 }
 
-/// The `provider_key` string in a PERSON actor's MessagePack body, if any.
+/// The `provider_key` string in a provider actor's MessagePack body, if any.
 fn provider_key_from_actor_body(body: &[u8]) -> Option<String> {
     let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut std::io::Cursor::new(body)) else {
         return None;
