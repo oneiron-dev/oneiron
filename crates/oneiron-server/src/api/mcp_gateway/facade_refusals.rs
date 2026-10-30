@@ -21,13 +21,14 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
     // named below, and they time out all the same.
     let retry_after = error.retry_after;
     let resets_at = std::mem::take(&mut error.resets_at);
+    let legal_hold = error.legal_hold;
     if let Some(stop) = error.hook {
-        return with_refusal_timing(mcp_hook_stop(*stop), retry_after, resets_at);
+        return with_refusal_timing(mcp_hook_stop(*stop), retry_after, resets_at, legal_hold);
     }
     if let Some(correction) = error.wrong_root {
         let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
         refusal.wrong_root = Some(correction);
-        return with_refusal_timing(refusal, retry_after, resets_at);
+        return with_refusal_timing(refusal, retry_after, resets_at, legal_hold);
     }
     let code = match error.code.as_str() {
         oneiron::MEMORY_CODE_NOT_FOUND => -32004,
@@ -84,6 +85,11 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         }
         code => refusal_kind(code),
     };
+    let kind = if legal_hold.is_some() {
+        Some("legal_hold")
+    } else {
+        kind
+    };
     if let Some(kind) = kind {
         // A model that did not answer says when to call again (FIX 3194),
         // and so does a render that can be asked again (FIX 8242).
@@ -91,6 +97,7 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
             McpGatewayError::new(code, kind, error.message),
             retry_after,
             resets_at,
+            legal_hold,
         );
     }
     // A facade refusal carrying a successor keeps the same stable kind and
@@ -106,6 +113,7 @@ fn mcp_facade_refusal(mut error: oneiron::MemoryError) -> McpGatewayError {
         },
         retry_after,
         resets_at,
+        legal_hold,
     )
 }
 
@@ -116,7 +124,9 @@ fn with_refusal_timing(
     mut refusal: McpGatewayError,
     retry_after: Option<u64>,
     resets_at: Vec<u64>,
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 ) -> McpGatewayError {
+    refusal.legal_hold = legal_hold;
     refusal.retry_after = refusal.retry_after.or(retry_after);
     if !resets_at.is_empty() {
         refusal.resets_at = Some(Box::new(resets_at));

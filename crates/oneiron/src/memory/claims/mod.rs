@@ -178,6 +178,9 @@ pub struct RecordRefusal {
     /// The JSON pointer of the refused element or slot (`/claims/2`), the
     /// field its receipt names.
     pub field: String,
+    /// The legal-hold notice behind this refusal, when its producer supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legal_hold: Option<Box<crate::error::LegalHoldNotice>>,
 }
 
 impl RecordRefusal {
@@ -189,6 +192,7 @@ impl RecordRefusal {
             message: error.message.clone(),
             suggestions: error.suggestions.clone(),
             field,
+            legal_hold: error.legal_hold.clone(),
         }
     }
 

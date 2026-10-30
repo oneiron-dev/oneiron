@@ -1,5 +1,6 @@
 use zeroize::Zeroize;
 
+use super::overlay::PlanCharge;
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -177,10 +178,10 @@ impl JournalScope {
 /// One turn's promotable closure, cut out of the typed journal by
 /// [`OverlaySnapshot::plan_promotion`] (ARCH-0052 D4, ONE-1730).
 ///
-/// The plan is pure data: it names WHAT to replay, and the promote
-/// transaction decides how. Selection and durable commit are separate so the
-/// caller can hold the per-session state lock across both and a failed commit
-/// leaves the journal it was cut from untouched.
+/// The plan is data and the charge on its copies: it names WHAT to replay,
+/// and the promote transaction decides how. Selection and durable commit are
+/// separate so the caller can hold the per-session state lock across both and
+/// a failed commit leaves the journal it was cut from untouched.
 pub(crate) struct PromotePlan {
     /// The replay program, in journal-staging order — the shell put leads, so
     /// every later op refers to a row the base apply already materialized.
@@ -209,6 +210,9 @@ pub(crate) struct PromotePlan {
     /// Whether the turn is already in base, saved by this stretch, so the
     /// plan only adds messages said into it since ([`Self::appends`]).
     pub(super) appends: bool,
+    /// The copies' charge on what the room's overlay retains, held for the
+    /// plan's life. Last, so it drops after the copies it counts.
+    pub(super) charge: Option<PlanCharge>,
 }
 
 // Replay ops and in-room aliases are private temporary copies of journal
