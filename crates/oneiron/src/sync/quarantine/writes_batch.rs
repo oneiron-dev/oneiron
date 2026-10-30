@@ -2,8 +2,9 @@
 
 use super::keys_classifier::{
     MAX_QUARANTINE_ROWS, MAX_QUARANTINE_ROWS_PER_PASS, QUARANTINE_BATCH_DROPS_KEY,
-    QUARANTINE_MAX_AGE_SECS, QuarantineContainer, QuarantineRecord, crdt_key_metadata,
-    decode_u64_le_counter, encode_quarantine_key, encode_record, payload_hash, reason_code_for,
+    QUARANTINE_MAX_AGE_SECS, QUARANTINE_PREFIX, QuarantineContainer, QuarantineRecord,
+    crdt_key_metadata, decode_record, decode_u64_le_counter, encode_quarantine_key, encode_record,
+    payload_hash, reason_code_for,
 };
 use super::remat_markers::set_replay_remat_marker_in_txn;
 use super::retention_reports::{allocate_next_quarantine_seq, enforce_retention_in_txn};
@@ -112,6 +113,41 @@ pub(in crate::sync) fn quarantine_rejected_op_in_txn(
     )?;
     set_remat_marker_for_quarantine_in_txn(vault, wtxn, window_key, container, crdt_key)?;
     Ok(seq)
+}
+
+/// [`quarantine_rejected_op_in_txn`] once per rejection: a standing row of
+/// the same container, key and payload digest answers for it, and nothing is
+/// written (FIX 2691: a divergent office proposal meets this vault's copy at
+/// every pass, under its key and a digest of both copies). Returns the new
+/// row's sequence, or `None` when one stands.
+pub(in crate::sync) fn quarantine_once_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    window_key: &str,
+    container: QuarantineContainer,
+    crdt_key: &str,
+    error: &Error,
+    payload: &[u8],
+) -> Result<Option<u64>> {
+    let (crdt_key_hash, crdt_key_len) = crdt_key_metadata(crdt_key);
+    let payload_hash = payload_hash(payload);
+    for entry in vault
+        .store
+        .sync_queue
+        .prefix_iter(&*wtxn, QUARANTINE_PREFIX)?
+    {
+        let (_, value) = entry?;
+        if decode_record(value).is_ok_and(|held| {
+            held.container == container
+                && held.crdt_key_hash == crdt_key_hash
+                && held.crdt_key_len == crdt_key_len
+                && held.payload_hash == payload_hash
+        }) {
+            return Ok(None);
+        }
+    }
+    quarantine_rejected_op_in_txn(vault, wtxn, window_key, container, crdt_key, error, payload)
+        .map(Some)
 }
 
 /// Builds and persists a quarantine record in its own write transaction.
