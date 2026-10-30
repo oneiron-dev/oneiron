@@ -185,7 +185,7 @@ pub fn edit_own_standing_block(
     });
     let claim_ref = vault.edit_standing_block(
         &handle,
-        WriteActor::new(memory.actor(), memory.actor_class()),
+        memory.write_actor(),
         &input.run_ref,
         StandingBlockEdit::Claim {
             field: input.field.clone(),

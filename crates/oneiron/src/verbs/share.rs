@@ -183,7 +183,7 @@ pub fn revoke_share_as_caller(
     input: ShareRevokeRequest,
 ) -> MemoryResult<ShareRevokeReceipt> {
     let share_id = share_ref(&input.share_ref)?;
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     let revoked_at = memory.vault().store.clock.now_recorded_at();
     let share = memory
         .vault()
