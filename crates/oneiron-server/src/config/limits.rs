@@ -625,7 +625,10 @@ impl LimitsConfig {
                 EngineLimit::ConnectorDispatchBatch,
                 connector_dispatch_batch,
             ),
-            (EngineLimit::IdentityDecisionStateBytes, identity_decision_state_bytes),
+            (
+                EngineLimit::IdentityDecisionStateBytes,
+                identity_decision_state_bytes,
+            ),
             (EngineLimit::IdentityExcerptBytes, identity_excerpt_bytes),
             (EngineLimit::CommunityCacheBytes, community_cache_bytes),
             (
