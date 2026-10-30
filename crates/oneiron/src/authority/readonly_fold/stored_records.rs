@@ -3,21 +3,32 @@
 //! its custody and its pad objects, folded as [`fold_authority_log`] folds a
 //! log, with no `Store`, no cache and no write. A vault's id is its genesis
 //! root, so no posture, pin or clock of the install it is open in changes
-//! which vault the rows name. No checkpoint image the vault adopted is read:
-//! a vault that holds its genesis only through one folds to none here.
+//! which vault the rows name. A vault that adopted a checkpoint image, and
+//! may hold its genesis only through it, folds from that image as the live
+//! fold does (FIX 11823): its stored pin row and the image bytes it names,
+//! read in the same transaction, verified as a stored adoption is.
 
 use super::*;
 
 /// The vault id `records` fold to: each an AUTHORITY_LOG record as the type
 /// index names it, its id key and its stored bytes (header and signed body).
-/// `None` when they fold to no one vault: no valid genesis among them, or
-/// more than one root.
+/// A vault that adopted a checkpoint image (`adopted_pin`, its stored pin
+/// row, and `adopted_image`, the stored bytes of the image that row names)
+/// folds from it, as the live fold does: the pin verified against the image
+/// ([`crate::authority::checkpoint_adopt::verified_adoption_of_rows`]), the
+/// image's vault id seeded, then the records above it, the ones it does not
+/// cover, folded for another root. `None` when they fold to no one vault: no
+/// valid genesis among them and no adopted image, or more than one root.
 ///
 /// # Errors
 ///
-/// A record of another type, or a header or an entry that does not decode.
+/// A record of another type, or a header or an entry that does not decode;
+/// a pin row that does not decode, or an adoption whose image is missing or
+/// no longer verifies.
 pub(crate) fn folded_vault_id_of_records(
     records: &[(Vec<u8>, Vec<u8>)],
+    adopted_pin: Option<&[u8]>,
+    adopted_image: Option<&[u8]>,
 ) -> Result<Option<AuthorityVaultId>> {
     let mut entries = Vec::with_capacity(records.len());
     for (_, raw) in records {
@@ -31,5 +42,23 @@ pub(crate) fn folded_vault_id_of_records(
             .ok_or(Error::CorruptedIndex("entity header"))?;
         entries.push(decode_authority_log_entry_body(body)?);
     }
-    Ok(fold_authority_log(&entries).vault_id)
+    let Some(pin_row) = adopted_pin else {
+        return Ok(fold_authority_log(&entries).vault_id);
+    };
+    let adopted =
+        crate::authority::checkpoint_adopt::verified_adoption_of_rows(pin_row, adopted_image)?;
+    let image = adopted.image();
+    let mut above = Vec::new();
+    for entry in entries {
+        if !image.rows.contains_key(&authority_entry_hash(&entry)?) {
+            above.push(entry);
+        }
+    }
+    // A genesis above the image roots another vault: more than one root.
+    let fold = fold_authority_log(&above);
+    let another_root = match fold.vault_id {
+        Some(root) => root != image.vault_id,
+        None => fold.vault_root_is_conflicted(),
+    };
+    Ok((!another_root).then_some(image.vault_id))
 }

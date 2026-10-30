@@ -61,7 +61,8 @@ pub(super) fn is_bundle_part_row(key: &[u8]) -> bool {
 
 /// What a paired read takes beside a source's custody: its pad object rows
 /// under `prefixes` and, apart from them, its bundle parts; its install's
-/// machine id; and its AUTHORITY_LOG records, whose fold names its vault.
+/// machine id; and its AUTHORITY_LOG records with the checkpoint image it
+/// adopted, pin row and image bytes, whose fold names its vault.
 pub(super) fn paired_source_ask<'a>(prefixes: &'a [&'a [u8]]) -> PairedSourceAsk<'a> {
     PairedSourceAsk {
         sync_state: prefixes,
@@ -69,6 +70,8 @@ pub(super) fn paired_source_ask<'a>(prefixes: &'a [&'a [u8]]) -> PairedSourceAsk
         bundle_part: is_bundle_part_row,
         machine_id: side_table::IDENTITY_MACHINE_ID.prefix,
         entity_type: crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+        adopted_pin: crate::authority::adopted_pin_row_key(),
+        adopted_image: crate::authority::adopted_image_row_key,
     }
 }
 
@@ -95,11 +98,10 @@ pub(crate) enum UncapturedPadObjects {
     /// transaction.
     IdentityUnread,
     /// A source whose authority records fold to no one vault (no valid
-    /// genesis among them, more than one root, or a genesis held only
-    /// through an adopted checkpoint image), so which vault its objects are
-    /// for is not proven (CALLS: PAD-1 paired source identity): a vault read
-    /// off its disk, or one open in this process with no genesis yet
-    /// (FIX 11826).
+    /// genesis among them and no adopted checkpoint image, or more than one
+    /// root), so which vault its objects are for is not proven (CALLS: PAD-1
+    /// paired source identity): a vault read off its disk, or one open in
+    /// this process with no genesis yet (FIX 11826).
     SourceVaultUnfolded,
 }
 
@@ -123,7 +125,8 @@ pub(crate) enum PadSourceIdentity {
     /// transaction its custody and objects are read in, as its home names
     /// them to its machines. A vault open in this process folds its own log
     /// there; a vault read off its disk folds the AUTHORITY_LOG records that
-    /// read took, Store-free (`authority::folded_vault_id_of_records`).
+    /// read took, from the checkpoint image it adopted where it adopted one,
+    /// Store-free (`authority::folded_vault_id_of_records`, FIX 11823).
     /// A source whose records fold to no one vault keeps its objects
     /// uncarried; a disk source that keeps none is an empty capture.
     FoldedInCustodyRead,
@@ -195,8 +198,9 @@ pub(super) fn disk_capture(
 
 /// The vault and the home a disk source's objects are named for, from the
 /// read that read its custody: the vault id its stored authority records
-/// fold to, and its machine id (the zero id before it has one). `None` when
-/// the records fold to no one vault.
+/// fold to, from the checkpoint image it adopted where it adopted one, and
+/// its machine id (the zero id before it has one). `None` when the records
+/// fold to no one vault.
 #[cfg(feature = "sync")]
 fn disk_identity(
     identity: Result<PairedIdentityRows>,
@@ -209,10 +213,12 @@ fn disk_identity(
             .ok_or(crate::error::Error::CorruptedIndex("machine id row"))?,
         None => crate::entity_id::EntityId::from_bytes_unchecked([0; 16]),
     };
-    Ok(
-        crate::authority::folded_vault_id_of_records(&identity.records)?
-            .map(|vault_id| (vault_id, home)),
-    )
+    let vault_id = crate::authority::folded_vault_id_of_records(
+        &identity.records,
+        identity.adopted_pin.as_deref(),
+        identity.adopted_image.as_deref(),
+    )?;
+    Ok(vault_id.map(|vault_id| (vault_id, home)))
 }
 
 /// Not carried, for `reason`.

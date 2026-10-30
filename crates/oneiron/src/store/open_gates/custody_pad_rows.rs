@@ -1,7 +1,8 @@
 //! The paired custody read (PAD-1, the L01 seam approved 10-22 10:3x, its
 //! identity and bundle rows agreed with L14 10-30 06:07): an existing vault's
 //! live custody rows, its home's current pad object rows, its bundle parts,
-//! its install's machine id and its stored authority records, read off its
+//! its install's machine id, its stored authority records and the checkpoint
+//! image it adopted, pin row and image bytes (FIX 11823), read off its
 //! directory in one read-only environment and one transaction, so what a side
 //! restore carries of the objects, and the vault and home it names them for,
 //! are the same revision as the custody it reads. It is the read-only door's
@@ -36,6 +37,10 @@ pub(in crate::store) struct PairedSourceAsk<'a> {
     pub(in crate::store) machine_id: &'a [u8],
     /// The entity type whose stored records it reads, by the type index.
     pub(in crate::store) entity_type: u8,
+    /// The `vault_meta` key its adopted checkpoint pin row is stored under.
+    pub(in crate::store) adopted_pin: &'a [u8],
+    /// The `vault_meta` key of the image a stored pin row names.
+    pub(in crate::store) adopted_image: fn(&[u8]) -> Result<Vec<u8>>,
 }
 
 /// The `sync_state` rows a paired read took under the prefixes asked, full
@@ -55,6 +60,12 @@ pub(in crate::store) struct PairedIdentityRows {
     /// Every stored record of the entity type asked, its id key and its
     /// stored bytes (header and body), in id order.
     pub(in crate::store) records: Rows,
+    /// The adopted checkpoint pin row's stored bytes; `None` when the vault
+    /// adopted no image.
+    pub(in crate::store) adopted_pin: Option<Vec<u8>>,
+    /// The stored bytes of the image that pin row names; `None` with no pin
+    /// row, or none stored under the key it names.
+    pub(in crate::store) adopted_image: Option<Vec<u8>>,
 }
 
 /// One paired read of an existing vault, and the canonical root it was read
@@ -142,8 +153,10 @@ fn sync_rows_in(env: &Env, txn: &RoTxn<'_>, ask: &PairedSourceAsk<'_>) -> Result
     Ok(rows)
 }
 
-/// The machine id row and every stored record of `ask`'s entity type, in
-/// `txn`: the type index names each record's id, and `entities` holds it.
+/// The machine id row, every stored record of `ask`'s entity type, and the
+/// adopted checkpoint's pin row with the image bytes it names, in `txn`: the
+/// type index names each record's id, `entities` holds it, and `vault_meta`
+/// holds the pin and the image.
 fn identity_rows_in(
     env: &Env,
     txn: &RoTxn<'_>,
@@ -170,8 +183,20 @@ fn identity_rows_in(
             .ok_or(Error::CorruptedIndex("type index row without entity"))?;
         records.push((id.to_vec(), raw.to_vec()));
     }
+    let meta = env
+        .open_database::<Bytes, Bytes>(txn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    let adopted_pin = meta.get(txn, ask.adopted_pin)?.map(<[u8]>::to_vec);
+    let adopted_image = match &adopted_pin {
+        Some(pin) => meta
+            .get(txn, &(ask.adopted_image)(pin)?)?
+            .map(<[u8]>::to_vec),
+        None => None,
+    };
     Ok(PairedIdentityRows {
         machine_id,
         records,
+        adopted_pin,
+        adopted_image,
     })
 }
