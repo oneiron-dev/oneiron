@@ -263,6 +263,11 @@ pub enum CapsuleRead {
     /// object's outer readers, so it can neither carry the generation nor
     /// see a lost acknowledgement in it.
     NoCapsuleHere,
+    /// No capsule opens with this machine's key, and the publication grant
+    /// the object carries for the request this install publishes for does:
+    /// it carries that one generation and publishes on top of it, with no
+    /// world key and no later generation by it.
+    PublicationGrant,
     /// It opened, or failed, for another reason: a publisher this install
     /// does not take, or another error. Not a capsule question.
     Refused,
