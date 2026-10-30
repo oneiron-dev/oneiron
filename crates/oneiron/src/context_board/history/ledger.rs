@@ -602,6 +602,10 @@ impl Vault {
             {
                 return Err(BoardHistoryError::UnreadableDocument(*id));
             }
+            // Admitted on its stored row: a file-plane ASSET's live row then
+            // reconstructs its body, not its manifest; an older revision
+            // keeps the manifest it was stored as.
+            let raw = self.materialized_revision_in_txn(&txn, id, raw)?;
             documents.insert(*id, raw[ENTITY_METADATA_HEADER_LEN..].to_vec());
         }
         let read_receipt = scoped.read_receipt_in(&txn, None, 0)?;
