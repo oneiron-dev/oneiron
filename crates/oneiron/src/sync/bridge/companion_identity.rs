@@ -279,7 +279,18 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // quarantines remote failures and commits siblings, so hydration needs
     // the same per-entity rollback boundary as the entity-delta observer.
     // A carrier its window binds by reference is the body it names (FIX 5489).
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones).with_body_refs(doc);
+    let mut ingest =
+        IngestCtx::new(vault, window_key, lease_vault_id, tombstones).with_body_refs(doc);
+    // An AUTHORITY_LOG endpoint is judged beside the window's other authority
+    // rows, as its carrier's are (FIX 11959).
+    if crate::sync::ingest::is_authority_row(&blob) {
+        ingest = ingest.with_authority_beside(
+            crate::sync::selector::authority_beside::AuthorityBeside::gather(
+                &doc.get_map("entities"),
+                |_| true,
+            ),
+        );
+    }
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     let step = ingest_entity_in_txn(&ingest, &mut savepoint, &hex_id, Some(&blob))?;
     if let EntityStep::Quarantine(refusal) = step {

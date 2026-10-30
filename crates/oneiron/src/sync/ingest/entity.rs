@@ -22,6 +22,7 @@ use crate::sync::quota;
 use crate::vault::Vault;
 
 mod asset_ref;
+mod beside;
 mod withdrawn;
 
 /// What one ingest reads besides the value: the vault, the window the value replays into, the

@@ -23,6 +23,7 @@ use crate::sync::federation_burst::erase::{self, CarriedBy};
 use crate::sync::federation_burst::schedule::{self, RetainedWorkQueue, Waiting};
 use crate::sync::ingest::{EntityStep, IngestCtx, RefusalRetry, ingest_entity_in_txn};
 use crate::sync::loro_support::TombstoneIndex;
+use crate::sync::selector::authority_beside::AuthorityBeside;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The retained operations, by signer key (64 hex) then entity id (32 hex).
@@ -212,9 +213,9 @@ pub(crate) fn erase_retained_in_txn(
 /// Replays the retained op at `key` through the entity ladder in a savepoint,
 /// its share passed over; `true` when it landed. A refusal a later pass may
 /// lift leaves it waiting; any other refusal ends it as Rejected. `windows`
-/// holds the tombstones of each window this pass loaded, so a window is
-/// loaded once per pass, however many of its ops the pass replays.
-fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, TombstoneIndex>) -> Result<bool> {
+/// holds each window this pass loaded, so a window is loaded once per pass,
+/// however many of its ops the pass replays.
+fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, ReplayWindow>) -> Result<bool> {
     // The window first, in a read of its own: the tombstone index below
     // loads the window document, which opens its own read transactions and
     // takes the materializer lock on a live window — neither crosses into
@@ -229,9 +230,9 @@ fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, TombstoneIndex
         };
         work.window.clone()
     };
-    let tombstones = windows
+    let loaded = windows
         .entry(window.clone())
-        .or_insert_with(|| window_tombstones(vault, &window));
+        .or_insert_with(|| replay_window(vault, &window));
     vault.with_write_txn_grouped(|wtxn| {
         let Some(work) = WORK.get(vault, wtxn, &key.to_owned())? else {
             return Ok(false);
@@ -245,7 +246,8 @@ fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, TombstoneIndex
             return Ok(false);
         }
         let id = entity_of(key)?;
-        let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, tombstones);
+        let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, &loaded.tombstones)
+            .with_authority_beside(loaded.authority.clone());
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         let step = {
             REPLAYING.with(|replaying| replaying.set(true));
@@ -267,21 +269,38 @@ fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, TombstoneIndex
     })
 }
 
-/// The tombstones of `window`, indexed for one replay (FIX 11185): the live
-/// document's when the window is open here, else the persisted state with
-/// its pending updates. A window that does not read replays as it did
+/// One window a drain pass replays into, loaded once for the pass: its
+/// tombstones (FIX 11185), and its AUTHORITY_LOG rows, which each retained
+/// authority op is judged beside, as its carrier's are (FIX 11959).
+struct ReplayWindow {
+    tombstones: TombstoneIndex,
+    authority: AuthorityBeside,
+}
+
+impl ReplayWindow {
+    fn of(doc: &loro::LoroDoc) -> Self {
+        Self {
+            tombstones: TombstoneIndex::build(&doc.get_map("tombstones")),
+            authority: AuthorityBeside::gather(&doc.get_map("entities"), |_| true),
+        }
+    }
+}
+
+/// `window` for one pass's replays: the live document's when the window is
+/// open here, read under its materializer lock, else the persisted state
+/// with its pending updates. A window that does not read replays as it did
 /// before its index, gated by the `dt:` marker and the row fence the ladder
-/// still checks.
-fn window_tombstones(vault: &Vault, window: &str) -> TombstoneIndex {
+/// still checks, and with no authority rows beside its own.
+fn replay_window(vault: &Vault, window: &str) -> ReplayWindow {
     let Some(key) = crate::sync::WindowKey::try_new(window) else {
         tracing::warn!(
             "retained maintenance: window key does not parse; replaying without CRDT tombstones"
         );
-        return empty_tombstones();
+        return empty_window();
     };
     if let Some((live, materializer, _)) = vault.live_window(&key) {
         let _guard = materializer.lock();
-        return TombstoneIndex::build(&live.doc.get_map("tombstones"));
+        return ReplayWindow::of(&live.doc);
     }
     let doc = match crate::sync::window::load_window_from_state(vault, "local", &key) {
         Ok(doc) => doc,
@@ -293,7 +312,7 @@ fn window_tombstones(vault: &Vault, window: &str) -> TombstoneIndex {
                         kind = ?error.kind(),
                         "retained maintenance: window rebuild failed; replaying without CRDT tombstones"
                     );
-                    return empty_tombstones();
+                    return empty_window();
                 }
             }
         }
@@ -302,17 +321,16 @@ fn window_tombstones(vault: &Vault, window: &str) -> TombstoneIndex {
                 kind = ?error.kind(),
                 "retained maintenance: window load failed; replaying without CRDT tombstones"
             );
-            return empty_tombstones();
+            return empty_window();
         }
     };
-    TombstoneIndex::build(&doc.get_map("tombstones"))
+    ReplayWindow::of(&doc)
 }
 
-/// No tombstones: what a replay the window's index does not cover falls
-/// back to.
-fn empty_tombstones() -> TombstoneIndex {
-    let doc = loro::LoroDoc::new();
-    TombstoneIndex::build(&doc.get_map("tombstones"))
+/// No tombstones and no authority rows: what a replay the window's index
+/// does not cover falls back to.
+fn empty_window() -> ReplayWindow {
+    ReplayWindow::of(&loro::LoroDoc::new())
 }
 
 /// Replays the retained maintenance work whose turn has come, at most
