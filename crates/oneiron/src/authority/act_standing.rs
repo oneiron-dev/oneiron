@@ -198,13 +198,9 @@ pub(crate) fn act_heads(fold: &AuthorityFold, machine: EntityId) -> BTreeSet<Aut
     heads
 }
 
-/// The acknowledged acts a profile revision listed before Phase2 A: what it
-/// still lists when the whole set would not ride one frame.
-const ACKNOWLEDGED_CLIP: usize = 4096;
-
-/// The frame floor a profile revision's signed row rides whole under: the
-/// WindowSync frame and the residence touch blob bound
-/// (`sync::MAX_DECODED_PAYLOAD_BYTES`), unchanged.
+/// The frame floor of the sync plane (`sync::MAX_DECODED_PAYLOAD_BYTES`),
+/// unchanged: a profile revision's signed row past it rides whole as bounded
+/// parts, joined and checked before admission (FIX 8246, 8247).
 const ACKNOWLEDGMENT_FRAME_FLOOR: usize = 8 * 1024 * 1024;
 #[cfg(feature = "sync")]
 const _: () = assert!(ACKNOWLEDGMENT_FRAME_FLOOR == crate::sync::MAX_DECODED_PAYLOAD_BYTES);
@@ -217,12 +213,10 @@ const ACKNOWLEDGMENT_ROW_ALLOWANCE: usize = 64 * 1024;
 /// What a new profile revision of `machine` lists as seen (FIX 2998, FIX
 /// 4649): the acts in the log it carried ([`super::world_privacy::live_edits_by`]),
 /// then every topology decision it carried, by token, measured against the
-/// `authority_record_items` row, which asks past it. The whole set is listed
-/// when, encoded, it rides one frame with its row (FIX 7911: a removal
-/// retires none it saw). One that would not keeps today's path whole: the
-/// first [`ACKNOWLEDGED_CLIP`] acts, then tokens in the room left, and a
-/// decision left out counts as one its removal raced (CALLS "FIX 4649 seal
-/// causal envelope"); never a refusal.
+/// `authority_record_items` row, which asks past it. The whole set is always
+/// listed (FIX 7911: a removal retires none it saw); a row it takes past one
+/// frame rides as the sync plane's bounded parts (FIX 8246, L02 10:01).
+/// Never a refusal.
 pub(super) fn acknowledged_by_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -234,14 +228,13 @@ pub(super) fn acknowledged_by_in_txn(
     let mut seen: BTreeSet<AuthorityEntryHash> = acts.iter().copied().collect();
     seen.extend(tokens.iter().copied());
     super::measure_authority_work(&store.limit_watch, seen.len());
-    if acknowledgment_rides_whole(&seen)? {
-        return Ok(seen);
+    if !acknowledgment_rides_whole(&seen)? {
+        tracing::debug!(
+            acknowledged = seen.len(),
+            "profile revision rides past one frame, as bounded parts"
+        );
     }
-    let mut clipped: BTreeSet<AuthorityEntryHash> =
-        acts.into_iter().take(ACKNOWLEDGED_CLIP).collect();
-    let room = ACKNOWLEDGED_CLIP.saturating_sub(clipped.len());
-    clipped.extend(tokens.into_iter().take(room));
-    Ok(clipped)
+    Ok(seen)
 }
 
 /// Whether `seen`, encoded as a profile revision lists it, rides one frame
