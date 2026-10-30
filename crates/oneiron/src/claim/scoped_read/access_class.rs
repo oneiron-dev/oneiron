@@ -102,10 +102,12 @@ impl<'b> ClassView<'b> {
         })
     }
 
-    /// The class's canonical bytes: every field in declaration order, each
-    /// set sorted, each part of variable length prefixed by its length, so
-    /// two views share a key only when every field is equal.
-    fn key(&self) -> Vec<u8> {
+    /// The class's canonical bytes for `reader`: every field in declaration
+    /// order, each set sorted, each part of variable length prefixed by its
+    /// length, so two views share a key only when every field is equal, but
+    /// confidence and salience, which share it when they fall on the same
+    /// side of each of `reader`'s floors.
+    fn key(&self, reader: &ClassReader<'_>) -> Vec<u8> {
         let mut key = Vec::with_capacity(192);
         key.extend_from_slice(self.world.as_bytes());
         key.extend_from_slice(self.scope_facet.as_bytes());
@@ -135,13 +137,25 @@ impl<'b> ClassView<'b> {
         put_bytes(&mut key, self.approval.as_str().as_bytes());
         put_bytes(&mut key, self.lifecycle.as_str().as_bytes());
         key.push(u8::from(self.stale));
-        key.extend_from_slice(&self.confidence.to_bits().to_be_bytes());
-        match self.salience {
-            Some(salience) => {
-                key.push(1);
-                key.extend_from_slice(&salience.to_bits().to_be_bytes());
-            }
-            None => key.push(0),
+        // Confidence and salience are read only against the reader's floors
+        // (the scalar ceiling's and each Grant selector's), so the class
+        // carries the side of each floor they fall on, not their values:
+        // claims of any confidence on the same sides share one class.
+        let salience = self.salience.unwrap_or(0.0);
+        key.push(u8::from(self.confidence.is_finite()) | u8::from(salience.is_finite()) << 1);
+        let floors = [
+            (reader.filter.min_confidence, reader.filter.min_salience),
+            (1.0, 1.0),
+        ]
+        .into_iter()
+        .chain(reader.policy.scalar_floors());
+        for (confidence_floor, salience_floor) in floors {
+            key.push(
+                u8::from(self.confidence >= confidence_floor)
+                    | u8::from(self.confidence <= confidence_floor) << 1
+                    | u8::from(salience >= salience_floor) << 2
+                    | u8::from(salience <= salience_floor) << 3,
+            );
         }
         put_ids(&mut key, self.facets.iter().copied());
         key
@@ -475,7 +489,7 @@ impl<'v> ScopedRead<'v> {
             grant,
             policy: ClaimReadPolicy::of(policy),
         };
-        let class = view.key();
+        let class = view.key(&reader);
         let verdicts = authority.class_verdicts();
         if let Some(verdict) = verdicts.held(&reader, &class) {
             return Ok(verdict);
