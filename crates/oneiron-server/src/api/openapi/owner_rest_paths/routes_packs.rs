@@ -34,6 +34,14 @@ pub(super) fn merge(spec: &mut Value) {
     );
     bind(
         spec,
+        "/v1/owner/packs/activate",
+        "post",
+        crate::api::owner_routes::pack_routes::schema::activate_candidate_body_schema(),
+        pack_put_schema(),
+        &[],
+    );
+    bind(
+        spec,
         "/v1/owner/packs/agent/world",
         "post",
         agent_world_body_schema(),
