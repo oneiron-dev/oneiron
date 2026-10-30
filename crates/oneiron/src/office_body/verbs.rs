@@ -17,7 +17,7 @@ use super::{
     ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
     XlsxStyle, XlsxTable,
 };
-use crate::batch::secret_scan::{LiftedKeys, mask_unplaced_json};
+use crate::batch::secret_scan::{LiftedKeys, mask_spanning_json, mask_unplaced_json};
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -449,13 +449,19 @@ impl Memory<'_> {
         // A text that still shows a key no mark places reads as the door's
         // placeholder to a masked reader, its owner's proposal filed, at an
         // earlier frontier and at the head of a live body (FIX 8996, FIX 12233).
+        // So does each text a key split over adjacent texts touches, which no
+        // text alone shows; at an earlier frontier that is history, so it is
+        // only masked: no write is opened and no proposal filed (FIX 12232).
         if !self.reads_lifted_keys_masked()? {
             return Ok(read.view);
         }
         let mut value = serde_json::to_value(&read.view)
             .map_err(|_| crate::Error::InvariantViolation("an office body view did not encode"))?;
         let lifted = keys.mask_json(&mut value);
-        if !(mask_unplaced_json(&mut value) || lifted) {
+        let unplaced = mask_unplaced_json(&mut value);
+        let spanning =
+            mask_spanning_json(&mut value, &|view| OfficeBodyView::deserialize(view).is_ok())?;
+        if !(lifted || unplaced || spanning) {
             return Ok(read.view);
         }
         Ok(serde_json::from_value(value).map_err(|_| {
