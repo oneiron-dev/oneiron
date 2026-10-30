@@ -80,6 +80,7 @@ mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
 mod sieve_ports;
+pub(crate) mod stage_log;
 pub(crate) mod step_charge;
 pub mod strength;
 mod support;

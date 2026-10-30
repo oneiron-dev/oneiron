@@ -364,7 +364,7 @@ fn invalid(reason: &str) -> MemoryError {
 
 impl Memory<'_> {
     pub(super) fn body_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor(), self.actor_class())
+        self.write_actor()
     }
 
     pub(super) fn body_ref(&self, reference: &str) -> MemoryResult<EntityId> {

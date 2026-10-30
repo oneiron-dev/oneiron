@@ -351,7 +351,9 @@ pub(super) fn found_key_custody_in_txn(
 ) -> Result<Vec<EntityId>> {
     Ok(FOUND
         .get(store, txn, record)?
-        .map_or_else(Vec::new, |found| found.keys.iter().map(|key| key.custody).collect()))
+        .map_or_else(Vec::new, |found| {
+            found.keys.iter().map(|key| key.custody).collect()
+        }))
 }
 
 /// The values the owner ruled no secret, by record: the write door reads

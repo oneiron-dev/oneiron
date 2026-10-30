@@ -1,6 +1,10 @@
 //! An owner anchor's writes (world privacy P6b, contract §4 and E2(b)): its
 //! root's record, and its `Owned(Yours)` mark of a machine in its own chain.
 //! The anchor signs each alone; no roster key and no install key vouches.
+//! A frontier wider than one of them names is joined first by the anchor
+//! itself (FIX 8498, Engine 09:31), for its own rows alone.
+
+use std::collections::BTreeSet;
 
 use ed25519_dalek::SigningKey;
 
@@ -25,8 +29,34 @@ impl Vault {
         Ok(hash)
     }
 
+    /// Joins `fold`'s main-log heads in `txn` when the next row `anchor`
+    /// signs ([`anchor_signed_entry`]) would name more of them than one entry
+    /// may beside the anchor's own heads, each join signed by `anchor` itself
+    /// (FIX 8498, Engine 09:31): the third join signer, for the anchor's own
+    /// rows alone, which the fold admits only while it records `anchor` for a
+    /// stored root. The fold read back, else `None`: today's path.
+    pub(crate) fn join_anchor_frontier_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        anchor: &SigningKey,
+    ) -> Result<Option<AuthorityView>> {
+        let own = fold
+            .anchor_heads
+            .get(&anchor.verifying_key().to_bytes())
+            .map_or(0, BTreeSet::len);
+        self.prepare_authority_frontier_in_txn(
+            txn,
+            fold,
+            FrontierSigner::Anchor(anchor),
+            MAX_PARENTS.saturating_sub(own),
+        )
+    }
+
     /// The root `record` describes, signed by its own `anchor` on this
-    /// vault's main-log heads and put in the caller's write transaction.
+    /// vault's main-log heads and put in the caller's write transaction. A
+    /// root its anchor already published here joins a wide frontier first; a
+    /// first root names the heads that fit ([`anchor_signed_entry`]).
     pub(crate) fn publish_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -34,6 +64,9 @@ impl Vault {
         record: OwnerRootRecord,
     ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        let fold = self
+            .join_anchor_frontier_in_txn(txn, &fold, anchor)?
+            .unwrap_or(fold);
         let now = self.instant_in_txn(txn)?.secs();
         let entry = anchor_signed_entry(&fold, anchor, AuthorityOp::OwnerRoot(record), now)?;
         self.put_anchor_entry_in_txn(txn, entry)
@@ -90,6 +123,10 @@ impl Vault {
             act: None,
         };
         profile.validate()?;
+        // FIX 8498: the mark's basis is the one read above; a join moves none.
+        let fold = self
+            .join_anchor_frontier_in_txn(txn, &fold, anchor)?
+            .unwrap_or(fold);
         let now = self.instant_in_txn(txn)?.secs();
         let entry = anchor_signed_entry(&fold, anchor, AuthorityOp::MachineProfile(profile), now)?;
         self.put_anchor_entry_in_txn(txn, entry)

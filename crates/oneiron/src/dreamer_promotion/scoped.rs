@@ -30,6 +30,7 @@ pub fn promote_scoped_consolidation(
         None => checker.clone(),
     });
     let checker = checker.as_ref();
+    let landing = write.landing;
     let mut outcome = PromotionOutcome::default();
     // The open markers this write's outputs answer (FIX 7325), and each head
     // the write landed or met again with the evidence its candidate cited.
@@ -182,6 +183,9 @@ pub fn promote_scoped_consolidation(
     answers.sort();
     answers.dedup();
     resolved_outputs::close_resolved_outputs(vault, run, &write.fence, &answers, &stood, &unmet);
+    if let Some(landing) = landing {
+        landing.record(&outcome.landed, outcome.rejected.len());
+    }
     Ok(outcome)
 }
 

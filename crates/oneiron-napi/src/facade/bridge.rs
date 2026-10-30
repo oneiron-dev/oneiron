@@ -92,6 +92,7 @@ impl VaultBridge {
             actor_hex: actor.to_hex(),
             actor_class: actor_class as u8,
             off_record_session: None,
+            read_proof: None,
         })
     }
 }
@@ -105,6 +106,10 @@ pub struct ActorScopedVault {
     /// The off-record session every verb runs inside, when the app host
     /// named one, bound to this handle's actor (OF-063, FIX 1668).
     off_record_session: Option<String>,
+    /// The verified slip this handle's delegated reader presented, which
+    /// every read runs under ([`Self::with_read_credential`], FIX 647);
+    /// `None` reads as the bound actor's own verbs do.
+    read_proof: Option<oneiron::authority::VerifiedSlip>,
 }
 
 #[napi]
@@ -126,6 +131,26 @@ impl ActorScopedVault {
             actor_hex: self.actor_hex.clone(),
             actor_class: self.actor_class,
             off_record_session: Some(session_ref.to_owned()),
+            read_proof: self.read_proof.clone(),
+        })
+    }
+
+    /// A NEW handle whose every read runs under the credential a delegated
+    /// reader presented to this host (FIX 647): the paired credential its
+    /// `pair` returned, verified against this vault as the server's door
+    /// verifies a served request's. Its reads then run under that slip's
+    /// key, never a broader one; a read refuses when the slip's holder is
+    /// not this handle's actor. A handle without one reads as before.
+    #[napi]
+    pub fn with_read_credential(&self, credential: String) -> napi::Result<ActorScopedVault> {
+        let proof = oneiron_remote::verify_read_credential(&self.vault, &credential)
+            .map_err(facade_error)?;
+        Ok(ActorScopedVault {
+            vault: Arc::clone(&self.vault),
+            actor_hex: self.actor_hex.clone(),
+            actor_class: self.actor_class,
+            off_record_session: self.off_record_session.clone(),
+            read_proof: Some(proof),
         })
     }
 }
@@ -143,6 +168,10 @@ impl ActorScopedVault {
             }
         };
         let memory = self.vault.memory(actor, actor_class);
+        let memory = match &self.read_proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
         Ok(match self.off_record_session.as_deref() {
             Some(session) => memory.in_off_record_session(session),
             None => memory,

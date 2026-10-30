@@ -8,8 +8,9 @@ use serde::{Deserialize, Serialize};
 
 use super::{ResolvedRecallSelection, recall_scope_transcript, residence_window_for_blob};
 use crate::Vault;
+use crate::claim::{CallerLocality, ScopedReadActorKey};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result, SyncProtocolValidation};
+use crate::error::Result;
 use crate::sync::types::WindowKey;
 
 /// The most entry bytes one residence page reply carries (CALLS:
@@ -29,28 +30,41 @@ pub struct ResidenceSearchCursor {
     pub as_of: u64,
 }
 
+/// A forwarded search's caller locality as its signed field (FIX 3550): one
+/// byte, 0 for a caller on the forwarding device and 1 for one off it.
+pub(super) const fn caller_locality_field(locality: CallerLocality) -> [u8; 1] {
+    match locality {
+        CallerLocality::OnDevice => [0],
+        CallerLocality::OffDevice => [1],
+    }
+}
+
 /// The forwarded `residence.search` a device signs and its home verifies, as
-/// [`super::with_forwarded_search`] builds it, with a later page's cursor
-/// bound too: its offset and `as_of` as big-endian `u64`s and its revision.
-/// A first page signs the same bytes as a search of one call.
+/// [`super::with_forwarded_search`] builds it, its caller's locality
+/// included, with a later page's cursor bound too: its offset and `as_of` as
+/// big-endian `u64`s and its revision. A first page signs the same bytes as
+/// a search of one call.
 pub fn with_forwarded_search_page<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    locality: CallerLocality,
     page: Option<&ResidenceSearchCursor>,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
+    let locality = caller_locality_field(locality);
     let offset = page.map(|page| page.offset.to_be_bytes());
     let as_of = page.map(|page| page.as_of.to_be_bytes());
-    let mut fields: Vec<&[u8]> = Vec::with_capacity(7);
+    let mut fields: Vec<&[u8]> = Vec::with_capacity(8);
     fields.extend([
         query.as_bytes(),
         limit.as_slice(),
         selector_wire,
         scope.as_slice(),
+        locality.as_slice(),
     ]);
     if let (Some(page), Some(offset), Some(as_of)) = (page, &offset, &as_of) {
         fields.extend([
@@ -68,20 +82,16 @@ pub fn with_forwarded_search_page<R>(
 /// The actor-readable lexical candidates of a paged search, ranked `window`
 /// deep at `as_of` (unix seconds) past the read lane's candidate window, and
 /// how many rows the ranking held: fewer than `window` only once the matches
-/// ran out. Admission and `scope` are those of [`super::home_search_candidates`].
+/// ran out. The read key and `scope` are those of
+/// [`super::home_search_candidates`].
 pub fn home_search_page_candidates(
     vault: &Vault,
-    proof: &crate::authority::VerifiedSlip,
+    actor: ScopedReadActorKey,
     query: &str,
     window: usize,
     scope: Option<&ResolvedRecallSelection>,
     as_of: u64,
 ) -> Result<(Vec<(EntityId, f32, WindowKey)>, usize)> {
-    let actor = vault
-        .credential_read_key(proof)?
-        .ok_or(Error::sync_protocol(
-            SyncProtocolValidation::DocumentAdmissionDenied,
-        ))?;
     let (found, ranked) = vault
         .scoped_read(actor)
         .residence_search_page(query, window, scope, as_of)?;
