@@ -405,7 +405,8 @@ impl<F: Future> Future for RestrictionPolls<F> {
 /// [`tokio::task::spawn_blocking`] for a door's blocking work: inside an
 /// owner's restriction-only act ([`scoped`]) the closure reads the
 /// restriction-only clock on its own thread; anywhere else it runs as it is.
-/// A call made for a leased run writes for it on that thread too (FIX 10748).
+/// A call made for a leased run writes for it on that thread too (FIX 10748),
+/// and a keyed request's route writes under its intent there (FIX 10379).
 pub(crate) fn run_blocking<F, R>(work: F) -> tokio::task::JoinHandle<R>
 where
     F: FnOnce() -> R + Send + 'static,
@@ -413,6 +414,7 @@ where
 {
     let restrictive = RESTRICTION_ONLY.try_with(|_| ()).is_ok();
     let run_writes = super::host_doors::support::calling_run_writes();
+    let work = oneiron::store::carry_idempotency_intent(work);
     tokio::task::spawn_blocking(move || {
         let _clock = restrictive.then(oneiron::authority::restriction_only_clock);
         oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), work)

@@ -23,7 +23,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 use super::ask_record;
 use super::ask_types::{
@@ -289,7 +289,7 @@ impl Memory<'_> {
             candidate = candidate.with_scope_stamps(facet, crate::claim::default_project_id());
         }
         let envelope = WriteEnvelope::new(
-            WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
             ClaimSource::Generated,
             WriteProvenance::new(Value::Map(vec![
                 (Value::from("surface"), Value::from("tasks.highway")),

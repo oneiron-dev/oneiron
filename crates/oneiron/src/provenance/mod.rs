@@ -164,13 +164,8 @@ pub mod text_commit;
 mod writes;
 pub(crate) use writes::EdgeProvenanceWrite;
 
-#[cfg(test)]
-pub(crate) use self::actor_substrate::encode_actor_class_evidence;
-pub(crate) use self::actor_substrate::{
-    EVIDENCE_KEY_ACTOR_CLASS, decode_actor_class_evidence, decode_model_entity_body,
-    resolve_persisted_actor_class,
-};
 pub use self::actor_substrate::{MODEL_SUBSTRATE_FIELD_MAX_BYTES, validate_actor_class};
+pub(crate) use self::actor_substrate::{decode_model_entity_body, resolve_persisted_actor_class};
 use self::actor_substrate::{encode_model_entity_body, validate_model_substrate_field};
 pub use self::codec::{
     EdgeProvenanceClaimBody, decode_edge_provenance_body, derive_confirmation_status,

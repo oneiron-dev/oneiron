@@ -37,6 +37,7 @@ mod fetch;
 mod handlers;
 #[cfg(unix)]
 mod host;
+mod isolation;
 mod landing;
 mod measure;
 pub mod mesh;
@@ -70,6 +71,7 @@ pub use fetch::GuardedFetch;
 pub use handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 #[cfg(unix)]
 pub use host::{CallMeasure, CallSize, OrganHost};
+pub use isolation::{DescendantFence, NamespaceFact, OrganIsolation};
 pub use landing::propose_organ_outputs;
 #[cfg(unix)]
 pub use mesh::OrganService;
@@ -84,8 +86,6 @@ pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };
-#[cfg(unix)]
-pub use sandbox::{DescendantFence, NamespaceFact, OrganIsolation};
 pub use shutdown::MeshCancel;
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};

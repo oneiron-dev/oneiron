@@ -199,6 +199,7 @@ pub use tradeoff::{
     settle_skill_tradeoff_ask_as_agent, skill_tradeoff_ask, skill_tradeoff_asks_for,
     skill_tradeoff_preferences,
 };
+pub use tradeoff_capacity::{TradeoffCapacityCrossing, crossings_in_txn};
 pub use verdict::{
     HeldOutVerdict, SkillEditDisposition, TradeoffChoice, TradeoffResolution, TradeoffRung,
 };

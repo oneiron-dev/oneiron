@@ -182,12 +182,13 @@ pub(crate) async fn vault_members_accept(
     let invitee = person(server, auth, VERB).and_then(|invitee| {
         require_slip_invitation(auth, VERB, &input.invitation).map(|()| invitee)
     });
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         invitee,
         move |server, invitee| sdk::accept_shared_invitation_as(server.vault(), &invitee, input),
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -231,12 +232,13 @@ pub(crate) async fn vault_members_decline(
     let invitee = person(server, auth, VERB).and_then(|invitee| {
         require_slip_invitation(auth, VERB, &input.invitation).map(|()| invitee)
     });
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         invitee,
         move |server, invitee| sdk::decline_shared_invitation_as(server.vault(), &invitee, input),
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }
@@ -249,12 +251,13 @@ pub(crate) async fn vault_members_withdraw_invitation(
     input: SharedInvitationWithdrawRequest,
 ) -> MaybeListed<SharedActExecutionReceipt> {
     const VERB: &str = "vault.members.withdraw_invitation";
+    let vault = Arc::clone(server);
     as_person_naming(
         server,
         VERB,
         person(server, auth, VERB),
         move |server, admin| sdk::withdraw_shared_invitation_as(server.vault(), &admin, input),
-        receipt_rows,
+        move |receipt| receipt_rows(vault.vault(), receipt),
     )
     .await
 }

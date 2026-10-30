@@ -33,17 +33,29 @@
 //! part row carries its index, every part's digest and its own bytes, and
 //! the digest the request names is over that list, so one 32-byte digest
 //! commits to the whole input and each part is checked on its own as it is
-//! admitted. The holder joins the parts before it opens the input; while one
-//! is missing, the request stays pending.
+//! admitted. The holder reads the parts in order as it opens the input,
+//! never joining them; while one is missing, the request stays pending.
+//!
+//! A door reads the input its owner's surface sealed where it lies, a file
+//! or a buffer, never as one buffer (FIX 11140, `stream`): it computes the
+//! digest part by part and keeps the input row by row.
 //!
 //! A witness past one row's bound travels in signed numbered parts of its
 //! own, and each input row carries a signed reference to them (FIX 8088,
 //! `witness`).
+//!
+//! While the carrier wire is on, an input is sealed under its own erasable
+//! carrier key first, and the recorder retires that key once its request is
+//! answered (FIX 7402, `carrier_seal`).
 
 mod attached;
+mod carrier_seal;
 mod envelopes;
+mod stream;
 mod surface_seal;
 mod witness;
+
+use std::io::Read;
 
 use getrandom::SysRng;
 use oneiron_crypto::{
@@ -66,9 +78,15 @@ use crate::store::Store;
 use crate::world_keys::MachineSecret;
 
 pub(crate) use self::attached::{
-    Attached, AttachedManifest, attach_manifest, attach_no_manifest, attach_published_manifests,
-    attach_unread, split_attached,
+    Attached, AttachedManifest, Attachment, attach_manifest, attach_no_manifest,
+    attach_published_manifests, attach_unread,
 };
+pub(crate) use self::carrier_seal::{
+    LeafSource, input_carrier_binds, input_carrier_in_txn, leaf_input_retries_in_txn,
+    open_leaf_input, retire_input_carriers_in_txn, seal_leaf_input_in_txn, surface_leaf_input,
+};
+pub use self::stream::SealedInput;
+pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
 pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
 #[cfg(feature = "sync")]
@@ -191,21 +209,24 @@ impl InputBinding<'_> {
         .map_err(|_| refused("sealing the custody input to its holder failed"))
     }
 
-    /// The body `input` holds, opened with the holder's `secret` under this
-    /// binding: one envelope, or every numbered envelope of a frame, each
-    /// opened and verified at its place before the body is joined (FIX
-    /// 5521). `None` when `secret` is not the holder's, an envelope does not
-    /// parse under its codec, or one was sealed to another key, under
-    /// another binding or at another place. Its length past one row's bound
-    /// is no reason: such an input comes joined from its parts (FIX 5445).
-    pub(crate) fn open(&self, input: &[u8], secret: &MachineSecret) -> Option<Zeroizing<Vec<u8>>> {
+    /// The body the input of `len` bytes `reader` holds, opened with the
+    /// holder's `secret` under this binding as it is read: one envelope, or
+    /// every numbered envelope of a frame, each opened and verified at its
+    /// place before the next is read and the runs joined (FIX 5521, 11140).
+    /// `None` when `secret` is not the holder's, an envelope does not parse
+    /// under its codec, or one was sealed to another key, under another
+    /// binding or at another place. Its length past one row's bound is no
+    /// reason: such an input is read from its parts in order (FIX 5445).
+    pub(crate) fn open(
+        &self,
+        reader: impl Read,
+        len: u64,
+        secret: &MachineSecret,
+    ) -> Option<Zeroizing<Vec<u8>>> {
         if secret.machine != self.holder {
             return None;
         }
-        match envelopes::numbered_frame(input) {
-            Some(frame) => self.open_numbered(frame, secret),
-            None => self.open_one(input, secret, &self.key_id()),
-        }
+        self.open_read(reader, len, secret)
     }
 
     /// The body one `envelope` holds, opened with the holder's `secret`
@@ -444,7 +465,9 @@ impl RelayedInput {
     /// The rows that carry this whole input when it travels in parts: each
     /// numbered part, in order, every one with the witness and the part
     /// list. `None` when it fits one row, or is a part already. Refused only
-    /// past the part list's own bound.
+    /// past the part list's own bound. A door's own input is kept as it is
+    /// read instead (`stream`, FIX 11140).
+    #[cfg(feature = "sync")]
     fn parts(&self) -> Result<Option<Vec<Self>>> {
         if self.part.is_some() || !splits(&self.envelope) {
             return Ok(None);
@@ -551,6 +574,7 @@ pub(crate) fn request_witness_in_txn(
 /// Keeps `input` in `wtxn`, each row under its key: a whole input that
 /// fits one row as it is, a longer one as its numbered parts, and a relayed
 /// part as it came.
+#[cfg(feature = "sync")]
 pub(crate) fn keep_input_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -572,42 +596,6 @@ pub(crate) fn held_input_in_txn(
     Ok(INPUTS
         .get(store, txn, key)?
         .and_then(|bytes| RelayedInput::decode(&bytes)))
-}
-
-/// The input the request names `digest` of, as this vault keeps it: its
-/// whole row, or every part of it joined in order, each part checked
-/// against the part list `digest` is over. `None` while it, or any part of
-/// it, is not here: the request stays pending.
-pub(crate) fn assembled_input_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    digest: &[u8; 32],
-) -> Result<Option<Vec<u8>>> {
-    if let Some(whole) = held_input_in_txn(store, txn, digest)?
-        && whole.part.is_none()
-        && whole.digest() == *digest
-    {
-        return Ok(Some(whole.envelope));
-    }
-    let mut joined = Vec::new();
-    let mut index = 0_u32;
-    loop {
-        let Some(row) = held_input_in_txn(store, txn, &part_key(digest, index))? else {
-            return Ok(None);
-        };
-        let Some(part) = &row.part else {
-            return Ok(None);
-        };
-        if part.index != index || parts_digest(&part.digests) != *digest {
-            return Ok(None);
-        }
-        let count = part.digests.len();
-        joined.extend_from_slice(&row.envelope);
-        index += 1;
-        if usize::try_from(index).is_ok_and(|done| done == count) {
-            return Ok(Some(joined));
-        }
-    }
 }
 
 /// Forgets the input the request names `digest` of: its whole row, or each
@@ -643,7 +631,7 @@ pub(crate) fn drop_inputs_for_in_txn(
     id: &EntityId,
 ) -> Result<usize> {
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
-    let doomed: Vec<[u8; 32]> = INPUTS
+    let doomed: Vec<([u8; 32], Vec<u8>)> = INPUTS
         .scan(&vault.store, wtxn)?
         .into_iter()
         .filter(|(_, bytes)| {
@@ -652,9 +640,14 @@ pub(crate) fn drop_inputs_for_in_txn(
                     .is_some_and(|request| request.act.target == *id)
             })
         })
-        .map(|(key, _)| key)
         .collect();
-    for key in &doomed {
+    // Their carrier keys go with them (FIX 7402).
+    let carriers: Vec<_> = doomed
+        .iter()
+        .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
+        .collect();
+    retire_input_carriers_in_txn(vault, wtxn, &carriers);
+    for (key, _) in &doomed {
         INPUTS.delete(&vault.store, wtxn, key)?;
     }
     // Every witness part kept for such a request goes too (FIX 8088); a
@@ -683,7 +676,7 @@ impl Vault {
     /// relay of work still awaiting its holder. The owner work drain runs it
     /// beside the revoke settle. Returns how many rows it forgot.
     pub(crate) fn settle_custody_inputs(&self) -> Result<usize> {
-        let (done, witnesses) = {
+        let (done, carriers, witnesses) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let settled = |request: &AuthorityEntryHash| {
@@ -692,13 +685,18 @@ impl Vault {
                         .owner_work_request(request)
                         .is_none_or(|request| fold.custody_revoked(&request.act.target))
             };
-            let done: Vec<[u8; 32]> = INPUTS
+            let done: Vec<([u8; 32], Vec<u8>)> = INPUTS
                 .scan(&self.store, &txn)?
                 .into_iter()
                 .filter(|(_, bytes)| {
                     RelayedInput::decode(bytes).is_none_or(|input| settled(&input.request))
                 })
-                .map(|(key, _)| key)
+                .collect();
+            // An answered input's carrier key retires here, where its
+            // recorder minted it (FIX 7402).
+            let carriers: Vec<_> = done
+                .iter()
+                .filter_map(|(_, bytes)| carrier_seal::row_carrier(bytes))
                 .collect();
             // So does every witness part kept for one (FIX 8088); a fault
             // finding them is warned, and the next settle retries.
@@ -707,13 +705,14 @@ impl Vault {
                     tracing::warn!(kind = ?error.kind(), "settled witness parts stay owed");
                     Vec::new()
                 });
-            (done, witnesses)
+            (done, carriers, witnesses)
         };
         if done.is_empty() && witnesses.is_empty() {
             return Ok(0);
         }
-        self.with_write_txn(|txn| {
-            for key in &done {
+        let forgot = self.with_write_txn(|txn| {
+            retire_input_carriers_in_txn(self, txn, &carriers);
+            for (key, _) in &done {
                 INPUTS.delete(&self.store, txn, key)?;
             }
             if let Err(error) = witness::delete_witnesses_in_txn(self, txn, &witnesses) {
@@ -721,7 +720,11 @@ impl Vault {
                 return Ok(done.len());
             }
             Ok(done.len() + witnesses.len())
-        })
+        })?;
+        if !carriers.is_empty() {
+            self.finish_credential_retirements_after_commit();
+        }
+        Ok(forgot)
     }
 }
 

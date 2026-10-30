@@ -300,6 +300,7 @@ pub struct RestoreReport {
     /// What it did not carry of its source's current pad objects (PAD-1);
     /// empty when it carried them all, or had none to carry.
     pub pad_object_notes: Vec<PadObjectNote>,
+    pub erasure_note: Option<String>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -522,6 +523,8 @@ impl Vault {
             &erased,
             budget,
         )?;
+        // A pack source it erased halts the copy's routes too (FIX 6086).
+        response_rows::removals::halt_erased_pack_routes(&vault, &erased)?;
         pad_objects::land_on_restore(&vault, &live.pad_objects, &mut report);
         forked.keep();
         made.keep(&mut vault);
@@ -607,6 +610,7 @@ impl Vault {
         // by name; a missing one is refused, not made.
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
+        let erased = source.erased_ids();
         let archive = Self::open_owned(path, config.clone())?;
         let expected = pad_objects::expected_of(&archive, &live.pad_objects);
         let (dropped_gate_decisions, erased_pads, credentials, landing) =
@@ -616,6 +620,8 @@ impl Vault {
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
         let vault = Self::open_owned(path, config)?;
+        // A pack source its source erased halts its routes here (FIX 6086).
+        response_rows::removals::halt_erased_pack_routes(&vault, &erased)?;
         let mut report = RestoreReport {
             epoch: RestoreEpoch {
                 checkpoint_id: String::new(),
@@ -635,6 +641,7 @@ impl Vault {
             opaque_responses: 0,
             credential_notes: credential_custody::notes(&vault.store, credentials),
             pad_object_notes: Vec::new(),
+            erasure_note: None,
         };
         pad_objects::finish_activation(&vault, &live.pad_objects, landing, &mut report);
         Ok(report)

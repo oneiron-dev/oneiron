@@ -11,11 +11,12 @@ use super::{
     ProjectConversationSkills, ReadSetProducer, ReaderSeats, RunCompaction, RunHostDoor,
     SKILL_SEPARATOR, ScopeMeter, SeatKind, SeatTask, SpawnHostSeat, SpendScopeId, SyncServer,
     TaskExposure, TaskTypeRef, UNBOUND_LIST_KEEPS_ROUTE, Vault, WINDOW_FULL_TRIES,
-    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_actor, browser_workflow, child_pin, craft,
+    WINDOW_FULL_WAIT, WriteActor, agent_dispatch_run_actor, browser_workflow, child_pin, craft,
     ensure_listed, enter_engine_native_run, finalize_step_captures, fork_executor_run,
     note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
     run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
 };
+use crate::mcp::LiveLeaseRunner;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -29,10 +30,28 @@ pub(super) fn run_bound(
 ) -> Result<BoundRun, EngineRunError> {
     let vault = server.vault();
     let status = &claimed.status;
-    let actor = agent_dispatch_actor(&status.input).map_err(text)?;
+    // The run's writes are bound to its attempt, so the Gate meets its live
+    // delegation chain at each (FIX 10537, L09 s50 10:4x).
+    let actor = agent_dispatch_run_actor(&status.input, status.attempt.id).map_err(text)?;
     // The run is the attempt's own: a retry is a fresh attempt, and so a
     // fresh run.
     let run_id = EntityId::from_bytes(*status.attempt.id.as_bytes()).map_err(text)?;
+    // FIX 7020: the attempt owner declares every input producer. A failed
+    // declaration is capture-only: later undeclared reports keep the set
+    // unknown, and the run goes on (Engine 03:58 for parked L09).
+    if let Err(error) = vault.declare_attempt_read_producers(
+        status.attempt.id,
+        &[
+            ReadSetProducer::TOOL_ANSWERS,
+            ReadSetProducer::SKILL_PACK,
+            ReadSetProducer::ACTOR_CLAIM,
+            ReadSetProducer::CODE_RUN_TASK_EXPOSURE,
+            ReadSetProducer::CODE_RUN_STEP_INPUT,
+            ReadSetProducer::CODE_RUN_HOST_TASK,
+        ],
+    ) {
+        tracing::warn!(kind = ?error.kind(), "a resident run's input producers were not declared");
+    }
     // One door for the whole run, so its browser lives as long as the run.
     let door = Arc::new(RunHostDoor::new(server, actor, runtime, run_id));
     let template = provider
@@ -90,6 +109,7 @@ pub(super) fn run_bound(
             definition.models.clone(),
         )?
     } else {
+        // No read scope is threaded here: the birth inherits (FIX 11768).
         task_engine_run_seat(
             vault,
             provider,
@@ -98,6 +118,7 @@ pub(super) fn run_bound(
             type_ref,
             status.input.plan.as_ref(),
             definition.models.clone(),
+            Vec::new(),
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -282,15 +303,9 @@ pub(super) fn run_bound(
         // thread the entry ran its calls on.
         finalize_step_captures(vault);
         let outcome = outcome?;
-        // The rows its tool answers were served from, each time the run
-        // stops (FIX 7017). Capture only: a set not recorded stays unknown,
-        // and the run goes on.
-        let rows = outcome.replay_record.agent_verb_rows();
-        let id = status.attempt.id;
-        if let Err(error) = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, rows) {
-            tracing::warn!(kind = ?error.kind(), "a resident run's tool answer rows were not recorded");
-            let _ = vault.record_attempt_sources(id, ReadSetProducer::TOOL_ANSWERS, None);
-        }
+        // Every input producer reports at each stop. Any unknown constituent
+        // keeps the whole set unknown, and the run goes on (FIX 7020).
+        record_resident_read_sets(vault, &status.attempt, &outcome, &exposures);
         match outcome.status {
             EngineExecutorStatus::Yielded { .. } => full = 0,
             EngineExecutorStatus::WindowFull { .. }
@@ -308,6 +323,52 @@ pub(super) fn run_bound(
             _ => return Ok(BoundRun::Agent(outcome)),
         }
     }
+}
+
+/// Records the resident attempt's complete input witnesses, or None for each
+/// constituent that has none. This is capture only: a failed report marks the
+/// producer unknown and never stops the run (FIX 7020).
+fn record_resident_read_sets(
+    vault: &Vault,
+    attempt: &AttemptRecord,
+    outcome: &EngineExecutorOutcome,
+    exposures: &[TaskExposure],
+) {
+    let record = |producer, rows| {
+        if let Err(error) = vault.record_attempt_sources(attempt.id, producer, rows) {
+            tracing::warn!(
+                producer = producer.as_str(),
+                kind = ?error.kind(),
+                "a resident run's input rows were not recorded"
+            );
+            let _ = vault.record_attempt_sources(attempt.id, producer, None);
+        }
+    };
+    // The load doors report every pack or craft row they read. These empty
+    // reports also close both producers when no such load ran; reports union,
+    // so they never hide a door's rows (the workflow-step precedent).
+    record(ReadSetProducer::SKILL_PACK, Some(Vec::new()));
+    record(ReadSetProducer::ACTOR_CLAIM, Some(Vec::new()));
+    let current_wait = match &outcome.status {
+        EngineExecutorStatus::Waiting(wait) => Some(wait.wait_id),
+        _ => None,
+    };
+    record(
+        ReadSetProducer::TOOL_ANSWERS,
+        oneiron::code_run::resident_tool_answer_rows(&outcome.replay_record, current_wait),
+    );
+    record(
+        ReadSetProducer::CODE_RUN_TASK_EXPOSURE,
+        Some(exposures.iter().map(|exposure| exposure.skill).collect()),
+    );
+    // FIX 7104 lands the complete model-step input set; until then no step
+    // input witness is invented from request digests or TURN ids.
+    record(ReadSetProducer::CODE_RUN_STEP_INPUT, None);
+    // Engine 03:58 (CALLS `FIX 7020 host-built task source`): claimed.task
+    // plus executor_config is host-built, not source-free. Witnessed skill
+    // additions do not prove the host text itself. A future witnessed task
+    // carrier must also cover before-seat Handoff reads and 6999 views/results.
+    record(ReadSetProducer::CODE_RUN_HOST_TASK, None);
 }
 
 /// The exposure a source run's [`TaskExposure::append`] left at the end of
@@ -362,21 +423,30 @@ fn continued_seat(
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
-    task_run_seat(vault, provider, config.run_id, type_ref, |facet| SeatTask {
-        kind: SeatKind::Attempt,
-        warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
-        task: config.task.clone(),
-        purpose: oneiron::CallPurpose::Other {
-            name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+    // No read scope is threaded here: the birth inherits (FIX 11768).
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        Vec::new(),
+        |facet| SeatTask {
+            kind: SeatKind::Attempt,
+            warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
+            task: config.task.clone(),
+            purpose: oneiron::CallPurpose::Other {
+                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+            },
+            facet: facet.to_owned(),
+            required: Vec::new(),
+            min_context_tokens: 1,
+            locality: config.model_locality,
+            override_model: Some(config.model.clone()),
+            override_effort: config.seat_effort,
+            listed,
+            worlds: Vec::new(),
         },
-        facet: facet.to_owned(),
-        required: Vec::new(),
-        min_context_tokens: 1,
-        locality: config.model_locality,
-        override_model: Some(config.model.clone()),
-        override_effort: config.seat_effort,
-        listed,
-    })
+    )
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured
@@ -457,6 +527,9 @@ fn enter_run(
         Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
         None => provider.host_meter().map(|guard| (guard, None)),
     };
+    // The entry's one live lease, which its door's speech and its planner
+    // runner's start look on too, and book on once (FIX 11747).
+    let lease = meter.as_ref().map(|meter| meter.lease.clone());
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
         planner.pattern_runner = pattern_launch::agent_runner(
@@ -467,7 +540,8 @@ fn enter_run(
             actor,
             model_seat,
             line.clone(),
-        );
+        )
+        .map(|runner| LiveLeaseRunner::lend(runner, vault, lease.as_ref()));
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {
@@ -493,6 +567,7 @@ fn enter_run(
         .map_err(text)?
         .enter();
     door.bind_meter(line);
+    door.bind_lease(lease);
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
@@ -500,6 +575,7 @@ fn enter_run(
         vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
     );
     door.bind_meter(None);
+    door.bind_lease(None);
     door.bind_attempt(None);
     entered
 }

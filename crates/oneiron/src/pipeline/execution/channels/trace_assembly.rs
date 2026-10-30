@@ -87,7 +87,7 @@ impl PipelineBuilder<'_> {
         RetrievalTrace {
             fork_hash,
             per_channel: inputs.trace_channels,
-            // The fused stage is the pre-blend RRF order, so it
+            // The fused stage is the live fused relevance sum, so it
             // carries no applied multiplier to attribute: an empty
             // map makes every one of its rows record `None`.
             fused: retrieval_trace_stage_record(

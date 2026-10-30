@@ -18,6 +18,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
 use crate::error::ErrorKind;
@@ -25,7 +26,6 @@ use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
-use crate::{EntityId, WriteActor};
 
 /// `vault.shares.create`'s input: the brief, its recipient, the most the view
 /// may show, and what born-with text travels.
@@ -108,7 +108,8 @@ pub fn create_share_as_caller(
         mention: input.mention,
     };
     let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Brief);
-    let issuer = WriteActor::new(memory.actor(), memory.actor_class());
+    // FIX 11921: the issuer carries the run it writes for, if any.
+    let issuer = memory.write_actor();
     memory
         .vault()
         .create_share_travelling(&share_id, &issuer, &share, &travel)?;
@@ -182,7 +183,7 @@ pub fn revoke_share_as_caller(
     input: ShareRevokeRequest,
 ) -> MemoryResult<ShareRevokeReceipt> {
     let share_id = share_ref(&input.share_ref)?;
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     let revoked_at = memory.vault().store.clock.now_recorded_at();
     let share = memory
         .vault()

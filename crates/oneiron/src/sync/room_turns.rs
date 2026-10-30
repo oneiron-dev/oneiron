@@ -10,7 +10,8 @@
 //!   in the window its TURN entity rides.
 //! - Admission refuses every insert into the map that is not a whole turn row
 //!   filed under its own id, in the latest state, at a snapshot's root and in
-//!   every retained operation.
+//!   every retained operation. A row past `MAX_ROW_BYTES` rides as parts
+//!   (`room_parts`, FIX 11790), its checks run on the joined row as it merges.
 //! - Reverse rematerialization mirrors the row of each TURN it mirrors, and a
 //!   door that changes a row mirrors it into the live window after commit.
 //! - Forward rematerialization and Observer B merge each row into this
@@ -22,9 +23,7 @@ pub(super) mod checkpoint;
 use loro::event::MapDelta;
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use super::loro_support::{
-    map_contains_binary, map_delete, map_for_each_bytes, map_get_bytes, map_insert_bytes,
-};
+use super::loro_support::{map_contains_binary, map_delete};
 use super::types::WindowKey;
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -56,16 +55,16 @@ fn decode(bytes: &[u8]) -> Result<RoomTurn> {
 }
 
 /// Decodes a turn row a window holds or this vault emitted, whatever its
-/// size (FIX 8882): the mirror writes rows past [`MAX_ROW_BYTES`], so the
-/// mirror's extension and every erase read them whole. Peer bytes pass the
-/// bound first ([`decode`]).
+/// size (FIX 8882): a row past [`MAX_ROW_BYTES`] rides as parts (FIX 11790),
+/// and the mirror's extension, the merge and every erase read it joined. A
+/// whole value from a peer passes the bound first ([`decode`]).
 fn decode_held(bytes: &[u8]) -> Result<RoomTurn> {
     serde_json::from_slice(bytes).map_err(|_| refused("not a turn row"))
 }
 
 /// Admits one insert into a window's `room_turns` map: a whole turn row of a
-/// base window, filed under its own turn's id, naming its room by id, each
-/// of its quotes kept against a message it names (FIX 2028).
+/// base window that passes `admit_turn`, or a part or the manifest of a row
+/// past `MAX_ROW_BYTES` (FIX 11790).
 pub(crate) fn admit_room_turn_carrier(
     key: Option<&WindowKey>,
     map_key: &str,
@@ -74,10 +73,19 @@ pub(crate) fn admit_room_turn_carrier(
     if key.is_some_and(|key| key.world().is_some()) {
         return Err(refused("in a world window"));
     }
+    if super::room_parts::admit(map_key, value, MAX_ROW_BYTES)? {
+        return Ok(());
+    }
     let LoroValue::Binary(bytes) = value else {
         return Err(refused("not bytes"));
     };
-    let turn = decode(bytes)?;
+    admit_turn(map_key, &decode(bytes)?)
+}
+
+/// The checks a turn row passes, whole or joined from its parts: filed under
+/// its own turn's id, naming its room by id, each of its quotes kept against
+/// a message it names (FIX 2028).
+fn admit_turn(map_key: &str, turn: &RoomTurn) -> Result<()> {
     let id = EntityId::from_hex(&turn.turn_id)?;
     if id.to_hex() != map_key || turn.turn_id != map_key {
         return Err(refused("filed under another id"));
@@ -138,7 +146,15 @@ pub(crate) fn mirror_room_turn(
     };
     let map = doc.get_map(ROOM_TURNS_MAP);
     let hex = id.to_hex();
-    let row = match map_get_bytes(&map, &hex).and_then(|carried| decode_held(&carried).ok()) {
+    // FIX 11790: a carried row still missing a part waits for it, so another
+    // machine's binding is not lost.
+    if super::room_parts::waits(&map, &hex) {
+        return Ok(false);
+    }
+    let carried = super::room_parts::row_at(&map, &hex)
+        .and_then(|carried| decode_held(&carried).ok())
+        .filter(|carried| admit_turn(&hex, carried).is_ok());
+    let row = match carried {
         Some(mut carried) => {
             let mut grew = false;
             if turn.actor == ERASED_CALL_IDENTITY && carried.actor != turn.actor {
@@ -180,7 +196,7 @@ pub(crate) fn mirror_room_turn(
         }
         None => turn,
     };
-    map_insert_bytes(&map, &hex, &encode(&row)?)?;
+    super::room_parts::write_row(&map, &hex, &encode(&row)?, MAX_ROW_BYTES)?;
     Ok(true)
 }
 
@@ -191,32 +207,22 @@ pub(crate) fn apply_room_turn_map(vault: &Vault, doc: &LoroDoc, key: &WindowKey)
     if key.world().is_some() || !holds_room_turn_map(doc) {
         return;
     }
-    let mut rows = Vec::new();
-    doc.get_map(ROOM_TURNS_MAP).for_each(|map_key, value| {
-        if let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value {
-            rows.push((map_key.to_owned(), bytes.to_vec()));
-        }
-    });
+    let rows = super::room_parts::rows(&doc.get_map(ROOM_TURNS_MAP), |_| true);
     merge_rows(vault, key.as_str(), rows);
 }
 
-/// Observer B for the room turn map: each row an import changed.
+/// Observer B for the room turn map: each row an import changed, and each
+/// one a part it brought completes.
 pub(crate) fn materialize_room_turns_from_delta(
-    _doc: &LoroDoc,
+    doc: &LoroDoc,
     delta: &MapDelta<'_>,
     vault: &Vault,
     window_key: &str,
     _lease_vault_id: u64,
 ) -> Option<Vec<EntityId>> {
-    let rows = delta
-        .updated
-        .iter()
-        .filter_map(|(key, value)| match value {
-            Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => {
-                Some((key.to_string(), bytes.to_vec()))
-            }
-            _ => None,
-        })
+    let rows = super::room_parts::changed_rows(&doc.get_map(ROOM_TURNS_MAP), delta)
+        .into_iter()
+        .filter_map(|(key, row)| Some((key, row?)))
         .collect();
     merge_rows(vault, window_key, rows);
     Some(Vec::new())
@@ -241,13 +247,13 @@ pub(crate) fn scrub_deleted_room_turns(
     }
     let map = doc.get_map(ROOM_TURNS_MAP);
     let mut rows = Vec::new();
-    map_for_each_bytes(&map, |map_key, bytes| {
-        if let Ok(turn) = decode_held(bytes)
+    for (map_key, bytes) in super::room_parts::rows(&map, |_| true) {
+        if let Ok(turn) = decode_held(&bytes)
             && let Ok(room) = EntityId::from_hex(&turn.room_id)
         {
-            rows.push((map_key.to_owned(), room, turn));
+            rows.push((map_key, room, turn));
         }
-    });
+    }
     let mut doomed = Vec::new();
     let mut erased = Vec::new();
     {
@@ -261,7 +267,8 @@ pub(crate) fn scrub_deleted_room_turns(
             }
         }
     }
-    if doomed.is_empty() && erased.is_empty() {
+    if doomed.is_empty() && erased.is_empty() && super::room_parts::unlisted_parts(&map).is_empty()
+    {
         return Ok(false);
     }
     // Pin before touching the live map, as the egress scrubs do.
@@ -272,8 +279,10 @@ pub(crate) fn scrub_deleted_room_turns(
         map_delete(&map, map_key)?;
     }
     for (map_key, row) in &erased {
-        map_insert_bytes(&map, map_key, row)?;
+        super::room_parts::write_row(&map, map_key, row, MAX_ROW_BYTES)?;
     }
+    // A row that went takes its parts with it.
+    super::room_parts::drop_unlisted_parts(&map)?;
     doc.commit_with(loro::CommitOptions::new().origin(super::bridge::BRIDGE_ORIGIN));
     Ok(true)
 }
@@ -304,8 +313,8 @@ fn holds_room_turn_map(doc: &LoroDoc) -> bool {
 fn merge_rows(vault: &Vault, window: &str, rows: Vec<(String, Vec<u8>)>) {
     let turns: Vec<RoomTurn> = rows
         .into_iter()
-        .filter_map(|(map_key, bytes)| match decode(&bytes) {
-            Ok(turn) if turn.turn_id == map_key => Some(turn),
+        .filter_map(|(map_key, bytes)| match decode_held(&bytes) {
+            Ok(turn) if admit_turn(&map_key, &turn).is_ok() => Some(turn),
             _ => {
                 tracing::warn!(window, key = %map_key, "room turn row malformed; left out");
                 None
