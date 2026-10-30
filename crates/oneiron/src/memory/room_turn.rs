@@ -81,11 +81,7 @@ impl<'v> RoomTurnHandle<'v> {
     /// # Errors
     ///
     /// As [`crate::task_verb::sdk::receipt_declared_refs`].
-    pub fn receipt_declared_refs(
-        &self,
-        verb: &str,
-        input: serde_json::Value,
-    ) -> MemoryResult<()> {
+    pub fn receipt_declared_refs(&self, verb: &str, input: serde_json::Value) -> MemoryResult<()> {
         if !Self::serves(verb) {
             return Ok(());
         }

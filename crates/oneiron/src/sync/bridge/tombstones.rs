@@ -268,6 +268,7 @@ fn apply_tombstone_batch(
     staged: &[TombstoneWork],
 ) -> Option<Vec<EntityId>> {
     let mut failures = Vec::<(&TombstoneWork, TombstoneFailureStage, Error)>::new();
+    let mut applied = Vec::new();
 
     #[cfg(test)]
     note_tombstone_batch_top_level_txn();
@@ -282,6 +283,7 @@ fn apply_tombstone_batch(
             let (stage, err) = match apply_tombstone_in_savepoint(vault, parent, window_key, work) {
                 Ok(ids) => {
                     affected.extend(ids);
+                    applied.push(work.id);
                     continue;
                 }
                 Err(failure) => failure,
@@ -414,6 +416,12 @@ fn apply_tombstone_batch(
                 "observer-b: receiver outbox scrub FAILED after hard tombstone replay; the item's purge was rolled back and flagged with an entity-scoped rm: marker for durable retry"
             ),
         }
+    }
+    if batch.is_ok() {
+        // A peer's NOTE tombstone scrubs the NOTE's attachments from the
+        // receiver's other windows too (FIX 12128), under this callback's
+        // materializer lock, which the lock-held variant skips taking.
+        crate::sync::note::deleted_elsewhere_under_lock(vault, window_key, applied);
     }
     batch.ok()
 }
