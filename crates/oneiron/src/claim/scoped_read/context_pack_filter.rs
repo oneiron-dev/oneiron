@@ -179,7 +179,7 @@ impl<'v> ScopedRead<'v> {
                 Ok(
                     (self.is_entity_retrievable_held_in(rtxn, policy, filter, &entity.id, held)?
                         && self.context_entity_revision_is_readable_in(
-                            rtxn, policy, filter, &entity,
+                            rtxn, policy, filter, &entity, held,
                         )?)
                     .then_some(()),
                 )

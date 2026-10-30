@@ -87,7 +87,7 @@ impl<'vault> ScopedRead<'vault> {
     /// left the turn's vector in its erasing write
     /// (`embed::erase_turn_vectors_in_txn`), so it no longer counts. A read by
     /// id finds nothing by meaning: it takes the turn's row alone
-    /// (`entity_raw_with_mode_in`, `is_entity_readable_with_policy_in`), whose
+    /// (`entity_raw_with_mode_held_in`, `is_entity_readable_with_policy_in`), whose
     /// text is the messages it may read.
     ///
     /// Each message is read under the actor's own floor, not the request's
