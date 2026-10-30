@@ -6,8 +6,9 @@
 //! preparation, so a marked row is never sealed, referenced or carried raw
 //! for a peer. An admission runs after the peer's pads are admitted and
 //! before anything persists, imports, relays or acknowledges: a copy edit
-//! lands on its source, and a ruled hold leaves the peer's update its own
-//! pending work. A vault with no marked repo item answers both as today.
+//! lands on its source, and a ruled hold is kept as its held record, never
+//! applied (FIX 10598). A vault with no marked repo item answers both as
+//! today.
 
 use std::borrow::Cow;
 
@@ -26,9 +27,10 @@ pub enum RepoSyncAdmission<'a> {
     /// or its copy edits translated onto their sources.
     Admit(Cow<'a, [u8]>),
     /// An edit of a copy the visible diff holds on a ruled cause
-    /// (`projection_edit_conflict` / `sealed_file_edited`): nothing of the
-    /// blob persists, imports, relays or is acknowledged, so the peer keeps
-    /// it queued and sends it again.
+    /// (`projection_edit_conflict` / `sealed_file_edited`): its held record
+    /// is written (the owner's `sync_doctor` lists it), and nothing of the
+    /// blob persists, imports or relays. A home acknowledges it so the device
+    /// stops sending it (FIX 10598); no edit of it is ever applied.
     Held,
 }
 
@@ -64,10 +66,12 @@ pub fn prepare_repo_sync_frame_for_home(
 
 /// `payload`, a window blob of `window` a peer sent, as this window takes
 /// it; `context` is this window. Call it after the blob's pads are admitted
-/// and before it persists.
+/// and before it persists. A ruled hold's record is written before it
+/// answers [`RepoSyncAdmission::Held`].
 ///
 /// # Errors
-/// A store failure, or the visible diff's own failure.
+/// A store failure (the hold's record included), or the visible diff's own
+/// failure.
 pub fn admit_repo_sync_frame<'a>(
     vault: &Vault,
     window: &str,
@@ -79,14 +83,15 @@ pub fn admit_repo_sync_frame<'a>(
         match projection.admit_window_blob(&vault.store, payload, context)? {
             WindowAdmission::Admit(bytes) => RepoSyncAdmission::Admit(bytes),
             WindowAdmission::Held(held) => {
-                for (source, cause) in &held {
+                for edit in &held {
                     tracing::warn!(
                         window,
-                        source = %source.to_hex(),
-                        ?cause,
-                        "sync: a copy edit is held on its ruled cause; the peer keeps it queued"
+                        source = %edit.source.to_hex(),
+                        cause = ?edit.cause,
+                        "sync: a copy edit is held on its ruled cause; its held record is kept"
                     );
                 }
+                super::held::record_held_edits(vault, window, &held)?;
                 RepoSyncAdmission::Held
             }
         },

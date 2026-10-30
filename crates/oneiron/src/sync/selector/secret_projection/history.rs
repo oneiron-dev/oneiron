@@ -21,10 +21,10 @@ use std::collections::BTreeSet;
 use loro::json::{JsonOpContent, JsonSchema, ListOp, MapOp, MovableListOp, TextOp};
 use loro::{ContainerID, ContainerType, ID, LoroValue, PeerID};
 
+use super::rows::HeldEdit;
 use super::{CopyRow, InboundRow, SyncSecretProjection};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::origin::secret_projection::edit::RepoProjectionDiffResult;
 
 /// The root map an entity row is a register of.
 const ENTITIES_MAP: &str = "entities";
@@ -50,9 +50,9 @@ pub(crate) struct TranslatedHistory {
     /// The canonical sources the translated operations now target.
     pub(crate) sources: BTreeSet<EntityId>,
     /// Edits of a copy the visible diff holds on a ruled cause. Their
-    /// operations are left untranslated: the caller keeps the whole update
-    /// pending and never imports or acknowledges it.
-    pub(crate) held: Vec<(EntityId, RepoProjectionDiffResult)>,
+    /// operations are left untranslated: the caller imports and applies
+    /// nothing of the update, and keeps only its held record (FIX 10598).
+    pub(crate) held: Vec<HeldEdit>,
 }
 
 impl SyncSecretProjection {
@@ -158,7 +158,7 @@ impl SyncSecretProjection {
                                 *key = id.to_hex();
                                 *value = LoroValue::from(row);
                             }
-                            InboundRow::Held { id, cause } => out.held.push((id, cause)),
+                            InboundRow::Held(edit) => out.held.push(edit),
                             InboundRow::Ordinary => self.unalias_key(key, &mut out.sources),
                         }
                     }
