@@ -57,7 +57,7 @@ const ACCEPT_BOTH: &str = "application/json, text/event-stream";
 
 mod issuer_rerun;
 mod reply_read;
-pub(crate) use issuer_rerun::spawn_issuer_rerun;
+pub(crate) use issuer_rerun::rerun_issuer_dependents;
 use reply_read::read_reply;
 
 fn refused(reason: &str) -> oneiron::Error {

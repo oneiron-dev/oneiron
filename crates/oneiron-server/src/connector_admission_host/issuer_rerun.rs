@@ -13,7 +13,6 @@
 //! connector no longer lists failing on its own; a failure is logged too.
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::connector_key::qualification::qualify_connector;
@@ -26,20 +25,12 @@ use super::{HttpQualificationConnector, ListedTool, client, discover, with_crede
 use crate::config::connectors::normalize_name;
 use crate::server::SyncServer;
 
-/// Starts the re-run of the dependents of the binding `binding_ref` on a
-/// blocking worker and returns at once: the owner's accept does not wait on
-/// it. Call it from the async runtime.
-pub(crate) fn spawn_issuer_rerun(server: &Arc<SyncServer>, binding_ref: EntityId) {
-    let server = Arc::clone(server);
-    drop(tokio::task::spawn_blocking(move || {
-        rerun_issuer_dependents(&server, binding_ref);
-    }));
-}
-
 /// Re-runs discovery, screening and qualification for the dependents of the
 /// binding `binding_ref`, whose issuer revision the owner accepted, and
-/// records each dependent's outcome on its key's audit.
-fn rerun_issuer_dependents(server: &SyncServer, binding_ref: EntityId) {
+/// records each dependent's outcome on its key's audit. A binding with no
+/// dependents runs nothing. Run it on a blocking worker: it holds the
+/// connector's HTTP exchanges.
+pub(crate) fn rerun_issuer_dependents(server: &SyncServer, binding_ref: EntityId) {
     let vault = server.vault();
     let binding = match vault.connector_credential_binding(&binding_ref) {
         Ok(Some(binding)) => binding,
@@ -49,6 +40,9 @@ fn rerun_issuer_dependents(server: &SyncServer, binding_ref: EntityId) {
             return;
         }
     };
+    if binding.dependents.is_empty() {
+        return;
+    }
     let Some(rerun) = rerun_connector(server, &binding) else {
         return;
     };
