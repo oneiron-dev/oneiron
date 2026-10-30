@@ -131,8 +131,7 @@ pub fn describe_named_rows(input: &DescribeRequest) -> Vec<crate::EntityId> {
         crate::task_verb::TaskHandle::Proposed { proposal_ref } => proposal_ref,
         crate::task_verb::TaskHandle::Task { task_ref }
         | crate::task_verb::TaskHandle::Attempt(crate::task_verb::AttemptHandle {
-            task_ref,
-            ..
+            task_ref, ..
         }) => task_ref,
         crate::task_verb::TaskHandle::Ask { group_ref } => group_ref,
     });
