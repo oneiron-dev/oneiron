@@ -18,6 +18,11 @@ pub enum CallOutcome<'a> {
     Answered(&'a LlmUsage),
     /// The paid service reports this many units of its service used.
     Used(u64),
+    /// The host/caller counted this many units used itself, at its row's
+    /// rates: an estimate, a fixed unit, admitted audio, a requested
+    /// length. Settles exactly as [`CallOutcome::Used`]; only the overage
+    /// source differs (FIX 11481).
+    UsedCounted(u64),
     /// No answer arrived: the call failed, or its response was lost.
     Failed,
     /// The call goes on past this process: a kept job a restart takes up
@@ -48,7 +53,7 @@ impl RunInner {
                 let floor = u64::try_from(permit.reserve_native).unwrap_or(u64::MAX);
                 Some(answered_units_wide(usage, floor))
             }
-            CallOutcome::Used(quantity) => {
+            CallOutcome::Used(quantity) | CallOutcome::UsedCounted(quantity) => {
                 Some(u128::from(quantity) * u128::from(permit.unit_cost))
             }
             CallOutcome::Failed => None,
@@ -100,11 +105,13 @@ impl RunInner {
             draw.settle(*units);
         }
         let charged = if permit.metered { units } else { 0 };
-        // A `Used` settlement past its reservation (FIX 11481): the provider
-        // reported more than the permit reserved, and the call settles at
-        // what was reported. The overage is marked on the settlement; the
-        // budget gate sees the true spend at the next admission, as for any
-        // call. Ordinary settlements carry no mark.
+        // A `Used` or `UsedCounted` settlement past its reservation (FIX
+        // 11481): the call settled past what its permit reserved, and the
+        // overage is marked on the settlement with where the settled figure
+        // came from — the provider's report (`Used`), or the host/caller's
+        // own count (`UsedCounted`). The budget gate sees the true spend at
+        // the next admission, as for any call. Ordinary settlements carry
+        // no mark.
         let overage = match outcome {
             CallOutcome::Used(_) if charged > permit.facts.reserved_units => {
                 Some(RunUsageOverage {
@@ -112,6 +119,14 @@ impl RunInner {
                     reserved_units: permit.facts.reserved_units,
                     overage_units: charged - permit.facts.reserved_units,
                     source: RunOverageSource::ProviderReported,
+                })
+            }
+            CallOutcome::UsedCounted(_) if charged > permit.facts.reserved_units => {
+                Some(RunUsageOverage {
+                    reported_units: charged,
+                    reserved_units: permit.facts.reserved_units,
+                    overage_units: charged - permit.facts.reserved_units,
+                    source: RunOverageSource::Counted,
                 })
             }
             _ => None,
@@ -144,7 +159,9 @@ impl RunInner {
                     _ => None,
                 },
                 service_quantity: match outcome {
-                    CallOutcome::Used(quantity) => Some(quantity),
+                    CallOutcome::Used(quantity) | CallOutcome::UsedCounted(quantity) => {
+                        Some(quantity)
+                    }
                     _ => None,
                 },
                 stream,

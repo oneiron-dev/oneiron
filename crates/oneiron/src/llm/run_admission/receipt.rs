@@ -72,10 +72,11 @@ pub enum RunEvent {
         /// when it reported none.
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         inference_calls: Vec<InferenceCallReceipt>,
-        /// What the call reported past its reservation, in the run line's
-        /// units (FIX 11481): a `Used` settlement charges what the provider
-        /// reported even past what its permit reserved, and the overage is
-        /// marked here. Present only then; ordinary settlements carry none.
+        /// What the call settled past its reservation, in the run line's
+        /// units (FIX 11481): a `Used` or `UsedCounted` settlement charges
+        /// the settled figure even past what its permit reserved, and the
+        /// overage is marked here with where that figure came from.
+        /// Present only then; ordinary settlements carry none.
         #[serde(skip_serializing_if = "Option::is_none")]
         overage: Option<RunUsageOverage>,
         units: u64,
@@ -134,13 +135,14 @@ pub struct RunTokenUsage {
     pub output: LlmOutputUsage,
 }
 
-/// What a settled call reported past its reservation (FIX 11481), in the
-/// run line's units as `units` is: the provider's report, settled as
-/// reported, against what the permit reserved. On the settlement only when
-/// the report ran past the reservation.
+/// What a settled call ran past its reservation (FIX 11481), in the
+/// run line's units as `units` is: the settled figure — the provider's
+/// report or the host/caller's own count, per `source` — against what the
+/// permit reserved. On the settlement only when the settled figure ran
+/// past the reservation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct RunUsageOverage {
-    /// What the call settled at: the provider's report, as charged.
+    /// What the call settled at, as charged.
     pub reported_units: u64,
     /// What the permit reserved.
     pub reserved_units: u64,
@@ -156,6 +158,9 @@ pub struct RunUsageOverage {
 pub enum RunOverageSource {
     /// The provider's own usage report for the call.
     ProviderReported,
+    /// The host/caller's own count for the call (bytes, audio, fixed
+    /// units, requested length), at its row's rates.
+    Counted,
 }
 
 /// Everything one permit binds.
