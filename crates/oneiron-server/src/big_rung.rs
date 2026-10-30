@@ -13,7 +13,7 @@
 //! Where a call goes, and whether its text leaves the host, is judged on the
 //! route it takes ([`route`], FIX 9525).
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::decision::{
@@ -76,8 +76,10 @@ pub(crate) struct BigModel {
     send: DecisionSendConstraint,
     /// The host's paired question ("does this need more thinking?"), read
     /// jointly with a question on a route that reports token scores (FIX
-    /// 1557); none when the host binds none.
-    paired: Option<DecisionQuestion>,
+    /// 1557); none when the host binds none. Shared by every clone, so a
+    /// house-read rebuild reaches the bound rung and its on-host twin (FIX
+    /// 11466).
+    paired: Arc<RwLock<Option<DecisionQuestion>>>,
 }
 
 impl BigModel {
@@ -113,7 +115,7 @@ impl BigModel {
             runtime,
             pin,
             send: DecisionSendConstraint::Any,
-            paired: None,
+            paired: Arc::new(RwLock::new(None)),
         })
     }
 
@@ -200,9 +202,21 @@ impl BigModel {
 
     /// This rung reading `paired` jointly with each question a route that
     /// reports token scores takes (FIX 1557).
-    pub(crate) fn with_paired(mut self, paired: Option<DecisionQuestion>) -> Self {
-        self.paired = paired;
+    pub(crate) fn with_paired(self, paired: Option<DecisionQuestion>) -> Self {
+        self.set_paired(paired);
         self
+    }
+
+    /// The paired question a house-read rebuild just bound (FIX 11466):
+    /// every clone of this rung reads it jointly from now on.
+    pub(crate) fn set_paired(&self, paired: Option<DecisionQuestion>) {
+        *self.paired.write().unwrap_or_else(PoisonError::into_inner) = paired;
+    }
+
+    /// The paired question this rung reads jointly now: the house read's
+    /// latest, or none when the host binds none (FIX 11466).
+    fn current_paired(&self) -> Option<DecisionQuestion> {
+        self.paired.read().unwrap_or_else(PoisonError::into_inner).clone()
     }
 
     pub(crate) fn pin(&self) -> ProviderPin {
@@ -242,7 +256,7 @@ impl BigModel {
         &self,
         call: &DecisionCall<'_>,
         route: &ResolvedDecisionRoute,
-        joint: Option<&JointRead<'_>>,
+        joint: Option<&JointRead>,
     ) -> oneiron::Result<LlmRequest> {
         let (model, locality) = (route.model.clone(), route.locality);
         let purpose = CallPurpose::Other {
