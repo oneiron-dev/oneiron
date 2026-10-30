@@ -24,12 +24,19 @@ pub(super) async fn facade_call_receipt(
     request: Request,
     next: Next,
 ) -> Response {
+    // L15 bench-only: one stage line per vault.recall, cleared on arrival.
+    let l15_recall = request.uri().path().trim_start_matches('/') == "vault.recall";
+    if l15_recall {
+        drop(oneiron::stage_timing::take_json());
+    }
+    let l15_total = l15_recall.then(|| oneiron::stage_timing::stage("server.total"));
     let (mut parts, body) = request.into_parts();
     let Ok(auth) = CoreAuth::for_request(&parts, &server).await else {
         return next.run(Request::from_parts(parts, body)).await;
     };
     let resolved = super::invocations::ResolvedCaller::of(auth.clone(), &parts);
     parts.extensions.insert(resolved);
+    let l15_receipt_pre = l15_recall.then(|| oneiron::stage_timing::stage("server.receipt_pre"));
     // OF-063: the no-record exception serves only a caller verified in the
     // session, judged on arrival and again before the receipt is written.
     let principal = call_receipt::request_principal(&auth);
@@ -58,6 +65,7 @@ pub(super) async fn facade_call_receipt(
     // OF-568: what the call reads, captured before it runs. OF-568 L4: the
     // attempt whose live run it holds, as the hold witnessed it.
     let inputs = call_receipt::action_inputs(&server, &verb, request.as_ref());
+    drop(l15_receipt_pre);
     // FIX 10938: a row an action runs in process runs inside its own hold.
     let outer = parts
         .extensions
@@ -111,6 +119,8 @@ pub(super) async fn facade_call_receipt(
     let anonymous =
         anonymous || call_receipt::in_anonymous_session(&server, &session_headers, principal);
     let (actor_ref, actor_class) = call_receipt::call_actor(&auth);
+    let l15_receipt_write =
+        l15_recall.then(|| oneiron::stage_timing::stage("server.call_receipt_write"));
     let stamp = call_receipt::record(
         &server,
         anonymous,
@@ -129,6 +139,7 @@ pub(super) async fn facade_call_receipt(
             served: Vec::new(),
         },
     );
+    drop(l15_receipt_write);
     if let Some(mut refusal) = refusal {
         if refusal.body.error.receipt_ref.is_none() {
             refusal.body.error.receipt_ref = stamp.receipt_ref().map(str::to_owned);
@@ -136,5 +147,13 @@ pub(super) async fn facade_call_receipt(
         response = refusal.reply();
     }
     stamp.stamp_header(&mut response);
+    if let Some(l15_total) = l15_total {
+        drop(l15_total);
+        tracing::warn!(
+            target: "l15_stage_timing",
+            "L15STAGES {}",
+            oneiron::stage_timing::take_json()
+        );
+    }
     response
 }

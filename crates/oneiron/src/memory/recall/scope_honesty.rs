@@ -22,6 +22,7 @@ impl Memory<'_> {
         read: &crate::claim::world_access::WorldAuthoritySet,
         deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> MemoryResult<ScopeHonesty> {
+        let _l15 = crate::stage_timing::stage("recall.census");
         let mut worlds = BTreeSet::new();
         let mut judged = 0;
         let mut stopped = false;
