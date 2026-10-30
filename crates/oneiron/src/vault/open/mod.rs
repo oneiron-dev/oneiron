@@ -552,6 +552,7 @@ impl Vault {
             writer_lease: None,
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
