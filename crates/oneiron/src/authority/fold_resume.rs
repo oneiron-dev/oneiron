@@ -508,6 +508,8 @@ pub(in crate::authority) struct FoldBase {
     projected: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     first_seen: BTreeMap<AuthorityEntryHash, u64>,
     floors: BTreeMap<AuthorityEntryHash, u64>,
+    /// The rows whose first-seen seconds and floor are write-once receipts'.
+    pinned: BTreeSet<AuthorityEntryHash>,
     once: Once,
 }
 
@@ -532,8 +534,24 @@ impl FoldBase {
                 .collect(),
             first_seen: first_seen.clone(),
             floors: floors.clone(),
+            pinned: BTreeSet::new(),
             once,
         }
+    }
+
+    /// This base, with `pinned` the rows it took from write-once receipts.
+    pub(in crate::authority) fn with_pinned(self, pinned: BTreeSet<AuthorityEntryHash>) -> Self {
+        Self { pinned, ..self }
+    }
+
+    /// Each pinned row's first-seen seconds and floor, as a read answers them.
+    pub(in crate::authority) fn pinned_receipts(
+        &self,
+    ) -> impl Iterator<Item = (AuthorityEntryHash, u64, Option<u64>)> + '_ {
+        self.pinned.iter().filter_map(move |hash| {
+            let first_seen = *self.first_seen.get(hash)?;
+            Some((*hash, first_seen, self.floors.get(hash).copied()))
+        })
     }
 
     /// Each row the base folded.
@@ -603,6 +621,8 @@ pub(in crate::authority) struct StoredTail<'a> {
     pub(in crate::authority) peer_consent_roots:
         &'a BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
     pub(in crate::authority) observations: &'a AuthorityLocalObservations,
+    /// The rows whose first-seen seconds and floor are receipts' (FIX 1854).
+    pub(in crate::authority) pinned: &'a BTreeSet<AuthorityEntryHash>,
     pub(in crate::authority) posture: crate::HostingPrivacyPosture,
     pub(in crate::authority) pin: Option<&'a PinnedRoot>,
 }
@@ -668,6 +688,7 @@ pub(in crate::authority) fn fold_stored_log(
                     now_secs,
                     peer_consent_roots,
                     observations,
+                    pinned: &BTreeSet::new(),
                     posture,
                     pin,
                 },
@@ -714,6 +735,7 @@ impl FoldBase {
             first_seen_at_secs,
             now_secs,
             observations,
+            pinned,
             ..
         } = log;
         if *inputs != self.inputs {
@@ -726,9 +748,11 @@ impl FoldBase {
             .filter(|(hash, _)| !self.rows.contains_key(hash))
             .map(|(hash, entry)| (*hash, *entry))
             .collect();
+        // A row pinned here and in the base holds one receipt's values.
         let on_base = |map: &BTreeMap<AuthorityEntryHash, u64>| {
             map.iter()
                 .filter(|(hash, _)| self.rows.contains_key(*hash))
+                .filter(|(hash, _)| !(self.pinned.contains(*hash) && pinned.contains(*hash)))
                 .map(|(hash, value)| (*hash, *value))
                 .collect::<Vec<_>>()
         };
@@ -850,6 +874,7 @@ impl FoldBase {
             projected,
             first_seen: first_seen_at_secs.clone(),
             floors: observations.sequence_floors.clone(),
+            pinned: pinned.clone(),
             once: Once {
                 judged,
                 head: tail.tip,
