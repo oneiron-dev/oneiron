@@ -47,6 +47,7 @@
 //! codecs are the shared ones in `oneiron_crypto::backup`; the engine reads
 //! version 2 only.
 mod manifest;
+mod payload_inventory;
 mod sink;
 
 use std::fs::File;
@@ -62,6 +63,7 @@ use oneiron_crypto::backup::{
 };
 
 use self::manifest::StreamEntry;
+pub(super) use self::payload_inventory::write_payload_inventory;
 use self::sink::Sealer;
 pub(super) use self::sink::{ArtifactBody, write_artifact};
 use super::admission::{
