@@ -3,13 +3,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::claim::ClaimBody;
+use crate::claim::{ClaimBody, ClaimReadStatus, ScopedRead, ScopedReadActorKey};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
-use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
+use crate::skill_hub::pack_catalog::{HookActorClass, HookAuthor, PackHookBinding};
 use crate::{EntityId, Error, Result as VaultResult, Vault};
 
 use super::filter::glob_match;
+use super::scope::HookScope;
 
 /// The owner's grant rows, by binding. Absent, a hook reads at its author's
 /// ceiling.
@@ -34,15 +35,33 @@ pub struct HookGrant {
 
 impl HookGrant {
     /// The author's ceiling: the owner's own reach for an owner's hook, and
-    /// for a hub hook its publisher's, which reads only what its Grant does.
+    /// for a hub hook its publisher's, which reads only what its Grant does
+    /// and, of that, only what the hook's manifest declares (FIX 1873): the
+    /// predicates it reads, in the world its scope names. A hub hook that
+    /// declares no read reads nothing: it is held to its own CODE entity as
+    /// its one world, which no claim stands in.
     #[must_use]
     pub fn author_ceiling(binding: &PackHookBinding) -> Self {
-        Self {
+        let mut grant = Self {
             reader: binding.author_id(),
             reader_class: binding.author_class(),
             predicates: Vec::new(),
             worlds: Vec::new(),
+        };
+        if matches!(binding.author, HookAuthor::ForeignActor { .. }) {
+            match crate::authority::hook_declared_reads(&binding.selector) {
+                Some(predicates) => {
+                    grant.predicates = predicates;
+                    if let Some(HookScope::World(world)) =
+                        binding.selector.scope.as_deref().and_then(HookScope::parse)
+                    {
+                        grant.worlds = vec![world];
+                    }
+                }
+                None => grant.worlds = vec![binding.code],
+            }
         }
+        grant
     }
 
     /// The grant's digest, lowercase hex: a saved verb input built under it
@@ -182,6 +201,30 @@ pub(crate) fn carry_hook_grant_in_txn(
         }
     }
     Ok(())
+}
+
+/// The Recorded lane a replay or a golden run under `grant` reads on: its
+/// reader's own, or one that reads no row for a reader no row holds yet
+/// (FIX 1873): a hub publisher whose hooks the owner has not bound holds no
+/// Grant, so its pack's test reads nothing, as the hook would.
+pub(super) fn reader_lane<'v>(vault: &'v Vault, grant: &HookGrant) -> VaultResult<ScopedRead<'v>> {
+    let class = super::filter::edge_class(grant.reader_class);
+    let key = match vault.memory(grant.reader, class).read_key() {
+        Ok(key) => key,
+        Err(_) if vault.get_entity_type(&grant.reader)?.is_none() => {
+            ScopedReadActorKey::read_nothing(grant.reader.to_hex(), class.gate_actor_class())
+                .ok_or(Error::InvariantViolation("a hook reader names no actor"))?
+        }
+        Err(error) => {
+            return Err(Error::InvalidConfig(format!(
+                "{}: {}",
+                error.code, error.message
+            )));
+        }
+    };
+    Ok(vault
+        .scoped_read(key)
+        .with_claim_status(ClaimReadStatus::Recorded))
 }
 
 /// The grant a run reads under: the owner's, else the author's ceiling.

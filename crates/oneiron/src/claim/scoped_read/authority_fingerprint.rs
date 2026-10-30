@@ -33,7 +33,7 @@ use crate::federation::Scope;
 use crate::pipeline::WorldAuthoritySet;
 use crate::registry::{
     ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_CLAIM, ENTITY_TYPE_MACHINE,
-    ENTITY_TYPE_RELATIONSHIP,
+    ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP,
 };
 use crate::settings::ReadDestination;
 use crate::{EntityId, Vault};
@@ -94,7 +94,8 @@ impl ScopedReadActorKey {
 }
 
 /// The reader's standing for `read` and every agent Grant that alone stands
-/// for it, each id with its Scope, as `agent_grants` resolves them.
+/// for it, each id with its Scope, as `agent_grants` resolves them: a PERSON
+/// reader as an agent, a hub hook's author (FIX 1873).
 fn fold_reader_grants(
     hasher: &mut Sha256,
     vault: &Vault,
@@ -103,7 +104,7 @@ fn fold_reader_grants(
 ) -> Result<()> {
     let class = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &reader)?.live_type()
     {
-        Some(ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+        Some(ENTITY_TYPE_AGENT_DEF | ENTITY_TYPE_PERSON) => EdgeActorClass::Agent,
         Some(ENTITY_TYPE_MACHINE) => EdgeActorClass::System,
         _ => {
             hasher.update([1u8]);

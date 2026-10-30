@@ -14,14 +14,14 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::ScopedRead;
 use crate::receipt::hex_lower;
 use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
 use crate::{EntityId, Error, Result, Vault};
 
 use super::body::{HookBodyRuntime, HookVerdict};
 use super::filter;
-use super::grant::{HookGrant, effective_grant};
+use super::grant::{HookGrant, effective_grant, reader_lane};
 use super::read;
 use super::runner::{Verdict, bounded};
 use super::source::{FactEntry, FactKind, FactPositionHex, FactSource};
@@ -338,10 +338,7 @@ impl Vault {
         walk: impl FnOnce(&Replay<'_>, &ScopedRead<'_>) -> Result<T>,
     ) -> Result<(T, Option<Vec<EntityId>>)> {
         let grant = effective_grant(self, binding_id, row)?;
-        let memory = self.memory(grant.reader, filter::edge_class(grant.reader_class));
-        let lane = memory
-            .read_lane(ClaimReadStatus::Recorded)
-            .map_err(|error| Error::InvalidConfig(format!("{}: {}", error.code, error.message)))?;
+        let lane = reader_lane(self, &grant)?;
         let replay = Replay {
             vault: self,
             runtime,

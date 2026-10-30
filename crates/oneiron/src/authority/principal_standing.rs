@@ -6,11 +6,12 @@
 //! and this check, run again in each snapshot the work writes in, that the
 //! principal is still live. A person stands while its PERSON row is live and
 //! active. An agent stands while its agent row is live (an enabled, active
-//! agent definition, or a base agent's MACHINE principal) AND one live Grant
-//! the owner gave it names it, confers now and lists the work's verb, and,
-//! on a shared vault, whose pact membership still stands (FIX 7511). Grants
-//! are never unioned and no other holder is picked. It mints nothing, and
-//! the work still crosses every gate it crosses for a caller.
+//! agent definition, or a base agent's MACHINE principal, or a live PERSON
+//! acting as an agent: a hub hook's author, FIX 1873) AND one live Grant the
+//! owner gave it names it, confers now and lists the work's verb, and, on a
+//! shared vault, whose pact membership still stands (FIX 7511). Grants are
+//! never unioned and no other holder is picked. It mints nothing, and the
+//! work still crosses every gate it crosses for a caller.
 
 use crate::Vault;
 use crate::claim::ClaimLifecycleStatus;
@@ -20,7 +21,9 @@ use crate::error::{Error, Result};
 use crate::federation::{
     AgentGrantStanding, FederationGrant, FederationGrantKind, FederationGrantScope, ScopeAxis,
 };
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON,
+};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// A recorded principal that stood in one snapshot.
@@ -189,7 +192,9 @@ fn principal_standing_or_lapse_in(
             None
         }
         EdgeActorClass::Agent | EdgeActorClass::System => {
-            if !live_agent_principal_in(home.store(), txn, principal, class)? {
+            if !live_agent_principal_in(home.store(), txn, principal, class)?
+                && !hook_author_person_in(home, txn, principal, class)?
+            {
                 return Ok(Err(NoStanding::NotStanding));
             }
             match agent_grant_listing_in(home, txn, principal, verb)? {
@@ -239,6 +244,23 @@ pub(crate) fn live_agent_principal_in(
         ) => crate::dreamer_runner::authority::is_base_agent_actor(&agent),
         _ => Ok(false),
     }
+}
+
+/// Whether `principal` is a live PERSON acting as an agent: the
+/// vault-resident actor a hub hook's publisher runs as (FIX 1873). It stands
+/// only on an owner agent Grant that names it, which only the owner's act on
+/// its hooks mints (`Vault::settle_hook_author_grants_in_txn`); the agent
+/// Grant door names no PERSON.
+fn hook_author_person_in(
+    home: StandingHome<'_>,
+    txn: &heed::RoTxn<'_>,
+    principal: EntityId,
+    class: EdgeActorClass,
+) -> Result<bool> {
+    Ok(class == EdgeActorClass::Agent
+        && live_entity_row_in_txn(home.store(), txn, &principal)?.live_type()
+            == Some(ENTITY_TYPE_PERSON)
+        && home.person_is_live_in(txn, &principal)?)
 }
 
 /// The first live owner-agent Grant, in id order, that alone names `agent`,

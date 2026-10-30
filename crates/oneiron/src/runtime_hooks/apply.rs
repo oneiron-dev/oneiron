@@ -1,6 +1,7 @@
 //! Applying saved intents (ARCH-0080 §4 Crash-safe outcomes, §6 authority).
 //! Each runs once, as the hook's author with source Generated, through the
-//! existing door, after current authority is checked again.
+//! existing door, after current authority is checked again: a hub hook's
+//! author's own Grant must list the outcome's verb (FIX 1873).
 
 use rmpv::Value;
 
@@ -105,6 +106,11 @@ fn apply_intent(
     };
     let outcome: HookOutcome = serde_json::from_str(&intent.outcome_json)
         .map_err(|_| Error::CorruptedIndex("hook intent outcome"))?;
+    // A hub hook's author lands only what its own Grant lists (FIX 1873).
+    if let Some(reason) = vault.hook_author_write_refusal(binding, outcome.kind())? {
+        report.intents_refused += 1;
+        return settle(vault, key, Err(reason));
+    }
     // The doors below run at hook depth 1: no verb hook fires inside them.
     let _depth = super::verb::HookDepth::enter();
     let class = super::filter::edge_class(binding.author_class());
