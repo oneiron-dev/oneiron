@@ -548,6 +548,23 @@ impl Vault {
     }
 }
 
+/// Whether a call on `tool` under connector key `key_ref` meets an issuer
+/// change, not yet accepted, on a binding its row depends on, read in the
+/// caller's transaction: the hold reason while it holds. A key that no
+/// longer resolves meets none here.
+pub(crate) fn connector_issuer_hold_reason_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key_ref: &EntityId,
+    tool: &str,
+) -> Result<Option<&'static str>> {
+    let Some(key) = read_connector_key_in_txn(store, txn, key_ref)? else {
+        return Ok(None);
+    };
+    let held = connector_issuer_hold_in_txn(store, txn, key_ref, &key, tool)?;
+    Ok(held.then_some(CONNECTOR_ISSUER_HOLD_REASON))
+}
+
 impl Vault {
     /// Whether a call on `tool` under connector key `key_ref` meets an issuer
     /// change, not yet accepted, on a binding its row depends on, read in its
@@ -560,11 +577,7 @@ impl Vault {
         tool: &str,
     ) -> Result<Option<&'static str>> {
         let txn = self.store.env.read_txn()?;
-        let Some(key) = read_connector_key_in_txn(&self.store, &txn, key_ref)? else {
-            return Ok(None);
-        };
-        let held = connector_issuer_hold_in_txn(&self.store, &txn, key_ref, &key, tool)?;
-        Ok(held.then_some(CONNECTOR_ISSUER_HOLD_REASON))
+        connector_issuer_hold_reason_in_txn(&self.store, &txn, key_ref, tool)
     }
 
     /// Whether any binding of the catalog connector `connector` meets an

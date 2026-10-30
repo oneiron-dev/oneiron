@@ -124,6 +124,7 @@ pub use self::grant::{
     SecretGrantRedemption, SecretGrantRef, SecretGrantStatus, SecretGrantTarget,
     SecretGrantTeardown, SecretLeaseGrant,
 };
+pub use self::grant_redeem::ConnectorGrantRedemption;
 pub use self::storage::{ACTOR_ERASE_REVEAL_LEASE, RevealLeaseErase};
 pub(crate) use self::storage::{
     erase_lease_actor_in_txn, erase_receipt_actor_in_txn, reread_reveal_lease_in_txn,
