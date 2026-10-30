@@ -256,11 +256,11 @@ where
 }
 
 /// [`run_booking_lifecycle_attempt`], carrying each committed revision's
-/// invite on `invite_sink` (FIX 7850): a confirm's first `REQUEST` and a
-/// move's revised one, sent as the page's verified live publisher through
-/// the page's standing invite grant, the gate and the intent ledger. A
-/// page with no live publisher sends nothing, and a send that fails never
-/// fails the committed revision.
+/// invite on `invite_sink` (FIX 7850): a confirm's first `REQUEST`, a move's
+/// revised one and a cancel's `CANCEL`, sent as the page's verified live
+/// publisher through the page's standing invite grant, the gate and the
+/// intent ledger. A page with no live publisher sends nothing, and a send
+/// that fails never fails the committed revision.
 ///
 /// # Errors
 ///

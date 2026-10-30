@@ -1,6 +1,7 @@
-//! Builds the outbound dispatch for the first confirm's invite and commits its passport.
+//! Builds the outbound dispatch for each booking revision's invite (a confirm's
+//! or move's `REQUEST`, a cancel's `CANCEL`) and commits its passport.
 
-use super::authorization::{booking_page_invites_authorizes, confirmed_booking_binding};
+use super::authorization::{booking_page_invite_method_authorizes, confirmed_booking_binding};
 use super::codec::{calendar_wrap, engine_failure, refused};
 use super::mint::live_page_invite_grant;
 use super::types::{BookingPageInviteContext, ConfirmedBookingInvite};
@@ -123,7 +124,30 @@ pub fn enqueue_confirm_invite_outcome(
     sink: &mut impl OutboundExecutionSink,
     now: u64,
 ) -> Result<ConfirmInviteOutcome, BookingError> {
-    let Some(binding) = confirmed_booking_binding(vault, &invite.booking_ref)? else {
+    enqueue_booking_invite_outcome(
+        vault,
+        actor,
+        grant_ref,
+        invite,
+        CalendarInviteMethod::Request,
+        sink,
+        now,
+    )
+}
+
+/// [`enqueue_confirm_invite_outcome`] for one invite method: a `REQUEST`, or
+/// a cancelled booking's `CANCEL` to its booker (FIX 7850), which the page
+/// grant still authorizes for a booking it covered.
+fn enqueue_booking_invite_outcome(
+    vault: &Vault,
+    actor: EntityId,
+    grant_ref: EntityId,
+    invite: &ConfirmedBookingInvite<'_>,
+    method: CalendarInviteMethod,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<ConfirmInviteOutcome, BookingError> {
+    let Some(binding) = confirmed_booking_binding(vault, &invite.booking_ref, method)? else {
         return Err(refused(
             "this booking carries no confirmed page and booker binding",
         ));
@@ -137,7 +161,7 @@ pub fn enqueue_confirm_invite_outcome(
     if grant.status != StandingOutboundGrantStatus::Active || grant.revoked_at.is_some() {
         return Err(refused("the named booking page grant is not live"));
     }
-    if !booking_page_invites_authorizes(
+    if !booking_page_invite_method_authorizes(
         vault,
         &grant.scope,
         &BookingPageInviteContext {
@@ -145,6 +169,7 @@ pub fn enqueue_confirm_invite_outcome(
             verb_kind: CALENDAR_INVITE_VERB,
             requested_recipient: &binding.recipient,
         },
+        method,
     )? {
         return Err(refused(
             "the named grant does not authorize invites for this booking",
@@ -152,7 +177,7 @@ pub fn enqueue_confirm_invite_outcome(
     }
 
     let payload = CalendarInvitePayload {
-        method: CalendarInviteMethod::Request,
+        method,
         uid: invite.uid.to_owned(),
         sequence: invite.sequence,
         ics_blob_ref: invite.ics_blob_ref.to_owned(),
@@ -249,8 +274,48 @@ pub(in crate::booking) fn dispatch_booking_revision_invite_outcome(
     sink: &mut impl OutboundExecutionSink,
     now: u64,
 ) -> Result<ConfirmInviteOutcome, BookingError> {
+    dispatch_booking_invite_outcome(
+        vault,
+        actor,
+        revision,
+        CalendarInviteMethod::Request,
+        sink,
+        now,
+    )
+}
+
+/// Assembles and dispatches the `CANCEL` a cancelled booking's revision
+/// carries to its booker (FIX 7850), under the cancel's bumped SEQUENCE,
+/// read from committed state as a move's `REQUEST` is. The page grant
+/// authorizes this one `CANCEL` for a booking it covered; it authorizes no
+/// new `REQUEST` to that booker.
+pub(in crate::booking) fn dispatch_booking_cancel_invite_outcome(
+    vault: &Vault,
+    actor: EntityId,
+    revision: &CalendarRevision,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<ConfirmInviteOutcome, BookingError> {
+    dispatch_booking_invite_outcome(
+        vault,
+        actor,
+        revision,
+        CalendarInviteMethod::Cancel,
+        sink,
+        now,
+    )
+}
+
+fn dispatch_booking_invite_outcome(
+    vault: &Vault,
+    actor: EntityId,
+    revision: &CalendarRevision,
+    method: CalendarInviteMethod,
+    sink: &mut impl OutboundExecutionSink,
+    now: u64,
+) -> Result<ConfirmInviteOutcome, BookingError> {
     let booking_ref = revision.event_ref;
-    let Some(binding) = confirmed_booking_binding(vault, &booking_ref)? else {
+    let Some(binding) = confirmed_booking_binding(vault, &booking_ref, method)? else {
         return Err(refused(
             "this booking carries no confirmed page and booker binding",
         ));
@@ -277,7 +342,7 @@ pub(in crate::booking) fn dispatch_booking_revision_invite_outcome(
     }
     let ics = emit_imip_ics_with_organizer_zones(
         &ImipEmitRequest {
-            method: CalendarInviteMethod::Request,
+            method,
             uid: revision.uid.clone(),
             sequence: revision.sequence,
             organizer,
@@ -298,14 +363,17 @@ pub(in crate::booking) fn dispatch_booking_revision_invite_outcome(
     let blob_ref = persist_imip_blob(
         vault,
         &confirm_invite_blob_id(&booking_ref, revision.sequence)?,
-        "booking confirm invite",
+        match method {
+            CalendarInviteMethod::Request => "booking confirm invite",
+            CalendarInviteMethod::Cancel => "booking cancel invite",
+        },
         &ics,
         &BlobVersionProvenance::UserUpload,
         WriteActor::new(actor, EdgeActorClass::Human),
         now,
     )
     .map_err(calendar_wrap)?;
-    enqueue_confirm_invite_outcome(
+    enqueue_booking_invite_outcome(
         vault,
         actor,
         grant_ref,
@@ -315,6 +383,7 @@ pub(in crate::booking) fn dispatch_booking_revision_invite_outcome(
             sequence: revision.sequence,
             ics_blob_ref: &blob_ref,
         },
+        method,
         sink,
         now,
     )

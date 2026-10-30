@@ -24,7 +24,8 @@ use super::types::{
 };
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
 use crate::booking::invite_grant::{
-    dispatch_booking_revision_invite_outcome, dispatch_confirm_booking_invite_outcome,
+    dispatch_booking_cancel_invite_outcome, dispatch_booking_revision_invite_outcome,
+    dispatch_confirm_booking_invite_outcome,
 };
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};
@@ -90,8 +91,22 @@ pub(super) fn execute_booking_lifecycle_attempt<S: OutboundExecutionSink>(
             Ok(BookingVerbReceipt::Rescheduled(receipt))
         }
         BookingVerbRequest::Cancel(spec) => {
-            execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())
-                .map(BookingVerbReceipt::Cancelled)
+            let receipt = execute_cancel(vault, spec, now_utc, attempt.public_authority.as_ref())?;
+            // The cancel carries its `CANCEL` to the booker under the bumped
+            // SEQUENCE (FIX 7850), on the grant that covered the booking, and
+            // a dispatch failure never fails the committed cancel.
+            if let (Some(actor), Some(sink)) = (invite_actor, invite_sink)
+                && let Err(error) = dispatch_booking_cancel_invite_outcome(
+                    vault,
+                    actor,
+                    &receipt.calendar,
+                    sink,
+                    now_utc,
+                )
+            {
+                tracing::debug!(%error, "booking cancel sent no cancel invite");
+            }
+            Ok(BookingVerbReceipt::Cancelled(receipt))
         }
     }
 }
