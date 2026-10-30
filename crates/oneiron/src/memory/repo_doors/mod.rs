@@ -31,7 +31,8 @@ pub use custody::{
 };
 pub use host::repo_provenance_unwitnessed;
 pub use proposals::{
-    REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, RepoReviewPolicy, RepoRunSources,
+    REPO_PROVENANCE_REQUIRED, REPO_REVIEW_POLICY_REQUIRED, REPO_WORK_BASE_CHANGED,
+    RepoReviewPolicy, RepoRunSources,
 };
 pub use review_policy::OwnerProposalReviewPolicy;
 pub use types::*;
@@ -222,6 +223,7 @@ pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
             REPO_PROVENANCE_REQUIRED,
             REPO_PUBLICATION_POLICY_REQUIRED,
             REPO_LANE_UNREADABLE,
+            REPO_WORK_BASE_CHANGED,
         ]
         .contains(&code)
 }
