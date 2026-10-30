@@ -37,7 +37,9 @@ use crate::world_keys::{PadAdmissionTarget, SealedBundleGeneration, SealedKeyPad
 
 mod membership;
 
-pub(crate) use membership::{PadObjectMembership, generations_an_install_retires_in_txn};
+pub(crate) use membership::{
+    PadObjectMembership, generations_an_install_retires_in_txn, read_back_put_back_in_txn,
+};
 
 /// The late joiners' grants and the admission outbox (`bundle_access`).
 const ACCESS: SideTable<String, Vec<u8>, Raw> =
@@ -141,6 +143,10 @@ pub(crate) struct CapturedPadObjects {
     objects: Vec<CapturedObject>,
     /// The admission outbox's rows.
     queued: Rows,
+    /// The outbox keys an install over the store this read added there that
+    /// it did not hold (FIX 12142): what a put-back of this capture takes
+    /// out again. Empty until `noting_outbox_added_by` notes them.
+    outbox_added: Vec<Vec<u8>>,
 }
 
 impl CapturedPadObjects {
@@ -365,6 +371,7 @@ fn capture_from(
         index,
         objects,
         queued,
+        outbox_added: Vec::new(),
     })
 }
 
@@ -514,12 +521,14 @@ pub(crate) fn capture_current_pad_objects_in_rows(
 /// Then each captured object of a generation kept here takes the place of
 /// the one kept, whole, with its grant rows; the admission outbox's rows
 /// land too. A store's own objects put back (`StoreOwnPutBack`) go back
-/// part by part as it held them, whole or not (FIX 11825). Every check
-/// comes before the first write: a store that moved, or a capture of
-/// another generation under the same name, writes nothing
-/// (`CurrentChanged`), nor does a source's object not whole of a generation
-/// kept here (`Unavailable`). The caller commits, then reads back
-/// ([`read_back_captured_in_txn`]).
+/// part by part as it held them, whole or not (FIX 11825), each one's grant
+/// rows as it held them, and the outbox's rows it held, with each the
+/// install added taken out (FIX 12142). Every check comes before the first
+/// write: a store that moved, or a capture of another generation under the
+/// same name, writes nothing (`CurrentChanged`), nor does a source's object
+/// not whole of a generation kept here (`Unavailable`). The caller commits,
+/// then reads back ([`read_back_captured_in_txn`], for a put-back
+/// [`read_back_put_back_in_txn`]).
 ///
 /// # Errors
 ///
@@ -570,16 +579,26 @@ pub(crate) fn install_captured_pad_objects_in_txn(
     let change = membership::membership_change(&held, captured, membership);
     membership::write_membership_change_in_txn(store, wtxn, captured, &change)?;
     for (entry, digest, bytes, object) in installs {
-        match bytes {
-            Some(bytes) => put_pads(store, wtxn, entry, digest, &bytes)?,
-            None => membership::put_pads_as_held(store, wtxn, entry, digest, &object.parts)?,
-        }
+        let Some(bytes) = bytes else {
+            membership::put_pads_as_held(store, wtxn, entry, digest, &object.parts)?;
+            let grants = generation_prefix(&entry.generation);
+            membership::put_access_as_held(store, wtxn, grants.as_bytes(), &object.grants)?;
+            continue;
+        };
+        put_pads(store, wtxn, entry, digest, &bytes)?;
         for (key, raw) in &object.grants {
             put_access(store, wtxn, key, raw)?;
         }
     }
-    for (key, raw) in &captured.queued {
-        put_access(store, wtxn, key, raw)?;
+    match membership {
+        PadObjectMembership::StoreOwnPutBack => {
+            membership::put_outbox_as_held(store, wtxn, captured)?;
+        }
+        PadObjectMembership::SourceKeepRuleProvesRetired => {
+            for (key, raw) in &captured.queued {
+                put_access(store, wtxn, key, raw)?;
+            }
+        }
     }
     Ok(PadObjectInstall::Installed(current_pad_objects_in_txn(
         store,
