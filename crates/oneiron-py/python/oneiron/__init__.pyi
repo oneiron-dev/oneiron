@@ -66,6 +66,7 @@ class ClaimInput(TypedDict):
     confidence: float
     source: str
     world_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[list[str] | None]
     scope: NotRequired[dict[str, Any] | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
