@@ -894,4 +894,4 @@ impl ScopeFold {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct EntityIdBytes([u8; 16]);
+pub(super) struct EntityIdBytes([u8; 16]);
