@@ -10,7 +10,8 @@
 //! carrier publishes at each turn, and takes the owner's answers to a
 //! diverged copy, which the carrier carries out at its next turn: `keep`
 //! moves the copy aside under its own name, a hidden sibling of the member
-//! ([`local::move_aside`]), so the origin's next version lands (FIX 11736);
+//! ([`local::move_aside`]), where the carrier leaves it, so the origin's
+//! next version lands (FIX 11736);
 //! `remove` removes the guest's own copy while it still hashes to the digest
 //! he answered, or, for the host's copy, takes that copy as the agreed
 //! version, so the guest's next scan retires it as an ordinary removal
@@ -210,8 +211,8 @@ impl Carrier {
             // version it refused for that copy goes again.
             DivergedAnswer::Keep => {
                 record.refused = None;
-                record.notice = Some(answered.clone());
-                Some(answered)
+                record.notice = Some(answered);
+                None
             }
             DivergedAnswer::Remove if own => {
                 match self.remove_own_copy(kind, member, &diverged.held.blake3) {
