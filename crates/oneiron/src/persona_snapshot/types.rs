@@ -299,6 +299,11 @@ pub struct PersonaSnapshotCompile {
     /// The audience's folded read of every candidate claim, when the card is
     /// FOR someone. Claims the audience may not read are counted here.
     pub read_receipt: Option<crate::claim::ScopedReadReceipt>,
+    /// The claims the relationship rows' labels read (FIX 6080): each related
+    /// person's name claim, and their role claim where the relationship
+    /// record names no role. Outside the compile fingerprint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub label_claims: Vec<EntityId>,
 }
 
 /// Strike decisions applied at export over a compile's row list.

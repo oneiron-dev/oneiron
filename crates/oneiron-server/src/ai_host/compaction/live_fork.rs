@@ -20,7 +20,7 @@ use oneiron::code_run::{
 };
 use oneiron::compaction::{
     CompactionCheck, CompactionHomeRef, CompactionRefusal, CompactionRequest,
-    SelfCompactionUnavailable,
+    SelfCompactionUnavailable, compaction_home_worn_rows,
 };
 use oneiron::llm::{
     CallEnvelope, ContentPart, LlmMessage, LlmMessageRole, LlmRequest, SelfCompactionDefault,
@@ -189,6 +189,9 @@ impl ServedCompactionBackend {
             started,
             call,
             dispatch,
+            // The live prefix's complete input set is not witnessed yet;
+            // only the home can contribute rows to this call (FIX 6999).
+            None,
             request.summary_token_budget,
             |call, room| {
                 let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
@@ -209,7 +212,8 @@ impl ServedCompactionBackend {
                         },
                     );
                 }
-                Ok(home.refs)
+                let home_rows = compaction_home_worn_rows(&home.refs).collect();
+                Ok((home.refs, Some(home_rows)))
             },
         )
     }

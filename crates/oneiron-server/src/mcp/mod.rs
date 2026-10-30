@@ -63,7 +63,7 @@ pub(crate) use self::exec_host::{
     EngineRunError, OffRecordRunSession, ScopeMeter, enter_engine_native_run, off_record_run_id,
     run_read_worlds, run_seat, task_engine_run_seat, task_run_seat,
 };
-pub(crate) use self::live_lease_backend::LiveLeaseBackend;
+pub(crate) use self::live_lease_backend::{LiveLeaseBackend, LiveLeaseRunner};
 pub use self::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource,
     McpResultEnd, McpRetrievalHealth, clamp_foreign_cache_ttl_ms, mcp_canonical_json,

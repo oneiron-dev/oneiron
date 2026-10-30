@@ -151,13 +151,16 @@ mod derivation_witness;
 pub(crate) use derivation_witness::{
     erase_derivation_witness_in_txn, note_summary_landing_in_txn, note_summary_request_in_txn,
 };
+mod site_exposure;
+pub(crate) use site_exposure::erase_site_exposure_in_txn;
+pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;
-pub use run_writes::{RunWriteToken, with_run_write_token};
 pub(crate) use run_writes::{
-    current_run_write_token, enter_run_write_token, enter_run_writes,
+    RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
     run_derivations,
 };
+pub use run_writes::{RunWriteToken, with_run_write_token};
 mod sweep;
 pub use sweep::{
     AttributionSweepReport, ReceiptAttributionFacts, ReceiptAttributionSource,

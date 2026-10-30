@@ -30,7 +30,7 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::secret_custody::{
     CustodyClass, CustodyManifestCheck, CustodyPlan, CustodyTier, ManifestSource,
     OwnerSecretRegistration, RequestedBinding, SECRET_NAME_MAX_BYTES, SealedCustodyChange,
-    SecretCustodyView, SecretCustodyWork, SecretRegistered,
+    SealedInput, SecretCustodyView, SecretCustodyWork, SecretRegistered,
 };
 use crate::secret_rotation::RotationReceipt;
 use crate::world_keys::OwnerWorkReceipt;
@@ -552,7 +552,7 @@ pub fn submit_sealed_custody_as(
             seen: digest("seen", &input.seen)?,
             holder: entity_id("holder", &input.holder)?,
             recipients: &recipients,
-            input: &sealed,
+            input: SealedInput::Slice(&sealed),
         },
         vault.now_recorded_at(),
     )?;

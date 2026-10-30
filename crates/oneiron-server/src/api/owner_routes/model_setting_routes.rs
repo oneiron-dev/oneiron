@@ -5,20 +5,38 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/settings/models", get(read).post(put))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/models",
+                summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/models",
+                summary: "Sets the switch; the next Responses turn reads it.",
+                row: None,
+            },
+            post(put),
+        ),
+    ]
 }
 
 /// The owner's model settings.
