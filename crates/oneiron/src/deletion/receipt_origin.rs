@@ -13,12 +13,13 @@ use std::collections::BTreeMap;
 use ed25519_dalek::{Signature, VerifyingKey};
 
 use crate::Vault;
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::receipt::{
-    ATT_KEY_CLIENT, ATT_KEY_PK, ATT_KEY_SIG, RECEIPT_ATT_DOMAIN, RedactionAuditReceipt, hex_lower,
-    receipt_envelope_header,
+    ATT_EMPTY_MAP_BYTE, ATT_KEY_CLIENT, ATT_KEY_PK, ATT_KEY_SIG, RECEIPT_ATT_DOMAIN,
+    RedactionAuditReceipt, hex_lower, receipt_attestation_splice, receipt_envelope_header,
 };
 use super::receipt_grammar::is_lower_hex;
 
@@ -27,10 +28,18 @@ use super::receipt_grammar::is_lower_hex;
 /// whose attestation names another client or key, or does not verify, is
 /// another device's.
 ///
+/// The signature is verified over the STORED bytes — the stored header and
+/// the stored body spliced at the `verification` value, exactly as the sync
+/// lease path verifies a receipt (OD-6) — never over a re-encode, so a
+/// stored body in another valid encoding still reads as this device's. Only
+/// when no row is stored, or the stored header is a later rewrite the
+/// signer never signed, does the signer's re-encoded transcript below stand
+/// in.
+///
 /// # Errors
 ///
-/// Storage errors reading the cached identity, and a cached row of the wrong
-/// length.
+/// Storage errors reading the cached identity or the stored row, and a
+/// cached row of the wrong length.
 pub(crate) fn receipt_attested_by_this_device_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -43,6 +52,39 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
     ) else {
         return Ok(false);
     };
+    // Every caller passes an initial receipt decoded from the row at
+    // `receipt_id`, which the mint stored (or sync replayed byte-exactly)
+    // under the point envelope stamped `hard_purge_complete_at`: the
+    // signer's own transcript, header and body both.
+    if let Some(raw) = vault.get_raw_in(txn, receipt_id)? {
+        let signed = receipt_envelope_header(receipt.hard_purge_complete_at);
+        if raw.len() >= ENTITY_METADATA_HEADER_LEN && raw[..ENTITY_METADATA_HEADER_LEN] == signed {
+            let body = &raw[ENTITY_METADATA_HEADER_LEN..];
+            let Some(parts) = receipt_attestation_splice(body) else {
+                return Ok(false);
+            };
+            if parts.client_id != client_id || parts.pubkey != device_pk {
+                return Ok(false);
+            }
+            let Ok(key) = VerifyingKey::from_bytes(&device_pk) else {
+                return Ok(false);
+            };
+            let mut message = Vec::with_capacity(
+                RECEIPT_ATT_DOMAIN.len()
+                    + 16
+                    + ENTITY_METADATA_HEADER_LEN
+                    + parts.verification_value_offset
+                    + 1,
+            );
+            message.extend_from_slice(RECEIPT_ATT_DOMAIN);
+            message.extend_from_slice(receipt_id.as_bytes());
+            message.extend_from_slice(&raw[..ENTITY_METADATA_HEADER_LEN]);
+            message.extend_from_slice(&body[..parts.verification_value_offset]);
+            message.push(ATT_EMPTY_MAP_BYTE);
+            let signature = Signature::from_bytes(&parts.signature);
+            return Ok(key.verify_strict(&message, &signature).is_ok());
+        }
+    }
     let attested = |key: &str| receipt.verification.get(key).map(String::as_str);
     if attested(ATT_KEY_CLIENT) != Some(format!("{client_id:016x}").as_str())
         || attested(ATT_KEY_PK) != Some(hex_lower(&device_pk).as_str())
@@ -55,8 +97,9 @@ pub(crate) fn receipt_attested_by_this_device_in_txn(
     ) else {
         return Ok(false);
     };
-    // The signer's transcript: the body with `verification` empty, under the
-    // point envelope an initial receipt is stored with.
+    // No stored row, or a stored header the signer never signed: fall back
+    // to the signer's transcript, the body with `verification` empty, under
+    // the point envelope an initial receipt is stored with.
     let unsigned = RedactionAuditReceipt {
         verification: BTreeMap::new(),
         ..receipt.clone()
