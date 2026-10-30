@@ -24,9 +24,17 @@ pub(super) fn classify_token(token: &str) -> Option<&'static str> {
     // hold a digit or capital, as a real key's random body does, so snake or
     // kebab prose (`highs_and_lows_…`, `risk_live_…`, `task-proj-…`) is not
     // read as a key.
+    // A rule reads a key only from its prefix on, so only the offsets where
+    // one starts are read ([`key_starts`]), the token's start as a token.
     // The token is ASCII by construction, so every offset is a char boundary.
-    classify_at(token, Body::Token)
-        .or_else(|| (1..token.len()).find_map(|start| classify_at(&token[start..], Body::Embedded)))
+    key_starts(token).find_map(|start| {
+        let body = if start == 0 {
+            Body::Token
+        } else {
+            Body::Embedded
+        };
+        classify_at(&token[start..], body)
+    })
 }
 
 /// The provider rules for a key that starts inside a longer token, read at
@@ -47,58 +55,173 @@ enum Body {
 }
 
 fn classify_at(token: &str, body: Body) -> Option<&'static str> {
-    if is_aws_access_key_id(token) {
-        Some(REASON_AWS_ACCESS_KEY_ID)
-    } else if is_github_token(token, body) {
-        Some(REASON_GITHUB_TOKEN)
-    } else if is_google_api_key(token, body) {
-        Some(REASON_GOOGLE_API_KEY)
-    } else if is_openai_key(token, body) {
-        Some(REASON_OPENAI_KEY)
-    } else if is_slack_token(token, body) {
-        Some(REASON_SLACK_TOKEN)
-    } else if is_stripe_key(token, body) {
-        Some(REASON_STRIPE_KEY)
-    } else {
-        None
+    PROVIDER_RULES
+        .iter()
+        .find(|rule| rule.matches(token, body))
+        .map(|rule| rule.reason)
+}
+
+/// The bytes an AWS access key id is read over, its prefix included.
+const ACCESS_KEY_ID_LEN: usize = 20;
+
+/// Every provider rule, in the order [`classify_at`] reads them: the first
+/// that matches names the reason. Each reads a key only from its prefix on.
+const PROVIDER_RULES: [ProviderRule; 18] = [
+    ProviderRule::access_key_id("AKIA"),
+    ProviderRule::access_key_id("ASIA"),
+    ProviderRule::key(REASON_GITHUB_TOKEN, "ghp_", 36, true, true),
+    ProviderRule::key(REASON_GITHUB_TOKEN, "gho_", 36, true, true),
+    ProviderRule::key(REASON_GITHUB_TOKEN, "ghu_", 36, true, true),
+    ProviderRule::key(REASON_GITHUB_TOKEN, "ghs_", 36, true, true),
+    ProviderRule::key(REASON_GITHUB_TOKEN, "ghr_", 36, true, true),
+    ProviderRule::key(REASON_GITHUB_TOKEN, "github_pat_", 70, false, false),
+    ProviderRule::key(REASON_GOOGLE_API_KEY, "AIza", 35, true, false),
+    ProviderRule::key(REASON_OPENAI_KEY, "sk-proj-", 32, false, false),
+    ProviderRule::key(REASON_OPENAI_KEY, "sk-", 48, true, true),
+    ProviderRule::key(REASON_SLACK_TOKEN, "xoxb-", 24, false, false),
+    ProviderRule::key(REASON_SLACK_TOKEN, "xoxp-", 24, false, false),
+    ProviderRule::key(REASON_SLACK_TOKEN, "xoxa-", 24, false, false),
+    ProviderRule::key(REASON_SLACK_TOKEN, "xoxr-", 24, false, false),
+    ProviderRule::key(REASON_SLACK_TOKEN, "xoxs-", 24, false, false),
+    ProviderRule::key(REASON_STRIPE_KEY, "sk_live_", 24, false, true),
+    ProviderRule::key(REASON_STRIPE_KEY, "rk_live_", 24, false, true),
+];
+
+/// The fewest bytes any provider rule reads a key in.
+const MIN_KEY_LEN: usize = min_key_len(&PROVIDER_RULES);
+
+/// The bytes some provider rule's prefix starts with.
+static PREFIX_HEADS: [bool; 256] = prefix_heads(&PROVIDER_RULES);
+
+/// One provider rule: a key that starts with `prefix`, its bytes read by
+/// `shape`, named by `reason`.
+struct ProviderRule {
+    reason: &'static str,
+    prefix: &'static str,
+    shape: KeyShape,
+}
+
+/// How a provider rule reads the bytes from its prefix on.
+enum KeyShape {
+    /// An AWS access key id: its first [`ACCESS_KEY_ID_LEN`] bytes are
+    /// upper-case letters and digits, at a token's start or inside one.
+    AccessKeyId,
+    /// [`key_matches`]'s rule, with its body length and byte rules.
+    Suffix {
+        suffix_len: usize,
+        exact_len: bool,
+        alphanumeric: bool,
+    },
+}
+
+impl ProviderRule {
+    const fn access_key_id(prefix: &'static str) -> Self {
+        Self {
+            reason: REASON_AWS_ACCESS_KEY_ID,
+            prefix,
+            shape: KeyShape::AccessKeyId,
+        }
+    }
+
+    const fn key(
+        reason: &'static str,
+        prefix: &'static str,
+        suffix_len: usize,
+        exact_len: bool,
+        alphanumeric: bool,
+    ) -> Self {
+        Self {
+            reason,
+            prefix,
+            shape: KeyShape::Suffix {
+                suffix_len,
+                exact_len,
+                alphanumeric,
+            },
+        }
+    }
+
+    /// Whether `candidate` holds this rule's key from its start.
+    fn matches(&self, candidate: &str, body: Body) -> bool {
+        match self.shape {
+            KeyShape::AccessKeyId => {
+                let candidate = candidate.as_bytes();
+                candidate.len() >= ACCESS_KEY_ID_LEN
+                    && candidate.starts_with(self.prefix.as_bytes())
+                    && candidate[..ACCESS_KEY_ID_LEN]
+                        .iter()
+                        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+            }
+            KeyShape::Suffix {
+                suffix_len,
+                exact_len,
+                alphanumeric,
+            } => key_matches(candidate, self.prefix, suffix_len, exact_len, alphanumeric, body),
+        }
+    }
+
+    /// The fewest bytes a candidate holding this rule's key has: [`Self::matches`]
+    /// finds no key in a shorter one.
+    const fn min_len(&self) -> usize {
+        match self.shape {
+            KeyShape::AccessKeyId => ACCESS_KEY_ID_LEN,
+            KeyShape::Suffix { suffix_len, .. } => self.prefix.len() + suffix_len,
+        }
+    }
+
+    /// Whether this rule may read a key at `candidate`'s start: it starts with
+    /// the prefix and holds [`Self::min_len`] bytes. [`Self::matches`] finds a
+    /// key only where this holds.
+    fn may_start(&self, candidate: &[u8]) -> bool {
+        candidate.len() >= self.min_len() && candidate.starts_with(self.prefix.as_bytes())
     }
 }
 
-fn is_aws_access_key_id(token: &str) -> bool {
-    let candidate = token.as_bytes();
-    if candidate.len() < 20 || !(candidate.starts_with(b"AKIA") || candidate.starts_with(b"ASIA")) {
-        return false;
+/// [`ProviderRule::min_len`]'s least over `rules`.
+const fn min_key_len(rules: &[ProviderRule]) -> usize {
+    let mut least = usize::MAX;
+    let mut at = 0;
+    while at < rules.len() {
+        let len = rules[at].min_len();
+        if len < least {
+            least = len;
+        }
+        at += 1;
     }
-    candidate[..20]
-        .iter()
-        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    least
 }
 
-fn is_github_token(token: &str, body: Body) -> bool {
-    ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
-        .iter()
-        .any(|prefix| key_matches(token, prefix, 36, true, true, body))
-        || key_matches(token, "github_pat_", 70, false, false, body)
+/// Which bytes a prefix in `rules` starts with; every byte when a rule has no
+/// prefix, since such a rule may start anywhere.
+const fn prefix_heads(rules: &[ProviderRule]) -> [bool; 256] {
+    let mut heads = [false; 256];
+    let mut at = 0;
+    while at < rules.len() {
+        let Some(&head) = rules[at].prefix.as_bytes().first() else {
+            return [true; 256];
+        };
+        heads[head as usize] = true;
+        at += 1;
+    }
+    heads
 }
 
-fn is_google_api_key(token: &str, body: Body) -> bool {
-    key_matches(token, "AIza", 35, true, false, body)
-}
-
-fn is_openai_key(token: &str, body: Body) -> bool {
-    key_matches(token, "sk-proj-", 32, false, false, body)
-        || key_matches(token, "sk-", 48, true, true, body)
-}
-
-fn is_slack_token(token: &str, body: Body) -> bool {
-    ["xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-"]
-        .iter()
-        .any(|prefix| key_matches(token, prefix, 24, false, false, body))
-}
-
-fn is_stripe_key(token: &str, body: Body) -> bool {
-    key_matches(token, "sk_live_", 24, false, true, body)
-        || key_matches(token, "rk_live_", 24, false, true, body)
+/// Each offset of `token`, in order, where some provider rule may read a key
+/// ([`ProviderRule::may_start`]). [`classify_at`] finds no key at any other
+/// offset, so a token holding no provider prefix is read nowhere.
+fn key_starts(token: &str) -> impl Iterator<Item = usize> {
+    let bytes = token.as_bytes();
+    // An offset past the last with `MIN_KEY_LEN` bytes left holds no key, and
+    // an empty candidate holds none.
+    let starts = (bytes.len() + 1)
+        .saturating_sub(MIN_KEY_LEN)
+        .min(bytes.len());
+    (0..starts).filter(move |&start| {
+        PREFIX_HEADS[usize::from(bytes[start])]
+            && PROVIDER_RULES
+                .iter()
+                .any(|rule| rule.may_start(&bytes[start..]))
+    })
 }
 
 /// One provider rule: `prefix`, then `suffix_len` body bytes (`exact_len`:
