@@ -35,8 +35,9 @@ fn encode_manifest(parts: &Parts) -> Result<Vec<u8>> {
     Ok(value)
 }
 
-/// The manifest `value` holds, in its one spelling.
-fn manifest(value: &[u8]) -> Option<Parts> {
+/// The manifest `value` holds, in its one spelling. A checkpoint places a
+/// manifest by the parts it lists.
+pub(super) fn manifest(value: &[u8]) -> Option<Parts> {
     let parts: Parts = rmp_serde::from_slice(value.strip_prefix(MANIFEST)?).ok()?;
     (parts.well_formed() && encode_manifest(&parts).ok()? == value).then_some(parts)
 }
