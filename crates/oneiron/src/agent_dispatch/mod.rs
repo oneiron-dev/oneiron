@@ -34,7 +34,8 @@ pub use self::comm::{CommReach, comm_prompt_block};
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_in, comm_widen_recipient_in_txn, erase_comm_widen_actor_in_txn, put_comm_widen_in,
+    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;
 mod continuation;
@@ -57,7 +58,8 @@ mod launch;
 mod leader_planner;
 mod leader_starter;
 pub use leader_starter::{
-    LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner,
+    LeaderAdvice, LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext,
+    LeaderTeamPlanner,
 };
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;

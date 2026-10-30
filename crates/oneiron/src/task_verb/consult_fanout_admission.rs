@@ -363,7 +363,7 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
                     replace_manifest_row(
                         entries,
@@ -421,7 +421,7 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
                     let position = manifest_row_or_insert(
                         entries,
