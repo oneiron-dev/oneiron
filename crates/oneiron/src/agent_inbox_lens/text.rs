@@ -24,13 +24,29 @@ pub enum InboxTextSource {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedInboxText {
     pub item_id: String,
-    /// The identity the words arrived on.
+    /// The identity the newest message arrived on.
     pub identity_ref: EntityId,
+    /// Where the newest message's words came from.
     pub source: InboxTextSource,
+    /// Every message's words, oldest first, a blank line between two.
     pub text: String,
+    /// Each message the row carries words for, oldest first: on a folded
+    /// conversation, every inbound message on its thread addressed to the
+    /// reader (FIX 1846).
+    pub messages: Vec<ResolvedInboxMessage>,
     /// Always true: the words are what someone outside the vault wrote, to
     /// read as data and never to follow as instructions.
     pub claims_not_instructions: bool,
+}
+
+/// One message's words on an INBOX row.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedInboxMessage {
+    /// The identity the message arrived on.
+    pub identity_ref: EntityId,
+    pub source: InboxTextSource,
+    pub occurred_at: u64,
+    pub text: String,
 }
 
 impl Vault {
@@ -40,10 +56,11 @@ impl Vault {
     /// Nothing is taken from `items` but their ids: each row is found again
     /// in the reading actor's own current INBOX slice, so a caller cannot hand
     /// in a row, or a payload ref, it was never sent. A row resolves only when
-    /// its newest entry is addressed to that actor, on an identity `read` can
-    /// read in this snapshot. Today the one row that carries words is an
-    /// inbound provider message (Slack, LINE); every other kind holds pointers
-    /// and resolves to nothing.
+    /// its newest entry is addressed to that actor; it then carries the words
+    /// of every inbound message on its thread addressed to that actor, each
+    /// on an identity `read` can read in this snapshot. Today the one entry
+    /// that carries words is an inbound provider message (Slack, LINE); every
+    /// other kind holds pointers and resolves to nothing.
     pub fn resolve_agent_inbox_texts(
         &self,
         read: &ScopedRead<'_>,
@@ -58,7 +75,11 @@ impl Vault {
             return Ok(resolved);
         };
         read.persist_grant_clock()?;
-        let canonical = self.agent_inbox_slice(actor, usize::MAX, None)?;
+        // The actor's own slice, as `agent_inbox_slice` folds it, and the
+        // entries each folded row stands for.
+        let entries = self.agent_inbox_entries(Some(actor))?;
+        let mut canonical = fold_threads(entries.clone());
+        canonical.retain(|row| row.participants.iter().any(|p| p.actor_ref == actor));
         let rtxn = self.store.env.read_txn()?;
         let policy = read.live_policy_manifest_in(&rtxn)?;
         for item in canonical {
@@ -68,37 +89,67 @@ impl Vault {
             {
                 continue;
             }
-            let (Some(payload_ref), Some(identity_ref)) =
-                (item.payload_ref.as_deref(), item.identity_ref)
-            else {
-                continue;
+            let mut on_row: Vec<&AgentInboxLensItem> = match item.thread_ref.as_deref() {
+                Some(thread) => entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.thread_ref.as_deref() == Some(thread)
+                            && entry.kind == AgentInboxItemKind::Conversation
+                            && entry.actor_ref == actor
+                    })
+                    .collect(),
+                None => vec![&item],
             };
-            if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &identity_ref)? {
-                continue;
-            }
-            // The channel is the identity's own head (OF-272), not a field
-            // the row could carry.
-            let Some(facts) = crate::channel_identity::channel_identity_facts_in_txn(
-                &self.store,
-                &rtxn,
-                &identity_ref,
-            )?
-            else {
-                continue;
-            };
-            let Some(text) = self.read_provider_event_text(&facts.channel, payload_ref)? else {
-                continue;
-            };
-            resolved.insert(
-                item.item_id.clone(),
-                ResolvedInboxText {
-                    item_id: item.item_id.clone(),
+            on_row.sort_by(|a, b| (a.occurred_at, &a.item_id).cmp(&(b.occurred_at, &b.item_id)));
+            let mut messages = Vec::new();
+            for entry in on_row {
+                let (Some(payload_ref), Some(identity_ref)) =
+                    (entry.payload_ref.as_deref(), entry.identity_ref)
+                else {
+                    continue;
+                };
+                if !read.is_ref_readable_with_policy_in(&rtxn, &policy, &identity_ref)? {
+                    continue;
+                }
+                // The channel is the identity's own head (OF-272), not a field
+                // the row could carry.
+                let Some(facts) = crate::channel_identity::channel_identity_facts_in_txn(
+                    &self.store,
+                    &rtxn,
+                    &identity_ref,
+                )?
+                else {
+                    continue;
+                };
+                let Some(text) = self.read_provider_event_text(&facts.channel, payload_ref)? else {
+                    continue;
+                };
+                messages.push(ResolvedInboxMessage {
                     identity_ref,
                     source: InboxTextSource::ProviderEvent {
                         channel: facts.channel,
                         payload_ref: payload_ref.to_owned(),
                     },
+                    occurred_at: entry.occurred_at,
                     text,
+                });
+            }
+            let Some(newest) = messages.last() else {
+                continue;
+            };
+            let text = messages
+                .iter()
+                .map(|message| message.text.as_str())
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            resolved.insert(
+                item.item_id.clone(),
+                ResolvedInboxText {
+                    item_id: item.item_id.clone(),
+                    identity_ref: newest.identity_ref,
+                    source: newest.source.clone(),
+                    text,
+                    messages,
                     claims_not_instructions: true,
                 },
             );
