@@ -66,15 +66,26 @@ pub(super) fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
     spans
 }
 
-/// Every place `value`'s bytes sit in `data`.
+/// Every place `value`'s bytes sit in `data`, in order, overlapping ones
+/// included. Only a place that opens with `value`'s first byte is compared
+/// whole (speed); an empty value sits nowhere.
 pub(super) fn occurrences<'a>(
     data: &'a [u8],
     value: &'a [u8],
 ) -> impl Iterator<Item = Range<usize>> + 'a {
-    data.windows(value.len().max(1))
-        .enumerate()
-        .filter(move |(_, window)| !value.is_empty() && *window == value)
-        .map(move |(at, _)| at..at + value.len())
+    let first = value.first().copied();
+    let mut from = 0;
+    std::iter::from_fn(move || {
+        let first = first?;
+        loop {
+            let rest = data.get(from..).filter(|rest| rest.len() >= value.len())?;
+            let at = from + rest.iter().position(|&byte| byte == first)?;
+            from = at + 1;
+            if data.get(at..at + value.len()) == Some(value) {
+                return Some(at..at + value.len());
+            }
+        }
+    })
 }
 
 /// `spans` in order, merged where they meet; the first span's reason names
