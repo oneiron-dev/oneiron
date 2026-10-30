@@ -24,8 +24,6 @@ mod types;
 mod vet;
 
 pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
-#[cfg(feature = "sync")]
-pub(in crate::store) use self::leave::HeldGateRows;
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
 #[cfg(feature = "sync")]
@@ -51,6 +49,8 @@ pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     gate_decision_upper_bound,
 };
+#[cfg(feature = "sync")]
+pub(in crate::store) use self::leave::HeldGateRows;
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{

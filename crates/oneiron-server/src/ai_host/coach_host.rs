@@ -43,10 +43,10 @@ use oneiron::dreamer_runner::maintenance::coach::{
     COACH_EVAL_MEASUREMENT_FACET, COACH_FORK_PROMOTE_FACET, COACH_JUDGE_LABEL_RECHECKS_FACET,
     COACH_JUDGE_SWAP_FACET, COACH_OFFER_CHECK_FACET, COACH_PERSON_THRESHOLD_FACET,
     COACH_RESEARCH_RUN_FACET, COACH_RESEARCH_SELECT_FACET, COACH_SEAL_CHECKS_FACET,
-    COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET, COACH_THINK_THRESHOLD_FACET,
-    COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET, COACH_TRAINING_RUN_FACET,
-    COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET, PersonThresholdPolicy,
-    ThinkThresholdPolicy,
+    COACH_SITE_SKILLS_FACET, COACH_SKILL_DISCOVERY_FACET, COACH_SKILL_DISTILL_FACET,
+    COACH_THINK_THRESHOLD_FACET, COACH_TRADEOFF_ROUTE_FACET, COACH_TRAINING_OFFER_FACET,
+    COACH_TRAINING_RUN_FACET, COACH_TYPE_TREE_UPKEEP_FACET, COACH_WEAVE_DIGEST_SETTINGS_FACET,
+    PersonThresholdPolicy, ThinkThresholdPolicy,
 };
 use oneiron::dreamer_runner::{
     AbortDreamerBudgetReservation, AdmitDreamerAttempt, DreamerAdmissionOutcome,
@@ -255,6 +255,7 @@ fn run_one(
         COACH_TRAINING_OFFER_FACET => super::training_offer::draft(server, admitted, now),
         COACH_EVAL_AUTHORING_FACET => super::eval_authoring::run(server, admitted, now),
         COACH_BROWSER_PROGRAMS_FACET => super::coach_browser_programs::run(server, admitted, now),
+        COACH_SITE_SKILLS_FACET => super::coach_site_skills::run(server, admitted, now),
         COACH_FEEDBACK_SWEEP_FACET => super::feedback_triage::run_sweep(server, admitted, now),
         COACH_FEEDBACK_TRIAGE_FACET => super::feedback_triage::run_revision(server, admitted, now),
         COACH_FEEDBACK_TRIAGE_PART_FACET => super::feedback_triage::run_part(server, admitted, now),
