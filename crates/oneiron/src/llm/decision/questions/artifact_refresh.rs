@@ -17,6 +17,7 @@ use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 mod history;
+mod ask_selection;
 mod live;
 mod manual;
 mod unit_receipts;
@@ -27,6 +28,8 @@ pub use self::manual::refresh_artifact_question_now;
 pub use self::unit_receipts::ArtifactUnitReceipt;
 pub(crate) use self::unit_receipts::artifact_unit_receipts;
 
+use self::ask_selection::ask_selection;
+
 use serde::{Deserialize, Serialize};
 
 use super::refresh::{hold_failed, standing_asker};
@@ -35,10 +38,7 @@ use super::{records::*, store::*};
 use crate::blob_artifact::{ArtifactAskUnits, read_blob_artifact_head_in_txn};
 use crate::edit_roundtrip::judgment_cells::named_sheet_cells;
 use crate::edit_roundtrip::slides_review::SlideReviewLabels;
-use crate::edit_roundtrip::{
-    ArtifactAsk, ArtifactAskRun, CellRef, CellValue, FolderAsk, FolderItem, ParagraphAsk, RangeRef,
-    SheetRowsAsk, UnitDecider,
-};
+use crate::edit_roundtrip::{ArtifactAsk, CellRef, CellValue, FolderItem, RangeRef, UnitDecider};
 use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, Reversibility};
 use crate::office_body::LivePin;
@@ -46,7 +46,7 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 
 /// Key: id16(question) + id16(artifact).
-const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =
+pub(super) const ASKED: SideTable<(EntityId, EntityId), ArtifactAsked, Named> =
     SideTable::new(&side_table::TYPED_QUESTION_ARTIFACT_ASKED);
 
 /// One ask's run clock, past which no unit call runs.
@@ -55,10 +55,10 @@ const ASK_DEADLINE: Duration = Duration::from_secs(300);
 /// The last ask of one artifact for one question: the schedule's projection of the ask
 /// log (FIX 2337).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct ArtifactAsked {
+pub(super) struct ArtifactAsked {
     question_version: u32,
     /// Each read artifact's head version when it was asked, the artifact first.
-    versions: Vec<(EntityId, u64)>,
+    pub(super) versions: Vec<(EntityId, u64)>,
     asked_at: u64,
     /// The proposal its answers wait under; none when no unit was answered.
     proposal_ref: Option<String>,
@@ -721,92 +721,4 @@ pub enum ArtifactAskStanding {
     /// The ask was logged with its ref details left out (FIX 9419): it names no proposal,
     /// so where its answers stand is not read here.
     DetailsOmitted,
-}
-
-/// The builder `selection` names, over the readable `files` of a folder ask, asking
-/// only the units in `only` when an arrival named them; a folder ask reads its files
-/// under `sight`, the one its saved lane holds now.
-fn ask_selection(
-    vault: &Vault,
-    artifact: EntityId,
-    selection: &Selection<'_>,
-    files: &[EntityId],
-    only: Option<&Changed>,
-    ask: ArtifactAsk<'_>,
-    sight: crate::secret_custody::SecretSight,
-) -> Result<ArtifactAskRun> {
-    match selection {
-        Selection::SheetRows {
-            sheet,
-            rows,
-            answer_col,
-            header_row,
-            max_count,
-        } => vault.ask_blob_artifact_sheet_rows(
-            &artifact,
-            &SheetRowsAsk {
-                ask,
-                sheet,
-                rows: *rows,
-                answer_col: *answer_col,
-                header_row: *header_row,
-                max_count_override: *max_count,
-                only_rows: match only {
-                    Some(Changed::Rows(rows)) => Some(rows),
-                    _ => None,
-                },
-            },
-        ),
-        Selection::Paragraphs {
-            blocks,
-            author,
-            labels,
-        } => vault.ask_blob_artifact_paragraphs(
-            &artifact,
-            &ParagraphAsk {
-                ask,
-                blocks: match only {
-                    Some(Changed::Blocks(changed)) => changed.as_slice(),
-                    _ => *blocks,
-                },
-                author,
-                labels,
-            },
-        ),
-        Selection::FolderItems {
-            sheet,
-            answer_col,
-            items,
-            max_count,
-        } => {
-            let items: Vec<FolderItem> = items
-                .iter()
-                .filter(|item| files.contains(&item.artifact))
-                .filter(|item| match only {
-                    Some(Changed::Items(changed)) => changed.contains(*item),
-                    _ => true,
-                })
-                .copied()
-                .collect();
-            if items.is_empty() {
-                return Ok(ArtifactAskRun {
-                    proposal: None,
-                    abstained: Vec::new(),
-                    refused: Vec::new(),
-                    read_rows: Vec::new(),
-                });
-            }
-            vault.ask_folder_items_into_sheet(
-                &artifact,
-                &FolderAsk {
-                    ask,
-                    items: &items,
-                    sheet,
-                    answer_col: *answer_col,
-                    max_count_override: *max_count,
-                    sight,
-                },
-            )
-        }
-    }
 }

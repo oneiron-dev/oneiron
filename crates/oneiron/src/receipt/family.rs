@@ -126,6 +126,26 @@ impl Vault {
             .map(|(_, undecodable)| u32::try_from(undecodable.len()).unwrap_or(u32::MAX))
     }
 
+    /// Every outbound receipt whose id is `receipt_id`, read from the whole
+    /// of each source [`Self::scan_receipts`] reads, with no result limit: a
+    /// caller proving that one id names one receipt sees every receipt that
+    /// carries it, however many outbound receipts the vault holds.
+    pub(crate) fn outbound_receipts_with_id(&self, receipt_id: &str) -> Result<Vec<ReceiptRecord>> {
+        let mut matches = Vec::new();
+        // Each source is filtered as it is read, so no two sources are held whole at once.
+        let mut keep = |records: Vec<ReceiptRecord>| {
+            matches.extend(records.into_iter().filter(|receipt| {
+                receipt.receipt_kind == ReceiptKind::Outbound && receipt.receipt_id == receipt_id
+            }));
+        };
+        keep(scan_attempt_pack_receipts(self)?.records);
+        keep(scan_durable_send_receipts(self)?.records);
+        keep(super::direct_dispatch::receipts(self)?);
+        keep(dispatch_observations(self)?);
+        keep(scan_suppression_receipts(self)?.records);
+        Ok(matches)
+    }
+
     /// Alias for callers that prefer verb-first query naming.
     pub fn query_receipts(&self, query: ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
         self.receipts(query)
@@ -438,6 +458,25 @@ fn commitment_lifecycle_receipts(
             if body.predicate != crate::commitment::PREDICATE_COMMITMENT_RECORD {
                 return Ok(());
             }
+            // A commitment's receipt is projected once, under its first id,
+            // from the body at the head of its status chain; a later link of
+            // that chain is not a commitment of its own.
+            if vault.commitment_predecessor_in_txn(txn, &id)?.is_some() {
+                return Ok(());
+            }
+            let head = vault.commitment_head_in_txn(txn, &id)?;
+            let (body, header) = if head == id {
+                (body, header)
+            } else {
+                (
+                    vault
+                        .get_claim_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                    vault
+                        .entity_header_in_txn(txn, &head)?
+                        .ok_or(Error::CorruptedIndex("commitment status chain head"))?,
+                )
+            };
             // Past the exact predicate match the codec is authoritative, so a
             // malformed commitment body is corruption rather than a row to skip.
             let record = crate::commitment::decode_commitment_claim(&body)?.ok_or(

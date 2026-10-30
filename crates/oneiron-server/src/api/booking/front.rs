@@ -25,7 +25,7 @@ use oneiron::booking::agent_front::{
     ConstraintFrontConfig, ConstraintFrontOutcome, ConstraintTurnRequest, constraint_deflect,
     run_constraint_turn,
 };
-use oneiron::booking::constraint::ConstraintSessionState;
+use oneiron::booking::constraint::{ConstraintSessionCaps, ConstraintSessionState};
 use oneiron::booking::publication::PublicBookingAuthority;
 use oneiron::booking::{
     BookingError, RungProjection, SessionKey, SlotOracle, SolveRequest, SolveResult,
@@ -143,7 +143,14 @@ async fn run_constraint_turn_in(
         return silent_answer(&input.session_ref, &front).map(|answer| (answer, Vec::new()));
     }
 
-    let session = front_sessions().checkout(session_key(page_ref, &input.session_ref), now);
+    // An authenticated caller's turns count apart from the anonymous
+    // visitors' (FIX 8137): its credential keys a session of its own.
+    let caller = FrontSessionKey {
+        session: session_key(page_ref, &input.session_ref),
+        credential: transport.credential.clone(),
+    };
+    let authenticated = caller.credential.is_some();
+    let session = front_sessions().checkout(caller, now);
     let event_type = input.event_type.clone();
     let session_ref = input.session_ref.clone();
     let request = ConstraintTurnRequest {
@@ -184,10 +191,37 @@ async fn run_constraint_turn_in(
                 sponsor,
                 now,
                 |backend, lease, config| {
-                    block_on(run_constraint_turn(
-                        &oracle, backend, lease, config, &caps, &mut state, &copy, request,
-                    ))
-                    .map_err(booking_error)
+                    if !authenticated {
+                        return block_on(run_constraint_turn(
+                            &oracle, backend, lease, config, &caps, &mut state, &copy, request,
+                        ))
+                        .map_err(booking_error);
+                    }
+                    // The page's caps shed anonymous visitors. Authenticated
+                    // work past them is measured and served: this turn is
+                    // admitted for exactly one turn and one model call, and
+                    // its spend is added to the session's tally after.
+                    measure_cap_crossing(&state, &caps);
+                    let mut turn_state = ConstraintSessionState::default();
+                    let one_turn = ConstraintSessionCaps {
+                        max_turns: 1,
+                        max_model_calls: 1,
+                    };
+                    let outcome = block_on(run_constraint_turn(
+                        &oracle,
+                        backend,
+                        lease,
+                        config,
+                        &one_turn,
+                        &mut turn_state,
+                        &copy,
+                        request,
+                    ));
+                    state.turns_used = state.turns_used.saturating_add(turn_state.turns_used);
+                    state.model_calls_used = state
+                        .model_calls_used
+                        .saturating_add(turn_state.model_calls_used);
+                    outcome.map_err(booking_error)
                 },
             )?;
             rows.extend(producers.take());
@@ -257,12 +291,35 @@ impl SlotOracle for PublicSlotOracle<'_> {
     }
 }
 
-/// Per page and session: the counters `run_constraint_turn` admits against.
-/// A turn locks its own session for its whole run, so two turns of one
-/// session never both spend the same count.
+/// An authenticated turn past the page's visitor caps: logged with the
+/// caps and the tally it crossed them at, never refused.
+fn measure_cap_crossing(state: &ConstraintSessionState, caps: &ConstraintSessionCaps) {
+    if state.turns_used >= caps.max_turns || state.model_calls_used >= caps.max_model_calls {
+        tracing::info!(
+            turns_used = state.turns_used,
+            max_turns = caps.max_turns,
+            model_calls_used = state.model_calls_used,
+            max_model_calls = caps.max_model_calls,
+            "authenticated booking front turn past the page's visitor caps"
+        );
+    }
+}
+
+/// One session's counters: the page session, and the credential of an
+/// authenticated caller (`None` for an anonymous visitor).
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct FrontSessionKey {
+    session: SessionKey,
+    credential: Option<String>,
+}
+
+/// Per page, session and caller: the counters `run_constraint_turn` admits
+/// against. A turn locks its own session for its whole run, so two turns of
+/// one session never both spend the same count, and a second turn waits for
+/// the first.
 #[derive(Default)]
 struct FrontSessions {
-    by_key: HashMap<SessionKey, FrontSession>,
+    by_key: HashMap<FrontSessionKey, FrontSession>,
 }
 
 struct FrontSession {
@@ -271,7 +328,7 @@ struct FrontSession {
 }
 
 impl FrontSessions {
-    fn checkout(&mut self, key: SessionKey, now: u64) -> Arc<Mutex<ConstraintSessionState>> {
+    fn checkout(&mut self, key: FrontSessionKey, now: u64) -> Arc<Mutex<ConstraintSessionState>> {
         self.by_key.retain(|_, session| {
             now.saturating_sub(session.last_used) < FRONT_SESSIONS.idle_expiry_secs
         });
@@ -280,7 +337,7 @@ impl FrontSessions {
                 .by_key
                 .iter()
                 .min_by_key(|(_, session)| session.last_used)
-                .map(|(oldest, _)| *oldest);
+                .map(|(oldest, _)| oldest.clone());
             if let Some(oldest) = oldest {
                 self.by_key.remove(&oldest);
             }

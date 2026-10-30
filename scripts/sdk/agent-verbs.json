@@ -15593,7 +15593,7 @@
       "refs": [
         "/subject_ref",
         "/world_ref",
-        "/relationship_ref"
+        "/relationship_ref/*"
       ],
       "uniffi": {
         "args": {

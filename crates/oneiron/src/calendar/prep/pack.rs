@@ -53,6 +53,9 @@ const PREP_CONTEXT_TEXT_FIELD_ALIASES: [&str; 4] = ["val", "txt", "text", "body"
 /// Hydrated-field key carrying a CLAIM row's predicate.
 const PREP_CLAIM_PREDICATE_FIELD: &str = "pred";
 
+/// Hydrated-field key carrying a CLAIM row's value.
+const PREP_CLAIM_VALUE_FIELD: &str = "val";
+
 /// Nesting bound for the text-leaf search over one hydrated field value.
 const PREP_TEXT_LEAF_MAX_DEPTH: u32 = 8;
 
@@ -83,16 +86,11 @@ pub enum PrepSectionKind {
     DossierDelta,
 }
 
-/// Which section one stored entity type belongs to, or `None` when it carries
-/// no prep meaning.
-///
-/// The CMT-3 swap point: today a CLAIM row is the closest thing the vault has to
-/// a recorded commitment, so it takes the top section. When commitment machinery
-/// lands, this arm keys on commitment rows and the rest of the module is
-/// untouched.
+/// Which section one stored non-CLAIM entity type belongs to, or `None` when
+/// it carries no prep meaning. A CLAIM row ranks by what it says, in
+/// [`prep_claim_row`].
 const fn prep_section_kind_for(entity_type: u8) -> Option<PrepSectionKind> {
     match entity_type {
-        ENTITY_TYPE_CLAIM => Some(PrepSectionKind::PriorCommitment),
         ENTITY_TYPE_TURN | ENTITY_TYPE_MESSAGE | ENTITY_TYPE_CONVERSATION => {
             Some(PrepSectionKind::AttendeeThread)
         }
@@ -285,19 +283,30 @@ fn prep_items_from_candidates(
         if !seen.insert(candidate.id) {
             continue;
         }
-        let Some(kind) = prep_section_kind_for(candidate.entity_type) else {
-            continue;
-        };
         let Some(fields) = candidate.fields.as_ref() else {
             continue;
         };
-        if candidate.entity_type == ENTITY_TYPE_CLAIM && is_calendar_family_row(fields) {
-            continue;
-        }
-        let Some(text) = PREP_CONTEXT_TEXT_FIELD_ALIASES.into_iter().find_map(|key| {
-            fields
-                .get(key)
-                .and_then(|value| first_text_leaf(value, PREP_TEXT_LEAF_MAX_DEPTH))
+        let (kind, said) = if candidate.entity_type == ENTITY_TYPE_CLAIM {
+            if is_calendar_family_row(fields) {
+                continue;
+            }
+            match prep_claim_row(event, fields) {
+                PrepClaimRow::Commitment { kind, text } => (kind, Some(text)),
+                PrepClaimRow::Fact => (PrepSectionKind::DossierDelta, None),
+                PrepClaimRow::Unreadable => continue,
+            }
+        } else {
+            let Some(kind) = prep_section_kind_for(candidate.entity_type) else {
+                continue;
+            };
+            (kind, None)
+        };
+        let Some(text) = said.or_else(|| {
+            PREP_CONTEXT_TEXT_FIELD_ALIASES.into_iter().find_map(|key| {
+                fields
+                    .get(key)
+                    .and_then(|value| first_text_leaf(value, PREP_TEXT_LEAF_MAX_DEPTH))
+            })
         }) else {
             continue;
         };
@@ -333,6 +342,56 @@ fn is_calendar_family_row(fields: &HashMap<String, serde_json::Value>) -> bool {
         .get(PREP_CLAIM_PREDICATE_FIELD)
         .and_then(serde_json::Value::as_str)
         .is_some_and(is_calendar_claim_predicate)
+}
+
+/// What one admitted CLAIM row is to a meeting's prep.
+enum PrepClaimRow {
+    /// A `commitment.record`, ranked and rendered as its own words.
+    Commitment { kind: PrepSectionKind, text: String },
+    /// Any other claim: a fact about the people and their orgs.
+    Fact,
+    /// A `commitment.record` whose value the codec does not read. Its first
+    /// string would be party metadata, so it says nothing here.
+    Unreadable,
+}
+
+/// Classifies one CLAIM row (FIX 7840, 9650).
+///
+/// A `commitment.record` value is decoded with the commitment codec, never
+/// searched for its first string, which is the beneficiary's id: a live open
+/// promise whose obligor or beneficiary is the meeting or one of its people is
+/// a prior commitment, and a closed one, or one between other parties, is
+/// dossier history. Both render the promise's own text.
+fn prep_claim_row(event: &PrepEvent, fields: &HashMap<String, serde_json::Value>) -> PrepClaimRow {
+    let predicate = fields
+        .get(PREP_CLAIM_PREDICATE_FIELD)
+        .and_then(serde_json::Value::as_str);
+    if predicate != Some(crate::commitment::PREDICATE_COMMITMENT_RECORD) {
+        return PrepClaimRow::Fact;
+    }
+    let Some(record) = fields.get(PREP_CLAIM_VALUE_FIELD).and_then(|value| {
+        crate::commitment::decode_commitment_value(&crate::ingest::json_to_msgpack_value(value))
+            .ok()
+    }) else {
+        return PrepClaimRow::Unreadable;
+    };
+    let text = record.content.text.trim();
+    if text.is_empty() {
+        return PrepClaimRow::Unreadable;
+    }
+    let involves =
+        |party: &EntityId| *party == event.event_ref || event.attendee_refs.contains(party);
+    let kind = if record.status == crate::commitment::CommitmentStatus::Open
+        && (involves(&record.obligor.entity_ref) || involves(&record.beneficiary))
+    {
+        PrepSectionKind::PriorCommitment
+    } else {
+        PrepSectionKind::DossierDelta
+    };
+    PrepClaimRow::Commitment {
+        kind,
+        text: text.to_owned(),
+    }
 }
 
 /// The first non-blank string inside one hydrated field value.

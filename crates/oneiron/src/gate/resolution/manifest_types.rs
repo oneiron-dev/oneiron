@@ -494,6 +494,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    /// Every trusted manifest's booking anti-abuse rule rows (FIX 9628).
+    pub(crate) booking_anti_abuse_rows: Vec<crate::booking::anti_abuse::BookingAntiAbuseRuleRow>,
     pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
     pub(super) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     /// Vault-resident wait windows keyed by class.

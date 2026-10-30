@@ -118,6 +118,8 @@ pub(crate) async fn start_desktop_workers(
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
+    // Served sends reach this host's provider APIs and mail server (FIX 4435).
+    crate::builtin_host::install_served_transports(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // The skill-edit gate's replay judge, on the ladder the server just built (OF-495).
@@ -242,6 +244,16 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
     workers.push(sync_server.spawn_connector_reply_worker(admitted()));
+    // Installed ICS feeds poll on their own cadence (FIX 7846).
+    workers.push(crate::calendar_host::spawn_ics_feed_polls(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
+    // A transcript upload that met an open session lands once it closes (FIX 9654).
+    workers.push(crate::calendar_host::spawn_pending_transcript_drain(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(&sync_server, admitted()));
     // Past the vault's deletion these two run on, to let its backups go at
