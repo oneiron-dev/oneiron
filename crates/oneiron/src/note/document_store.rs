@@ -72,12 +72,15 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
+/// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
 pub(super) fn persist_replica(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
+    super::replica::seal::refuse_frozen_motion(vault, txn, doc)?;
     super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
     persist_structural(vault, txn, doc, false)
 }

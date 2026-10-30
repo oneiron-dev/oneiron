@@ -38,17 +38,19 @@ pub(crate) fn deleted(doc: &LoroDoc, note: &EntityId) -> Result<()> {
             map_delete(&doc.get_map("note_forks"), &key)?;
         }
     }
+    // The NOTE's attachments in a bundle of another NOTE's go too, and that
+    // bundle stays a projection, not complete.
     for (key, raw) in rows(doc, "note_proposals")? {
-        let mut row: NoteReviewBundle = unpack(&raw)?;
-        if !bundle_notes(&row).contains(note) {
+        let mut row: BundleCarrier = unpack(&raw)?;
+        if !bundle_notes(&row.bundle).contains(note) {
             continue;
         }
-        row.waiting.retain(|fork| fork.note != *note);
-        row.landed.retain(|receipt| receipt.note != *note);
-        if row.waiting.is_empty() && row.landed.is_empty() {
+        row.bundle.waiting.retain(|fork| fork.note != *note);
+        row.bundle.landed.retain(|receipt| receipt.note != *note);
+        if row.bundle.waiting.is_empty() && row.bundle.landed.is_empty() {
             map_delete(&doc.get_map("note_proposals"), &key)?;
         } else {
-            row.explainer = "redacted".to_owned();
+            row.redact();
             map_insert_bytes(&doc.get_map("note_proposals"), &key, &pack(&row)?)?;
         }
     }
