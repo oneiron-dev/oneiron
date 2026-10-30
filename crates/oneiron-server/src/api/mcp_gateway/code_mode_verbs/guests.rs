@@ -566,12 +566,13 @@ impl RunGuests {
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
                 Err(refused) => {
-                    let refused = self.bound_refusal(call.verb, origin, memory, refused);
+                    let refused = self.bound_refusal(call.verb, origin, memory, &hooks, refused);
                     self.refused.keep(Some(&refused));
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
             };
         let held = self.take_held_press();
+        let hook_pre = oneiron::runtime_hooks::VerbHookPreSnapshot::from_pre(&hooks);
         let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         });
@@ -579,7 +580,7 @@ impl RunGuests {
         match post {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
-                self.hold_stopped_batch(call.verb, origin, memory, held, &output);
+                self.hold_stopped_batch(call.verb, origin, memory, held, hook_pre, &output);
                 Ok(Ok(AgentVerbAnswer::new(output, answer.rows)))
             }
             Err(error) => refused(super::mcp_facade_error(error)),

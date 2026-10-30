@@ -310,6 +310,14 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
                 field(&[u8::from(text.is_some())]);
                 field(text.as_deref().unwrap_or_default().as_bytes());
             }
+            field(&[u8::from(action.hook_pre.is_some())]);
+            field(
+                &action
+                    .hook_pre
+                    .as_ref()
+                    .and_then(|snapshot| rmp_serde::to_vec_named(snapshot).ok())
+                    .unwrap_or_default(),
+            );
         }
     }
     *hasher.finalize().as_bytes()

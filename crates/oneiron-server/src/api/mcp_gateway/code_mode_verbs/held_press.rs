@@ -7,6 +7,7 @@
 
 use super::*;
 use oneiron::code_run::CodeConsentBrowserAction;
+use oneiron::runtime_hooks::{VerbHookPre, VerbHookPreSnapshot};
 use oneiron_browser::{HeldPress, PressNeed};
 
 /// Binds the act a press held on a code run's browser `verb` call to the
@@ -24,6 +25,7 @@ fn hold_press(
     memory: &Memory<'_>,
     held: HeldPress,
     stopped: Option<&Value>,
+    hook_pre: Option<VerbHookPreSnapshot>,
 ) -> Option<oneiron::EntityId> {
     if held.need == PressNeed::PersonOnly {
         return None;
@@ -41,6 +43,7 @@ fn hold_press(
         session: held.generation,
         need: held.need.as_str().to_owned(),
         stopped: stopped.map(Value::to_string),
+        hook_pre,
     };
     memory
         .clone()
@@ -133,12 +136,20 @@ impl RunGuests {
         verb: AgentVerb,
         origin: &HostWriteOrigin,
         memory: &Memory<'_>,
+        pre: &VerbHookPre,
         refused: AgentVerbRefusalWords,
     ) -> AgentVerbRefusalWords {
         if let Some(held) = self.take_held_press()
             && refused.code == BrowserError::NeedsPress(String::new()).code()
             && let Some(page) = self.browser.as_ref().and_then(RunBrowser::held_page)
-            && let Some(wait) = hold_press(verb, origin, memory, held, Some(&page))
+            && let Some(wait) = hold_press(
+                verb,
+                origin,
+                memory,
+                held,
+                Some(&page),
+                VerbHookPreSnapshot::from_pre(pre),
+            )
         {
             self.await_press_answer(Some(wait));
             return browser_guest::bound_words(refused, wait);
@@ -155,10 +166,11 @@ impl RunGuests {
         origin: &HostWriteOrigin,
         memory: &Memory<'_>,
         held: Option<HeldPress>,
+        hook_pre: Option<VerbHookPreSnapshot>,
         output: &Value,
     ) {
         if let Some(held) = held
-            && let Some(wait) = hold_press(verb, origin, memory, held, Some(output))
+            && let Some(wait) = hold_press(verb, origin, memory, held, Some(output), hook_pre)
         {
             self.await_press_answer(Some(wait));
         }
