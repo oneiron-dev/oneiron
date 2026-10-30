@@ -18,7 +18,7 @@ mod tombstone;
 
 pub(in crate::sync) use self::birth_watch::{note_born, watch_births, watches};
 pub(in crate::sync) use self::delivery::{
-    Delivery, delivered_rows, note_delivered_in_txn, with_delivery,
+    Delivery, delivered_rows, note_delivered_in_txn, payload_rows, with_delivery,
 };
 
 #[cfg(test)]

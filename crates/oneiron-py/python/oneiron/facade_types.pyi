@@ -6947,7 +6947,7 @@ ScopeResource = ScopeResourceBucket | ScopeResourceDocumentVersion | ScopeResour
 class ScopeScope(TypedDict):
     world: str | None
     facet: str | None
-    relationship: str | None
+    relationship: list[str] | None
     project: str | None
     readable: list[ScopeResource]
     writable: list[ScopeResource]
@@ -12009,7 +12009,7 @@ class ClaimInput(TypedDict):
     confidence: float
     source: str
     world_ref: NotRequired[str | None]
-    relationship_ref: NotRequired[str | None]
+    relationship_ref: NotRequired[list[str] | None]
     scope: NotRequired[Any | None]
     valid_from: NotRequired[int | None]
     valid_to: NotRequired[int | None]
@@ -14225,6 +14225,7 @@ class SlideJudgment(TypedDict):
     presence: NotRequired[TypedDecision | None]
     location: NotRequired[SlideLocation | None]
     band_mode: BandMode
+    ceiling: DecisionRung
     renderer: str
     frontier: list[int]
     media: NotRequired[list[DecisionMedia]]
@@ -20411,7 +20412,7 @@ class ConsolidationRootBucket(TypedDict):
     predicate_root: str
     world: NotRequired[str | None]
     facet: NotRequired[str | None]
-    relationship: NotRequired[str | None]
+    relationship: NotRequired[list[str] | None]
     project: str
 class ConsolidationReference(TypedDict):
     source_id: str

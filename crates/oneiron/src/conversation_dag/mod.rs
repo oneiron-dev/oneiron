@@ -61,8 +61,9 @@ pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
+pub(crate) use redacted::capture_withdrawn_record_in_txn;
 #[cfg(feature = "sync")]
-pub(crate) use redacted::{capture_withdrawn_record_in_txn, pin_shell_record_in_txn};
+pub(crate) use redacted::pin_shell_record_in_txn;
 pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
 pub(crate) use reply::{

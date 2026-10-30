@@ -585,9 +585,8 @@ impl Package {
         self.write_metadata(TYPES, value)
     }
 
-    /// The byte budgets and the ZIP32 codec's entry bound. The configured
-    /// entry count is an observation (FIX 8598): only 65,535, the codec's
-    /// ZIP64 sentinel, ends an edit.
+    /// The byte budgets and the ZIP32 codec's entry bound: only 65,535,
+    /// the codec's ZIP64 sentinel, ends an edit (FIX 10590).
     fn check_budgets(&self) -> Result<()> {
         let count = self.entries.iter().filter(|entry| !entry.removed).count() + self.added.len();
         // 65,535 in classic ZIP's count is its ZIP64 sentinel.

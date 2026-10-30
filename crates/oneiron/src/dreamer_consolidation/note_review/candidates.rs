@@ -139,7 +139,7 @@ pub(super) fn note_candidate(
         &facts.value,
         facts.world,
         facts.facet,
-        facts.rel,
+        facts.rel.as_ref(),
         facts.project,
         facts.topic.as_deref(),
     )?;

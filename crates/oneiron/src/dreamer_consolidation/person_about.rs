@@ -8,7 +8,8 @@
 //! band whose facts differ from the band below it, reads the facts again, and
 //! lands every line in one write. The board reads the stored line of the
 //! highest band at or below the reader's ceiling; no model runs at render.
-//! A CLAIM write about a person hides its lines at once, in the write's own
+//! A CLAIM write about a person, and a door that drops one of its facts
+//! without a new body (FIX 3196), hide its lines at once, in that door's own
 //! transaction, until the next pass reads the facts again.
 
 use super::request_sources::{CallBackend, SourcedBackend};
@@ -37,7 +38,12 @@ use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
+mod claim_hooks;
 mod sources;
+
+pub(crate) use claim_hooks::{
+    erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
+};
 
 /// The four sensitivity bands, public (0) to restricted (3).
 const TOP_BAND: u8 = 3;
@@ -73,8 +79,9 @@ struct PersonAbout {
     /// The lines the Dreamer's newest landing replaced, kept so the owner
     /// can revert it (owner ruling 10-18: each Dreamer change revertible).
     previous: Option<PriorAbout>,
-    /// A CLAIM write about the person landed since a wake pass last read its
-    /// facts: the board shows no line until one reads them again.
+    /// A CLAIM write about the person, or a door that dropped one of its
+    /// facts, landed since a wake pass last read them: the board shows no
+    /// line until one reads them again.
     moved: bool,
 }
 
@@ -324,82 +331,6 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
     })?;
     vault.store.notify_attempt_observers();
     Ok(())
-}
-
-/// Hides the `about` lines of the PERSON a CLAIM is about, and of the one its
-/// stored body was about, until a wake pass reads their facts again. Runs in
-/// the CLAIM put's transaction, before the new body replaces the stored one.
-pub(crate) fn mark_person_about_moved_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    claim: EntityId,
-    body: &crate::claim::ClaimBody,
-) -> Result<()> {
-    let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &claim)?
-        .filter(|raw| {
-            crate::batch::EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-        })
-        .and_then(|raw| {
-            crate::claim::decode_claim_body(
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
-                true,
-            )
-            .ok()
-        })
-        .map(|stored| stored.subject);
-    for subject in std::iter::once(body.subject).chain(stored) {
-        let ClaimSubject::Entity(person) = subject else {
-            continue;
-        };
-        let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
-            continue;
-        };
-        if !row.moved {
-            row.moved = true;
-            PERSON_ABOUT.put(store, txn, &person, &row)?;
-        }
-    }
-    Ok(())
-}
-
-/// The erase hook's PEOPLE half (FIX 3155): an erased fact takes the
-/// `about` lines of the PERSON it was about, and their kept before-image,
-/// with it, so no stored line still says what the fact said; the next wake
-/// pass writes new lines from the facts left. An erased PERSON takes its
-/// whole row. Runs in the erasing transaction, before the tear.
-pub(crate) fn erase_person_about_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
-    if PERSON_ABOUT.get(store, txn, id)?.is_some() {
-        PERSON_ABOUT.delete(store, txn, id)?;
-        return Ok(());
-    }
-    let subject = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
-        .filter(|raw| {
-            crate::batch::EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-        })
-        .and_then(|raw| {
-            crate::claim::decode_claim_body(
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
-                true,
-            )
-            .ok()
-        })
-        .map(|body| body.subject);
-    let Some(ClaimSubject::Entity(person)) = subject else {
-        return Ok(());
-    };
-    let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
-        return Ok(());
-    };
-    row.moved = true;
-    row.lines.clear();
-    row.previous = None;
-    PERSON_ABOUT.put(store, txn, &person, &row)
 }
 
 /// The owner's revert of the Dreamer's newest `about` landing for `person`:

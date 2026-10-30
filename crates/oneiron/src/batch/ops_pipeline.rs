@@ -194,8 +194,8 @@ pub(super) fn check_decode_point_taint_guard(
             if let Some(world) = candidate.world() {
                 check(&world)?;
             }
-            if let Some(relationship) = candidate.relationship() {
-                check(&relationship)?;
+            for relationship in candidate.relationship().into_iter().flatten() {
+                check(relationship)?;
             }
             check_claim_subject_refs(candidate.subject(), &check)?;
             check(&envelope.actor().entity_ref())?;
@@ -242,8 +242,8 @@ pub(super) fn check_claim_body_refs(
     if let Some(world) = body.world {
         check(&world)?;
     }
-    if let Some(rel) = body.rel {
-        check(&rel)?;
+    for rel in body.rel.iter().flatten() {
+        check(rel)?;
     }
     Ok(())
 }
