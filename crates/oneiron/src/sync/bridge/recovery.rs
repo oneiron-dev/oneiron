@@ -9,6 +9,7 @@ use crate::sync::ingest::{
     EntityStep, IngestCtx, authority_parent_order, ingest_entity_in_txn, is_authority_row,
 };
 use crate::sync::loro_support::TombstoneIndex;
+use crate::sync::selector::authority_beside::AuthorityBeside;
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use loro::LoroDoc;
@@ -63,12 +64,17 @@ fn preflight_in_txn(
     crate::recovery::validate_window_documents(doc)?;
     snapshot.preflight_note_recovery(vault, txn)?;
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
+    // Each AUTHORITY_LOG row is judged beside the snapshot's others, as a
+    // carrier's are (FIX 11959).
     let ingest = IngestCtx::new(
         vault,
         &snapshot.window,
         materializer.lease_vault_id(),
         &tombstones,
-    );
+    )
+    .with_authority_beside(AuthorityBeside::of_rows(
+        snapshot.entity_blobs.iter().map(|entity| &entity.blob[..]),
+    ));
     // AUTHORITY_LOG rows first, parents first, as the forward pass lands
     // them (H72): the door holds a row whose signer's enrollment is not
     // staged yet, and the preflight refuses on any held row.
