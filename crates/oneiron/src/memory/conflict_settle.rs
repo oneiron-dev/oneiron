@@ -144,7 +144,9 @@ impl Memory<'_> {
     /// receipt then names that approval. A retry whose write is discarded
     /// answers with the first refusal, the retained alternative intact; one
     /// that committed answers with what it committed, even when the writer's
-    /// post-commit work then fails.
+    /// post-commit work then fails. A VAD consolidation that fails after the
+    /// commit never refuses the settlement: its receipt carries a
+    /// pending-VAD warning (FIX 7600).
     pub fn settle_conflict(
         &self,
         reviewer: Option<&AuthenticatedOwner>,
@@ -164,7 +166,7 @@ impl Memory<'_> {
                 now,
             )
         });
-        let outcome = match first {
+        let mut outcome = match first {
             Ok(outcome) => outcome,
             Err(refusal) => {
                 consolidate = None;
@@ -222,9 +224,13 @@ impl Memory<'_> {
             }
         };
         // Consent is committed before the consolidator opens its own writer;
-        // a VAD failure is returned with the settlement durable.
-        if let Some(approved) = consolidate {
-            self.vault.consolidate_claim_vad_now(&approved, now)?;
+        // a VAD failure warns and the settlement answers success (FIX 7600,
+        // Engine 09:24).
+        if let Some(approved) = consolidate
+            && let Some(warning) = self.vault.consolidate_settled_claim_vad(&approved, now)
+            && let ConflictSettleOutcome::Settled(receipt) = &mut outcome
+        {
+            receipt.warnings.push(warning);
         }
         Ok(outcome)
     }
@@ -262,7 +268,7 @@ impl Memory<'_> {
                     .ok_or_else(|| authority_denied("no named conflict review Grant"))?,
             )
         };
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         if let ConflictSettlement::ApproveAndKeep(staged) = settlement {
             let dreamer_run = self.approve_staged_keep_in_txn(
                 txn,
@@ -271,6 +277,10 @@ impl Memory<'_> {
                 staged,
                 now,
             )?;
+            // The approval's commit carries its consolidation debt (FIX 11858).
+            if dreamer_run {
+                self.vault.owe_settled_claim_vads_in_txn(txn, &[staged])?;
+            }
             *consolidate = dreamer_run.then_some(staged);
         }
         let approval = if approve {
@@ -359,6 +369,10 @@ impl Memory<'_> {
             (None, _) => None,
             (Some(approval), ConflictSettlement::Keep(selector)) => {
                 let approved = approval.approved().ok_or_else(not_approved)?;
+                if approved.dreamer_run {
+                    self.vault
+                        .owe_settled_claim_vads_in_txn(txn, &[approved.claim])?;
+                }
                 *consolidate = approved.dreamer_run.then_some(approved.claim);
                 let mut record = decision(
                     actor,
@@ -401,6 +415,7 @@ impl Memory<'_> {
             superseded: settled.superseded,
             receipt_ref: format!("gate:{}", receipt.decision_id.to_hex()),
             approval_ref,
+            warnings: Vec::new(),
         }))
     }
 
@@ -418,7 +433,7 @@ impl Memory<'_> {
         owner: Option<&AuthenticatedOwner>,
         dreamer: bool,
     ) -> Result<KeepApproval, Error> {
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        let actor = self.write_actor();
         if dreamer || actor == dreamer_principal()? {
             return Err(authority_denied(
                 "the Dreamer's standing review approves no held Keep",
@@ -536,11 +551,7 @@ impl Memory<'_> {
                     "a person settles a conflict with their authentication",
                 ));
             }
-            verify_live_actor(
-                self.vault,
-                txn,
-                WriteActor::new(self.actor, self.actor_class),
-            )?;
+            verify_live_actor(self.vault, txn, self.write_actor())?;
             return Ok(false);
         };
         if self.actor != reviewer.revalidate_person_in_txn(self.vault, txn)?
@@ -561,7 +572,7 @@ impl Memory<'_> {
     /// Whether this caller is the vault's own Dreamer principal, the System
     /// MACHINE whose conflict review stands from birth with no Grant.
     fn conflict_responder_is_dreamer(&self) -> Result<bool, Error> {
-        Ok(WriteActor::new(self.actor, self.actor_class) == dreamer_principal()?)
+        Ok(self.write_actor() == dreamer_principal()?)
     }
 
     /// The owner-delegated Grant that lets this caller review conflicts on
@@ -571,13 +582,7 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         subject: EntityId,
     ) -> Result<Option<String>, Error> {
-        live_review_bound(
-            self.vault,
-            txn,
-            WriteActor::new(self.actor, self.actor_class),
-            VERB,
-            subject,
-        )
+        live_review_bound(self.vault, txn, self.write_actor(), VERB, subject)
     }
 
     /// The owner's hold on the Dreamer's review of `subject`, its own or the
@@ -587,13 +592,7 @@ impl Memory<'_> {
         txn: &heed::RoTxn<'_>,
         subject: EntityId,
     ) -> Result<Option<String>, Error> {
-        live_review_bound(
-            self.vault,
-            txn,
-            WriteActor::new(self.actor, self.actor_class),
-            HOLD_VERB,
-            subject,
-        )
+        live_review_bound(self.vault, txn, self.write_actor(), HOLD_VERB, subject)
     }
 
     /// Lets `delegate` settle the open conflicts `scope` covers: a standing
