@@ -12,7 +12,9 @@ pub use skipped::{
     NATIVE_MAIL_SET_ASIDE_AFTER_STOPS, NativeMailSkippedMessage, native_mail_skipped_messages,
 };
 pub(crate) use skipped::{
-    drop_native_mail_skipped_messages_in_txn, record_native_mail_skipped_message,
+    clear_native_mail_stopping_message, drop_native_mail_skipped_messages_in_txn,
+    native_mail_message_stops, native_mail_stopping_message, record_native_mail_skipped_message,
+    record_native_mail_stopping_message,
 };
 
 use super::shared_validate::{
