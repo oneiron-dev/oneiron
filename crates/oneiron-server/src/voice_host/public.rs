@@ -221,7 +221,7 @@ impl PublicSession {
     }
 
     /// The page, beside the rows its served events were made from (FIX
-    /// 4778), `None` when one of them is unknown.
+    /// 4778).
     pub(crate) fn events(
         &self,
         input: LiveVoiceEventsRequest,

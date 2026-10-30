@@ -56,19 +56,19 @@ pub(crate) async fn ai_voice_audio(
 /// turn (FIX 4778): the answering agent's definition, the history each turn
 /// heard, the memories it heard and its tool contexts' rows, the policy
 /// row a notice names and the rows a memories read found. The person's
-/// words and the control events list none. A page one of whose turns kept
-/// no complete set lists unknown (`None`), never `[]`.
+/// words and the control events list none, and so does a refusal (FIX
+/// 6080).
 pub(crate) async fn ai_voice_events(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LiveVoiceEventsRequest,
-) -> MaybeListed<LiveVoiceEvents> {
+) -> Listed<LiveVoiceEvents> {
     let answer = owner_proof(auth, server, "ai.voice.events")
         .and_then(|_| server.live_voice.get(auth, &input.session_ref))
         .and_then(|session| session.events(input));
     match answer {
         Ok((page, rows)) => (Ok(page), rows),
-        Err(error) => (Err(error), None),
+        Err(error) => (Err(error), Vec::new()),
     }
 }
 
