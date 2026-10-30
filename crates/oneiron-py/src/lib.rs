@@ -251,18 +251,28 @@ impl NativeClient {
 
     /// `open`, then this install's own machine profile from the vault's host
     /// root secret, its exact bytes borrowed for this call (FIX 5342).
-    /// `device_class` is `open`'s.
+    /// `device_class` is `open`'s. `hold_checkpoint_root_signer` holds this
+    /// install's host root as the vault's checkpoint signer for the handle's
+    /// life (FIX 5343); omitted is `false`.
     #[staticmethod]
-    #[pyo3(signature = (path, host_root_secret, dimensions=None, device_class=None))]
+    #[pyo3(signature = (path, host_root_secret, dimensions=None, device_class=None, hold_checkpoint_root_signer=None))]
     fn open_with_host_root(
         py: Python<'_>,
         path: Option<std::path::PathBuf>,
         host_root_secret: &[u8],
         dimensions: Option<usize>,
         device_class: Option<String>,
+        hold_checkpoint_root_signer: Option<bool>,
     ) -> PyResult<Self> {
         let device_class = host_device_class(device_class.as_deref())?;
-        let inner = host_root::open(py, path, host_root_secret, dimensions, device_class)?;
+        let inner = host_root::open(
+            py,
+            path,
+            host_root_secret,
+            dimensions,
+            device_class,
+            hold_checkpoint_root_signer.unwrap_or(false),
+        )?;
         Ok(Self { inner, keep: None })
     }
 
