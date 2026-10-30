@@ -104,8 +104,7 @@ pub enum CalendarError {
         /// The offending timestamp.
         utc: u64,
     },
-    /// The recurrence text is not RFC 5545 the engine can expand, or expanding
-    /// it over the requested window costs more than the supported walk. Never
+    /// The recurrence text is not RFC 5545 the engine can expand. Never
     /// answered with a short or empty series.
     #[error("invalid or unsupported recurrence rule: {rule}")]
     InvalidRecurrenceRule {
