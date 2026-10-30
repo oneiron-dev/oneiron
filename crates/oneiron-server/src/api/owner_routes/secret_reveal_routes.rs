@@ -9,7 +9,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -21,7 +20,7 @@ use oneiron::secret_custody::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -31,11 +30,36 @@ use crate::server::SyncServer;
 /// The most reveals one read lists.
 const MAX_REVEALS_PAGE: usize = 200;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/reveals", get(reveals))
-        .route("/secrets/reveals/answer", post(answer))
-        .route("/secrets/reveal", post(reveal))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/reveals",
+                summary: "The vault's reveals, newest first, each with its receipt and, while it waits on the owner, its ask card and digest.",
+                row: None,
+            },
+            get(reveals),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/reveals/answer",
+                summary: "The owner's answer to one asked reveal, against the exact digest it was listed with.",
+                row: None,
+            },
+            post(answer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/reveal",
+                summary: "The owner reads one secret's value.",
+                row: None,
+            },
+            post(reveal),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/reveals/answer`'s body (FIX 11611):

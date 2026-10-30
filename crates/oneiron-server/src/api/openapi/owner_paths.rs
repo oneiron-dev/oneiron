@@ -1,14 +1,11 @@
 //! The owner surface in the OpenAPI document (FIX 1755): every `/v1/owner`
 //! route, with the SDK row whose input it takes where it mirrors one. The
-//! routes are axum handlers with no utoipa annotation, so these tables name
-//! them; a route added under `api/owner_routes` adds its line to the table
-//! its path sorts into.
+//! routes are axum handlers with no utoipa annotation, so each owner route
+//! leaf declares its rows beside its handlers, in the one table its router
+//! is built from; the document reads those tables through
+//! `owner_routes::owner_route_rows` (FIX 8931).
 
 use serde_json::{Map, Value, json};
-
-mod routes_a_to_e;
-mod routes_f_to_packs;
-mod routes_pads_to_w;
 
 /// One `/v1/owner` route: its method, its path under `/v1/owner`, what it
 /// does, and the SDK row whose input schema its body is.
@@ -19,23 +16,88 @@ pub(crate) struct OwnerRoute {
     pub(crate) row: Option<&'static str>,
 }
 
-/// Every `/v1/owner` route, the off-record ones included: three tables in
-/// path order, read one after another.
-pub(crate) const OWNER_ROUTE_TABLES: &[&[OwnerRoute]] = &[
-    routes_a_to_e::ROUTES,
-    routes_f_to_packs::ROUTES,
-    routes_pads_to_w::ROUTES,
+/// The rows of the owner routes two modules still serve from their own
+/// routers: the origin cutover and mirror (`api::owner_origin`) and the
+/// pinned library's default restores (`api::packs::defaults`).
+const ORIGIN_AND_PACK_DEFAULT_ROUTES: &[OwnerRoute] = &[
+    OwnerRoute {
+        method: "get",
+        path: "/origin-authority",
+        summary: "Origin authority.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/origin-authority",
+        summary: "Cut origin authority.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "delete",
+        path: "/origin-mirror",
+        summary: "Clear origin mirror.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "get",
+        path: "/origin-mirror",
+        summary: "Origin mirror.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/origin-mirror",
+        summary: "Set origin mirror.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/origin-mirror/push",
+        summary: "Push origin mirror.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/origin-mirror/strategy",
+        summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/packs/defaults/import",
+        summary: "Import hub skill.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/packs/defaults/restore",
+        summary: "Restore defaults.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
+        path: "/packs/defaults/restore-skill",
+        summary: "Restore hub skill.",
+        row: None,
+    },
 ];
 
-/// Adds each owner route to `spec`'s paths: owner-grade bearer, its row's
-/// input schema as the JSON body where it has one, its row's output schema as
-/// the answer where the SDK publishes one (else a JSON answer of unstated
-/// shape), and the one 403 the owner door answers every refusal with.
+/// Adds each owner route to `spec`'s paths, in path order: owner-grade
+/// bearer, its row's input schema as the JSON body where it has one, its
+/// row's output schema as the answer where the SDK publishes one (else a JSON
+/// answer of unstated shape), and the one 403 the owner door answers every
+/// refusal with.
 pub(crate) fn merge_owner_paths(spec: &mut Value) {
     let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
         return;
     };
-    for route in OWNER_ROUTE_TABLES.iter().copied().flatten() {
+    let tabled = crate::api::owner_routes::owner_route_rows();
+    let mut routes: Vec<&OwnerRoute> = tabled
+        .iter()
+        .chain(ORIGIN_AND_PACK_DEFAULT_ROUTES)
+        .collect();
+    routes.sort_by_key(|route| route.path);
+    for route in routes {
         let path = format!("/v1/owner{}", route.path);
         let item = paths
             .entry(path.clone())
