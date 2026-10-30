@@ -70,6 +70,7 @@
 mod approval;
 mod codec;
 mod custody;
+mod door_recheck;
 mod effect;
 mod engine;
 mod facade;
@@ -107,7 +108,7 @@ pub use self::model::{
     LINEAR_SYNC_ADAPTER_ID, LINEAR_SYNC_OPERATION_DOMAIN, LINEAR_SYNC_REGISTRATION,
     LINEAR_SYNC_SCHEMA_VERSION, LinearChangePage, LinearChangeSource, LinearEgress,
     LinearFieldConflict, LinearIssueChange, LinearIssueRef, LinearMirrorReceipt,
-    LinearMirrorStatus, LinearPullReceipt, LinearSyncDirection, LinearSyncError,
+    LinearMirrorStatus, LinearPullReceipt, LinearPushFailure, LinearSyncDirection, LinearSyncError,
     LinearSyncRegistration, LinearSyncResult, LinearTaskStore, LinearWait, LinearWriteActor,
     MirroredTaskFields, TaskIssueLink, TaskMirrorSnapshot, WaveResult,
 };
