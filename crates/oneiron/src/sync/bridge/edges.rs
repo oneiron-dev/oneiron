@@ -198,6 +198,7 @@ pub(super) fn materialize_edges_from_delta(
                             &tgt,
                         )?
                     {
+                        super::shell_pin::pin_child_of(vault, wtxn, &edges_map, kind, &src, &tgt)?;
                         continue;
                     }
                     // FIX 5972: a stored `regenerates` pair was proven when it
