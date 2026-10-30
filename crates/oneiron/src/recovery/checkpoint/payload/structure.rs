@@ -52,23 +52,14 @@ fn entity(bytes: &[u8]) -> Option<OwnerRef> {
 }
 
 fn entity_hex(text: &str) -> Option<OwnerRef> {
-    EntityId::from_hex(text)
-        .ok()
-        .map(|id| OwnerRef::entity(&id))
+    EntityId::from_hex(text).ok().map(|id| OwnerRef::entity(&id))
 }
 
 /// The owners a sync row links to: an entity-keyed marker's or counter's
 /// entity, or a pending mirror's row, or both ends of its edge.
 fn sync_links(key: &[u8]) -> Vec<OwnerRef> {
-    if let Some(id) = ENTITY_KEYED
-        .iter()
-        .find_map(|decl| key.strip_prefix(decl.prefix))
-    {
-        return std::str::from_utf8(id)
-            .ok()
-            .and_then(entity_hex)
-            .into_iter()
-            .collect();
+    if let Some(id) = ENTITY_KEYED.iter().find_map(|decl| key.strip_prefix(decl.prefix)) {
+        return std::str::from_utf8(id).ok().and_then(entity_hex).into_iter().collect();
     }
     // A pending mirror: its window, which holds no `:`, then a row's id, or
     // an edge's key, its kind between its two ids.
@@ -77,12 +68,12 @@ fn sync_links(key: &[u8]) -> Vec<OwnerRef> {
         .and_then(|rest| std::str::from_utf8(rest).ok())
         .and_then(|rest| rest.split_once(':'))
         .map(|(_, owed)| owed);
-    match owed.map(|owed| owed.split(':').collect::<Vec<_>>()).as_deref() {
+    let parts: Option<Vec<&str>> = owed.map(|owed| owed.split(':').collect());
+    match parts.as_deref() {
         Some([id]) => entity_hex(id).into_iter().collect(),
-        Some([source, _, target]) => [source, target]
-            .into_iter()
-            .filter_map(|id| entity_hex(id))
-            .collect(),
+        Some([source, _, target]) => {
+            [source, target].into_iter().filter_map(|id| entity_hex(id)).collect()
+        }
         _ => Vec::new(),
     }
 }
@@ -93,10 +84,9 @@ pub(super) fn dependencies(database: &str, key: &[u8], value: &[u8]) -> Vec<Owne
     match database {
         "short_ids" => entity(value).into_iter().collect(),
         "short_ids_reverse" => entity(key).into_iter().collect(),
-        "edges_out" | "edges_in" if key.len() == 33 => [&key[..16], &key[17..]]
-            .into_iter()
-            .filter_map(entity)
-            .collect(),
+        "edges_out" | "edges_in" if key.len() == 33 => {
+            [&key[..16], &key[17..]].into_iter().filter_map(entity).collect()
+        }
         // An asset refcount marker: the bytes' digest (32), then the id of
         // the record holding them.
         "vault_meta" => key
@@ -128,9 +118,7 @@ pub(super) fn dependents(
     let mut rows: BTreeMap<&'static str, BTreeSet<Vec<u8>>> = BTreeMap::new();
     for link in links {
         if link.on.iter().any(|owner| gone.contains(owner)) {
-            rows.entry(link.database)
-                .or_default()
-                .insert(link.key.clone());
+            rows.entry(link.database).or_default().insert(link.key.clone());
         }
     }
     rows
