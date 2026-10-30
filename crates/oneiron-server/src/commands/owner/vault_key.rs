@@ -320,8 +320,10 @@ pub(crate) fn page_seal_at(
 
 /// Refuses a page-seal mirror with no vault beside it, before anything can
 /// create a vault there: the new vault would take that vault's identity and
-/// custody. The mirror stays as it is.
+/// custody. The mirror stays as it is. A vault whose sealed creation never
+/// finished is refused by kind: only init removes it (FIX 1942).
 pub(crate) fn refuse_orphaned_page_seal(path: &Path) -> anyhow::Result<()> {
+    world_keys::refuse_unfinished_sealed_creation(path)?;
     if path.join("data.mdb").exists() || !world_keys::vault_is_sealed(path)? {
         return Ok(());
     }
@@ -340,10 +342,41 @@ pub(crate) fn ensure_page_seal_wrapped(vault: &oneiron::Vault, path: &Path) -> a
     vault.check_page_custody().map_err(|error| {
         anyhow::anyhow!(
             "the sealed vault at {} would not open again ({error}): if it was just created, \
-             delete it and run `oneiron init --maximum-tier` with a keystore or --secret-file",
+             `oneiron init --maximum-tier` with a keystore or --secret-file creates it again",
             path.display()
         )
     })
+}
+
+/// Wraps the key of the vault init opened, when its pages are sealed: a new
+/// one's to this device's keystore and to `password`, and init keeps it only
+/// once its mirror opens it. When a step fails while the vault's creation is
+/// unfinished, the vault is closed and what that creation made is removed,
+/// so `oneiron init` simply runs again; the error is the step's (FIX 1942).
+/// A plain vault passes as it is.
+pub(crate) fn wrap_sealed_vault(
+    vault: oneiron::Vault,
+    config: &ServeConfig,
+    password: Option<&HostUnlock>,
+) -> anyhow::Result<oneiron::Vault> {
+    if !vault.vault_pages_sealed() {
+        return Ok(vault);
+    }
+    let path = &config.vault_path;
+    let wrapped = (|| -> anyhow::Result<()> {
+        config.keystore.install_on_boot(&vault, path)?;
+        if let Some(HostUnlock::Password(password)) = password {
+            vault.set_vault_key_password(password, None)?;
+        }
+        ensure_page_seal_wrapped(&vault, path)
+    })();
+    let Err(error) = wrapped else {
+        return Ok(vault);
+    };
+    if let Err(removal) = vault.remove_unfinished_sealed_creation() {
+        tracing::warn!(%removal, "the unfinished sealed vault stays until the next init");
+    }
+    Err(error)
 }
 
 fn set_password(args: VaultKeyArgs) -> anyhow::Result<()> {
