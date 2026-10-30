@@ -98,21 +98,22 @@ pub(super) fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
     Ok(entity_id_from_hash_material(SEAT_QUOTA_DOMAIN, &parts)?)
 }
 
-/// Records what `attempt`'s capture read of `seat`'s quota, in the routing
-/// writer: a spend, or a completed run's clearing of a spent seat. Any other
-/// capture proves nothing and records nothing. A replay, and an older
-/// capture settling after a newer reading, keep the head.
+/// Records what `attempt`'s capture read of quota `id`, in the routing
+/// writer: a spend, or a completed run's clearing of a spent seat. The id
+/// comes from the current seat or the capture hop's frozen identity when the
+/// seat was removed (FIX 11984). Any other capture proves nothing and records
+/// nothing. A replay, and an older capture settling after a newer reading,
+/// keep the head.
 ///
 /// # Errors
 /// A record that does not encode or decode; a store failure.
-pub(super) fn record_seat_quota_in_txn(
+pub(super) fn record_seat_quota_by_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    seat: &RunnerSeat,
+    id: EntityId,
     attempt: &AttemptRecord,
     spent: Option<&SeatSpent>,
 ) -> ByoaResult<()> {
-    let id = seat_quota_id(seat)?;
     let head: Option<SeatQuotaRecord> = head_record(vault, wtxn, &id)?;
     let cleared = attempt.state == AttemptState::Completed
         && head.as_ref().is_some_and(|head| head.spent.is_some());

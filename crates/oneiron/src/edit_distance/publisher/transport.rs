@@ -184,6 +184,43 @@ pub(crate) fn record_signature_hold_in_txn(
     Ok(())
 }
 
+/// Returns a delivery lane's unanswered signature to [`SignatureSendState::Local`],
+/// in the caller's write (FIX 11631): the lane's issue no longer routes to a
+/// publisher, so its send will never leave and the signature reads as no lane's.
+/// Only an unanswered state moves — [`SignatureSendState::Pending`], or
+/// [`SignatureSendState::Withheld`] while the switches held that same lane — and
+/// its lane send is cleared with it. Every state the outbound path wrote
+/// ([`SignatureSendState::Uncertain`], [`SignatureSendState::NotDelivered`],
+/// [`SignatureSendState::Sent`]) and [`SignatureSendState::Local`] stand.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn record_signature_local_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    signature: EntityId,
+) -> Result<()> {
+    let row = SEND_STATE
+        .get(&vault.store, &*wtxn, &signature)?
+        .unwrap_or_default();
+    if matches!(
+        row.state,
+        SignatureSendState::Pending | SignatureSendState::Withheld
+    ) {
+        SEND_STATE.put(
+            &vault.store,
+            wtxn,
+            &signature,
+            &SendStateRow {
+                state: SignatureSendState::Local,
+                send_ref: None,
+            },
+        )?;
+    }
+    Ok(())
+}
+
 /// Offers a batch of stored signatures to the publisher channel, honoring the
 /// dial.
 ///
