@@ -2,7 +2,7 @@
 //! the erase's own transaction and rewrite a case in its own encoding, never
 //! through the side-row wall: forgetting an id adds nothing to admit.
 
-use super::{CASES, CaseCaller, FrozenCall};
+use super::{CASES, CaseCaller, FrozenCall, delete_case_in_txn, index};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -56,6 +56,9 @@ pub(crate) fn erase_callable_case_actor_in_txn(
 /// - a case whose sources are unknown goes when its receipt names `id` as
 ///   its job, trigger, trace or a field. Its actor is the actor scrub's.
 ///
+/// The cases' index finds the last two by key (FIX 12180): no other case is
+/// read, and each receipt is read once, however many cases it holds.
+///
 /// # Errors
 ///
 /// Storage errors.
@@ -64,22 +67,27 @@ pub(crate) fn erase_callable_cases_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    CASES.delete_from(store, wtxn, id.as_bytes())?;
+    for key in CASES.scan_keys(store, wtxn, id.as_bytes())? {
+        delete_case_in_txn(store, wtxn, &key)?;
+    }
+    for key in index::source_cases_in_txn(store, wtxn, id)? {
+        delete_case_in_txn(store, wtxn, &key)?;
+    }
+    index::forget_source_in_txn(store, wtxn, id)?;
     let spelled = id.to_hex();
-    for (key, row) in cases_in_txn(store, wtxn)? {
-        let named = match &row.source_rows {
-            Some(rows) => rows.contains(id),
-            None => crate::receipt::attempt_pack_receipt_in_txn(store, wtxn, &row.receipt)?
-                .is_some_and(|receipt| {
-                    let names = |text: &str| text.to_ascii_lowercase().contains(&spelled);
-                    receipt.job_ref.as_deref().is_some_and(names)
-                        || receipt.trigger_ref.as_deref().is_some_and(names)
-                        || receipt.policy_trace.iter().any(|step| names(step.as_str()))
-                        || receipt.fields.values().any(|value| names(value.as_str()))
-                }),
-        };
+    for (receipt, keys) in index::receipt_cases_in_txn(store, wtxn)? {
+        let named = crate::receipt::attempt_pack_receipt_in_txn(store, wtxn, &receipt)?
+            .is_some_and(|receipt| {
+                let names = |text: &str| text.to_ascii_lowercase().contains(&spelled);
+                receipt.job_ref.as_deref().is_some_and(names)
+                    || receipt.trigger_ref.as_deref().is_some_and(names)
+                    || receipt.policy_trace.iter().any(|step| names(step.as_str()))
+                    || receipt.fields.values().any(|value| names(value.as_str()))
+            });
         if named {
-            CASES.delete(store, wtxn, &key)?;
+            for key in keys {
+                delete_case_in_txn(store, wtxn, &key)?;
+            }
         }
     }
     Ok(())
@@ -97,7 +105,7 @@ fn cases_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<Vec<(Vec<u8
         match CASES.decode_value(&value) {
             Ok(row) => rows.push((key, row)),
             Err(_) => {
-                CASES.delete(store, wtxn, &key)?;
+                delete_case_in_txn(store, wtxn, &key)?;
                 dropped += 1;
             }
         }
