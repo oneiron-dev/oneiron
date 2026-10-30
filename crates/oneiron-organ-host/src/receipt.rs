@@ -7,6 +7,7 @@ use oneiron::limit_ask::EngineLimit;
 use oneiron_organ_protocol::{AskCode, Hash32, Locator, Notes, OrganIdentity, ProtocolVersion};
 use serde::{Deserialize, Serialize};
 
+use crate::isolation::OrganIsolation;
 use crate::spec::CallClass;
 
 /// What one call read, made and took. Recall and the Dreamer read it as a
@@ -16,6 +17,10 @@ pub struct CallReceipt {
     pub organ: OrganIdentity,
     /// The version the session speaks: the lower minor of both sides.
     pub protocol: ProtocolVersion,
+    /// What the call's process was isolated with: its namespaces and its
+    /// descendant fence, as its start found them (FIX 10582).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub isolation: Option<OrganIsolation>,
     pub verb: String,
     pub schema: u32,
     /// blake3 of the call's args, as MessagePack.

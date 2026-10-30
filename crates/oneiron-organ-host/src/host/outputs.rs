@@ -90,6 +90,7 @@ pub(super) fn finish(called: &Called<'_>, reply: Replied) -> Result<OrganOutcome
     let receipt = CallReceipt {
         organ: process.hello.organ.clone(),
         protocol: process.session,
+        isolation: Some(process.isolation.clone()),
         verb: call.verb.clone(),
         schema: call.schema,
         args_digest: digest(&call.args),
