@@ -8,7 +8,7 @@ use tokio::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::sync::client::{SyncClient, SyncEvent};
-use crate::sync::transport::{self, window_sub_tags};
+use crate::sync::transport;
 use crate::sync::types::parse_window_key_str;
 
 use crate::side_table::HexId;
@@ -79,9 +79,32 @@ impl SyncConnection {
             return LoopExit::Renegotiate;
         }
         let mut left_rx = self.left.subscribe();
+        // The host's admission for each batch, and its pause (FIX 12036).
+        let mut gate = self.batch_gate();
 
         loop {
-            self.run_machine_history(&mut machine_history_tasks, &machine_history_due, event_tx);
+            // What the home sent, then the promotions asked, go first, in
+            // order, each under its own admission; a pause keeps the rest.
+            if let Err(exit) = self
+                .apply_held(
+                    &mut gate,
+                    client,
+                    &mut write,
+                    event_tx,
+                    &machine_history_due,
+                    &mut debounce_buffer,
+                )
+                .await
+            {
+                return exit;
+            }
+            self.run_machine_history(
+                &mut machine_history_tasks,
+                &machine_history_due,
+                event_tx,
+                &mut gate,
+            )
+            .await;
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
                 Some(deadline) => tokio::time::sleep_until(deadline),
@@ -89,49 +112,13 @@ impl SyncConnection {
             };
 
             tokio::select! {
-                // WS message from server
-                msg = read.next() => {
+                // WS message from server; while paused, read until the
+                // frames held fill their room (FIX 12036).
+                msg = read.next(), if gate.reading() => {
                     match msg {
-                        Some(Ok(Message::Binary(data))) => {
-                            match client.handle_server_message(&data) {
-                                Ok(responses) => {
-                                    if crate::sync::machine_history::take_landed(&client.vault) {
-                                        machine_history_due.store(true, Ordering::Relaxed);
-                                    }
-                                    // Judged per frame: a device-only flag may turn while an
-                                    // earlier frame waits on the socket.
-                                    for resp in responses
-                                        .into_iter()
-                                        .filter(|frame| !client.frame_withheld(frame))
-                                    {
-                                        let send_result =
-                                            write.send(Message::Binary(resp.into())).await;
-                                        if let Err(e) = send_result {
-                                            return LoopExit::Disconnected(format!("Send failed: {e}"));
-                                        }
-                                    }
-                                    if client.config.residence_mode == crate::sync::SyncResidenceMode::Opened
-                                        && !client.residence_acks.is_empty()
-                                        && let Err(e) = self.clear_residence_acks(client)
-                                    {
-                                        return LoopExit::Disconnected(e);
-                                    }
-                                }
-                                Err(e) => {
-                                    let _ = event_tx.send(SyncEvent::Error(format!("Protocol error: {e}")));
-                                    if matches!(data.first(),
-                                        Some(&transport::TAG_WINDOW_SYNC)
-                                            | Some(&transport::TAG_BULK_TRANSFER)
-                                            | Some(&transport::TAG_BULK_TRANSFER_DONE)) {
-                                        // A missing causal prefix cannot be repaired by
-                                        // silently dropping one live delta. Reconnect repeats
-                                        // the VV handshake for every followed window.
-                                        flush_to_queue(&self.queue, &mut debounce_buffer);
-                                        return LoopExit::Disconnected(format!("Window sync error: {e}"));
-                                    }
-                                }
-                            }
-                        }
+                        // Applied at the loop's head, in order, under the
+                        // host's admission (FIX 12036).
+                        Some(Ok(Message::Binary(data))) => gate.hold_frame(data),
                         Some(Ok(Message::Ping(data))) => {
                             let pong_result = write.send(Message::Pong(data)).await;
                             if let Err(e) = pong_result {
@@ -142,22 +129,22 @@ impl SyncConnection {
                             // Flush debounce buffer before disconnecting; the
                             // close code tells a server fault from a refusal
                             // (FIX 5927).
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                             return LoopExit::Closed(ServerClose::read(frame.as_ref()));
                         }
                         None => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }
                         Some(Err(e)) => {
-                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                             return LoopExit::Disconnected(format!("WS error: {e}"));
                         }
                         _ => {} // Text, Pong — ignore
                     }
                 }
 
-                promotion = promotion_rx.recv() => {
+                promotion = promotion_rx.recv(), if !gate.paused() => {
                     let key = match promotion {
                         Ok(key) => key,
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
@@ -167,50 +154,16 @@ impl SyncConnection {
                             return LoopExit::Disconnected("promotion channel closed".into());
                         }
                     };
-                    if client.config.residence_mode != crate::sync::SyncResidenceMode::Opened {
-                        continue;
-                    }
-                    // A home that may not read the window's world is not asked to promote it,
-                    // nor for its vector; the `rp:w:` intent stays (FIX 922 item 11).
-                    if !client.home_may_promote(&key) || !client.home_may_request(&key) {
-                        continue;
-                    }
-                    let Some(selector) = client.config.residence_selector.as_ref() else {
-                        return LoopExit::Disconnected("promoted window missing grant selector".into());
-                    };
-                    let bytes = match crate::sync::encode_sync_selector(selector) {
-                        Ok(bytes) => bytes,
-                        Err(e) => return LoopExit::Disconnected(format!("promotion selector: {e}")),
-                    };
-                    let proof = match transport::encode_window_sync(
-                        key.as_str(), window_sub_tags::PROMOTION_REQUEST, &bytes,
-                    ).into_result() {
-                        Ok(frame) => frame,
-                        Err(e) => return LoopExit::Disconnected(e.to_string()),
-                    };
-                    let window = match client.ensure_window(key.as_str()) {
-                        Ok(window) => window,
-                        Err(e) => return LoopExit::Disconnected(e.to_string()),
-                    };
-                    let vv = match transport::encode_window_sync(
-                        key.as_str(), window_sub_tags::VV_REQUEST,
-                        &crate::sync::loro_support::doc_version_vector(&window.doc),
-                    ).into_result() {
-                        Ok(frame) => frame,
-                        Err(e) => return LoopExit::Disconnected(e.to_string()),
-                    };
-                    for frame in [proof, vv] {
-                        if let Err(e) = write.send(Message::Binary(frame.into())).await {
-                            return LoopExit::Disconnected(e.to_string());
-                        }
-                    }
+                    // Sent at the loop's head under the host's admission.
+                    gate.hold_promotion(key);
                 }
 
-                partial = presence_rx.recv() => {
+                // Live and lossy: no admission, and none sent while paused.
+                partial = presence_rx.recv(), if !gate.paused() => {
                     match partial {
                         Ok(frame) => {
                             if let Err(error) = write.send(Message::Binary(frame.into())).await {
-                                flush_to_queue(&self.queue, &mut debounce_buffer);
+                                self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                                 return LoopExit::Disconnected(format!("Presence send failed: {error}"));
                             }
                         }
@@ -278,7 +231,12 @@ impl SyncConnection {
                 }
 
                 // Debounce timer fired — flush buffered updates
-                _ = debounce_sleep, if debounce_deadline.is_some() => {
+                _ = debounce_sleep, if debounce_deadline.is_some() && !gate.paused() => {
+                    // Held until the batch is sent; a pause keeps the
+                    // buffers for the tick after the thaw (FIX 12036).
+                    let Some(_batch) = gate.admit().await else {
+                        continue;
+                    };
                     debounce_deadline = None;
 
                     match self.flush_node_batch(
@@ -303,13 +261,23 @@ impl SyncConnection {
                     }
                 }
 
-                _ = sealed_relay.tick() => {
+                _ = sealed_relay.tick(), if !gate.paused() => {
+                    // Each upkeep task holds the host's admission until its
+                    // last write; a pause leaves the tick due at the thaw
+                    // (FIX 12036).
+                    let (Some(tombstone_batch), Some(sealed_batch)) =
+                        (gate.admit().await, gate.admit().await)
+                    else {
+                        sealed_relay.reset_immediately();
+                        continue;
+                    };
                     // The home handoff's delivery round (FIX 5661 C2a).
                     self.home_handoff_wake.notify_one();
                     if tombstone_task.as_ref().is_none_or(tokio::task::JoinHandle::is_finished) {
                         let vault = std::sync::Arc::clone(self.manager.vault());
                         let events = event_tx.clone();
                         tombstone_task = Some(tokio::task::spawn_blocking(move || {
+                            let _batch = tombstone_batch;
                             if let Err(error) = crate::sync::residence::retry_pending_tombstones(&vault) {
                                 let _ = events.send(SyncEvent::Error(format!(
                                     "Pending tombstone retry failed: {error}"
@@ -326,6 +294,7 @@ impl SyncConnection {
                         let directives = std::sync::Arc::clone(&self.directive_wake);
                         let machine_history_due = std::sync::Arc::clone(&machine_history_due);
                         sealed_task = Some(tokio::spawn(async move {
+                            let _batch = sealed_batch;
                             // An opened machine's windows carry only the
                             // authority rows they hold: take the rest first
                             // (OF-469). Any machine whose rows name history it
@@ -447,8 +416,12 @@ impl SyncConnection {
                     machine_history_due.store(true, Ordering::Relaxed);
                 }
 
-                // Loro's Rust EphemeralStore has no internal timer.
-                _ = ephemeral_housekeeping.tick() => {
+                // Loro's Rust EphemeralStore has no internal timer. Its
+                // sends and writes are one batch (FIX 12036).
+                _ = ephemeral_housekeeping.tick(), if !gate.paused() => {
+                    let Some(_batch) = gate.admit().await else {
+                        continue;
+                    };
                     client.remove_outdated_ephemeral();
                     if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
                         return LoopExit::Disconnected(e);
@@ -477,9 +450,12 @@ impl SyncConnection {
                     }
                 }
 
+                // The host thawed: what the pause held goes first (FIX 12036).
+                () = gate.thawed(), if gate.paused() => {}
+
                 changed = mode_rx.changed() => {
                     if changed.is_ok() {
-                        flush_to_queue(&self.queue, &mut debounce_buffer);
+                        self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                         let _ = write.send(Message::Close(None)).await;
                         return LoopExit::Renegotiate;
                     }
@@ -490,7 +466,7 @@ impl SyncConnection {
                 // `wait_for` returns goes before the close frame's await, so
                 // the loop stays `Send` for a host that spawns it.
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
-                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;
                 }
@@ -498,7 +474,7 @@ impl SyncConnection {
                 // Shutdown signal
                 _ = &mut *shutdown_rx => {
                     // Flush any remaining buffered updates to queue
-                    flush_to_queue(&self.queue, &mut debounce_buffer);
+                    self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                     // Send close frame
                     let _ = write.send(Message::Close(None)).await;
                     return LoopExit::Shutdown;
@@ -510,12 +486,14 @@ impl SyncConnection {
     /// Starts an owed machine-history round off this loop once one is due and
     /// a task is free (FIX 3820). Own residence only: the home answers it, a
     /// federation peer does not. A round that lands rows asks for another,
-    /// since a row it released may owe more.
-    fn run_machine_history(
+    /// since a row it released may owe more. Each round holds the host's
+    /// admission until it ends; a paused host leaves it due (FIX 12036).
+    async fn run_machine_history(
         &self,
         tasks: &mut Vec<tokio::task::JoinHandle<()>>,
         due: &std::sync::Arc<AtomicBool>,
         event_tx: &mpsc::UnboundedSender<SyncEvent>,
+        gate: &mut super::batch_admission::BatchGate<'_>,
     ) {
         tasks.retain(|task| !task.is_finished());
         if self.config.client_config.federation_peer.is_some()
@@ -524,11 +502,16 @@ impl SyncConnection {
         {
             return;
         }
+        let Some(batch) = gate.admit().await else {
+            due.store(true, Ordering::Relaxed);
+            return;
+        };
         let manager = std::sync::Arc::clone(&self.manager);
         let config = self.client_config();
         let events = event_tx.clone();
         let due = std::sync::Arc::clone(due);
         tasks.push(tokio::spawn(async move {
+            let _batch = batch;
             match crate::sync::client::fetch_owed_machine_history(&manager, &config).await {
                 Ok(0) | Err(crate::sync::TransportError::InvalidPayload(_)) => {}
                 Ok(_) => due.store(true, Ordering::Relaxed),

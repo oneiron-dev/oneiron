@@ -33,11 +33,11 @@
 //! on a cadence, since no mesh signal says a peer's offer changed, and writes
 //! their own-server rows.
 //!
-//! On a managed vault (WILL-PLAN L14 row 14) the connection runs under one
-//! admission of the reap freeze, taken before the home is held and kept
-//! until its task ends: a frozen vault starts none, and while it runs, its
-//! imports, renewals and catalog writes keep a reap from finding the vault
-//! quiescent. Its enrolment is looked for beside the supervisor's key
+//! On a managed vault (WILL-PLAN L14 row 14) the opening writes hold one
+//! admission of the reap freeze, so a frozen vault starts none; then each
+//! batch the connection applies or sends, catalog refresh and candidacy write
+//! holds its own, and a freeze pauses the connection with its socket open
+//! (FIX 12036). Its enrolment is looked for beside the supervisor's key
 //! directory alone, never under HOME or XDG (FIX 5768).
 
 use std::sync::Arc;
@@ -49,9 +49,7 @@ use crate::config::ServeConfig;
 use crate::handler::mesh::MeshHost;
 use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
 
-/// The admission a managed vault's connection holds for its whole run.
-type Admission = Box<dyn Send>;
-
+mod batch_admission;
 mod dial;
 mod enrolment;
 mod removal_delivery;
@@ -82,14 +80,14 @@ impl DeviceSyncHost {
         mesh: Option<&MeshHost>,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Plain)?;
-        Self::open_logged(server, dial, mesh, None, admit_every_pass()).await
+        Self::open_logged(server, dial, mesh, admit_every_pass()).await
     }
 
-    /// [`Self::start`] on a managed vault: the connection, and every write
-    /// it makes, run under one admission `admit` grants, taken before the
-    /// home is held and kept until the connection's task ends. A frozen
-    /// vault starts none; it says so, and serve runs on without it. Its
-    /// enrolment is the one beside the supervisor's key directory, if any.
+    /// [`Self::start`] on a managed vault: its opening writes hold one
+    /// admission `admit` grants, taken before the home is held, and each
+    /// batch, refresh and write after them holds its own (FIX 12036). A
+    /// frozen vault starts none; it says so, and serve runs on without it.
+    /// Its enrolment is the one beside the supervisor's key directory, if any.
     pub(crate) async fn start_admitted(
         server: &Arc<SyncServer>,
         config: &ServeConfig,
@@ -97,14 +95,14 @@ impl DeviceSyncHost {
         admit: &HousekeepingAdmission,
     ) -> Option<Self> {
         let dial = Self::dial(server, config, EnrolmentSource::Managed)?;
-        let Some(admission) = admit() else {
+        let Some(_opening) = admit() else {
             tracing::warn!(
                 "device sync disabled: the vault is paused for reap preparation; it starts with \
                  the next serve"
             );
             return None;
         };
-        Self::open_logged(server, dial, mesh, Some(admission), Arc::clone(admit)).await
+        Self::open_logged(server, dial, mesh, Arc::clone(admit)).await
     }
 
     /// What this machine dials, its enrolment looked for where `source`
@@ -120,20 +118,25 @@ impl DeviceSyncHost {
     }
 
     /// The connection to `dial`'s home and its archive receiver, or, with the
-    /// line that says why, the receiver alone or `None`. `admission` ends with the task;
-    /// `admit` admits each archive import (FIX 11796).
+    /// line that says why, the receiver alone or `None`. `admit` admits the
+    /// connection's batches and writes (FIX 12036) and each archive import (FIX 11796).
     async fn open_logged(
         server: &Arc<SyncServer>,
         dial: Dial,
         mesh: Option<&MeshHost>,
-        admission: Option<Admission>,
         admit: HousekeepingAdmission,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396).
         // An import the reap freeze refused goes again at its thaw (FIX 12154).
         let freeze = server.ai.dreamer_control().map(|control| control.pause);
-        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, admit, freeze);
-        match open(server, dial, mesh, admission).await {
+        let removal = removal_delivery::Receiver::start(
+            &dial,
+            mesh,
+            &server.vault,
+            Arc::clone(&admit),
+            freeze,
+        );
+        match open(server, dial, mesh, admit).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {
                 tracing::warn!("device sync disabled: {reason:#}");
@@ -185,21 +188,20 @@ async fn open(
     _server: &Arc<SyncServer>,
     _dial: Dial,
     _mesh: Option<&MeshHost>,
-    _admission: Option<Admission>,
+    _admit: HousekeepingAdmission,
 ) -> anyhow::Result<DeviceSyncHost> {
     anyhow::bail!("this server was built without the `mesh` feature")
 }
 
-/// Holds the home and opens the connection to it. `admission`, a managed
-/// vault's, was taken before anything here writes; it moves into the
-/// connection's task and ends with it, and a failed open drops it only
-/// once its own work has ended.
+/// Holds the home and opens the connection to it. Each batch the connection
+/// applies or sends, each catalog refresh and each candidacy write a catch-up
+/// starts holds an admission `admit` grants (FIX 12036).
 #[cfg(feature = "mesh")]
 async fn open(
     server: &Arc<SyncServer>,
     dial: Dial,
     mesh: Option<&MeshHost>,
-    admission: Option<Admission>,
+    admit: HousekeepingAdmission,
 ) -> anyhow::Result<DeviceSyncHost> {
     use oneiron::sync::SyncDialer;
     use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
@@ -241,6 +243,7 @@ async fn open(
     let resolve = route::resolver(Arc::clone(&server.vault), home, machine, routes());
     let moves = route::RouteChanges::new(mesh.and_then(|_| routes()), Arc::clone(&resolve));
     let link = Link {
+        admit: Arc::clone(&admit),
         windows: Arc::clone(&server.reassert_manager),
         topology,
         url,
@@ -274,12 +277,10 @@ async fn open(
             .models()
             .mesh_routes(&server.vault, mesh.transport()),
         staging: server.model_budgets.mesh_staging(),
+        admit,
     });
     tracing::info!(machine = %machine.to_hex(), %home, over, "device sync started");
     let task = tokio::spawn(async move {
-        // Held through every run, reconnect, renewal and catalog refresh,
-        // and dropped only once all of them end.
-        let _admission = admission;
         // The observer is synchronous, so each status goes to the catalog
         // loop; the channel closes when the last connection's run ends.
         let (statuses, status_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -303,6 +304,8 @@ async fn open(
 /// What each connection to the home is built from, but its credential.
 #[cfg(feature = "mesh")]
 struct Link {
+    /// What each batch, refresh and candidacy write holds (FIX 12036).
+    admit: HousekeepingAdmission,
     windows: Arc<oneiron::sync::WindowManager>,
     url: String,
     worlds: Vec<oneiron::EntityId>,
@@ -359,13 +362,15 @@ impl Link {
         &self,
         client_config: oneiron::sync::SyncClientConfig,
     ) -> anyhow::Result<Arc<oneiron::sync::SyncConnection>> {
-        let connection = Arc::new(oneiron::sync::SyncConnection::new(
+        let connection = oneiron::sync::SyncConnection::new(
             Arc::clone(&self.windows),
             oneiron::sync::ConnectionConfig {
                 client_config,
                 auto_reconnect: true,
             },
-        )?);
+        )?;
+        let freeze = batch_admission::FreezeAdmission(Arc::clone(&self.admit));
+        let connection = Arc::new(connection.with_batch_admission(Arc::new(freeze)));
         crate::residence_machines::register(self.machine, &connection);
         Ok(connection)
     }
@@ -415,6 +420,7 @@ impl Link {
                         self.always_on,
                         self.primary,
                         self.macro_ready,
+                        Arc::clone(&self.admit),
                     ),
                 );
                 tokio::pin!(observed);
@@ -493,8 +499,8 @@ impl Link {
 
 /// A connection's event observer: each status to `statuses`, each error to
 /// the log. An authority catch-up that took rows declares this machine's
-/// MACRO home candidacy again off the async thread, so a freshly enrolled
-/// device counts at once, not at its next start.
+/// MACRO home candidacy again off the async thread under an admission of its
+/// own from `admit` (FIX 12036), so a freshly enrolled device counts at once.
 #[cfg(feature = "mesh")]
 fn observer(
     home: String,
@@ -503,6 +509,7 @@ fn observer(
     always_on: bool,
     primary: bool,
     macro_ready: bool,
+    admit: HousekeepingAdmission,
 ) -> impl FnMut(oneiron::sync::SyncEvent) + Send {
     use oneiron::sync::SyncEvent;
 
@@ -512,8 +519,10 @@ fn observer(
             let _ = statuses.send(status);
         }
         SyncEvent::AuthorityCaughtUp => {
+            let Some(admitted) = admit() else { return };
             let vault = Arc::clone(&vault);
             tokio::task::spawn_blocking(move || {
+                let _admitted = admitted;
                 crate::home_candidacy::declare(&vault, always_on, primary, macro_ready);
             });
         }
@@ -559,6 +568,8 @@ struct MeshCatalog {
     routes: crate::models::MeshRoutes,
     /// The vault's one mesh budget its transport's calls hold bytes on.
     staging: oneiron_llm_own_server::StagingBudget,
+    /// Each refresh's admission; none while frozen (FIX 12036).
+    admit: HousekeepingAdmission,
 }
 
 #[cfg(feature = "mesh")]
@@ -594,6 +605,7 @@ impl MeshCatalog {
     async fn refresh(&mut self, home: &str) {
         use oneiron_llm_own_server::{MeshLlmTransport, OwnServerBackend, VaultLlmNodes};
 
+        let Some(_held) = (self.admit)() else { return };
         if self.backend.is_none() {
             let transport = MeshLlmTransport::new(
                 Arc::clone(&self.transport),
