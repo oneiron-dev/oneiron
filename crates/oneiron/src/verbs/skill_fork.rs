@@ -4,7 +4,7 @@ use crate::authority::VerifiedSlip;
 use crate::consent::AuthenticatedOwner;
 use crate::error::ClaimError;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::{EntityId, Error, TimeRange, Vault, WriteActor};
+use crate::{EntityId, Error, TimeRange, Vault};
 
 use super::HubSkillRequest;
 use super::skills::{
