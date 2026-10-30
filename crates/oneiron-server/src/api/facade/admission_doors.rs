@@ -118,9 +118,15 @@ pub(crate) fn call_verb<'a>(
             result
         });
         // A code run's or an action's call keeps its origin and run writes
-        // in the detached worker (FIX 10748).
-        tokio::spawn(super::host_doors::support::carrying_calling_run(
-            crate::idempotency::run_under_intent_owned(store_key, worker),
+        // in the detached worker (FIX 10748), and a live-run hold it makes
+        // names its attempt on the call's receipt: no task-local crosses a
+        // spawn, so the collector rides there too (FIX 8107, FIX 10941).
+        let collector = crate::api::call_receipt::attempt_collector();
+        tokio::spawn(crate::api::call_receipt::with_attempt_collector(
+            collector,
+            super::host_doors::support::carrying_calling_run(
+                crate::idempotency::run_under_intent_owned(store_key, worker),
+            ),
         ))
         .await
         .map_err(|_| super::host_doors::support::internal("admission"))?
