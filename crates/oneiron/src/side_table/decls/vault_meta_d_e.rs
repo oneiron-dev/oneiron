@@ -63,6 +63,9 @@ side_tables! {
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its
     /// actor/subject/step hash. Key: id16(attempt).
     DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw;
+    /// FIX 10766: every milestone claim by the attempt its value names, bound or not; written and
+    /// dropped beside the durable index. Key: id16(attempt) + id16(claim).
+    DREAMER_MILESTONE_INDEX_ATTEMPT_CLAIM: VaultMeta b"dreamer.milestone_index.v1.a:" Named Engine;
     /// Marker that the one-time durable-milestone-index backfill pass has run. Key: ().
     DREAMER_MILESTONE_INDEX_BACKFILLED: VaultMeta b"dreamer.milestone_index.v1.backfilled" Raw;
     /// Durable milestone-index candidate row (empty-value marker) for an attempt, ordered by (at,
@@ -72,6 +75,9 @@ side_tables! {
     /// Pointer from a milestone claim id back to its DREAMER_MILESTONE_INDEX_CANDIDATE row key. Key:
     /// id16.
     DREAMER_MILESTONE_INDEX_CLAIM: VaultMeta b"dreamer.milestone_index.v1.i:" Raw;
+    /// FIX 10766: the attempt each DREAMER_MILESTONE_INDEX_ATTEMPT_CLAIM row's claim names, for
+    /// the door that drops it. Key: id16(claim).
+    DREAMER_MILESTONE_INDEX_CLAIM_ATTEMPT: VaultMeta b"dreamer.milestone_index.v1.n:" Named Engine;
     /// Pointer to the single vault-owned Dreamer principal actor entity id. Key: ().
     DREAMER_AUTHORITY_ACTOR: VaultMeta b"dreamer:authority:v1:actor" Raw;
     /// Stamp binding one attempt id to the Dreamer principal, facet, and gate-decision receipt that

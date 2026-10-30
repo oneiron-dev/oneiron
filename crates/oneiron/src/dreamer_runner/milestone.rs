@@ -30,6 +30,7 @@ use super::constants::{
 use super::store::DreamerRunnerStore;
 use super::types::{DreamerDurableMilestone, DreamerMilestoneClaim, DreamerMilestoneKind};
 
+mod claim_index;
 #[cfg(feature = "sync")]
 mod verified_read;
 
@@ -254,6 +255,7 @@ pub(crate) fn index_dreamer_milestone_claim_for_put(
     learned_at: u64,
 ) -> Result<()> {
     deindex_dreamer_milestone_claim(store, wtxn, claim_id)?;
+    claim_index::index_milestone_claim_in_txn(store, wtxn, claim_id, body)?;
 
     let Some(milestone) = dreamer_milestone_from_claim_body(claim_id, body, learned_at) else {
         return Ok(());
@@ -468,6 +470,7 @@ pub(crate) fn deindex_dreamer_milestone_claim(
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
 ) -> Result<()> {
+    claim_index::deindex_milestone_claim_in_txn(store, wtxn, claim_id)?;
     let Some(candidate_key) = MILESTONE_INDEX_CLAIM.get(store, &*wtxn, claim_id)? else {
         return Ok(());
     };
