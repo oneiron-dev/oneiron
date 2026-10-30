@@ -311,8 +311,8 @@ pub(super) fn prune_carrier_structure(
                     .filter(|(decl, _)| !preflight.holds_out(decl))
                     .map(|(_, declared)| declared),
             };
-            let class = declared.map(|declared| class_for_row(name, key, value, declared));
-            let Some(Class::Mixed(carrier)) = class else {
+            let placed = declared.map(|declared| class_for_row(name, key, value, declared));
+            let Some(Class::Mixed(carrier)) = placed else {
                 return true;
             };
             !structure_dependencies(carrier, key, value)
