@@ -82,7 +82,9 @@ impl SyncConnection {
         // The host's admission for each batch, and its pause (FIX 12036).
         let mut gate = self.batch_gate();
 
-        loop {
+        // Every `break` is the run's shutdown; any other exit returns, and
+        // its upkeep rounds run on beside the next connection.
+        let exit = loop {
             // What the home sent, then the promotions asked, go first, in
             // order, each under its own admission; a pause keeps the rest.
             if let Err(exit) = self
@@ -96,6 +98,9 @@ impl SyncConnection {
                 )
                 .await
             {
+                if matches!(exit, LoopExit::Shutdown) {
+                    break exit;
+                }
                 return exit;
             }
             self.run_machine_history(
@@ -170,7 +175,7 @@ impl SyncConnection {
                         // A slow socket skips obsolete partials; the durable final
                         // and the next full-text partial repair the user view.
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return LoopExit::Shutdown,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break LoopExit::Shutdown,
                     }
                 }
 
@@ -225,7 +230,7 @@ impl SyncConnection {
                         }
                         None => {
                             // Channel closed — application is shutting down
-                            return LoopExit::Shutdown;
+                            break LoopExit::Shutdown;
                         }
                     }
                 }
@@ -468,7 +473,7 @@ impl SyncConnection {
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
                     self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                     let _ = write.send(Message::Close(None)).await;
-                    return LoopExit::Shutdown;
+                    break LoopExit::Shutdown;
                 }
 
                 // Shutdown signal
@@ -477,10 +482,24 @@ impl SyncConnection {
                     self.queue_on_exit(&mut gate, &mut debounce_buffer).await;
                     // Send close frame
                     let _ = write.send(Message::Close(None)).await;
-                    return LoopExit::Shutdown;
+                    break LoopExit::Shutdown;
                 }
             }
+        };
+        // FIX 12037: the run ends with its residence upkeep ended, so none of
+        // its writes lands after it (a reap's export waits on this): the
+        // async rounds are aborted, and each task, the blocking tombstone
+        // retry included, is waited for.
+        if let Some(task) = &sealed_task {
+            task.abort();
         }
+        for task in &machine_history_tasks {
+            task.abort();
+        }
+        for task in sealed_task.into_iter().chain(tombstone_task).chain(machine_history_tasks) {
+            let _ = task.await;
+        }
+        exit
     }
 
     /// Starts an owed machine-history round off this loop once one is due and

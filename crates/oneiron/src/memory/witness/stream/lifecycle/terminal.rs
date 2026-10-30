@@ -118,6 +118,9 @@ fn terminal_write(
         None
     };
     let unread = std::cell::Cell::new(None);
+    // The created records the judged set does not prove, receipted once
+    // the terminal lands (FIX 11034).
+    let unproven = std::cell::Cell::new(Vec::new());
     let written: MessageStreamResult<()> = if seed.continuation {
         write_continuation_terminal(
             vault,
@@ -125,8 +128,8 @@ fn terminal_write(
             assertions,
             gate,
             callback,
-            lane.as_ref(),
-            &unread,
+            (lane.as_ref(), &memory),
+            (&unread, &unproven),
             &mut receipt,
         )
     } else {
@@ -156,5 +159,6 @@ fn terminal_write(
         return Err(error);
     }
     crate::gate::record_references::receipt_landed_prose(&memory, &unlinked_prose);
+    reply_assertions::receipt_unproven(&memory, &unproven);
     Ok(receipt)
 }

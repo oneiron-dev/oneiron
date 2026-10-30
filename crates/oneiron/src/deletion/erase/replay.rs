@@ -289,6 +289,14 @@ impl Vault {
             None,
         )?;
         changed_documents.extend(citing);
+        // The replay reserves no topology delete, so the purge kept the
+        // checkpoint payload leaves; the tombstone's own reason settles them.
+        crate::deletion::checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn(
+            &self.store,
+            wtxn,
+            id,
+            decoded.reason,
+        )?;
         // Receiver-side `dt:` local hard-delete marker (pinned: presence-only
         // value, GLOBAL key, permanent, no GC) — written in the SAME txn as
         // the purge so local delete truth survives CRDT-map manipulation.

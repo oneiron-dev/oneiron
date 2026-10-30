@@ -42,6 +42,7 @@ pub(in crate::sync) use regenerates::{
     owe_regenerates, settle_regenerates, wake_regenerates_after_document,
 };
 pub(in crate::sync) mod shell_pin;
+mod task_fact_edges;
 mod tombstones;
 
 // it resolves through this import, so the moved body stays byte-identical.

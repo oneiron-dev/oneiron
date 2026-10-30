@@ -9,7 +9,7 @@ mod admission;
 pub(crate) use admission::admit_federated_entity_blob;
 // FIX 2535, 2989: the authority rows an import copies beside each one.
 #[cfg(feature = "sync")]
-mod authority_beside;
+pub(in crate::sync) mod authority_beside;
 mod authorize;
 mod born_with;
 mod codec;
