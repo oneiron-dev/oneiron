@@ -11,8 +11,7 @@ use oneiron_crypto::backup::{BackupEvidence, CheckpointFact, SignedCheckpointFac
 use super::watermark::SnapshotMark;
 use super::{
     ArtifactKind, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT,
-    RecoveryWriteBudget, StorageTier, artifact, carried_bodies, codec_error, commitment, rebuild,
-    storage_tier,
+    RecoveryWriteBudget, artifact, carried_bodies, codec_error, commitment, payload, rebuild,
 };
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::store::DB_MANIFEST;
@@ -143,15 +142,8 @@ impl Vault {
         // canonical re-embedding path. Diagnostics are deliberately
         // runtime-only. Other explicit vectors must not silently disappear.
         self.validate_checkpoint_rebuild_sources(&txn)?;
-        let mut excluded = std::collections::BTreeSet::<Vec<u8>>::new();
-        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
-            let (key, value) = row?;
-            if crate::batch::EntityMetadataHeader::parse(&value)
-                .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
-            {
-                excluded.insert(key.as_bytes().to_vec());
-            }
-        }
+        // What the image takes, the payload projection's rule too (FIX 6377).
+        let filter = payload::ImageFilter::of_snapshot(&self.store, &txn)?;
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
         // Window snapshots kept as they rest, warned by count (FIX 7107).
@@ -161,25 +153,7 @@ impl Vault {
         let mut pads_carried = 0_usize;
         for entry in DB_MANIFEST {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-                if storage_tier(entry.name, key) != StorageTier::Canonical {
-                    return Ok(None);
-                }
-                let excluded_row = match entry.name {
-                    "entities" | "short_ids_reverse" => excluded.contains(key),
-                    "short_ids" => excluded.contains(value),
-                    "edges_out" | "edges_in" => {
-                        key.len() == 33
-                            && (excluded.contains(&key[..16]) || excluded.contains(&key[17..]))
-                    }
-                    "vault_meta" => [
-                        INDEX_SOURCE_TEXT.decl().prefix,
-                        INDEX_SOURCE_PHONETIC.decl().prefix,
-                    ]
-                    .iter()
-                    .any(|p| key.strip_prefix(*p).is_some_and(|id| excluded.contains(id))),
-                    _ => false,
-                };
-                if excluded_row {
+                if !filter.takes(entry.name, key, value) {
                     return Ok(None);
                 }
                 // Every body a row names goes with it, sealed under its
