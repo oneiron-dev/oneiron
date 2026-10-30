@@ -9715,7 +9715,7 @@ class LegalHoldLiftAndErased(TypedDict):
     changed: NotRequired[LiftAndEraseShownState | None]
 class LegalHoldWithdrawEraseRequest(TypedDict):
     records: list[EntityId]
-EraseWithdrawal = Literal["withdrawn", "not_waiting", "under_way"]
+EraseWithdrawal = Literal["withdrawn", "not_waiting", "confirmed_by_another_owner", "under_way"]
 class LegalHoldWithdrawnErase(TypedDict):
     record: EntityId
     status: EraseWithdrawal

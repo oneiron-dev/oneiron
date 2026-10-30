@@ -90,6 +90,7 @@ impl Vault {
                 reason,
                 generation,
                 veto_act: None,
+                withdrawn: None,
             };
             let stored = hold_store::put_pending_erase_in_txn(&self.store, txn, id, request)?;
             if stored.generation != generation {

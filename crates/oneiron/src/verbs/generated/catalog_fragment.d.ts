@@ -1939,7 +1939,7 @@ declare namespace Sdk {
   type LegalHoldErasedRecord = { record: EntityId; status: LegalHoldEraseState };
   type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldErasedRecord[]; changed?: LiftAndEraseShownState | null };
   type LegalHoldWithdrawEraseRequest = { records: EntityId[] };
-  type EraseWithdrawal = "withdrawn" | "not_waiting" | "under_way";
+  type EraseWithdrawal = "withdrawn" | "not_waiting" | "confirmed_by_another_owner" | "under_way";
   type LegalHoldWithdrawnErase = { record: EntityId; status: EraseWithdrawal };
   type LegalHoldErasesWithdrawn = { records: LegalHoldWithdrawnErase[] };
   type CourtesyDeleteSendRequest = { pact: string; worlds?: string[]; epoch_cutoff?: number | null; peer: string; signed?: string | null };

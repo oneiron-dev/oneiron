@@ -6,7 +6,10 @@
 //! newer request replaces an older one instead of being refused. In a shared
 //! vault that erases through its veto window, an explicit lift-and-erase
 //! names its own `erase` act too (FIX 9781). The row names no hold, so it
-//! tells the owner nothing a secret order keeps.
+//! tells the owner nothing a secret order keeps. A request the owner withdrew
+//! stays as the record of that withdrawal, who and when, and waits no more
+//! (FIX 10401): no read here returns it as waiting, and a new request
+//! replaces it.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -47,14 +50,31 @@ pub(crate) struct PendingErase {
     /// The `erase` act an explicit lift-and-erase waits out in a shared
     /// vault with two or more Owners (FIX 9781).
     pub(crate) veto_act: Option<String>,
+    /// The owner's withdrawal of this request, once made (FIX 10401).
+    pub(crate) withdrawn: Option<EraseWithdrawalRecord>,
+}
+
+/// Who withdrew a waiting erase, and when (FIX 10401).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct EraseWithdrawalRecord {
+    pub(crate) by: String,
+    pub(crate) at: u64,
 }
 
 impl PendingErase {
-    /// The same owner act as `other`: a retry of it keeps its generation.
+    /// The same owner act as `other`: a retry of it keeps its generation. A
+    /// withdrawn request is never the same: a new one replaces it.
     fn same_request(&self, other: &Self) -> bool {
-        self.kind == other.kind
+        self.withdrawn.is_none()
+            && self.kind == other.kind
             && self.reason == other.reason
             && self.confirmed_by == other.confirmed_by
+    }
+
+    /// The request still waits: the owner has not withdrawn it.
+    fn waits(&self) -> bool {
+        self.withdrawn.is_none()
     }
 }
 
@@ -90,7 +110,7 @@ pub(crate) fn set_pending_veto_act_in_txn(
     let Some(mut pending) = PENDING_ERASES.get(dbs, txn, record)? else {
         return Ok(false);
     };
-    if pending.generation != *generation || pending.veto_act.is_some() {
+    if pending.generation != *generation || pending.veto_act.is_some() || !pending.waits() {
         return Ok(false);
     }
     pending.veto_act = Some(act);
@@ -109,7 +129,9 @@ pub(crate) fn erases_without_act_in_txn(
         .scan(dbs, txn)?
         .into_iter()
         .filter(|(_, pending)| {
-            pending.kind == PendingEraseKind::LiftAndErase && pending.veto_act.is_none()
+            pending.waits()
+                && pending.kind == PendingEraseKind::LiftAndErase
+                && pending.veto_act.is_none()
         })
         .collect())
 }
@@ -120,7 +142,32 @@ pub(crate) fn pending_erase_in_txn(
     txn: &RoTxn<'_>,
     record: &EntityId,
 ) -> Result<Option<PendingErase>> {
-    PENDING_ERASES.get(dbs, txn, record)
+    Ok(PENDING_ERASES
+        .get(dbs, txn, record)?
+        .filter(PendingErase::waits))
+}
+
+/// Records the owner `by`'s withdrawal at `at` of the waiting erase of
+/// `record`, while it is still request `generation` (FIX 10401): the row
+/// stays as that withdrawal's record and waits no more. False when that
+/// request no longer waits.
+pub(crate) fn withdraw_pending_erase_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &mut RwTxn<'_>,
+    record: &EntityId,
+    generation: &EntityId,
+    by: String,
+    at: u64,
+) -> Result<bool> {
+    let Some(mut pending) = pending_erase_in_txn(dbs, txn, record)? else {
+        return Ok(false);
+    };
+    if pending.generation != *generation {
+        return Ok(false);
+    }
+    pending.withdrawn = Some(EraseWithdrawalRecord { by, at });
+    PENDING_ERASES.put(dbs, txn, record, &pending)?;
+    Ok(true)
 }
 
 /// The waiting erases whose records nothing holds now, each with its
@@ -131,7 +178,7 @@ pub(crate) fn due_erases_in_txn(
 ) -> Result<Vec<(EntityId, PendingErase)>> {
     let mut due = Vec::new();
     for (record, pending) in PENDING_ERASES.scan(dbs, txn)? {
-        if !super::held_in_txn(dbs, txn, record.as_bytes())? {
+        if pending.waits() && !super::held_in_txn(dbs, txn, record.as_bytes())? {
             due.push((record, pending));
         }
     }
@@ -139,15 +186,15 @@ pub(crate) fn due_erases_in_txn(
 }
 
 /// Drops the waiting erase of `record` only while it is still request
-/// `generation`: a newer request stays for its own run.
+/// `generation`: a newer request stays for its own run, and a withdrawn one
+/// stays as its withdrawal's record (FIX 10401).
 pub(crate) fn drop_pending_erase_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
     record: &EntityId,
     generation: &EntityId,
 ) -> Result<()> {
-    if PENDING_ERASES
-        .get(dbs, txn, record)?
+    if pending_erase_in_txn(dbs, txn, record)?
         .is_some_and(|pending| pending.generation == *generation)
     {
         PENDING_ERASES.delete(dbs, txn, record)?;

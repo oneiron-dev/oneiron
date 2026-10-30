@@ -28,7 +28,7 @@ pub(crate) use notice::law_notice;
 pub(crate) use pending::{
     PendingErase, PendingEraseKind, drop_pending_erase_in_txn, due_erases_in_txn,
     erases_without_act_in_txn, pending_erase_in_txn, put_pending_erase_in_txn,
-    set_pending_veto_act_in_txn, use_limit_pending_privacy_in_txn,
+    set_pending_veto_act_in_txn, use_limit_pending_privacy_in_txn, withdraw_pending_erase_in_txn,
 };
 pub(crate) use settlement::RefusalBatch;
 #[cfg(feature = "sync")]

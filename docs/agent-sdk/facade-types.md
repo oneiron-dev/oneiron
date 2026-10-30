@@ -3848,7 +3848,7 @@ export type LegalHoldLiftAndErased = { holds: EntityId[]; records: LegalHoldEras
 /** `oneiron::verbs::legal_hold::LegalHoldWithdrawEraseRequest` */
 export type LegalHoldWithdrawEraseRequest = { records: EntityId[] }
 /** `oneiron::deletion::legal_hold::types::EraseWithdrawal` */
-export type EraseWithdrawal = "withdrawn" | "not_waiting" | "under_way"
+export type EraseWithdrawal = "withdrawn" | "not_waiting" | "confirmed_by_another_owner" | "under_way"
 /** `oneiron::verbs::legal_hold::LegalHoldWithdrawnErase` */
 export type LegalHoldWithdrawnErase = { record: EntityId; status: EraseWithdrawal }
 /** `oneiron::verbs::legal_hold::LegalHoldErasesWithdrawn` */

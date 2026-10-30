@@ -315,8 +315,11 @@ pub enum EraseWithdrawal {
     Withdrawn,
     /// No erase of the record waits.
     NotWaiting,
-    /// Its erase has begun: it runs to its end, and reads as its confirm's
-    /// status does.
+    /// Another Owner confirmed the erase: only they withdraw it. This
+    /// Owner's objection to its `erase` act is their veto.
+    ConfirmedByAnotherOwner,
+    /// Its erase has begun, or a request has claimed its `erase` act: it
+    /// runs to its end, and reads as its confirm's status does.
     UnderWay,
 }
 
