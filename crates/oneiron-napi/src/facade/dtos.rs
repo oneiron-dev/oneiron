@@ -2,6 +2,8 @@
 
 use napi_derive::napi;
 
+use super::legal_hold::NapiLegalHoldNotice;
+
 mod read_scope;
 mod witness_assertions;
 pub(super) use self::read_scope::{NapiReadReceipt, NapiReadScope, NapiRecallScope};
@@ -191,6 +193,9 @@ pub struct NapiRecordRefusal {
     pub suggestions: Vec<String>,
     /// The refused element's JSON pointer (`/claims/2`).
     pub field: String,
+    /// The legal-hold notice behind this refusal, when its producer supplied one.
+    #[napi(js_name = "legal_hold")]
+    pub legal_hold: Option<NapiLegalHoldNotice>,
 }
 
 /// Receipt for one safe delete.

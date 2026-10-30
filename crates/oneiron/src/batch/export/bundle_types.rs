@@ -120,6 +120,9 @@ pub enum ImportOmissionReason {
     NoteAuthorshipNotRestored,
     /// Device-local routing/binding and owner confidence are not portable authority.
     LocalActorConfigurationNotRestored,
+    /// Learning cells are projector-only views, rebuilt from their receipts
+    /// after import; the archive row stays archive data.
+    LearningCellsRebuiltFromReceipts,
 }
 
 /// Foundations not stored as vault-owned source. Never fabricate PACK.md/code.

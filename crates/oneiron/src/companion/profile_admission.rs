@@ -157,9 +157,8 @@ impl Vault {
             }
         };
         self.companion_profile_withheld_toward_in(txn, key, sources, destination)
-            || reader.is_some_and(|reader| {
-                reader.companion_profile_excluded_in(txn, key.world, sources)
-            })
+            || reader
+                .is_some_and(|reader| reader.companion_profile_excluded_in(txn, key.world, sources))
     }
 
     /// Whether the owner's recipient choice keeps the profile at `key` from

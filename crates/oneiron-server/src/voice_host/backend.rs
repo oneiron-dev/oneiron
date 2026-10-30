@@ -47,6 +47,7 @@ impl CallBackend {
             binding: HostInferenceBinding::Advertised {
                 model: request.model.clone(),
                 locality,
+                keyless: false,
             },
             extraction_egress: self.server.extraction_egress.as_deref(),
         };

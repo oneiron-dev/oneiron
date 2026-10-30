@@ -16,7 +16,8 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::secret_custody::{
-    RevealTarget, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealReceipt,
+    RevealGrantScope, RevealTarget, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
+    SecretRevealReceipt,
 };
 use serde::{Deserialize, Serialize};
 
@@ -91,6 +92,10 @@ struct ReceiptView {
     delivered_at: Option<u64>,
     /// The file an agent's read of a marked file named, as 32 hex.
     file: Option<String>,
+    /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
+    cause: Option<String>,
+    /// The reach of the standing grant that answered it (FIX 2354).
+    scope: Option<&'static str>,
 }
 
 impl From<SecretRevealReceipt> for ReceiptView {
@@ -113,6 +118,8 @@ impl From<SecretRevealReceipt> for ReceiptView {
             asked_at: receipt.asked_at,
             delivered_at: receipt.delivered_at,
             file: receipt.file.map(|file| file.to_hex()),
+            cause: receipt.cause.map(|cause| cause.as_str().to_owned()),
+            scope: receipt.scope.map(RevealGrantScope::as_str),
         }
     }
 }
@@ -129,8 +136,12 @@ struct RevealView {
     disclosure: Option<String>,
     /// Lowercase hex; an answer sends exactly this back as `expected_digest`.
     expected_digest: Option<String>,
-    /// The registry row a `standing` answer writes.
+    /// The registry row a `standing` answer writes at its default reach.
     grant_ref: Option<String>,
+    /// The reaches a `standing` answer may send as `scope`, the narrowest
+    /// first (FIX 2354); empty for a repo file reveal, which sends
+    /// `repo_scope`.
+    scopes: Vec<&'static str>,
     card: Option<oneiron::genui::ConsentAskCard>,
 }
 
@@ -143,6 +154,7 @@ impl From<SecretRevealAsk> for RevealView {
             disclosure: ask.disclosure,
             expected_digest: ask.once_digest.map(|digest| digest.to_hex()),
             grant_ref: ask.grant_ref,
+            scopes: ask.scopes.into_iter().map(RevealGrantScope::as_str).collect(),
             card: ask.card,
         }
     }
@@ -180,6 +192,11 @@ struct AnswerReveal {
     /// revoked.
     #[serde(default)]
     repo_scope: Option<oneiron::secret_custody::RepoFileRevealScope>,
+    /// For a standing answer to any other reveal, its reach (FIX 2354):
+    /// `project`, `every_project`, `task` or `run`, one of the reveal's
+    /// `scopes`. Absent: this project.
+    #[serde(default)]
+    scope: RevealGrantScope,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -190,6 +207,8 @@ struct AnsweredView {
     /// The standing grant a `standing` answer wrote; revoke it in the
     /// consent registry.
     grant_ref: Option<String>,
+    /// That grant's reach (FIX 2354); `None` for a repo file reveal's.
+    scope: Option<&'static str>,
 }
 
 impl From<SecretRevealAnswered> for AnsweredView {
@@ -199,6 +218,7 @@ impl From<SecretRevealAnswered> for AnsweredView {
             outcome: answered.answer.as_str(),
             receipt_ref: format!("gate:{}", answered.decision.to_hex()),
             grant_ref: answered.grant_ref,
+            scope: answered.scope.map(RevealGrantScope::as_str),
         }
     }
 }
@@ -267,6 +287,7 @@ async fn answer(
                 &digest,
                 request.outcome.into(),
                 request.repo_scope,
+                request.scope,
             )?
             .into())
     })

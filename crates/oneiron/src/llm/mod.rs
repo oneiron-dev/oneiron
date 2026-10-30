@@ -109,7 +109,8 @@ pub use oneiron_model::llm::{
 // FIX 8314 (INFERENCE R1): model workers and the receipt of each physical call.
 pub use oneiron_model::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
-    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
+    WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerKind, WorkerMode, WorkerPhase,
+    WorkerReadiness, WorkerStatus,
 };
 // FIX 9065: what each physical request measured, published on its lease while it runs.
 pub use oneiron_model::llm::{

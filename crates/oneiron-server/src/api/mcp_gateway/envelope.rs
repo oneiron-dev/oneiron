@@ -116,6 +116,8 @@ pub(crate) struct McpGatewayError {
     /// The refusal's stable reason codes, in its producer's order (FIX
     /// 7398), surfaced as `error.data.reason_codes` when it named any.
     pub(super) reason_codes: Vec<String>,
+    /// The typed legal-hold notice, surfaced as `error.data.legal_hold`.
+    pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 impl McpGatewayError {
@@ -137,6 +139,7 @@ impl McpGatewayError {
             resets_at: None,
             program_steps: None,
             reason_codes: Vec::new(),
+            legal_hold: None,
         }
     }
 
@@ -164,6 +167,14 @@ impl McpGatewayError {
 
     pub(super) fn with_successor_short_id(mut self, successor_short_id: impl Into<String>) -> Self {
         self.successor_short_id = Some(successor_short_id.into());
+        self
+    }
+
+    pub(super) fn with_legal_hold(
+        mut self,
+        legal_hold: Box<oneiron::error::LegalHoldNotice>,
+    ) -> Self {
+        self.legal_hold = Some(legal_hold);
         self
     }
 

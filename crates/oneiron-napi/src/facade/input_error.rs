@@ -22,6 +22,7 @@ pub(super) fn witness_input_error(reason: String) -> napi::Error {
         retry_after: None,
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
+        legal_hold: None,
     })
 }
 

@@ -32,12 +32,13 @@ use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
 use oneiron::llm::run_admission::{
-    CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit, offer_id, offer_place,
+    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunPermit, offer_id,
+    offer_place,
 };
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
-    RetryableLlmError,
+    ModelLocality, RetryableLlmError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
@@ -423,6 +424,22 @@ impl OfferLadder {
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
+    }
+
+    /// Whether every rung a call on this ladder may reach is free keyless
+    /// own-server work (FIX 10592): each rung's bound offer is `Payer::Local`
+    /// on `OwnServer` with `KeyCustody::Keyless`. Any keyed, third-party or
+    /// otherwise paid rung that may bill keeps the door paid, as does an
+    /// empty ladder; a keyed owner endpoint stays paid. Read from the
+    /// host-bound ladder, never from a caller's request.
+    #[must_use]
+    pub(crate) fn all_keyless_own_server(&self) -> bool {
+        !self.rungs.is_empty()
+            && self.rungs.iter().all(|rung| {
+                rung.offer.binding.payer == Payer::Local
+                    && rung.offer.binding.locality == ModelLocality::OwnServer
+                    && rung.offer.binding.custody == KeyCustody::Keyless
+            })
     }
 
     /// A capability holds only if every rung has it: a fallback rung must

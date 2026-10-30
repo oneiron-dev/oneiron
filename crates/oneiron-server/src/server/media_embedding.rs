@@ -654,6 +654,7 @@ impl RuntimeMediaEmbedder {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
+                host_keyless: false,
                 seat_effort: None,
             },
             operation: AiOperation::Embed,

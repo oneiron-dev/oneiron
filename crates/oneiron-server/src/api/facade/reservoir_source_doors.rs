@@ -31,10 +31,11 @@ pub(crate) async fn vault_coach_training_offers_sources(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer =
-        tokio::task::spawn_blocking(move || reservoir_sources_as(server.vault(), &owner, input))
-            .await
-            .unwrap_or_else(|_| Err(internal(VERB)));
+    let answer = super::clock_ingress::run_blocking(move || {
+        reservoir_sources_as(server.vault(), &owner, input)
+    })
+    .await
+    .unwrap_or_else(|_| Err(internal(VERB)));
     let rows = answer.as_ref().map_or_else(
         |_| Vec::new(),
         |preview| preview.sources.iter().map(|row| row.source).collect(),

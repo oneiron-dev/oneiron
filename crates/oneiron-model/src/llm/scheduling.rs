@@ -240,7 +240,7 @@ impl SchedulingCapability {
 
 /// A call's `scheduling` receipt in its `final` or `released`: its context
 /// at its end, and what the worker's executor did with its Jobs.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchedulingReceipt {
     pub policy: String,
     pub work_class: WorkClass,
