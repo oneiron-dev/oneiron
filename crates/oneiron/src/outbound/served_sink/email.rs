@@ -54,6 +54,11 @@ impl ServedChannelSink<'_> {
             Ok(false) => return OutboundExecutionOutcome::failed("email_sender_not_native_mail"),
             Err(_) => return OutboundExecutionOutcome::failed("email_sender_unreadable"),
         }
+        // The mailbox is the identity's address as its facts name it now.
+        let address = match self.vault.channel_identity_facts(&identity) {
+            Ok(Some(facts)) => facts.address_or_handle,
+            _ => return OutboundExecutionOutcome::failed("email_sender_unreadable"),
+        };
         let Some(text) = self.text(request) else {
             return OutboundExecutionOutcome::failed("content_unresolvable");
         };
@@ -91,6 +96,7 @@ impl ServedChannelSink<'_> {
                 outcome = Some(match StalwartClient::connect(placement.clone(), header) {
                     Ok(client) => client.submit_served_text(
                         identity,
+                        &address,
                         &message,
                         send_key,
                         &request.hygiene_headers,
