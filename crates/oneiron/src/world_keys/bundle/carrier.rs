@@ -69,7 +69,9 @@ pub struct SealedVaultUpload {
 impl Vault {
     /// Seals this vault's bundle for upload `slot` ([`sealed_bundle_slot`]) and
     /// the pad object beside it, to every machine mine here and the pinned root,
-    /// for `holder`, the home that keeps it.
+    /// for `holder`, the home that keeps it. A publisher mine here also grants
+    /// both outer keys to each asked executor not mine here, for its request
+    /// (FIX 4785).
     ///
     /// `base` is the base section. It must hold no world key pad row: pads ride
     /// only the pad object, or erase would not reach old bundles. Each of `worlds`

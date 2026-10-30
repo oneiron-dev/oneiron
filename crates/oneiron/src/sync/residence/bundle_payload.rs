@@ -153,17 +153,9 @@ impl WindowManager {
         let vault = self.vault();
         let windows = discover_local_window_keys(vault)?;
         let (base, eligible, sides) = self.sealed_bundle_base(&windows, holder)?;
-        let latest = match latest {
-            None => None,
-            Some((bundle, pads)) => {
-                let opened = vault.open_vault_bundle(bundle, holder)?;
-                let pads = vault.open_key_pads(pads)?;
-                if pads.generation() != opened.generation() {
-                    return Err(refused("the pad object is another generation's"));
-                }
-                Some((opened, pads))
-            }
-        };
+        let latest = latest
+            .map(|(bundle, pads)| vault.open_latest_for_publication(bundle, pads, holder, request))
+            .transpose()?;
         let keys = match &latest {
             Some((_, pads)) => vault.bundle_reader_keys(Some(pads), true)?,
             None => Vec::new(),

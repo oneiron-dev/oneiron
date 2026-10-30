@@ -284,8 +284,9 @@ impl Vault {
     /// `holder`, is to this install's publication for `request`: whether it
     /// is that publication (it opens here, passes the publisher check, names
     /// that request and this install sealed it), and how each of its outer
-    /// capsules opened here (FIX 4785). A bundle that does not open here is
-    /// not this install's publication. Reads only.
+    /// objects opened here: a capsule of this machine's, or else the
+    /// publication grant it carries for `request` (FIX 4785). A bundle that
+    /// does not open here is not this install's publication. Reads only.
     #[cfg(feature = "sync")]
     pub(crate) fn read_latest_for_request(
         &self,
@@ -295,13 +296,13 @@ impl Vault {
         request: AuthorityEntryHash,
     ) -> Result<(bool, LatestRead)> {
         let me = self.machine_secret_outside_txn()?.machine;
-        let opened = self.open_vault_bundle(bundle, holder);
+        let opened = self.open_bundle_to_publish(bundle, holder, Some(request));
         let named = opened
             .as_ref()
-            .is_ok_and(|opened| opened.publisher == me && opened.request == Some(request));
+            .is_ok_and(|(opened, _)| opened.publisher == me && opened.request == Some(request));
         let read = LatestRead::Read {
-            bundle: CapsuleRead::of(&opened),
-            pads: CapsuleRead::of(&self.open_key_pads(pads)),
+            bundle: CapsuleRead::of_publication(&opened),
+            pads: CapsuleRead::of_publication(&self.open_pads_to_publish(pads, Some(request))),
         };
         Ok((named, read))
     }

@@ -7,10 +7,11 @@
 //!   [`SEALED_BUNDLE_PAD_STEP_BYTES`], and the digest of its bytes. No world, key,
 //!   window, tag, pad, per-world length or reader is in the clear.
 //! - Each upload draws a fresh outer key. Hybrid capsules seal it to every machine
-//!   mine here and to the pinned recovery root, in anonymous slots padded with
-//!   blanks to a multiple of 16. The outer body rides E0 envelopes under that key
-//!   (purpose `SealedVaultBundle`), sized so the whole frame lands on the size
-//!   step; the padding is inside the ciphertext.
+//!   mine here and to the pinned recovery root, and grant it to an asked executor
+//!   not mine here for its request (`publication_grant`, FIX 4785), in anonymous
+//!   slots padded with blanks to a multiple of 16. The outer body rides E0
+//!   envelopes under that key (purpose `SealedVaultBundle`), sized so the whole
+//!   frame lands on the size step; the padding is inside the ciphertext.
 //! - Inside: the publishing machine and its signature, the base section, then the
 //!   catalog of world sections, the world capsules and, last, the owner work
 //!   request it published for, if any (`publication`). Each section is sealed
@@ -55,6 +56,7 @@ mod key_erase;
 mod pad_objects;
 mod plan;
 mod publication;
+mod publication_grant;
 mod retirement;
 mod sections;
 

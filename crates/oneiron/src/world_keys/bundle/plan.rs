@@ -2,6 +2,7 @@
 //! over it. The entry point is `Vault::seal_plan`.
 //! `super` owns the frame codec and the carrier.
 
+use super::publication_grant::{PublicationGrantee, publication_grantees, seal_slots_granting};
 use super::*;
 
 /// What one seal reads from the vault, in one snapshot.
@@ -12,6 +13,9 @@ pub(super) struct SealPlan {
     /// The owner work request this upload publishes for.
     pub(super) request: Option<AuthorityEntryHash>,
     pub(super) readers: Vec<HybridPublicKey>,
+    /// Each asked executor not mine here that the generation's outer keys
+    /// are granted to, for its request (FIX 4785).
+    pub(super) grantees: Vec<PublicationGrantee>,
     /// Each fresh world capsule's readers: the machines mine here that may read
     /// the world, and the root.
     pub(super) authority_readers: Vec<(EntityId, Vec<HybridPublicKey>)>,
@@ -91,6 +95,13 @@ impl Vault {
         if readers.is_empty() {
             return Err(refused("no machine and no kit could open the bundle"));
         }
+        // A publisher mine here grants each asked executor not mine here
+        // the generation's outer keys, for its request (FIX 4785).
+        let grantees = if mine {
+            publication_grantees(&fold, holder)
+        } else {
+            Vec::new()
+        };
         let mut pads = Vec::new();
         for key in fold.all_world_keys() {
             if bundle_carries(&fold, key.id.world, holder)
@@ -120,6 +131,7 @@ impl Vault {
             publisher: secret.machine,
             request: carry.request,
             readers,
+            grantees,
             authority_readers,
             kit_root,
             pads,
@@ -134,8 +146,8 @@ impl Vault {
     }
 }
 
-/// A fresh outer key, its capsules to the plan's readers, and `body` framed under
-/// it.
+/// A fresh outer key, its capsules to the plan's readers and its grants to
+/// the plan's grantees, and `body` framed under it.
 pub(super) fn seal_object(
     kind: Kind,
     plan: &SealPlan,
@@ -144,7 +156,14 @@ pub(super) fn seal_object(
 ) -> Result<SealedObject> {
     let mut outer = Zeroizing::new([0u8; 32]);
     os_fill(&mut outer[..])?;
-    let slots = seal_slots(kind, &plan.vault_id, generation, &outer, &plan.readers)?;
+    let slots = seal_slots_granting(
+        kind,
+        &plan.vault_id,
+        generation,
+        &outer,
+        &plan.readers,
+        &plan.grantees,
+    )?;
     let bytes = seal_outer(kind, &plan.vault_id, generation, &outer, &slots, body, None)?;
     Ok(SealedObject { generation, bytes })
 }
