@@ -25,7 +25,7 @@ impl SyncConnection {
     /// Queue-overflow check, run between reconnect attempts.
     ///
     /// Overflow triggers a REAL re-bootstrap (ONE-1128): the queue is
-    /// cleared (`q:`/`e:` rows only — the `h:`/`m:`/`x:` families and
+    /// cleared (`q:` rows only — the `h:`/`m:`/`x:`/`e:` families and
     /// delete-bearing rows + `d:` markers survive)
     /// and the in-memory Docs are dropped, so the next `connect_and_sync`
     /// re-runs the Phase 1-3 initial sync from scratch. Docs are dropped

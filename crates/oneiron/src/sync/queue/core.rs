@@ -271,25 +271,26 @@ impl SyncQueue {
         Ok(())
     }
 
-    /// Clears update and embed-job rows for re-bootstrap.
+    /// Clears the transport update rows for re-bootstrap.
     ///
-    /// Hard-delete sweep jobs (`h:`), metadata counters (`m:`), and
-    /// delete-bearing update rows + their `d:` markers (ONE-1135) are
-    /// intentionally preserved. Reconnect overflow is about the offline
-    /// update queue only; wiping sweep jobs after a GDPR delete receipt has
-    /// committed would strand historical carriers past the Art.17 SLA, and
-    /// wiping a delete-bearing update before the server confirmed it would
-    /// silently lose the delete itself.
+    /// Hard-delete sweep jobs (`h:`), metadata counters (`m:`), embedding
+    /// jobs (`e:`), and delete-bearing update rows + their `d:` markers
+    /// (ONE-1135) are intentionally preserved. Reconnect overflow is about
+    /// the offline update queue only; wiping sweep jobs after a GDPR delete
+    /// receipt has committed would strand historical carriers past the
+    /// Art.17 SLA, wiping a delete-bearing update before the server confirmed
+    /// it would silently lose the delete itself, and an embedding job is the
+    /// reconciler's alone to consume: a re-bootstrap drops no entity it names
+    /// (FIX 8884).
     pub fn clear_all(&self) -> Result<()> {
         let mut wtxn = self.vault.store.env.write_txn()?;
         let preserved_seq = self.recover_last_update_seq_for_clear(&wtxn)?;
         let delete_bearing = delete_bearing_seqs_in_txn(&self.vault, &wtxn)?;
-        let mut keys_to_delete: Vec<Vec<u8>> = self
+        let keys_to_delete: Vec<Vec<u8>> = self
             .keys_with_prefix(&wtxn, UPDATE_PREFIX)?
             .into_iter()
             .filter(|key| !decode_update_key(key).is_ok_and(|seq| delete_bearing.contains(&seq)))
             .collect();
-        keys_to_delete.extend(self.keys_with_prefix(&wtxn, EMBED_PREFIX)?);
 
         for key in &keys_to_delete {
             self.vault.store.sync_queue.delete(&mut wtxn, key)?;
