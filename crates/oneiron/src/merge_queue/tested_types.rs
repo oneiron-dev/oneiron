@@ -201,7 +201,8 @@ pub enum QueueExportHoldReason {
     HeldStore,
     /// Untouched imported bytes have no reviewed admission yet (G4).
     HeldUntouchedPromotion,
-    /// The canonical author was erased.
+    /// The canonical author was erased: an author erased before the seal
+    /// holds this revision's export alone, never later seals (FIX 7348).
     AuthorErased,
     /// The canonical author cannot be read.
     AuthorUnavailable,

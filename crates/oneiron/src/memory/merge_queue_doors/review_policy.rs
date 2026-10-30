@@ -171,7 +171,7 @@ impl Memory<'_> {
         let row = input.policy.map(|policy| QueueReviewPolicy {
             catalog: policy.catalog,
             thresholds: policy.thresholds,
-            set_by: actor,
+            set_by: Some(actor),
             set_at,
         });
         self.vault

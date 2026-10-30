@@ -5,7 +5,7 @@ use crate::scan_check::{EngineScan, ScanCount};
 use std::collections::BTreeMap;
 
 /// One file's bytes a tree read holds in memory: a machine floor.
-const MAX_TREE_FILE_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_TREE_FILE_BYTES: usize = 32 * 1024 * 1024;
 /// One tree's file bytes a read holds in memory at once: a machine floor.
 const MAX_TREE_BYTES: usize = 128 * 1024 * 1024;
 

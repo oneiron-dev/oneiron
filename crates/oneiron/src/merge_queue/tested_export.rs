@@ -7,12 +7,14 @@
 //! place, every reason that export holds and its way out. No hold is a red
 //! verdict, and nothing here approves, rebases, rechecks or retries: the
 //! owner's `vault.code.export` and the owner queue doors are unchanged.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Mutex, PoisonError};
 
 use super::{
     GreenQueueRevision, MergeQueue, QueueExportHold, QueueExportHoldReason, QueueGreenExportView,
     QueueRevisionIntent, QueueSealTarget,
 };
+use crate::EntityId;
 use crate::code_revision::{CodeCommitMetadata, MODE_GITLINK, QueuePromotionGap};
 use crate::error::{Error, Result};
 use crate::git_wire::{GitOid, GitWire, lock_repository};
@@ -26,6 +28,12 @@ fn held<T>(reason: QueueExportHoldReason, detail: impl Into<String>) -> Result<H
 
 /// How many object ids one presence read names.
 const OBJECT_READ_CHUNK: usize = 1_000;
+
+/// The tested revisions whose every blob a readiness read found in their
+/// object store, by store and revision (FIX 7349). A sealed revision's
+/// blobs never change and its green keeps them reachable, so each is read
+/// once a process, not on every observe.
+static PRESENT_REVISIONS: Mutex<BTreeSet<(String, EntityId)>> = Mutex::new(BTreeSet::new());
 
 impl MergeQueue<'_> {
     /// Runs `act` holding this queue's repository writer, which re-enters
@@ -42,9 +50,11 @@ impl MergeQueue<'_> {
     /// message of a tested revision. A landed batch is authored by its last
     /// actually landed proposal's recorded live actor, `Queue batch <id>`;
     /// the baseline by the checked-init approver, `Checked baseline
-    /// <commit>`; the timestamp is the seal intent's. An erased or
-    /// unavailable author holds: no synthetic person or owner stands in.
-    /// Every document's reviewed mode is recorded explicitly.
+    /// <commit>`; the timestamp is the seal intent's. A landed batch whose
+    /// author was erased seals with no author (FIX 7348): the chain keeps
+    /// sealing and that revision's export alone holds. An unavailable
+    /// author holds; no synthetic person or owner stands in. Every
+    /// document's reviewed mode is recorded explicitly.
     ///
     /// # Errors
     /// A store failure.
@@ -71,13 +81,14 @@ impl MergeQueue<'_> {
                         "the batch landed no source",
                     );
                 };
+                let message = format!("Queue batch {batch}");
                 let Some(author) = last.actor.id() else {
-                    return held(
-                        QueueExportHoldReason::AuthorErased,
-                        "the last landed proposal's actor was erased",
-                    );
+                    return Ok(Ok(modes.iter().fold(
+                        CodeCommitMetadata::authorless(message),
+                        |metadata, (document, mode)| metadata.with_file_mode(*document, *mode),
+                    )));
                 };
-                (author, format!("Queue batch {batch}"))
+                (author, message)
             }
         };
         if self.vault.get_entity_type(&author)?.is_none() {
@@ -148,13 +159,17 @@ impl MergeQueue<'_> {
                 "the tested revision has no canonical author",
             );
         };
-        if self.vault.get_entity_type(&metadata.author)?.is_none() {
+        let Some(author) = metadata.author else {
             return held(
                 QueueExportHoldReason::AuthorErased,
-                format!(
-                    "the canonical author {} was erased",
-                    metadata.author.to_hex()
-                ),
+                "the last landed proposal's actor was erased before the seal; a fresh combined \
+                 proposal under a live author lands the same change",
+            );
+        };
+        if self.vault.get_entity_type(&author)?.is_none() {
+            return held(
+                QueueExportHoldReason::AuthorErased,
+                format!("the canonical author {} was erased", author.to_hex()),
             );
         }
         if let Some(path) = revision
@@ -167,20 +182,31 @@ impl MergeQueue<'_> {
                 format!("{path} is a submodule link"),
             );
         }
-        let oids = revision
-            .blob_frontiers
-            .values()
-            .map(|blob| GitOid::parse_hex(blob.git_oid.clone()))
-            .collect::<Result<Vec<_>>>()?;
-        let wire = GitWire::new(self.vault)?;
-        for chunk in oids.chunks(OBJECT_READ_CHUNK) {
-            let present = wire.object_info(&self.repo, chunk)?;
-            if let Some(missing) = chunk.iter().find(|oid| !present.contains_key(*oid)) {
-                return held(
-                    QueueExportHoldReason::HeldObject,
-                    format!("object {} is not in the object store", missing.as_str()),
-                );
+        let proved = (green.store.clone(), revision.revision_id);
+        let present = PRESENT_REVISIONS
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .contains(&proved);
+        if !present {
+            let oids = revision
+                .blob_frontiers
+                .values()
+                .map(|blob| GitOid::parse_hex(blob.git_oid.clone()))
+                .collect::<Result<Vec<_>>>()?;
+            let wire = GitWire::new(self.vault)?;
+            for chunk in oids.chunks(OBJECT_READ_CHUNK) {
+                let present = wire.object_info(&self.repo, chunk)?;
+                if let Some(missing) = chunk.iter().find(|oid| !present.contains_key(*oid)) {
+                    return held(
+                        QueueExportHoldReason::HeldObject,
+                        format!("object {} is not in the object store", missing.as_str()),
+                    );
+                }
             }
+            PRESENT_REVISIONS
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(proved);
         }
         match self.vault.queue_promotion_gap(revision.revision_id)? {
             None => Ok(Ok(())),

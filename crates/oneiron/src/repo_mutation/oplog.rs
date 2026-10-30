@@ -136,7 +136,7 @@ impl Vault {
         self.repo_mutation_oplog_for_canonical(&canonical)
     }
 
-    pub(super) fn repo_mutation_oplog_for_canonical(
+    pub(crate) fn repo_mutation_oplog_for_canonical(
         &self,
         repo_ref: &RepoRef,
     ) -> Result<Vec<RepoMutationOplogEntry>> {
@@ -442,6 +442,7 @@ pub(super) fn public_oplog_entry(
         finished_at_ms: stored.finished_at_ms,
         pre_action_fork_hash: stored.pre_action_fork_hash,
         expected_post_action_fork_hash: stored.expected_post_action_fork_hash,
+        post_commit: stored.prepared_commit.map(|commit| commit.new_head),
         status: RepoMutationStatus::parse(&stored.status)?,
         failure: stored.failure,
     })

@@ -55,12 +55,26 @@ impl MergeQueue<'_> {
         self.require_current(&queue)?;
         self.require_clean(self.repo.repo_root())?;
         validate_proposals(&proposals, &queue.pointers.green)?;
-        let id = self.next_batch_id(&mut queue, &proposals)?;
+        let mut batch = self.queued_batch(&mut queue, proposals)?;
+        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
+            return Ok(Err(refused));
+        }
+        Ok(Ok(batch))
+    }
+
+    /// A new Queued batch of `proposals` on `queue`'s current head and
+    /// green, its id drawn from `queue`'s sequence; not yet saved.
+    fn queued_batch(
+        &self,
+        queue: &mut QueueRecord,
+        proposals: Vec<MergeProposal>,
+    ) -> Result<MergeBatch> {
+        let id = self.next_batch_id(queue, &proposals)?;
         let changed = proposals
             .iter()
             .flat_map(|p| p.files.iter().map(|f| f.path.as_str()));
         let selected_tests = queue.graph.affected_tests(changed)?;
-        let mut batch = MergeBatch {
+        Ok(MergeBatch {
             schema_version: 1,
             id,
             expected_head: queue.pointers.head.clone(),
@@ -76,11 +90,7 @@ impl MergeQueue<'_> {
             selected_tests,
             run_order: None,
             drive: None,
-        };
-        if let Err(refused) = self.save_checked(&queue, &mut batch, admit)? {
-            return Ok(Err(refused));
-        }
-        Ok(Ok(batch))
+        })
     }
 
     /// The id a new batch of `proposals` takes. The sequence only salts the
@@ -249,6 +259,9 @@ impl MergeQueue<'_> {
 
     /// Requeue only survivors of a diagnosed red batch. No changed base is silently
     /// accepted; the caller must submit a fresh reviewed proposal in that case.
+    /// A run's survivors keep its accepted order, its predecessors and its
+    /// sequence, so they wait as before and its work still lists them (FIX
+    /// 7066).
     pub fn requeue_survivors(&self, id: &str) -> Result<Option<MergeBatch>> {
         let _guard = lock_repository(self.repo.common_dir())?;
         let batch = self.batch(id)?;
@@ -266,10 +279,17 @@ impl MergeQueue<'_> {
             .filter(|p| !quarantine.proposal_ids.contains(&p.id))
             .collect();
         if survivors.is_empty() {
-            Ok(None)
-        } else {
-            self.enqueue(survivors).map(Some)
+            return Ok(None);
         }
+        let mut queue = self.queue()?;
+        self.require_current(&queue)?;
+        self.require_clean(self.repo.repo_root())?;
+        validate_proposals(&survivors, &queue.pointers.green)?;
+        let run_order = survivor_run_order(batch.run_order, &survivors);
+        let mut child = self.queued_batch(&mut queue, survivors)?;
+        child.run_order = run_order;
+        self.save(&queue, &[&child])?;
+        Ok(Some(child))
     }
 
     /// Abandon only unlanded work. Landing/rollback intents require recovery.
@@ -408,6 +428,22 @@ impl MergeQueue<'_> {
         }
         self.require_clean(&path.worktree)
     }
+}
+
+/// A run's accepted order narrowed to its `survivors`: the same work,
+/// declaration, predecessors and sequence (FIX 7066).
+pub(super) fn survivor_run_order(
+    order: Option<RepoQueueOrder>,
+    survivors: &[MergeProposal],
+) -> Option<RepoQueueOrder> {
+    order.map(|mut order| {
+        order.proposals.retain(|stored| {
+            survivors
+                .iter()
+                .any(|proposal| proposal.id == stored.to_hex())
+        });
+        order
+    })
 }
 
 pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Result<()> {

@@ -15,6 +15,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::batch_index::BatchIndexKind;
 use super::{BatchState, MergeBatch, MergeProposal, MergeQueue};
 use crate::EntityId;
 use crate::contract_oracle::invalid;
@@ -74,15 +75,19 @@ impl MergeQueue<'_> {
                 Ok(order) => order,
                 Err(refused) => return Ok(Err(refused)),
             };
-            let accepted: BTreeSet<String> = order.proposals.iter().map(EntityId::to_hex).collect();
-            for batch in self.repo_batches_in_txn(txn)? {
-                if holds_candidates(&batch)
-                    && batch
-                        .proposals
-                        .iter()
-                        .any(|proposal| accepted.contains(&proposal.id))
+            // Each accepted proposal's own batches, by index (FIX 7067).
+            for accepted in order.proposals.iter().map(EntityId::to_hex) {
+                for batch in
+                    self.indexed_batches_in_txn(txn, BatchIndexKind::Proposal, &accepted)?
                 {
-                    return Err(invalid("a proposal of this entry is already queued"));
+                    if holds_candidates(&batch)
+                        && batch
+                            .proposals
+                            .iter()
+                            .any(|proposal| proposal.id == accepted)
+                    {
+                        return Err(invalid("a proposal of this entry is already queued"));
+                    }
                 }
             }
             Ok(Ok(Some(order)))
@@ -111,9 +116,14 @@ impl MergeQueue<'_> {
             return Ok(Vec::new());
         };
         let txn = self.vault.store.env.read_txn()?;
-        let batches = self.repo_batches_in_txn(&txn)?;
         let mut blocked = Vec::new();
         for predecessor in &order.predecessors {
+            // The batches accepted under this declaration, by index (FIX 7067).
+            let batches = self.indexed_batches_in_txn(
+                &txn,
+                BatchIndexKind::Declaration,
+                &predecessor.declaration.to_hex(),
+            )?;
             let accepted: Vec<(BatchState, u64)> = batches
                 .iter()
                 .filter_map(|other| {
@@ -145,14 +155,15 @@ impl MergeQueue<'_> {
         Ok(blocked)
     }
 
-    /// The run entries of this queue accepted from `work`, in key order.
+    /// The run entries of this queue accepted from `work`, in key order,
+    /// read by index (FIX 7067).
     ///
     /// # Errors
     /// A store failure.
     pub(crate) fn run_batches_of(&self, work: EntityId) -> Result<Vec<MergeBatch>> {
         let txn = self.vault.store.env.read_txn()?;
         Ok(self
-            .repo_batches_in_txn(&txn)?
+            .indexed_batches_in_txn(&txn, BatchIndexKind::Work, &work.to_hex())?
             .into_iter()
             .filter(|batch| {
                 batch
