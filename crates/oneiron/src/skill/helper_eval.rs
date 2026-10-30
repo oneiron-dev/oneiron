@@ -13,16 +13,103 @@
 use std::collections::BTreeSet;
 
 use crate::Vault;
+use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
-use crate::skill_optimize::{EvalMeasurement, FamilyPurpose, MeasurementState, SufficiencyVerdict};
+use crate::registry::ENTITY_TYPE_SKILL;
+use crate::skill_optimize::{
+    EvalArmPin, EvalAxisPin, EvalMeasurement, EvalMeasurementRequest, EvalSeat, FamilyPurpose,
+    FloorSlicePolicy, JUDGE_SCORE_AXIS, JUDGE_SCORE_UNITS, MeasurementMethodPin, MeasurementState,
+    ScoreDirection, SufficiencyVerdict, eval_seat_canary,
+};
 
 use super::helper::{CallableCase, CaseSplit, HelperPairedVerdict};
 use super::identity::SkillContentHash;
+use super::lifecycle::SkillLifecycle;
 use super::record::SkillRecord;
+use super::role::SkillRole;
+
+/// The decision a helper's paired measurement waits on.
+const HELPER_GATE_DECISION: &str = "callable_helper_gate";
 
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
+}
+
+/// The paired measurement each callable helper awaiting its gate asks for
+/// (FIX 12069), by helper: its exact content as the candidate arm against
+/// its parent's as the incumbent (no skill, when it has no parent), both
+/// answered by `model` at `revision` on `seat`'s newest live cohort and
+/// scored by `scorer`. This is exactly the pair the gate reads
+/// ([`helper_measurement`]). None when the seat has no live cohort.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn callable_helper_measurement_requests(
+    vault: &Vault,
+    seat: &EvalSeat,
+    (model, revision): (&str, &str),
+    scorer: &str,
+) -> Result<Vec<(EntityId, EvalMeasurementRequest)>> {
+    let Some(cohort) = vault
+        .eval_cohorts(seat)?
+        .into_iter()
+        .rev()
+        .find(|cohort| cohort.retired_at.is_none())
+    else {
+        return Ok(Vec::new());
+    };
+    let arm = |skill_digest| EvalArmPin {
+        model: model.to_owned(),
+        revision: revision.to_owned(),
+        skill_digest,
+    };
+    let content = |record: &SkillRecord| record.content_hash.as_ref().map(SkillContentHash::to_hex);
+    let mut requests = Vec::new();
+    for id in vault.entities_by_type(ENTITY_TYPE_SKILL)? {
+        let Some(record) = vault.get_skill_record(&id)? else {
+            continue;
+        };
+        // An agent-born helper awaiting its gate, as the measured pack load
+        // admits it.
+        if record.role != SkillRole::Callable
+            || record.call.is_none()
+            || record.lifecycle_status != SkillLifecycle::Candidate
+            || record.approval_status != ClaimApprovalStatus::Proposed
+        {
+            continue;
+        }
+        let Some(candidate) = content(&record) else {
+            continue;
+        };
+        let parent = match record.forked_from {
+            Some(parent) => vault.get_skill_record(&parent)?,
+            None => None,
+        };
+        requests.push((
+            id,
+            EvalMeasurementRequest {
+                decision: HELPER_GATE_DECISION.to_owned(),
+                seat: seat.clone(),
+                incumbent: arm(parent.as_ref().and_then(content)),
+                candidate: arm(Some(candidate)),
+                cohort: cohort.id,
+                membership_digest: cohort.membership_digest.clone(),
+                rubric_revision: cohort.rubric_revision.clone(),
+                scorer: scorer.to_owned(),
+                axis: EvalAxisPin {
+                    axis: JUDGE_SCORE_AXIS.to_owned(),
+                    direction: ScoreDirection::HigherIsBetter,
+                    units: JUDGE_SCORE_UNITS.to_owned(),
+                },
+                floor_slices: FloorSlicePolicy::default(),
+                canary: eval_seat_canary(seat).map(str::to_owned),
+                method: MeasurementMethodPin::current(),
+            },
+        ));
+    }
+    Ok(requests)
 }
 
 /// The measurement `digest` names, when it compares this helper's exact
