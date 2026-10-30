@@ -303,6 +303,13 @@ fn text_sources(
     Ok((turns, artifacts))
 }
 
+/// Whether the case claims an attempt's task input: one `attempt:` receipt
+/// and no parents. A claimed input that does not read is a coverage gap;
+/// any other case has no task input to read.
+fn claims_attempt_input(receipts: &[String], parents: &[EntityId]) -> bool {
+    matches!(receipts, [receipt] if receipt.starts_with("attempt:")) && parents.is_empty()
+}
+
 /// The purpose-limited reader: one case's source text, for this audit's
 /// comparison alone, with each source it could not read noted as a gap.
 fn case_texts(
@@ -335,6 +342,24 @@ fn case_texts(
                 case: case.case,
                 source: Some(amendment_receipt_id(artifact)),
             }),
+        }
+    }
+    {
+        let txn = vault.store.env.read_txn()?;
+        match super::replay_input::cut_audit_task_text_in_txn(
+            vault,
+            &txn,
+            &case.receipts,
+            &case.parents,
+        )? {
+            Some((_, text)) => texts.push(text),
+            None if claims_attempt_input(&case.receipts, &case.parents) => {
+                gaps.push(CoverageGap {
+                    case: case.case,
+                    source: case.receipts.first().cloned(),
+                });
+            }
+            None => {}
         }
     }
     Ok(texts)
@@ -448,9 +473,9 @@ pub(super) fn prepare_cut_audit(
 
 /// [`case_texts`], listing into `rows` each row the text was read from, from
 /// those same reads: every TURN whose text was read and each MESSAGE child
-/// that text joined, as [`crate::embed::turn_text_in_txn`] joins them, and
-/// every finalized proposal artifact read. A source it could not read is a
-/// gap, as there, and lists nothing.
+/// that text joined, as [`crate::embed::turn_text_in_txn`] joins them, every
+/// finalized proposal artifact read, and the attempt whose task input was
+/// read. A source it could not read is a gap, as there, and lists nothing.
 fn case_texts_listing(
     vault: &Vault,
     lineage: &LineageReader,
@@ -497,6 +522,27 @@ fn case_texts_listing(
             }),
         }
     }
+    {
+        let txn = vault.store.env.read_txn()?;
+        match super::replay_input::cut_audit_task_text_in_txn(
+            vault,
+            &txn,
+            &case.receipts,
+            &case.parents,
+        )? {
+            Some((attempt, text)) => {
+                rows.push(attempt);
+                texts.push(text);
+            }
+            None if claims_attempt_input(&case.receipts, &case.parents) => {
+                gaps.push(CoverageGap {
+                    case: case.case,
+                    source: case.receipts.first().cloned(),
+                });
+            }
+            None => {}
+        }
+    }
     Ok(texts)
 }
 
@@ -528,8 +574,9 @@ fn case_shingles_listing(
 
 /// [`prepare_cut_audit`], listing into `rows` every row whose text the audit
 /// compared, from the same reads ([`case_texts_listing`]): the TURNs, their
-/// MESSAGE children and the proposal artifacts. A cut that would take no
-/// member reads no text and lists none.
+/// MESSAGE children, the proposal artifacts and the attempts whose task
+/// input was read. A cut that would take no member reads no text and lists
+/// none.
 pub(super) fn prepare_cut_audit_listing(
     vault: &Vault,
     lineage: &LineageReader,
