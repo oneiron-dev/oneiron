@@ -130,6 +130,83 @@ pub(in crate::live) fn plot_plan(
     (targets, assign)
 }
 
+/// `targets` and the plot each series is drawn in (`assign`, each series
+/// of family `resolved`) after each series `wanted` names an ordinal for
+/// is drawn in that plot of its family (FIX 10295, 9375). In each family a
+/// series names one for, its series take ordinals (the one named, else the
+/// place of its plot among the family's plots that draw a series); the
+/// lowest is drawn in the first such plot, the next in the next, and those
+/// past them each in a new plot of the family after every plot. A plot
+/// every series of which left goes. Only the order of the ordinals counts,
+/// so the export, given the settled ones, lays the plots out as the
+/// settlement did.
+pub(in crate::live) fn place_ordinals(
+    targets: &mut Vec<PlotTarget>,
+    assign: &mut [usize],
+    resolved: &[ChartKind],
+    wanted: &[Option<u32>],
+) {
+    let mut families: Vec<ChartKind> = Vec::new();
+    for (index, kind) in resolved.iter().enumerate() {
+        if wanted.get(index).copied().flatten().is_some() && !families.contains(kind) {
+            families.push(*kind);
+        }
+    }
+    if families.is_empty() {
+        return;
+    }
+    let drew: Vec<bool> = (0..targets.len()).map(|at| assign.contains(&at)).collect();
+    for kind in families {
+        let plots: Vec<usize> = (0..targets.len())
+            .filter(|&at| targets[at].kind == kind && assign.contains(&at))
+            .collect();
+        let members: Vec<usize> = (0..resolved.len())
+            .filter(|&index| resolved[index] == kind && index < assign.len())
+            .collect();
+        let ordinals: Vec<u64> = members
+            .iter()
+            .map(|&index| match wanted.get(index).copied().flatten() {
+                Some(plot) => u64::from(plot),
+                None => plots
+                    .iter()
+                    .position(|&at| at == assign[index])
+                    .map_or(0, |at| u64::try_from(at).unwrap_or(u64::MAX)),
+            })
+            .collect();
+        let mut used = ordinals.clone();
+        used.sort_unstable();
+        used.dedup();
+        let mut opened: Vec<usize> = Vec::new();
+        for (&index, ordinal) in members.iter().zip(&ordinals) {
+            let rank = used.binary_search(ordinal).unwrap_or(0);
+            assign[index] = match plots.get(rank) {
+                Some(&at) => at,
+                None => {
+                    let extra = rank - plots.len();
+                    while opened.len() <= extra {
+                        targets.push(PlotTarget { held: None, kind });
+                        opened.push(targets.len() - 1);
+                    }
+                    opened[extra]
+                }
+            };
+        }
+    }
+    let gone: Vec<usize> = (0..targets.len())
+        .filter(|&at| drew.get(at).copied().unwrap_or(false) && !assign.contains(&at))
+        .collect();
+    if gone.is_empty() {
+        return;
+    }
+    for index in assign.iter_mut() {
+        let shift = gone.iter().filter(|&&at| at < *index).count();
+        *index -= shift;
+    }
+    for &at in gone.iter().rev() {
+        targets.remove(at);
+    }
+}
+
 /// The first category slot any series of the chart holds.
 pub(super) fn first_category(tree: &XmlTree) -> Option<usize> {
     let (_, plots) = held::plots(tree)?;
