@@ -26,7 +26,7 @@ use super::{RepoRunAnswer, RepoRunBinding, refusal_error, repo_target};
 use crate::EntityId;
 use crate::checkout::lease::{CheckoutLeaseAct, CheckoutRepoOps};
 use crate::codebase::RepoRef;
-use crate::federation::{RepoAccessIntent, RepoAccessRefusal};
+use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
 use crate::memory::origin_doors::OriginPublicationState;
 use crate::memory::{
@@ -187,8 +187,9 @@ impl Memory<'_> {
     /// `self.code.export` for a run: the revision is one the run's lane
     /// reads, the run's checkout is materialized on the served store, and
     /// L02's publication policy admits the ref over every path the revision
-    /// holds, judged again just before the engine export; a ref move that
-    /// rewrites history needs that Grant to list publish_rewrite too.
+    /// holds, judged again just before the engine export and inside its
+    /// writers (FIX 7179); a ref move that rewrites history needs that Grant
+    /// to list publish_rewrite too.
     pub fn repo_export_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -229,13 +230,10 @@ impl Memory<'_> {
                 .transpose()?,
         };
         let authority = self.repo_export_authority(&own.served)?;
+        let target = repo_target(input.repo, &input.git_ref, &paths);
         // The run and its publication Grant, judged once more in the
-        // snapshot just before the export's own writers.
-        self.repo_run_admit(
-            binding,
-            &repo_target(input.repo, &input.git_ref, &paths),
-            RepoAccessIntent::Read,
-        )?;
+        // snapshot just before the export makes any Git object.
+        self.repo_run_admit(binding, &target, RepoAccessIntent::Read)?;
         if self.repo_publication_grant(binding, input.repo, &input.git_ref, &paths, false)? != grant
         {
             return Err(refusal_error(RepoAccessRefusal::StaleLease));
@@ -244,8 +242,8 @@ impl Memory<'_> {
         // move whose new commit does not descend from `expected_old_oid` is a
         // history rewrite, and needs a Grant that also lists publish_rewrite
         // (FIX 8800); without one it is the typed publication hold.
-        let mut grant = grant;
-        let receipt = self.vault.export_engine_commit_judged(
+        let held = std::cell::Cell::new((grant, false));
+        let receipt = self.vault.export_engine_commit_checked(
             &wire,
             &source,
             &request,
@@ -267,9 +265,32 @@ impl Memory<'_> {
                 }
                 Ok(self
                     .repo_publication_grant(binding, input.repo, &input.git_ref, &paths, true)
-                    .map(|rewrite| grant = rewrite))
+                    .map(|rewrite| held.set((rewrite, true))))
+            },
+            // The run and the Grant it publishes under, judged again as the
+            // first act of each writer before the publication, so a revoke
+            // that lands before them publishes nothing (FIX 7179).
+            |txn| {
+                let (grant, rewrite) = held.get();
+                match self.vault.admit_repo_run_in_txn(
+                    txn,
+                    binding,
+                    &target,
+                    RepoAccessIntent::Read,
+                )? {
+                    Ok(_) => {}
+                    Err(refused) => return Ok(Err(refusal_error(refused))),
+                }
+                Ok(
+                    match self.repo_publication_grant_in_txn(txn, binding, &target, rewrite)? {
+                        Ok(again) if again == grant => Ok(()),
+                        Ok(_) => Err(refusal_error(RepoAccessRefusal::StaleLease)),
+                        Err(hold) => Err(hold),
+                    },
+                )
             },
         )??;
+        let (grant, _) = held.get();
         Ok(RepoRunAnswer {
             rows: vec![input.repo, revision.revision_id],
             output: RepoExportOutput {
@@ -384,22 +405,42 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let admitted = self.vault.admit_origin_publish_grant_in_txn(
+        self.repo_publication_grant_in_txn(
             &txn,
+            binding,
+            &repo_target(repo, git_ref, paths),
+            rewrite,
+        )?
+    }
+
+    /// [`Self::repo_publication_grant`] over `target`, read in `txn`: the
+    /// Grant, or the typed publication hold.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure.
+    fn repo_publication_grant_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        binding: &RepoRunBinding,
+        target: &RepoTarget,
+        rewrite: bool,
+    ) -> crate::Result<MemoryResult<EntityId>> {
+        let admitted = self.vault.admit_origin_publish_grant_in_txn(
+            txn,
             binding.actor.entity_ref(),
             binding.actor.actor_class(),
-            &repo_target(repo, git_ref, paths),
+            target,
             rewrite,
             None,
         )?;
-        match admitted {
+        Ok(match admitted {
             Ok(grant) => Ok(grant.grant),
             Err(denial) => Err(MemoryError::new(
                 REPO_PUBLICATION_POLICY_REQUIRED,
                 format!("{}: {}", denial.code, denial.message),
                 &["The owner grants publish on this repo; git_push never implies an export."],
             )),
-        }
+        })
     }
 
     /// The host authority the export publishes under, read as the owner's
