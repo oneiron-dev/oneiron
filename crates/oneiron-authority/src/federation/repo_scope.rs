@@ -191,6 +191,11 @@ pub enum RepoAccessRefusal {
     /// No live Grant of the actor's names this repo for this intent: the
     /// first check, made before any other id is resolved or revealed.
     NoMembership,
+    /// A live Grant of the actor's names this repo, but the shared vault's
+    /// membership gate holds it for a cause that can clear (its root is
+    /// conflicted): a typed hold, not a refusal of the Grant, that the
+    /// caller retries once the cause is resolved (FIX 6896).
+    MembershipHeld,
     /// The act names another repo than the admitted handle.
     WrongRepo,
     /// The ref is not a full ref name the Grant's bounds list, nor one under
@@ -205,12 +210,23 @@ pub enum RepoAccessRefusal {
 }
 
 impl RepoAccessRefusal {
-    /// The stable public code a door answers with: the one hook for the five
+    /// Every typed reason, in check order.
+    pub const ALL: [Self; 6] = [
+        Self::NoMembership,
+        Self::MembershipHeld,
+        Self::WrongRepo,
+        Self::WrongRef,
+        Self::PathOutsideScope,
+        Self::StaleLease,
+    ];
+
+    /// The stable public code a door answers with: the one hook for the six
     /// typed reasons.
     #[must_use]
     pub const fn public_code(self) -> &'static str {
         match self {
             Self::NoMembership => "repo_no_membership",
+            Self::MembershipHeld => "repo_membership_held",
             Self::WrongRepo => "repo_wrong_repo",
             Self::WrongRef => "repo_wrong_ref",
             Self::PathOutsideScope => "repo_path_outside_scope",
@@ -223,6 +239,9 @@ impl RepoAccessRefusal {
     pub const fn message(self) -> &'static str {
         match self {
             Self::NoMembership => "no live Grant of this actor admits it to this repo",
+            Self::MembershipHeld => {
+                "this actor's Grant is held while the shared vault's root is conflicted; retry once it is resolved"
+            }
             Self::WrongRepo => "the act names another repo than the one this actor was admitted to",
             Self::WrongRef => {
                 "the ref is not a full Git ref name this actor's Grant lists or covers"
@@ -254,7 +273,8 @@ impl Scope {
     ///
     /// # Errors
     /// The first [`RepoAccessRefusal`] the target meets; never
-    /// [`RepoAccessRefusal::StaleLease`], which is a run fence's.
+    /// [`RepoAccessRefusal::StaleLease`], which is a run fence's, nor
+    /// [`RepoAccessRefusal::MembershipHeld`], the shared vault gate's.
     pub fn admit_repo_target(
         &self,
         bounds: &RepoAccessBounds,

@@ -18,7 +18,9 @@
 //!   membership gate for that one grant
 //!   (`Vault::authenticated_grant_membership_in_txn`: vault not deleted, root
 //!   not conflicted, pact not inactive); on a personal vault it is under the
-//!   home's residence scope. Grants are never unioned;
+//!   home's residence scope. A Grant the gate holds on a conflicted root is
+//!   the typed hold [`RepoAccessRefusal::MembershipHeld`], which the caller
+//!   retries, never no membership (FIX 6896). Grants are never unioned;
 //! - the CODE anchor: a live CODE_ARTIFACT whose stored repo_ref parses (the
 //!   current repo) and that belongs to the bounds' live PROJECT.
 //!
@@ -72,13 +74,26 @@ pub(crate) struct RepoMembership {
 /// An admission: the membership, or the typed reason it was refused.
 pub(crate) type RepoAdmission = std::result::Result<RepoMembership, RepoAccessRefusal>;
 
+/// How one agent Grant stands under this vault's own rule (FIX 6896).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GrantGate {
+    /// It stands.
+    Stands,
+    /// The shared vault's membership gate holds it for a cause that can
+    /// clear: the vault root is conflicted. The caller may retry.
+    Held,
+    /// It does not stand here.
+    Refused,
+}
+
 // The run repo doors (L11 G1 PR2) call these three seams, as the manual
 // publish doors (FIX 6866) will.
 impl Vault {
     /// Admits `actor`, of `class`, to the repo handle `repo` (a CODE anchor)
     /// in the caller's snapshot `txn`. `actor` and `class` are the ones the
     /// host bound, never a request's. `Ok(Err(NoMembership))` when no single
-    /// Grant admits it; no other id is resolved first.
+    /// Grant admits it, `Ok(Err(MembershipHeld))` when one would but the
+    /// shared vault's gate holds it; no other id is resolved first.
     ///
     /// # Errors
     /// A store, fold or clock failure; never "no membership".
@@ -148,7 +163,8 @@ impl Vault {
     /// The one admission the three seams share. With no `ask` it admits the
     /// membership alone; with one, the first Grant (in id order) whose
     /// bounds admit the target wins, and the refusal is the one that got
-    /// furthest across the actor's Grants for this handle.
+    /// furthest across the actor's Grants for this handle, a held Grant's
+    /// [`RepoAccessRefusal::MembershipHeld`] among them.
     fn admit_repo_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -177,9 +193,16 @@ impl Vault {
                 || !grant.confers_at(now)
                 || !owners.contains(&standing.delegated_by)
                 || !grant.authority_scope.admits_repo_member(bounds)
-                || !self.agent_grant_stands_in_txn(txn, &standing, shared)?
             {
                 continue;
+            }
+            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+                GrantGate::Stands => {}
+                GrantGate::Held => {
+                    refusal = refusal.max(RepoAccessRefusal::MembershipHeld);
+                    continue;
+                }
+                GrantGate::Refused => continue,
             }
             let Some(repo_ref) = self.repo_anchor_in_txn(txn, bounds)? else {
                 continue;
@@ -203,24 +226,32 @@ impl Vault {
         Ok(Err(refusal))
     }
 
-    /// Whether the agent Grant stands under this vault's own rule. On a
-    /// shared vault (`shared` is its id): under the vault's scope and
-    /// admitted by the shipped membership gate for that one grant, whose
-    /// refusal (a conflicted root among them) is no membership here. On a
+    /// How the agent Grant stands under this vault's own rule. On a shared
+    /// vault (`shared` is its id): under the vault's scope and admitted by
+    /// the shipped membership gate for that one grant. The gate's refusal is
+    /// [`GrantGate::Held`] for exactly the cause that can clear, a conflicted
+    /// vault root (FIX 6896), and [`GrantGate::Refused`] for any other. On a
     /// personal vault: under the home's residence scope; the personal
     /// standing rule already ran.
-    fn agent_grant_stands_in_txn(
+    fn agent_grant_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         standing: &AgentGrantStanding,
         shared: Option<u64>,
-    ) -> Result<bool> {
+    ) -> Result<GrantGate> {
         let grant = &standing.grant;
+        let stands = |admitted: bool| {
+            if admitted {
+                GrantGate::Stands
+            } else {
+                GrantGate::Refused
+            }
+        };
         let Some(vault_id) = shared else {
-            return Ok(grant.scope == own_device_residence_scope());
+            return Ok(stands(grant.scope == own_device_residence_scope()));
         };
         if grant.scope != FederationGrantScope::vault(vault_id) {
-            return Ok(false);
+            return Ok(GrantGate::Refused);
         }
         match self.authenticated_grant_membership_in_txn(
             txn,
@@ -228,8 +259,15 @@ impl Vault {
             grant.member_ref,
             standing.id,
         ) {
-            Ok(membership) => Ok(membership.is_some()),
-            Err(Error::Claim(_)) => Ok(false),
+            Ok(membership) => Ok(stands(membership.is_some())),
+            Err(Error::Claim(_))
+                if self
+                    .authority_fold_readonly_in_txn(txn)?
+                    .vault_root_is_conflicted() =>
+            {
+                Ok(GrantGate::Held)
+            }
+            Err(Error::Claim(_)) => Ok(GrantGate::Refused),
             Err(error) => Err(error),
         }
     }
@@ -278,9 +316,17 @@ impl Vault {
                 || !grant.confers_at(now)
                 || !owners.contains(&standing.delegated_by)
                 || !grant.authority_scope.admits_repo_member(bounds)
-                || !self.agent_grant_stands_in_txn(txn, &standing, shared)?
             {
                 continue;
+            }
+            match self.agent_grant_gate_in_txn(txn, &standing, shared)? {
+                GrantGate::Stands => {}
+                GrantGate::Held => {
+                    refusal =
+                        refusal.map(|furthest| furthest.max(RepoAccessRefusal::MembershipHeld));
+                    continue;
+                }
+                GrantGate::Refused => continue,
             }
             let Some(repo_ref) = self.repo_anchor_in_txn(txn, bounds)? else {
                 continue;
@@ -348,7 +394,7 @@ impl Vault {
         for standing in self.agent_grants_in_txn(txn)? {
             if standing.grant.repo_bounds.is_none()
                 && standing.stands_in_txn(self, txn, actor, verb, now, &owners)
-                && self.agent_grant_stands_in_txn(txn, &standing, shared)?
+                && self.agent_grant_gate_in_txn(txn, &standing, shared)? == GrantGate::Stands
             {
                 return Ok(Ok(standing.id));
             }
