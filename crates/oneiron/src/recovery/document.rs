@@ -313,7 +313,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         schema_manifest: super::CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 1,
+            container_schema_version: 2,
             analyzer_manifest_blake3: [0; 32],
         },
         suppressed_tasks: Vec::new(),
@@ -324,6 +324,7 @@ pub(crate) fn validate_window_documents(doc: &LoroDoc) -> Result<CanonicalSnapsh
         peer_origins: Vec::new(),
         row_births: Vec::new(),
         withdrawn_cutoffs: Vec::new(),
+        asset_body_refs: Vec::new(),
     };
     for (key, bytes) in super::canonical::binary_rows(doc, "documents")? {
         let value: CanonicalDocument =

@@ -173,6 +173,14 @@ fn keep_smallest(
 
 /// The next entry `signer`, a key outside the roster, signs on `fold`'s
 /// heads: an owner root's anchor signing its root, or a mark in its own chain.
+/// A writer joins a frontier wider than the entry names first, signed by the
+/// anchor ([`Vault::join_anchor_frontier_in_txn`], FIX 8498). No join leads
+/// to a root its anchor publishes first, since the fold records the anchor
+/// from that root on (Engine 09:31 (2)): on a frontier wider than one entry
+/// names, such a root names the lowest-hash main heads that fit beside the
+/// anchor's own (a head count never refuses). The other heads stay heads,
+/// none dropped, and the next writer joins them: the root's own marks, once
+/// it is recorded.
 pub(crate) fn anchor_signed_entry(
     fold: &AuthorityFold,
     signer: &SigningKey,
@@ -188,15 +196,18 @@ pub(crate) fn anchor_signed_entry(
         .unwrap_or(0);
     // The main log's heads, and this anchor's own: no door names another
     // anchor's rows (Astra S2-R2 A2-F4).
+    let own = fold.anchor_heads.get(&signer.verifying_key().to_bytes());
+    let main_room = match &op {
+        AuthorityOp::OwnerRoot(_) => MAX_PARENTS
+            .saturating_sub(own.map_or(0, BTreeSet::len))
+            .max(1),
+        _ => usize::MAX,
+    };
     let parents: BTreeSet<_> = fold
         .append_heads
         .iter()
-        .chain(
-            fold.anchor_heads
-                .get(&signer.verifying_key().to_bytes())
-                .into_iter()
-                .flatten(),
-        )
+        .take(main_room)
+        .chain(own.into_iter().flatten())
         .copied()
         .collect();
     if fold.vault_id.is_none() || parents.is_empty() {

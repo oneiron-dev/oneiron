@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -14,17 +13,43 @@ use axum::routing::{get, post};
 use oneiron::connector_key::ChannelMessageSubscription;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/connectors/subscriptions", get(list).post(subscribe))
-        .route("/connectors/subscriptions/revoke", post(revoke))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/connectors/subscriptions",
+                summary: "The agent's connector event subscriptions, standing and revoked.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/subscriptions",
+                summary: "Subscribes the agent to the messages the channel's built-in pack routes to it.",
+                row: None,
+            },
+            post(subscribe),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/subscriptions/revoke",
+                summary: "The subscription wakes nothing more; its key stays.",
+                row: None,
+            },
+            post(revoke),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

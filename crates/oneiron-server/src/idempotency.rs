@@ -133,9 +133,11 @@ impl IdempotencyStore {
         }
 
         // An intent no outcome settled: the first run never finished (FIX
-        // 9527).
+        // 9527), with the writes it committed (FIX 10379).
         if stored.status == intent::INTENT_STATUS {
-            return Ok(IdempotencyLookup::Interrupted);
+            return Ok(IdempotencyLookup::Interrupted {
+                committed_writes: stored.committed_writes,
+            });
         }
         let response = CachedHttpResponse::of_stored(stored)?;
         Ok(IdempotencyLookup::Replay(response))
@@ -199,8 +201,12 @@ enum IdempotencyLookup {
     Conflict,
     /// An erase of an owner took the cached response (KS-2B2).
     Erased,
-    /// The first request's intent stands with no outcome (FIX 9527).
-    Interrupted,
+    /// The first request's intent stands with no outcome (FIX 9527): the
+    /// writes committed while it ran, each counted in its own transaction
+    /// (FIX 10379).
+    Interrupted {
+        committed_writes: u32,
+    },
 }
 
 #[derive(Clone)]
@@ -318,6 +324,7 @@ impl CachedHttpResponse {
                 ..Default::default()
             },
             erased: false,
+            committed_writes: 0,
             erase_drops: stamp.erase_drops,
         }
     }

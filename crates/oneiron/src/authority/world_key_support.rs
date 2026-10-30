@@ -47,10 +47,30 @@ pub(crate) fn sign_side_entry(
     op: AuthorityOp,
     now: u64,
 ) -> Result<AuthorityLogEntry> {
+    let signer = signing.verifying_key().to_bytes();
+    let mut entry = unsigned_side_entry(fold, signer, seq, parents, op, now)?;
+    entry.signer.signature = signing
+        .sign(&authority_transcript(&entry)?)
+        .to_bytes()
+        .to_vec();
+    Ok(entry)
+}
+
+/// [`sign_side_entry`]'s entry before its signature: the Ed25519 key
+/// `signer` alone over `parents`, its signature zeroed, for a signer held
+/// behind a callback (FIX 11867).
+pub(crate) fn unsigned_side_entry(
+    fold: &AuthorityFold,
+    signer: [u8; 32],
+    seq: u64,
+    parents: BTreeSet<AuthorityEntryHash>,
+    op: AuthorityOp,
+    now: u64,
+) -> Result<AuthorityLogEntry> {
     if fold.vault_id.is_none() || parents.is_empty() || parents.len() > MAX_PARENTS {
         return Err(invalid_authority());
     }
-    let mut entry = AuthorityLogEntry {
+    Ok(AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: fold.vault_id,
         seq,
@@ -58,17 +78,12 @@ pub(crate) fn sign_side_entry(
         op,
         signer: AuthoritySignature {
             suite: AuthoritySignatureSuite::Ed25519,
-            public_key: AuthorityKey::Ed25519(signing.verifying_key().to_bytes()),
+            public_key: AuthorityKey::Ed25519(signer),
             signature: vec![0; 64],
         },
         cosigns: Vec::new(),
         ts: now,
-    };
-    entry.signer.signature = signing
-        .sign(&authority_transcript(&entry)?)
-        .to_bytes()
-        .to_vec();
-    Ok(entry)
+    })
 }
 
 /// The rows a machine's standing rests on under `fold`'s pin: its roster

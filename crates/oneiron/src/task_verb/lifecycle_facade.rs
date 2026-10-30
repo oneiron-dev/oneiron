@@ -327,7 +327,7 @@ impl Memory<'_> {
             wtxn,
             task_ref,
             &body,
-            crate::WriteActor::new(self.actor(), self.actor_class()),
+            self.write_actor(),
             (landed, option),
             owner,
             at,
@@ -412,11 +412,7 @@ impl Memory<'_> {
                 .ok_or_else(unaddressed_write)?;
             return self
                 .vault()
-                .verify_write_actor_generation_in_txn(
-                    txn,
-                    crate::WriteActor::new(self.actor(), self.actor_class()),
-                    standing.generation,
-                )
+                .verify_write_actor_generation_in_txn(txn, self.write_actor(), standing.generation)
                 .map_err(MemoryError::from);
         }
         if body_executor(body)? == self.actor() {
@@ -471,7 +467,7 @@ impl Memory<'_> {
                 txn,
                 handle.group_ref,
                 &group,
-                crate::WriteActor::new(self.actor(), self.actor_class()),
+                self.write_actor(),
                 word,
                 owner,
                 now,

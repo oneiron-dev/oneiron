@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -26,21 +25,79 @@ use oneiron::feedback::{
     ReportPublisherBinding, ReportPublisherBindingRequest, ReportPublisherEndpoint,
 };
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/feedback/triage/run", post(run))
-        .route("/feedback/triage/status", get(status))
-        .route("/feedback/triage/binding", get(binding).put(set_binding))
-        .route("/feedback/delivery/run", post(delivery_run))
-        .route("/feedback/delivery/status", get(delivery_status))
-        .route("/feedback/delivery/binding", put(delivery_binding))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/feedback/triage/run",
+                summary: "Queues the Coach's feedback sweep now (`{}`), joining one already queued: each open-inbox note not yet handed off gets its own triage job on the bound skill, whose findings land Proposed in the run tray. Answers `{attempt}`; the sweep completing is not each job finishing.",
+                row: None,
+            },
+            post(run),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/feedback/triage/status",
+                summary: "One feedback sweep's status (`attempt`, 32 hex): its state and last error, the binding, each source's continuation, each revision it handed off or queued again with its job's state and committed result refs, and the holds (`skill_unbound`, each revision still unacknowledged). Not found when the queue holds no such attempt.",
+                row: None,
+            },
+            get(status),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/feedback/triage/binding",
+                summary: "The skill the Coach's feedback triage runs (OF-420): `skill` (32 hex, null until the owner binds one), the `revision` a change names as `seen` (0 while never set) and `set_at`. With no skill bound every sweep and every queued job completes doing nothing, each revision stays unacknowledged, and its status holds `skill_unbound`.",
+                row: None,
+            },
+            get(binding),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/feedback/triage/binding",
+                summary: "Binds the SKILL the feedback triage runs (`skill`, 32 hex; null unbinds) at the `seen` revision the owner read; a binding that moved since is refused and nothing changes. Answers the binding.",
+                row: None,
+            },
+            put(set_binding),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/feedback/delivery/run",
+                summary: "Queues the Coach's publisher delivery now (`{}`), joining one already queued: every report routed to a publisher gets its content-free ED-08 issue signature, sent to the endpoint the owner bound while \"Help improve Oneiron\" and the publisher dial are both on. Text never leaves this way. Answers `{attempt}`.",
+                row: None,
+            },
+            post(delivery_run),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/feedback/delivery/status",
+                summary: "One report issue's signature delivery (`issue_ref`, 32 hex): whether it is routed to a publisher, the publisher's binding, and its lane (key, frozen signature and send, hold, receipt and outcome). Holds: `metadata_unresolved` with its reason, `endpoint_unbound`, `destination_unsupported`, `changed_binding`, `withheld`. Not found when the vault holds no such issue.",
+                row: None,
+            },
+            get(delivery_status),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/feedback/delivery/binding",
+                summary: "Binds a publisher (`publisher_ref`) to this server's feedback destination, its channel and exact endpoint as configured now (`bound: true`), or unbinds it (`false`); binding needs a configured destination. Its content-free issue signatures go only there. A lane that froze another destination and never entered dispatch takes the new binding in the same write and its hold clears; one offered once holds as `changed_binding` and is never redirected. Answers `{publisher_ref, endpoint}`.",
+                row: None,
+            },
+            put(delivery_binding),
+        ),
+    ]
 }
 
 /// `POST /v1/owner/feedback/triage/run` with `{}`: queues the sweep now and

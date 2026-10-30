@@ -5,6 +5,7 @@
 mod tests;
 
 mod admission;
+mod authority_parts;
 mod authority_tail;
 mod bundle;
 mod bundle_access;
@@ -23,6 +24,11 @@ mod prune;
 mod recall_scope;
 mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
+pub use authority_parts::{
+    AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
+    AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage,
+    authority_append_part_for, authority_entry_part_for, split_authority_page,
+};
 pub use authority_tail::{
     AUTHORITY_APPEND_WORK_SLICE, AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
     AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
@@ -129,22 +135,21 @@ use super::window::Withhold;
 /// grant does not exhaust a smaller top-k before intersection. The page is
 /// short when the window holds fewer resident rows.
 ///
+/// `actor` is the read key the search reads under: the connection's own
+/// credential's, or a forwarded caller's at the locality its device signed
+/// (FIX 3550).
+///
 /// A recall's `scope` (FIX 2905) narrows the search before that window is
 /// cut, by the same worlds, projects, facet and kinds the device's own
 /// recall read, and returns the unit recall returns. A scope the home cannot
 /// evaluate is refused, never answered unscoped.
 pub fn home_search_candidates(
     vault: &Vault,
-    proof: &crate::authority::VerifiedSlip,
+    actor: crate::claim::ScopedReadActorKey,
     query: &str,
     limit: usize,
     scope: Option<&ResolvedRecallSelection>,
 ) -> Result<Vec<(EntityId, f32, WindowKey)>> {
-    let actor = vault
-        .credential_read_key(proof)?
-        .ok_or(Error::sync_protocol(
-            SyncProtocolValidation::DocumentAdmissionDenied,
-        ))?;
     let candidates = crate::memory::caps::narrowed_candidate_window(limit);
     let read = vault.scoped_read(actor);
     let found = match scope {
@@ -163,20 +168,23 @@ pub fn home_search_candidates(
 
 /// The forwarded `residence.search` a device signs and its home verifies
 /// (FIX 2907): the query, the limit as a big-endian `u64`, the device
-/// selector's wire bytes and the recall scope's transcript
-/// ([`recall_scope_transcript`], FIX 2905), in that order. Both ends build
-/// it here, from the values the request carries, so the two never sign
-/// different bytes.
+/// selector's wire bytes, the recall scope's transcript
+/// ([`recall_scope_transcript`], FIX 2905) and the caller's locality on the
+/// device, one byte, 0 on it and 1 off it (FIX 3550), in that order. Both
+/// ends build it here, from the values the request carries, so the two never
+/// sign different bytes.
 pub fn with_forwarded_search<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    locality: crate::claim::CallerLocality,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
-    let fields: [&[u8]; 4] = [query.as_bytes(), &limit, selector_wire, &scope];
+    let locality = search::caller_locality_field(locality);
+    let fields: [&[u8]; 5] = [query.as_bytes(), &limit, selector_wire, &scope, &locality];
     with(&crate::authority::ForwardedRequest {
         method: "residence.search",
         fields: &fields,
@@ -391,7 +399,12 @@ pub fn selected_item_blob_with(
     // FIX 7608 slice 4: a copy id reads its source; a marked row is its copy.
     super::selector::secret_projection::released_item_blob(vault, item, |item| {
         let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
-        Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+        match map_get_bytes(&selected.get_map("entities"), &item.to_hex()) {
+            // A carrier its window binds by reference reads as the body it
+            // names (FIX 5532).
+            Some(blob) => super::asset_body::served_row(vault, source, &item, blob),
+            None => Ok(None),
+        }
     })
 }
 
@@ -642,6 +655,8 @@ pub fn promotion_covers_full_window_for(
         }
         copy_embedding_setup_rows(source, &selected)?;
     }
+    // A body reference stands beside each owner the grant kept (FIX 5532).
+    super::asset_body::references::copy_refs_within(source, &selected)?;
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

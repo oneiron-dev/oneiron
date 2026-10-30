@@ -319,10 +319,8 @@ impl Memory<'_> {
             };
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
-                self.vault.verify_write_actor_in_txn(
-                    wtxn,
-                    &crate::WriteActor::new(self.actor, self.actor_class),
-                )?;
+                self.vault
+                    .verify_write_actor_in_txn(wtxn, &self.write_actor())?;
             }
             if !session.is_member_in_txn(wtxn, room, self.actor)? {
                 return Err(MemoryError::new(

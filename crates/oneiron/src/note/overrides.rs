@@ -222,11 +222,8 @@ impl Memory<'_> {
         input: &SetNoteOverridesRequest,
     ) -> MemoryResult<NoteDefaultsView> {
         let note = crate::memory::resolve_entity_ref(self.vault(), &input.note_ref)?;
-        self.vault().set_note_overrides(
-            note,
-            &input.overrides,
-            WriteActor::new(self.actor(), self.actor_class()),
-        )
+        self.vault()
+            .set_note_overrides(note, &input.overrides, self.write_actor())
     }
 
     /// `vault.notes.defaults`: one NOTE's overrides and the defaults its

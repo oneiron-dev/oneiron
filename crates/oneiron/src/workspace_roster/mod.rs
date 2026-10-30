@@ -152,7 +152,7 @@ pub use project::{
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchor,
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchorLink,
     ProjectAuthority, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt,
     ProjectProofVersion, ProjectQuarantine, ProjectRecord, ProjectRole, ProjectRoom,
     ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,
@@ -172,9 +172,10 @@ pub(crate) use project::{
     validate_room_body, verify_existing_leader_chat_turn,
 };
 pub(crate) use project::{
-    PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, capture_before_tear, capture_project_put,
-    check_revision_put, is_project_revision_type, project_revision_type, projects_touched_by_put,
-    rebuild_project_revision_indexes, refresh_project_frontiers, refuse_revision_delete,
+    PROJECT_REVISION_SHORT_ID_PREFIX, ProjectForks, RevisionPut, capture_before_tear,
+    capture_project_put, check_revision_put, is_project_revision_type, project_revision_type,
+    projects_touched_by_put, rebuild_project_revision_indexes, refresh_project_frontiers,
+    refuse_revision_delete,
 };
 #[cfg(feature = "sync")]
 pub(crate) use project::{

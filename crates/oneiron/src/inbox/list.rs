@@ -135,7 +135,9 @@ fn notification_not_found() -> MemoryError {
 enum InboxMarkWriteScope {
     /// The row's recipient markers name the actor, its read lane still reads
     /// the row in the snapshot that writes, and its Grant admits a write at
-    /// the row's own stored position.
+    /// the row's own stored position. A row stored with no position, as a
+    /// NOTIFICATION that reached this node by sync is, takes the mark as a
+    /// local-row act (Engine 09:39, FIX 6552).
     OwnRowLane,
 }
 
@@ -151,7 +153,8 @@ impl InboxMarkWriteScope {
     /// check), and its Grant at the row's stored position, the per-record
     /// proof the content writer runs
     /// (`Vault::authorize_shared_content_write_in_txn`). A row stored with
-    /// no position admits no one here.
+    /// no position is marked on this node alone and asks no position: the
+    /// mark stamps none, as no local re-put does (FIX 6552, FIX 11925).
     fn admits_in(
         self,
         memory: &Memory<'_>,
@@ -185,11 +188,9 @@ impl InboxMarkWriteScope {
                 if !own {
                     return Ok(false);
                 }
-                vault.authorize_shared_content_write_in_txn(
-                    txn,
-                    id,
-                    &crate::WriteActor::new(memory.actor(), memory.actor_class()),
-                )?;
+                if crate::federation::record_scope::has_stored_position(&vault.store, txn, id)? {
+                    vault.authorize_shared_content_write_in_txn(txn, id, &memory.write_actor())?;
+                }
                 Ok(true)
             }
         }
@@ -349,6 +350,8 @@ impl Memory<'_> {
             if mark == NotificationMark::Acked {
                 body.acked_by.insert(caller.clone(), true);
             }
+            // A row stored with no position stays unstamped: the mark is this
+            // node's local re-put (Engine 09:39, FIX 6552; FIX 11925).
             let learned_at = self.vault().put_notification_in_txn(wtxn, &id, &body)?;
             Ok(row_for(id, learned_at, body, &caller))
         })?;

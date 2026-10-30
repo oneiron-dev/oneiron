@@ -39,6 +39,10 @@ pub struct ParagraphJudgment {
     pub labels: SlideReviewLabels,
     pub frontier: [u8; 32],
     pub judged_version: Option<u64>,
+    /// The document's live body when it was asked: an edit to it never
+    /// exported withdraws the paragraphs it changed (FIX 2115).
+    #[serde(default)]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// One typed ask over paragraphs, by their stable block ids.
@@ -73,6 +77,7 @@ impl Vault {
         {
             return Err(invalid("invalid paragraph ask selection"));
         }
+        let judged_live = self.office_body_pin(artifact)?;
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Docx)?;
         let limits = {
             let rtxn = self.store.env.read_txn()?;
@@ -171,6 +176,7 @@ impl Vault {
                 labels: request.labels.clone(),
                 frontier,
                 judged_version: Some(version),
+                judged_live: judged_live.clone(),
             });
         }
         if judgments.is_empty() {

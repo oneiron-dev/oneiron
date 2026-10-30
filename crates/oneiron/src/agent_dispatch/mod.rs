@@ -34,7 +34,8 @@ pub use self::comm::{CommReach, comm_prompt_block};
 mod comm_widen;
 pub(crate) use self::comm_widen::{
     CommWidenDecision, CommWidenQuestion, CommWidenRecipient, CommWidenRequest, CommWidenState,
-    comm_widen_in, comm_widen_recipient_in_txn, erase_comm_widen_actor_in_txn, put_comm_widen_in,
+    comm_widen_children_in, comm_widen_in, comm_widen_recipient_in_txn,
+    erase_comm_widen_actor_in_txn, put_comm_widen_in,
 };
 mod context;
 mod continuation;
@@ -57,7 +58,8 @@ mod launch;
 mod leader_planner;
 mod leader_starter;
 pub use leader_starter::{
-    LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext, LeaderTeamPlanner,
+    LeaderAdvice, LeaderResponsibility, LeaderStarter, LeaderStarterSkills, LeaderTaskContext,
+    LeaderTeamPlanner,
 };
 mod origin;
 pub(crate) use origin::dispatch_origin_conversation;
@@ -69,6 +71,8 @@ mod requester;
 pub use self::requester::{QueuedRequester, RequesterStanding, RequesterWithdrawn};
 mod resident;
 mod room_join;
+mod run_lineage;
+pub(crate) use run_lineage::delegation_lineage_parent_in_txn;
 mod run_objectives;
 mod scope;
 pub(crate) use scope::project_descends_from_in_txn;
@@ -120,8 +124,8 @@ pub use self::budget_hold::{
     BudgetHoldLease, BudgetHoldNotice, BudgetHoldState, HeldAttempt, PartialResultHold,
 };
 pub use self::codec::{
-    agent_dispatch_actor, agent_dispatch_payload_agent_id, decode_agent_dispatch_input,
-    encode_agent_dispatch_input,
+    agent_dispatch_actor, agent_dispatch_payload_agent_id, agent_dispatch_run_actor,
+    decode_agent_dispatch_input, encode_agent_dispatch_input,
 };
 pub(crate) use self::codec::{attempt_task_type_ref, attempt_team_stamp, record_dispatch_input};
 pub use self::dispatch::AgentDispatcher;

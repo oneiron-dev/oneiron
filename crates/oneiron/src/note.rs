@@ -104,8 +104,8 @@ mod tombstone_review;
 mod verbs;
 mod write_gate;
 pub use documents::{
-    NoteAnchor, NoteDocument as NoteProgramDocument, NoteEdit as NoteProgramEdit,
-    NoteEditOutcome as NoteProgramEditOutcome, NoteVersion,
+    NoteAnchor, NoteDocument as NoteProgramDocument, NoteProgramEdit, NoteProgramEditOutcome,
+    NoteVersion,
 };
 pub(crate) use kinds::{COMPACTION_INTENT_NOTE_KIND, LENS_INTENT_NOTE_KIND, descriptor_in_txn};
 pub use kinds::{
@@ -113,6 +113,8 @@ pub use kinds::{
 };
 pub use lifecycle::{NoteLifecycleStatus, NoteLifecycleView, NoteRefRequest, NoteSeal};
 mod overrides;
+#[cfg(feature = "sync")]
+pub(crate) use lifecycle::note_seal_in_txn;
 pub(crate) use lifecycle::{erase_seal_actor_in_txn, note_sealed_in_txn, seal_note_in_txn};
 pub(crate) use overrides::note_defaults_in_txn;
 pub use overrides::{NoteDefaultsView, NoteOverrides, SetNoteOverridesRequest};
@@ -608,7 +610,10 @@ mod document_tests;
 #[cfg(all(test, feature = "sync"))]
 mod sync_tests;
 pub(crate) use document::MAX_NOTE_BYTES;
-pub use document::{NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution};
+pub use document::{
+    NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome, NoteSpanResolution,
+};
+pub use document::{NoteScalarEdit as NoteEdit, NoteScalarEditOutcome as NoteEditOutcome};
 
 #[cfg(test)]
 mod program_tests;

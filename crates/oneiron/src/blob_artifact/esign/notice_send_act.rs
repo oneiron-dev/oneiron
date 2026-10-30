@@ -50,7 +50,8 @@ pub(super) struct RecordedSendAct {
 /// Records the send `request` carries for `document`, in the e-sign sink's
 /// writer right after its `Sent` event. The first act stands; a send whose
 /// admitted call is not on the ledger, or does not match this act, records
-/// nothing.
+/// nothing. FIX 6644: its row is read under the dispatch's
+/// `ledger_identity` when it names one, else its intent ref.
 /// # Errors
 /// A storage failure only.
 pub(super) fn record_send_act_in_txn(
@@ -58,11 +59,12 @@ pub(super) fn record_send_act_in_txn(
     txn: &mut heed::RwTxn<'_>,
     document: EntityId,
     request: &OutboundExecutionRequest<'_>,
+    ledger_identity: Option<&str>,
 ) -> Result<()> {
     if SEND_ACT.contains(&vault.store, txn, &document)? {
         return Ok(());
     }
-    let Some(act) = admitted_send_in(vault, txn, document, request)? else {
+    let Some(act) = admitted_send_in(vault, txn, document, request, ledger_identity)? else {
         return Ok(());
     };
     SEND_ACT.put(&vault.store, txn, &document, &act)
@@ -76,6 +78,7 @@ fn admitted_send_in(
     txn: &heed::RoTxn<'_>,
     document: EntityId,
     request: &OutboundExecutionRequest<'_>,
+    ledger_identity: Option<&str>,
 ) -> Result<Option<NoticeSendAct>> {
     #[derive(Deserialize)]
     struct Admitted {
@@ -86,7 +89,8 @@ fn admitted_send_in(
         #[serde(default)]
         actor_entity_ref: Option<String>,
     }
-    let Ok(attempt) = crate::outbound::outbound_dispatch_attempt_id(request.intent_ref) else {
+    let identity = ledger_identity.unwrap_or(request.intent_ref);
+    let Ok(attempt) = crate::outbound::outbound_dispatch_attempt_id(identity) else {
         return Ok(None);
     };
     let record = match read_intent_for_attempt_in_txn(vault, txn, attempt, 0) {

@@ -222,7 +222,7 @@ impl TurnVadAnnotateResponse {
         ),
         (
             status = 409,
-            description = "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.",
+            description = "Active Gate policy rejected the VAD annotation write; response uses INVALID_STATE with Gate outcome and reason codes. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.",
             body = ApiErrorEnvelope,
             content_type = "application/json"
         ),

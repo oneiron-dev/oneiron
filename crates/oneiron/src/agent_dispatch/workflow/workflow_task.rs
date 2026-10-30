@@ -19,6 +19,7 @@ use crate::agent_dispatch::widen::PreparedParentContext;
 use crate::agent_dispatch::widen_record::invalid;
 use crate::agent_dispatch::workflow_record::{
     DEDUPE, RECORD, WORKFLOW_ATTEMPT_TYPE, WorkflowTaskBinding, dedupe_key_hash, is_wrapper,
+    wrapper_rows_in_txn,
 };
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, DispatchAgent,
@@ -261,8 +262,8 @@ impl AgentDispatcher<'_> {
     ///
     /// The queue's and storage errors.
     pub fn unsettled_workflow_tasks(&self) -> Result<Vec<AttemptId>> {
-        let rows = AttemptQueue::new(self.vault).list()?;
         let txn = self.vault.store.env.read_txn()?;
+        let rows = wrapper_rows_in_txn(self.vault, &txn)?;
         let mut roots = Vec::new();
         for row in rows {
             if row.task_ref.is_none() || !row.state.is_terminal() || !is_wrapper(&row) {

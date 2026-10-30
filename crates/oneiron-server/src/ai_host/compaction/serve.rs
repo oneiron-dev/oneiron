@@ -29,6 +29,7 @@ use oneiron::{BudgetGuard, EntityId, LlmResponse};
 use super::{
     BACKEND_KEY, COMPACTION_RUN, CompactionMeter, ServedCompactionBackend, output_tokens, refused,
 };
+use crate::ai_host::live_lease::LiveLease;
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::models::{RoleCall, RoleRefusal};
 
@@ -213,6 +214,25 @@ impl ServedCompactionBackend {
             .models
             .funded_run(COMPACTION_RUN, guard.clone(), payer)
             .sourced(union_source_rows([sources, home_rows]));
+        // A run's scope lends this call a live lease, as a reader child's
+        // (FIX 11748): its admission meets the room the scope has left now,
+        // siblings' spend included, and its own spend books once.
+        let live = match &self.meter {
+            CompactionMeter::Scope(scope) => {
+                let limit = guard.read().limit_units;
+                Some(LiveLease::new(
+                    &self.vault,
+                    Some(scope.clone()),
+                    guard.clone(),
+                    limit,
+                    0,
+                ))
+            }
+            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => None,
+        };
+        if let Some(live) = &live {
+            live.book_and_revise();
+        }
         let reply = match dispatch {
             Dispatch::Walk => self
                 .handle
@@ -231,9 +251,8 @@ impl ServedCompactionBackend {
                 ))
             }
         };
-        if let CompactionMeter::Scope(scope) = &self.meter
-            && let Err(error) =
-                AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)
+        if let Some(live) = &live
+            && let Err(error) = live.book_rest()
         {
             tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
         }
