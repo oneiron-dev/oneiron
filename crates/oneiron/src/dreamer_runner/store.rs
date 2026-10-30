@@ -601,6 +601,10 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Defers a leased try to `retry_at` as the SAME row (FIX 3863): its
+    /// spend settles, the deferral joins the row's history and the row waits
+    /// scheduled, so a window demoted for months keeps one row, one stamp
+    /// and one scope however often it waits, and its paid steps replay free.
     pub(crate) fn defer_selection(
         &self,
         admitted: &super::DreamerAdmittedAttempt,
@@ -614,32 +618,21 @@ impl<'a> DreamerRunnerStore<'a> {
         }
         self.vault.with_write_txn_grouped(|txn| {
             self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), step_hashes)?;
-            let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
+            self.attempts.requeue_in_txn(
                 txn,
-                crate::attempt_queue::RetryAttempt {
+                crate::attempt_queue::RequeueAttempt {
                     id: source.id,
                     lease_owner: source
                         .lease_owner
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    backoff_until: retry_at,
-                    last_error: Some("consolidation selection deferred".into()),
-                    now: budget.now,
+                    reason: "consolidation selection deferred".into(),
+                    due_at: retry_at,
                 },
             )?;
-            super::authority::stamp_attempt(
-                self.vault,
-                txn,
-                &record,
-                &admitted.status.payload.attempt_type,
-            )?;
-            crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
-                self.vault, txn, source.id, record.id,
-            )?;
-            // The source never runs again; its retry lists afresh.
+            // Its next run lists afresh.
             crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, txn, source.id)?;
-            ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
             Ok(())
         })
     }
