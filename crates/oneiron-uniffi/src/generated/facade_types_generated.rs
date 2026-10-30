@@ -10116,6 +10116,18 @@ pub struct WireRecallScope {
         skip_serializing_if = "Option::is_none"
     )]
     pub project_refs: Option<Vec<String>>,
+    #[serde(
+        rename = "conversation_refs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub conversation_refs: Option<Vec<String>>,
+    #[serde(
+        rename = "person_ref",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub person_ref: Option<String>,
     #[serde(rename = "facet", default, skip_serializing_if = "Option::is_none")]
     pub facet: Option<String>,
     #[serde(rename = "kinds", default, skip_serializing_if = "Option::is_none")]

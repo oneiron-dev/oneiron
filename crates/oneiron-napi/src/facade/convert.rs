@@ -636,6 +636,12 @@ pub(super) fn recall_scope_to_engine(scope: Option<NapiRecallScope>) -> RecallSc
         kinds: scope.kinds,
         // Omitted or empty selects every project the caller reads (FIX 8115).
         project_refs: scope.project_refs.unwrap_or_default(),
+        // Empty adds no narrowing; with `person_ref`, only conversations
+        // selected by both axes remain.
+        conversation_refs: scope.conversation_refs.unwrap_or_default(),
+        // A PERSON selects conversations with at least one live MESSAGE
+        // AuthoredBy them, never conversations that merely mention them.
+        person_ref: scope.person_ref,
         ..Default::default()
     })
 }

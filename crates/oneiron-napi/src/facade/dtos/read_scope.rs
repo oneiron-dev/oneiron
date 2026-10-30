@@ -16,6 +16,12 @@ pub struct NapiRecallScope {
     /// Project audience ids to select from (FIX 8115). Omitted or empty
     /// adds no narrowing to what the caller may read.
     pub project_refs: Option<Vec<String>>,
+    /// Conversation entity refs. Empty adds no narrowing; with `person_ref`,
+    /// only conversations selected by both axes remain.
+    pub conversation_refs: Option<Vec<String>>,
+    /// PERSON entity ref; selects conversations where they authored at least
+    /// one live MESSAGE, never conversations that merely mention them.
+    pub person_ref: Option<String>,
 }
 
 /// One read scope on a receipt: the requested, ceiling, or applied tuple.

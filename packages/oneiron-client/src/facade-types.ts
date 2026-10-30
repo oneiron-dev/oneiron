@@ -1027,7 +1027,7 @@ export type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call
 /** `oneiron::memory::read_selection::RecallWorlds` */
 export type RecallWorlds = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: string; include_base: boolean } | { kind: "worlds"; world_refs: string[]; include_base: boolean }
 /** `oneiron::memory::recall::RecallScope` */
-export type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; facet?: string | null; kinds?: string[] | null }
+export type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; conversation_refs?: string[]; person_ref?: string | null; facet?: string | null; kinds?: string[] | null }
 /** `oneiron_contracts::code_run::vault_read::context_pack::MediaQueryKind` */
 export type MediaQueryKind = "text" | "image" | "audio"
 /** `oneiron_contracts::code_run::vault_read::context_pack::ContextPackMediaQuery` */

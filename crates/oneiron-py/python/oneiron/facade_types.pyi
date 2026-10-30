@@ -2768,6 +2768,8 @@ class RecallScope(TypedDict):
     world_ref: NotRequired[str | None]
     worlds: NotRequired[RecallWorlds | None]
     project_refs: NotRequired[list[str]]
+    conversation_refs: NotRequired[list[str]]
+    person_ref: NotRequired[str | None]
     facet: NotRequired[str | None]
     kinds: NotRequired[list[str] | None]
 MediaQueryKind = Literal["text", "image", "audio"]

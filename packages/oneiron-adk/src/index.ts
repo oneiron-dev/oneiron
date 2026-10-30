@@ -32,6 +32,8 @@ export const recallOptions = z.object({
     worldRef: z.string().optional(),
     facet: z.string().optional(),
     kinds: z.array(z.string()).optional(),
+    conversationRefs: z.array(z.string()).optional(),
+    personRef: z.string().optional(),
   }).strict().optional(),
   limit: z.number().optional(),
   format: z.enum(["json", "yaml", "toon", "md", "txt"]).optional(),

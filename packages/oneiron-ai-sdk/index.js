@@ -37,6 +37,7 @@ export function memoryTools(memory) {
           format: { type: "string", enum: ["json", "yaml", "toon", "md", "txt"] },
           scope: { type: "object", additionalProperties: false, properties: {
             worldRef: { type: "string" }, facet: { type: "string" },
+            conversationRefs: { type: "array", items: { type: "string" } }, personRef: { type: "string" },
           } },
         } },
       }, ["query"]),

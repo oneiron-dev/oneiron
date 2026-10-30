@@ -710,6 +710,12 @@ pub struct RecallScope {
     /// Registry kinds to return; unset returns every kind but
     /// conversations, sessions, facets and worlds.
     pub kinds: Option<Vec<String>>,
+    /// Conversation entity refs. Empty adds no narrowing; with `person_ref`,
+    /// only conversations selected by both axes remain.
+    pub conversation_refs: Option<Vec<String>>,
+    /// PERSON entity ref; selects conversations where they authored at least
+    /// one live MESSAGE, never conversations that merely mention them.
+    pub person_ref: Option<String>,
 }
 
 /// A recall's media query (OF-370): bytes the server embeds into one

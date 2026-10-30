@@ -277,6 +277,10 @@ export type RecallScope = {
   kinds?: string[]
   /** Project audience ids to select from. Unset or empty adds no narrowing to what the caller may read. */
   projectRefs?: string[]
+  /** Conversation entity refs. Empty adds no narrowing; with `personRef`, only conversations selected by both axes remain. */
+  conversationRefs?: string[]
+  /** PERSON entity ref; selects conversations where they authored at least one live MESSAGE, never conversations that merely mention them. */
+  personRef?: string
 }
 
 /** A recall's media query (OF-370): bytes the server embeds into one declared space, searched as that space's list beside the query's. An embedded client returns `MODEL_UNAVAILABLE`. */

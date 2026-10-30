@@ -531,7 +531,7 @@ declare namespace Sdk {
   type CommitReceipt = { claim_short_id: string; approval: string; superseded_short_id?: string | null; receipt_ref: string; claim?: RecordRef | null; superseded?: RecordRef | null };
   type RecallEffort = "light" | "medium" | "high" | "xhigh" | "max" | "call";
   type RecallWorlds = { kind: "all" } | { kind: "base" } | { kind: "world"; world_ref: string; include_base: boolean } | { kind: "worlds"; world_refs: string[]; include_base: boolean };
-  type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; facet?: string | null; kinds?: string[] | null };
+  type RecallScope = { world_ref?: string | null; worlds?: RecallWorlds | null; project_refs?: string[]; conversation_refs?: string[]; person_ref?: string | null; facet?: string | null; kinds?: string[] | null };
   type MediaQueryKind = "text" | "image" | "audio";
   type ContextPackMediaQuery = { space: string; mime: string; bytes_b64: string; kinds?: MediaQueryKind[] };
   type QueryAffect = { valence: number; arousal: number; dominance: number };
