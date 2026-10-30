@@ -62,8 +62,7 @@ impl Vault {
         let copies = match slip.transferred_bounds() {
             None => self.removal_exports_in_txn(&txn, person, now)?,
             Some(bounds) => {
-                let admits = transferred_admission(bounds, now);
-                self.projected_removal_exports_in_txn(&txn, person, now, &admits)?
+                self.transferred_exports_in_txn(&mut txn, slip, person, None, now, bounds)?
             }
         };
         let holder = slip.current_binding_key();

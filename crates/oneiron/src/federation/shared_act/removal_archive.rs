@@ -9,6 +9,8 @@
 //! input does not read (the positions, the archive's manifest, members or
 //! rows) answers the stored copy as it did before projection existed
 //! (`ISOLATION_NEW_CHECK_ERROR_MODE`); bounds that were judged still bound.
+//! A one-shot transfer is served once (FIX-LIST 10773): the row keeps each
+//! slip an archive door spent so, on every archive of its removed Owner.
 
 use std::collections::BTreeSet;
 
@@ -54,11 +56,19 @@ pub(crate) struct FrozenPosition {
 pub(crate) struct StoredRemovalExport {
     pub(crate) copy: RemovalExportCopy,
     positions: Vec<u8>,
+    /// The one-shot transferred slips an archive door already served, by
+    /// slip id (FIX-LIST 10773): each is kept on every archive of the
+    /// removed Owner, so it takes none of them again.
+    spent_slips: BTreeSet<[u8; 32]>,
 }
 
 impl StoredRemovalExport {
     pub(super) fn new(copy: RemovalExportCopy, positions: Vec<u8>) -> Self {
-        Self { copy, positions }
+        Self {
+            copy,
+            positions,
+            spent_slips: BTreeSet::new(),
+        }
     }
 
     /// The copy `admits` leaves its holder, judged record by record on the
@@ -155,6 +165,41 @@ impl Vault {
             }
         }
         Ok(copies)
+    }
+
+    /// Whether an archive door already served the one-shot transferred slip
+    /// `slip_id`: any of `member`'s archives keeps its spend (FIX-LIST
+    /// 10773).
+    pub(crate) fn removal_archive_slip_spent_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        member: EntityId,
+        slip_id: &[u8; 32],
+    ) -> Result<bool> {
+        let prefix = removal_export_key(&member.to_hex(), "");
+        Ok(REMOVAL_EXPORT
+            .scan_from(&self.store, txn, prefix.as_bytes())?
+            .iter()
+            .any(|(_, stored)| stored.spent_slips.contains(slip_id)))
+    }
+
+    /// Spends the one-shot transferred slip `slip_id` on every archive of
+    /// `member`, in the writer whose answer served it (FIX-LIST 10773).
+    pub(crate) fn spend_removal_archive_slip_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        member: EntityId,
+        slip_id: [u8; 32],
+    ) -> Result<()> {
+        let prefix = removal_export_key(&member.to_hex(), "");
+        for (row_key, mut stored) in
+            REMOVAL_EXPORT.scan_from(&self.store, txn, prefix.as_bytes())?
+        {
+            if stored.spent_slips.insert(slip_id) {
+                REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
+            }
+        }
+        Ok(())
     }
 
     /// [`Self::removal_export_in_txn`] for a transferred holder, as
