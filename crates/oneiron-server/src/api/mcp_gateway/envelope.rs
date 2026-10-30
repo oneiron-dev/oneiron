@@ -252,7 +252,11 @@ impl McpCallContext {
             .auth
             .as_ref()
             .is_some_and(crate::auth::CoreAuth::is_owner_grade);
-        oneiron::memory::HomeRecallCaller::admitted(owner_grade, self.forwarded.clone())
+        oneiron::memory::HomeRecallCaller::admitted(
+            owner_grade,
+            self.forwarded.clone(),
+            self.actor.locality(),
+        )
     }
 
     /// The closed metadata envelope for one result on this endpoint.

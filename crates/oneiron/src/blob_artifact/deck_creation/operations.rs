@@ -1,5 +1,6 @@
 //! Credential-bound admission; every write rechecks its inputs in its writer.
 use super::*;
+use crate::EntityId;
 use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::consent::AuthenticatedOwner;
@@ -9,7 +10,6 @@ use crate::edit_roundtrip::deck_create::{
 use crate::memory::{Memory, MemoryError, MemoryResult, resolve_entity_ref};
 use crate::secret_custody::SecretSight;
 use crate::typed_body::LiftedSources;
-use crate::{EntityId, WriteActor};
 use oneiron_docedit::design_plan::Brief;
 use oneiron_docedit::emit::Names;
 use serde::de::DeserializeOwned;
@@ -269,11 +269,7 @@ impl Memory<'_> {
         self.with_verified_actor_write_txn(|txn| {
             self.admit_outline_settle(owner, input, note, &lane, txn)?;
             self.vault()
-                .keep_deck_outline_in_txn(
-                    txn,
-                    note,
-                    WriteActor::new(self.actor(), self.actor_class()),
-                )
+                .keep_deck_outline_in_txn(txn, note, self.write_actor())
                 .map_err(creation_error)
         })
     }
@@ -458,7 +454,7 @@ impl Memory<'_> {
                         run_ref: &input.run_ref,
                         made_by: Some(self.actor()),
                         trigger: input.trigger.clone(),
-                        actor: WriteActor::new(self.actor(), self.actor_class()),
+                        actor: self.write_actor(),
                     },
                 )
                 .map_err(creation_error)?;
