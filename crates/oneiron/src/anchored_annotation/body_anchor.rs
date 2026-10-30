@@ -12,7 +12,9 @@
 //! shape by its node id ([`super::deck_anchor`], FIX 12264). Deleting the
 //! spot detaches the comment to the Unattached list. The body anchor is a hint:
 //! a frontier that does not read leaves the thread on its version pin, with
-//! a warning, for the next pass.
+//! a warning, for the next pass. A stamp that fails with every read in hand
+//! is remembered, and the pass reads nothing for that thread until its head,
+//! the body's head or the newest export moves ([`super::failed_stamps`]).
 
 use std::collections::HashMap;
 
@@ -21,6 +23,7 @@ use oneiron_docedit::xlsx_body::{XlsxAxis, XlsxAxisEdit};
 use super::anchor_text::{docx_blocks, remap_span};
 use super::codec::ThreadHead;
 use super::deck_anchor::{deck_body_locator, deck_file_locator, move_deck_locator};
+use super::failed_stamps::FailedStampKey;
 use super::model::{
     Anchor, AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOp, ReanchorOutcome,
 };
@@ -61,6 +64,17 @@ enum Effect {
     Landed(u64),
     /// The spot was deleted; the comment detached at this version.
     Detached(u64),
+}
+
+/// What stamping a thread's body anchor found.
+enum Stamp {
+    /// The unit's body anchor.
+    Held(BodyAnchor),
+    /// Every read came back and the body does not hold the unit as its
+    /// version does: the same reads answer the same.
+    Missed,
+    /// A body or version did not read, or the body never held the version.
+    Retry,
 }
 
 impl Vault {
@@ -189,21 +203,43 @@ impl Vault {
             return Ok((Vec::new(), 0));
         };
         let export = self.office_body_latest_export_in_txn(txn, artifact)?;
+        let (vault, latest) = (
+            *self.vault_id().as_bytes(),
+            export.as_ref().map(|(version, _)| *version),
+        );
         let (mut units, mut filed) = (UnitsAt::new(), FiledAt::new());
         let mut unread = 0_u64;
         let mut plans = Vec::new();
         for thread in threads {
             let stamp = match &thread.anchor.body {
                 Some(body) => Some((body.clone(), false)),
-                None => self
-                    .stamp_in_txn(
+                None => {
+                    // A stamp that failed on these same inputs fails again:
+                    // the pass reads no body or version for it.
+                    let key = FailedStampKey::new(vault, artifact, &thread, &head, latest);
+                    if key.failed_before() {
+                        continue;
+                    }
+                    match self.stamp_in_txn(
                         txn,
                         (artifact, head.as_slice()),
                         &thread.anchor,
                         (&mut units, &mut filed),
                         &mut unread,
-                    )
-                    .map(|body| (body, true)),
+                    ) {
+                        Stamp::Held(body) => Some((body, true)),
+                        Stamp::Missed => {
+                            tracing::debug!(
+                                thread = %thread.thread_id.to_hex(),
+                                "the body does not hold the comment's unit as its version does; \
+                                 the pass skips it until the comment, the body or an export moves",
+                            );
+                            key.remember();
+                            None
+                        }
+                        Stamp::Retry => None,
+                    }
+                }
             };
             let Some((body, stamped)) = stamp else {
                 continue;
@@ -242,25 +278,28 @@ impl Vault {
         anchor: &Anchor,
         (units, filed): (&mut UnitsAt, &mut FiledAt),
         unread: &mut u64,
-    ) -> Option<BodyAnchor> {
-        let frontier = self
-            .office_body_frontier_of_version_in_txn(txn, artifact, anchor.version)
-            .unwrap_or_else(|error| {
+    ) -> Stamp {
+        let read = self.office_body_frontier_of_version_in_txn(txn, artifact, anchor.version);
+        let frontier = match read {
+            Ok(Some(frontier)) => frontier,
+            Ok(None) => return Stamp::Retry,
+            Err(error) => {
                 warn_unread(artifact, &error, unread);
-                None
-            })?;
+                return Stamp::Retry;
+            }
+        };
         self.load_units(txn, artifact, &frontier, units, unread);
         // A deck's file ids are read from the deck bound to that version.
         if matches!(anchor.locator, Locator::Pptx { .. }) {
             self.load_units(txn, artifact, head, units, unread);
         }
         let held = match (units_at(units, &frontier), &anchor.locator) {
+            (None, _) => return Stamp::Retry,
             (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { para_path, .. }) => {
                 self.load_filed(txn, artifact, anchor.version, filed, unread);
-                let filed = filed
-                    .get(&anchor.version)
-                    .and_then(Option::as_deref)
-                    .unwrap_or_default();
+                let Some(Some(filed)) = filed.get(&anchor.version) else {
+                    return Stamp::Retry;
+                };
                 text_of(blocks, para_path)
                     .is_some_and(|text| text_of(filed, para_path) == Some(text))
             }
@@ -269,15 +308,23 @@ impl Vault {
             }
             (Some(OfficeBodyUnits::Pptx(deck)), Locator::Pptx { .. }) => {
                 let head = units_at(units, head);
-                let locator = deck_body_locator(deck, head, anchor.version, &anchor.locator)?;
-                return Some(BodyAnchor { frontier, locator });
+                return match deck_body_locator(deck, head, anchor.version, &anchor.locator) {
+                    Some(locator) => Stamp::Held(BodyAnchor { frontier, locator }),
+                    // A head deck that did not read may yet bind the version.
+                    None if head.is_none() => Stamp::Retry,
+                    None => Stamp::Missed,
+                };
             }
             _ => false,
         };
-        held.then(|| BodyAnchor {
-            frontier,
-            locator: anchor.locator.clone(),
-        })
+        if held {
+            Stamp::Held(BodyAnchor {
+                frontier,
+                locator: anchor.locator.clone(),
+            })
+        } else {
+            Stamp::Missed
+        }
     }
 
     fn load_units(
