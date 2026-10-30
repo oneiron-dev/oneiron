@@ -1076,6 +1076,8 @@ export class Oneiron {
         tradeoff_asks: Object.assign((input: Facade.EmptyRequest = {}): Facade.SkillOptimizeTradeoffAskView[] => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsks(input) as Facade.SkillOptimizeTradeoffAskView[]), {
           /** Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant. */
           pick: (input: Facade.SkillOptimizeTradeoffPickRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsksPick(input) as Facade.SkillOptimizeResultView),
+          /** The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference. */
+          resolve: (input: Facade.SkillOptimizeTradeoffResolveRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsksResolve(input) as Facade.SkillOptimizeResultView),
         }),
       },
       governance: {
