@@ -14,6 +14,11 @@
 //! conversion fails typed only when the interval actually emitted has no
 //! half-open representation.
 //!
+//! A floating or all-day EVENT names civil time, not an instant: it occupies
+//! the span its civil start and exclusive end cover in some zone
+//! (`CalendarEventRow::wall_span`), so an all-day EVENT keeps its whole day
+//! busy wherever its owner reads it (FIX 7844).
+//!
 //! Recurrence is a deferred leg. ONE-1785 (CAL-03) lands after this ticket, so
 //! on the 1791 baseline the union covers non-recurring busy occurrences only;
 //! when `expand_window` exists, series masters expand inside the query range
