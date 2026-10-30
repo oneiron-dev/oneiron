@@ -28,6 +28,7 @@ pub(super) const RULE_KEY_TAG: &[u8; 5] = b"rule\x00";
 pub(super) const NOTICE_KEY_TAG: &[u8; 7] = b"notice\x00";
 pub(super) const RATE_KEY_TAG: &[u8; 5] = b"rate\x00";
 pub(super) const CACHE_KEY_TAG: &[u8; 6] = b"cache\x00";
+pub(super) const PROPOSAL_KEY_TAG: &[u8; 9] = b"proposal\x00";
 
 /// One activated rule row. Key: `"rule\0"` + hash32 (the row id digest).
 pub(super) const RULE: SideTable<([u8; 5], [u8; 32]), BookingAntiAbuseRuleRow, Raw> =
@@ -36,6 +37,12 @@ pub(super) const RULE: SideTable<([u8; 5], [u8; 32]), BookingAntiAbuseRuleRow, R
 /// One owner-visible activation notice. Key: `"notice\0"` + hash32 (the row id
 /// + version digest).
 pub(super) const NOTICE: SideTable<([u8; 7], [u8; 32]), String, Raw> =
+    SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
+
+/// One retained rule change awaiting its holder (FIX 9627). Key:
+/// `"proposal\0"` + hash32 (the proposed row's version hash, the digest the
+/// owner's approve-once press names).
+pub(super) const RULE_PROPOSAL: SideTable<([u8; 9], [u8; 32]), BookingAntiAbuseRuleRow, Raw> =
     SideTable::new(&side_table::BOOKING_ANTI_ABUSE);
 
 impl crate::side_table::RawValue for BookingAntiAbuseRuleRow {
