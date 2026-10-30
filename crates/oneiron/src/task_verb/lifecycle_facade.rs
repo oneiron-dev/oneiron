@@ -15,6 +15,7 @@ use super::create_validation::{
     standard_body_in_txn, task_body_in_txn,
 };
 use super::route_receipts::{TaskCreateReceipt, TaskResultInput, TaskStartedReceipt};
+use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::TaskAssignee;
 use super::wire_encode::encode_task_verb_body;
@@ -342,6 +343,11 @@ impl Memory<'_> {
                 self.vault().store.clock.now_recorded_at(),
                 owner,
             )?;
+        }
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement, unless this surface keeps no record.
+        if self.keeps_lifecycle() {
+            anchor_kept_review_in_txn(self.vault(), wtxn, task_ref, None)?;
         }
         // The routing projection counts this settlement on the folds whose
         // runs worked this TASK before it settled (FIX 11618).
