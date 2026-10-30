@@ -288,6 +288,7 @@ pub(super) fn done_part_rows(
     let mut done = Vec::new();
     for (request, rows) in part_sets(map) {
         let gone = KeptExportOutput::request_rows_done(fold, &request, fenced)
+            || fold.export_supplement_imported(&request)
             || match join(map, &request) {
                 Joined::Copy(output) => output.row_done(fold, fenced),
                 Joined::Waiting => false,
