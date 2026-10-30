@@ -45,10 +45,9 @@ pub(crate) fn folded_vault_id_of_records(
     let Some(pin_row) = adopted_pin else {
         return Ok(fold_authority_log(&entries).vault_id);
     };
-    let adopted = match crate::authority::checkpoint_adopt::verified_adoption_of_rows(
-        pin_row,
-        adopted_image,
-    ) {
+    let verified =
+        crate::authority::checkpoint_adopt::verified_adoption_of_rows(pin_row, adopted_image);
+    let adopted = match verified {
         Ok(adopted) => adopted,
         // A pin that does not verify, or names no image here, folds as the
         // paired read did before it took the pin: from the records alone.
