@@ -19,6 +19,7 @@ use super::normalize_keys::{
     normalize_non_blank, normalize_thread_id, optional_section_text, section_references,
     thread_id_from_payload_url,
 };
+use super::page_text::{conversation_link_names, matches_any_name};
 use super::verified_send::receipt_error_code;
 use super::{
     DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, LINKEDIN_CHANNEL,
@@ -319,6 +320,7 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
             let messages = conversation_messages_from_tool_output(
                 &conversation_output,
                 Some(&pending.thread_id),
+                Some(&self.config.receiving_address_or_handle),
             )?;
             let message_count = messages.len();
             let handled = pending.handled_messages.min(message_count);
@@ -508,9 +510,15 @@ fn linkedin_tool_failure(tool: &'static str, err: &str) -> Error {
     }
 }
 
+/// The messages of a `get_conversation` output, in page order. With a
+/// `seat_key`, a message the output shows the seat sent is left out
+/// (FIX 12328): one whose `sender` is the seat's key, or a page-text turn
+/// headed by a name a link to the seat's own profile carries. A seat's own
+/// reply is never an inbound message.
 pub(super) fn conversation_messages_from_tool_output(
     output: &Value,
     fallback_thread_id: Option<&str>,
+    seat_key: Option<&str>,
 ) -> Result<Vec<LinkedInConversationMessage>> {
     let payload = mcp_payload(output)?;
     let conversation_references = section_references(&payload, "conversation");
@@ -540,7 +548,15 @@ pub(super) fn conversation_messages_from_tool_output(
     {
         messages = fallback_conversation_messages(&thread_id, conversation_text)?;
     }
-    Ok(messages)
+    if let Some(seat_key) = seat_key {
+        let (seat_names, _) = conversation_link_names(&payload, seat_key);
+        messages.retain(|(sender, _)| {
+            sender
+                .as_deref()
+                .is_none_or(|sender| sender != seat_key && !matches_any_name(&seat_names, sender))
+        });
+    }
+    Ok(messages.into_iter().map(|(_, message)| message).collect())
 }
 
 pub(super) fn message_in_backfill_window(

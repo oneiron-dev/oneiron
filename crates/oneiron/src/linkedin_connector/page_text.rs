@@ -48,16 +48,14 @@ pub(super) fn page_text_occurrences(
         return None;
     }
     let page = optional_section_text(&payload, "conversation").ok()??;
-    let counterparties = counterparty_names(&payload, self_key);
+    let (_, counterparties) = conversation_link_names(&payload, self_key);
     Some(
         sender_turns(page)
             .into_iter()
             .filter(|turn| {
-                turn.sender.as_deref().is_none_or(|sender| {
-                    !counterparties
-                        .iter()
-                        .any(|name| name.eq_ignore_ascii_case(sender))
-                })
+                turn.sender
+                    .as_deref()
+                    .is_none_or(|sender| !matches_any_name(&counterparties, sender))
             })
             .map(|turn| {
                 conversation_message_occurrence_count(&turn.lines.join("\n"), &plan.message_text)
@@ -66,25 +64,46 @@ pub(super) fn page_text_occurrences(
     )
 }
 
-/// The names the page's conversation links carry, less those of links to
-/// the seat's own profile: every name a turn of another member is headed by.
-fn counterparty_names(payload: &Value, self_key: &str) -> Vec<String> {
+/// The names the page's conversation links carry, split by whom they link
+/// to: first those of links to the seat `self_key`'s own profile, the names
+/// the seat's own turns are headed by; then every other, the names a turn
+/// of another member is headed by.
+pub(super) fn conversation_link_names(
+    payload: &Value,
+    self_key: &str,
+) -> (Vec<String>, Vec<String>) {
     let own_member = self_key
         .strip_prefix(LINKEDIN_MEMBER_KEY_PREFIX)
         .unwrap_or(self_key);
-    section_references(payload, "conversation")
-        .into_iter()
-        .filter(|reference| {
-            reference
-                .get("url")
-                .and_then(Value::as_str)
-                .and_then(profile_member)
-                .is_none_or(|member| !member.eq_ignore_ascii_case(own_member))
-        })
-        .filter_map(|reference| reference.get("text").and_then(Value::as_str))
-        .map(normalize_whitespace)
-        .filter(|name| !name.is_empty())
-        .collect()
+    let mut seat = Vec::new();
+    let mut others = Vec::new();
+    for reference in section_references(payload, "conversation") {
+        let Some(name) = reference
+            .get("text")
+            .and_then(Value::as_str)
+            .map(normalize_whitespace)
+            .filter(|name| !name.is_empty())
+        else {
+            continue;
+        };
+        let links_to_seat = reference
+            .get("url")
+            .and_then(Value::as_str)
+            .and_then(profile_member)
+            .is_some_and(|member| member.eq_ignore_ascii_case(own_member));
+        if links_to_seat {
+            seat.push(name);
+        } else {
+            others.push(name);
+        }
+    }
+    (seat, others)
+}
+
+/// Whether `sender`, a turn's heading, is one of `names`.
+pub(super) fn matches_any_name(names: &[String], sender: &str) -> bool {
+    let sender = normalize_whitespace(sender);
+    names.iter().any(|name| name.eq_ignore_ascii_case(&sender))
 }
 
 /// A page's sender turns in page order. A line followed by a time label

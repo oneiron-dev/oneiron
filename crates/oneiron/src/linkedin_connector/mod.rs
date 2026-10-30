@@ -504,7 +504,7 @@ impl LinkedInMcpConnectorAdapter {
         received_at: u64,
         backfill_window_secs: u64,
     ) -> Result<Vec<LinkedInConversationMessageEvent>> {
-        let messages = conversation_messages_from_tool_output(output, None)?;
+        let messages = conversation_messages_from_tool_output(output, None, None)?;
         self.normalize_conversation_messages(messages, received_at, backfill_window_secs)
     }
 
