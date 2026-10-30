@@ -17,8 +17,8 @@
 //! - **grant**: a standing reveal grant for the key's class to one agent
 //!   (the 2a bound: that connection × that class × a project);
 //! - **not a secret**: the owner overrules the scan. A masked span in a
-//!   record's body gets its value back, a file's mark drops the key, and the
-//!   custody record is revoked. The value stays a kept value of that record
+//!   record's body or text field gets its value back, a file's mark drops
+//!   the key, and the custody record is revoked. The value stays a kept value of that record
 //!   ([`KeptValues`]): the write door no longer reads it as a hit there.
 //!
 //! A batch that masks many keys in one record raises one notice for it. The
@@ -52,7 +52,8 @@ pub use self::page::{FoundKeyCursor, FoundKeyNoticePage};
 pub const NOTIFICATION_PRODUCER_FOUND_KEY: &str = "secret.found_key";
 
 /// The most due records one write's commit boundary raises notices for; the
-/// rest wait for the next write.
+/// rest wait for the next write, or the housekeeping drain
+/// ([`raise_found_key_notices_page`]).
 const NOTICES_PER_WRITE: usize = 64;
 
 /// The scan's reason codes share this prefix; a key's kind is what follows.
@@ -253,6 +254,27 @@ pub(crate) fn found_key_notices_due_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Re
     Ok(DUE.iter_from(&vault.store, txn, &[])?.next().is_some())
 }
 
+/// Raises the notices of the next [`NOTICES_PER_WRITE`] records left due, in
+/// a write of their own: the housekeeping drain for a vault that goes quiet
+/// with more due than one write raises (FIX 2648). That write carries nothing
+/// else, so its commit boundary raises them
+/// ([`raise_found_key_notices_in_txn`]). Returns how many records the page
+/// took and whether any is still due; with none due it takes no write.
+pub(crate) fn raise_found_key_notices_page(vault: &Vault) -> Result<(usize, bool)> {
+    if !found_key_notices_due_in_txn(vault, &vault.store.env.read_txn()?)? {
+        return Ok((0, false));
+    }
+    let page = vault.with_write_txn_grouped(|wtxn| {
+        Ok(DUE
+            .iter_from(&vault.store, wtxn, &[])?
+            .take(NOTICES_PER_WRITE)
+            .collect::<Result<Vec<_>>>()?
+            .len())
+    })?;
+    let more = found_key_notices_due_in_txn(vault, &vault.store.env.read_txn()?)?;
+    Ok((page, more))
+}
+
 /// Raises the needs-you notice of each record left due, one inbox Ask per
 /// owner, at a write's commit boundary. A write under an actor's in-flight
 /// binding raises none: the next write does.
@@ -317,6 +339,19 @@ pub(crate) fn found_key_actions_in_txn(
                 .map(|key| key.settled.as_ref().map(|settled| settled.action))
                 .collect()
         }))
+}
+
+/// The custody record of each key a mask lifted out of `record`, in the
+/// order they were found: what an erase of a row outside the entity tables
+/// revokes (FIX 6710).
+pub(super) fn found_key_custody_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    record: &EntityId,
+) -> Result<Vec<EntityId>> {
+    Ok(FOUND
+        .get(store, txn, record)?
+        .map_or_else(Vec::new, |found| found.keys.iter().map(|key| key.custody).collect()))
 }
 
 /// The values the owner ruled no secret, by record: the write door reads
