@@ -291,5 +291,9 @@ name = "sync_memory"
 harness = false
 required-features = ["sync"]
 
+[[bench]]
+name = "agent_verb_rows_replay"
+harness = false
+
 [lints]
 workspace = true
