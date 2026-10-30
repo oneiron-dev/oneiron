@@ -572,7 +572,9 @@ impl RunGuests {
                 }
             };
         let held = self.take_held_press();
-        let hook_pre = oneiron::runtime_hooks::VerbHookPreSnapshot::from_pre(&hooks);
+        let hook_pre = held
+            .as_ref()
+            .and_then(|_| oneiron::runtime_hooks::VerbHookPreSnapshot::from_pre(&hooks));
         let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         });
