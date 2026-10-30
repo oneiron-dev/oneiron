@@ -34,7 +34,8 @@ use axum::routing::{get, post};
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
-    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
+    OwnerAttestedManifestQualifier, ProbeManifestQualifier, ResolvedConnectorManifest,
+    SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
@@ -73,6 +74,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/connectors/setup", get(setup))
         .route("/connectors/slate/accept", post(accept))
         .route("/connectors/qualify", post(qualify))
+        .route("/connectors/attest", post(attest))
         .route("/connectors/refresh", post(refresh))
         .route("/connectors/enabled", post(enabled))
         .route("/connectors/proxy", post(proxy))
@@ -129,6 +131,12 @@ pub(crate) struct QualifyRequest {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub(crate) struct AttestRequest {
+    pub(crate) connector: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 struct RefreshRequest {
     connector: String,
     /// A new tool's data class and spend, by tool name. A tool left out
@@ -167,6 +175,9 @@ struct Registered {
     status: &'static str,
     protocol_revision: Option<String>,
     slate: SlateView,
+    /// What registration took on the connector's word and could not check
+    /// (TP4, FIX 2607); empty when it took nothing.
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -375,6 +386,9 @@ fn register_connector(
         status: record.status.as_str(),
         protocol_revision: record.protocol_revision,
         slate: SlateView::new(vault, slate_id, &slate)?,
+        warnings: host::self_declared_hints_warning(&discovery.tools)
+            .into_iter()
+            .collect(),
     })
 }
 
@@ -545,16 +559,75 @@ pub(crate) fn qualify_connector(
 
 /// Stages the resolved manifest under the suite, then runs the suite again
 /// to activate the key: two full runs on the one surface the owner stamped.
-fn probe(
+/// `POST /v1/owner/connectors/attest`: CONNECTOR-QUALIFY = A (owner ruling
+/// 2026-10-30 05:52 JST). The owner attests a pending connector the probe
+/// suite cannot grade (one that returns no `oneiron/probe` evidence). Its
+/// tools are listed again and must match the slate he stamped; the manifest
+/// stages under his attestation and the key activates with an
+/// owner-attested receipt. Owner-only: no agent verb reaches it, and
+/// `/qualify` stays the default.
+async fn attest(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<AttestRequest>,
+) -> OwnerReply<KeyView> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let reply = blocking(move || attest_connector(&server, &owner, &request)).await?;
+    Ok(Json(reply))
+}
+
+fn attest_connector(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &AttestRequest,
+) -> OwnerResult<KeyView> {
+    let vault = server.vault();
+    let (name, endpoint) = installed(server, &request.connector)?;
+    let catalog = catalog(vault, &name)?;
+    let revision =
+        catalog.record.protocol_revision.clone().ok_or_else(|| {
+            OwnerError::Invalid("the connector pins no protocol revision".to_owned())
+        })?;
+    if catalog.record.status != ConnectorKeyStatus::Pending {
+        return Err(OwnerError::Refused(
+            "the connector is already admitted".to_owned(),
+        ));
+    }
+    let resolved =
+        host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
+            let client = host::client().map_err(engine)?;
+            listed_as_stamped(vault, &catalog, &client, &endpoint, &revision, auth)
+        })
+        .map_err(engine)??;
+    let now = unix_seconds_now();
+    vault
+        .stage_connector_manifest(
+            &catalog.key,
+            resolved,
+            &revision,
+            &OwnerAttestedManifestQualifier { owner },
+            now,
+        )
+        .map_err(engine)?;
+    vault
+        .attest_connector_key(owner, &catalog.key, &revision, now)
+        .map_err(engine)?;
+    let approved = approve(vault, owner, catalog.key)?;
+    Ok(KeyView::new(catalog.key, approved)?)
+}
+
+/// The connector's tools, listed again at `revision` and resolved, when
+/// they are still the ones the owner stamped on its slate.
+fn listed_as_stamped(
     vault: &Vault,
     catalog: &Catalog,
+    client: &reqwest::blocking::Client,
     endpoint: &str,
     revision: &str,
     auth: Option<&HeaderValue>,
-    kit: &QualificationKit,
-) -> OwnerResult<()> {
-    let client = host::client().map_err(engine)?;
-    let discovery = host::discover(&client, endpoint, auth, Some(revision)).map_err(engine)?;
+) -> OwnerResult<ResolvedConnectorManifest> {
+    let discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
     let (_, slate) = slate_of(vault, &catalog.record)?;
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let classes = slate
@@ -577,6 +650,19 @@ fn probe(
             "the connector's tools changed since it was registered".to_owned(),
         ));
     }
+    Ok(resolved)
+}
+
+fn probe(
+    vault: &Vault,
+    catalog: &Catalog,
+    endpoint: &str,
+    revision: &str,
+    auth: Option<&HeaderValue>,
+    kit: &QualificationKit,
+) -> OwnerResult<()> {
+    let client = host::client().map_err(engine)?;
+    let resolved = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
     let connector = host::HttpQualificationConnector::new(
         &client,
         endpoint,

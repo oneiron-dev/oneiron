@@ -54,6 +54,17 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_CONSUME)),
             (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
         ]),
+        // `grant_ref` rides as 32-hex, as a slip's claims name it.
+        AuthorityOp::SlipGrantRevoke { grant_ref } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OP_KIND_SLIP_GRANT_REVOKE),
+            ),
+            (
+                Value::from(SLIP_KEY_GRANT_REF),
+                Value::from(grant_ref.to_hex()),
+            ),
+        ]),
         AuthorityOp::Genesis {
             device,
             genesis_nonce,

@@ -279,6 +279,10 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::memory::GrantAskRequest>(),
             ),
             (
+                "self.grants.asked",
+                crate::code_run::vault_read::request_schema::<crate::memory::GrantAskedRequest>(),
+            ),
+            (
                 "vault.companions.access_requests.answer",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
@@ -982,6 +986,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 "vault.turn_programs.disarm",
                 crate::code_run::vault_read::request_schema::<
                     crate::dreamer_runner::DisarmTurnProgram,
+                >(),
+            ),
+            (
+                "vault.turn_programs.rebind",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dreamer_runner::TurnProgramRebindRequest,
                 >(),
             ),
             (
@@ -10744,6 +10754,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "self.grants.asked" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.companions.access_requests.answer" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -11720,6 +11737,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.turn_programs.disarm" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.turn_programs.rebind" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -19007,6 +19031,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "self.grants.ask" => {
             let _input: crate::memory::GrantAskRequest = decode(value.clone())?;
         }
+        "self.grants.asked" => {
+            let _input: crate::memory::GrantAskedRequest = decode(value.clone())?;
+        }
         "vault.companions.access_requests.answer" => {
             let _input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest =
                 decode(value.clone())?;
@@ -19466,6 +19493,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.turn_programs.disarm" => {
             let _input: crate::dreamer_runner::DisarmTurnProgram = decode(value.clone())?;
+        }
+        "vault.turn_programs.rebind" => {
+            let _input: crate::dreamer_runner::TurnProgramRebindRequest = decode(value.clone())?;
         }
         "self.saved_query.create" => {
             let _input: crate::campaign::surface::SavedQueryCreateRequest = decode(value.clone())?;
@@ -23151,6 +23181,7 @@ pub fn invoke(
         "vault.shape.groups.resolve" => encode(vault_shape_groups_resolve(memory, decode(value)?)?),
         "self.message" => encode(self_message(memory, decode(value)?)?),
         "self.grants.ask" => encode(self_grants_ask(memory, decode(value)?)?),
+        "self.grants.asked" => encode(self_grants_asked(memory, decode(value)?)?),
         "vault.companions.access_requests.answer" => encode(
             vault_companions_access_requests_answer(memory, decode(value)?)?,
         ),
@@ -23360,6 +23391,7 @@ pub fn invoke(
         }
         "vault.turn_programs.arm" => encode(vault_turn_programs_arm(memory, decode(value)?)?),
         "vault.turn_programs.disarm" => encode(vault_turn_programs_disarm(memory, decode(value)?)?),
+        "vault.turn_programs.rebind" => encode(vault_turn_programs_rebind(memory, decode(value)?)?),
         "self.saved_query.create" => encode(self_saved_query_create(memory, decode(value)?)?),
         "self.saved_query.read" => encode(self_saved_query_read(memory, decode(value)?)?),
         "self.saved_query.update" => encode(self_saved_query_update(memory, decode(value)?)?),
@@ -25986,6 +26018,12 @@ pub fn self_grants_ask(
 ) -> MemoryResult<crate::memory::GrantAskReceipt> {
     memory.grants_ask(&input)
 }
+pub fn self_grants_asked(
+    memory: &Memory<'_>,
+    input: crate::memory::GrantAskedRequest,
+) -> MemoryResult<crate::memory::GrantAskedPage> {
+    memory.grants_asked(&input)
+}
 pub fn vault_companions_access_requests_answer(
     memory: &Memory<'_>,
     input: crate::task_verb::sdk::CompanionAccessRequestAnswerRequest,
@@ -27110,6 +27148,12 @@ pub fn vault_turn_programs_disarm(
     input: crate::dreamer_runner::DisarmTurnProgram,
 ) -> MemoryResult<bool> {
     memory.disarm_turn_program(input.registration)
+}
+pub fn vault_turn_programs_rebind(
+    memory: &Memory<'_>,
+    input: crate::dreamer_runner::TurnProgramRebindRequest,
+) -> MemoryResult<crate::dreamer_runner::TurnProgramRebindReceipt> {
+    crate::dreamer_runner::rebind_turn_program(memory, &input)
 }
 pub fn self_saved_query_create(
     memory: &Memory<'_>,
