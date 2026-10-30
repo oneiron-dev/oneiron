@@ -118,7 +118,7 @@ impl ServedChannelSink<'_> {
 
 /// The subject a send's text gives: its first non-blank line, cut to
 /// [`EMAIL_SUBJECT_MAX_CHARS`] whole characters.
-fn email_subject(text: &str) -> String {
+pub(super) fn email_subject(text: &str) -> String {
     text.lines()
         .map(str::trim)
         .find(|line| !line.is_empty())
