@@ -395,11 +395,7 @@ pub(crate) fn settle_team_work_outcome(
         let settled = settle_team_outcome_in_txn(vault, wtxn, team_ref, &outcome)?;
         if let Some(reviews) = &reviews {
             crate::critic::review::record_deliverable_outcomes_in_txn(
-                vault,
-                wtxn,
-                reviews,
-                &outcome,
-                None,
+                vault, wtxn, reviews, &outcome, None,
             );
         }
         Ok(settled)
