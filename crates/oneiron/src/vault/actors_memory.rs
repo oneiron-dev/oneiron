@@ -385,9 +385,9 @@ impl Vault {
 
     /// Decoded attachment-index rows for one symbol, keyed by symbol identity.
     ///
-    /// There is NO path-keyed counterpart: a stale `path_at_revision` is a
-    /// locator, and the public surface offers no way to resolve attachment
-    /// identity from one.
+    /// There is NO path-keyed counterpart: a locator is a cursor-anchored span
+    /// on the symbol's file document, and the public surface offers no way to
+    /// resolve attachment identity from one.
     pub fn code_memory_attachments(
         &self,
         symbol_id: EntityId,

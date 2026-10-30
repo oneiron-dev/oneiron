@@ -6,7 +6,9 @@
 // Section 3 — explicit rename/copy anchor transfer
 // ---------------------------------------------------------------------------
 
-/// Rename re-points; Copy clones. Nothing else transfers an attachment.
+/// Between two distinct symbols, Rename re-points and Copy clones. A file
+/// rename needs neither: its symbols keep their document-based ids and
+/// their notes (FIX 7810).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnchorTransferKind {
     Rename,
@@ -129,8 +131,8 @@ pub fn transfer_code_memory_anchor(
         }));
     }
 
-    // Step 4 — plan every destination write, enforcing both bounds before a
-    // single durable byte moves. Each plan carries the payload set that
+    // Step 4 — plan every destination write, under the encoded slot bound,
+    // before a single durable byte moves. Each plan carries the payload set that
     // ORIGINATES IN THE SOURCE: those payloads, and only those, take this
     // transfer's `to_locator` at the destination.
     let mut planned_slots = Vec::with_capacity(source_slots.len());
@@ -149,6 +151,7 @@ pub fn transfer_code_memory_anchor(
     // from the incoming source stream.
     for (slot, moved_payloads) in &planned_slots {
         write_slot(store, txn, &transfer.to_symbol_id, slot)?;
+        observe_slot_values(store, txn, &transfer.to_symbol_id, slot);
         derive_attachment_rows(
             store,
             txn,
@@ -203,8 +206,8 @@ pub fn transfer_code_memory_anchor(
 /// the destination is dropped from the plan. Contract collisions resolve
 /// exactly like slot collisions do: the destination registration stands, its
 /// kind/actor/time/provenance are never overwritten with the source's, and
-/// there is no last-writer-wins path. The per-symbol bound therefore counts
-/// only the keys this transfer genuinely adds.
+/// there is no last-writer-wins path. The destination's keys after the
+/// transfer are observed, never refused (FIX 8562).
 fn plan_transferred_contracts(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -223,13 +226,10 @@ fn plan_transferred_contracts(
         if !keys.insert(always_on_key(to_symbol_id, &moved.slot, moved.payload)) {
             continue;
         }
-        if keys.len() > CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
-            return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
-                kind: "always-on contracts per symbol",
-                limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
-            }));
-        }
         planned.push(moved);
+    }
+    if !planned.is_empty() {
+        observe_always_on_contracts(store, txn, to_symbol_id, keys.len());
     }
     Ok(planned)
 }

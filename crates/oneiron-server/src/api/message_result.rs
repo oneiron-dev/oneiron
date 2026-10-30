@@ -3,7 +3,9 @@
 //! principal on the read lane its transcript is read on: the result's card,
 //! or a `slice`, `search`, `query` or `chunks` page of its body. Only the
 //! body the MESSAGE's own hold backs resolves, and the answer leaves this
-//! device as the MCP `read_result` door's does.
+//! device as the MCP `read_result` door's does. A MESSAGE of the off-record
+//! room the request's `x-oneiron-session` names is read in that room, for
+//! someone in it, through the room's storage (FIX 3620).
 
 use std::sync::Arc;
 
@@ -53,7 +55,7 @@ pub(crate) struct MessageResultReadRequest {
         (status = 400, description = "Malformed MESSAGE id or request body, or a room turn header.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or names no principal and actor class.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 404, description = "No MESSAGE the reader may read has this id, or it carries no result its own hold backs.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 404, description = "No MESSAGE the reader may read has this id, in this vault or in the off-record room the request's session names, or it carries no result its own hold or the room backs.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Result read failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -80,6 +82,7 @@ pub(crate) async fn read_core_message_result(
     let (actor, class) = reader(&auth)?;
     let proof = auth.verified_slip().cloned();
     let destination = auth.destination();
+    let session = auth.off_record_session().map(str::to_owned);
     // A search or a table query scans up to its bound from disk, so it runs
     // off the reactor.
     let read = tokio::task::spawn_blocking(move || -> Result<Value, MemoryError> {
@@ -89,6 +92,11 @@ pub(crate) async fn read_core_message_result(
             .for_destination(&destination);
         let memory = match &proof {
             Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
+        // A room's MESSAGE is read in the session the request names.
+        let memory = match &session {
+            Some(session) => memory.in_off_record_session(session),
             None => memory,
         };
         let reply = memory.read_message_result(&message, request.facet, request.input)?;
