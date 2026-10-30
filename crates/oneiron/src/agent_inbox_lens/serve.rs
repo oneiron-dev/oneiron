@@ -86,6 +86,10 @@ pub struct InboxLensRow {
     /// The widening a comm widen ask asks for (FIX 3901).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub widening: Option<crate::context_board::ConsultWidening>,
+    /// The reader's own read state of the row (OF-414): present only on the
+    /// slice of the actor that reads it, whose state it is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub read_state: Option<super::AgentInboxReadState>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -160,6 +164,7 @@ impl From<AgentInboxLensItem> for InboxLensRow {
             }),
             sender: item.sender.map(|id| id.to_hex()),
             widening: item.widening,
+            read_state: None,
         }
     }
 }
@@ -198,7 +203,20 @@ fn page(
             before,
         })?,
     };
-    let items: Vec<InboxLensRow> = items.into_iter().map(InboxLensRow::from).collect();
+    // The read state is the reading actor's own; no other reader sees it.
+    let states = match actor.filter(|actor| *actor == reader) {
+        Some(actor) => vault.agent_inbox_read_states(actor, &items, vault.now_recorded_at())?,
+        None => Vec::new(),
+    };
+    let items: Vec<InboxLensRow> = items
+        .into_iter()
+        .enumerate()
+        .map(|(at, item)| {
+            let mut row = InboxLensRow::from(item);
+            row.read_state = states.get(at).copied();
+            row
+        })
+        .collect();
     let mut concern_groups: Vec<InboxConcernGroup> = Vec::new();
     for row in &items {
         let Some(concern) = &row.concern else {

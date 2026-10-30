@@ -3493,6 +3493,42 @@
       "openapi": true
     },
     {
+      "name": "self.inbox.get",
+      "description": "Opens one row of the bound actor's own INBOX by its handle: the row, the words of each message on it as data, and a digest row's notification (marked seen); the row reads open until it is done.",
+      "input": "crate::agent_inbox_lens::InboxItemRequest",
+      "output": "crate::agent_inbox_lens::InboxItemView",
+      "call": "memory.inbox_item_get(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.inbox.done",
+      "description": "Marks one row of the bound actor's own INBOX done, answered or closed, until a newer entry arrives on it; a digest row's notification is acknowledged with it.",
+      "input": "crate::agent_inbox_lens::InboxItemRequest",
+      "output": "crate::agent_inbox_lens::InboxItemMarked",
+      "call": "memory.inbox_item_done(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "self.inbox.later",
+      "description": "Puts one row of the bound actor's own INBOX off until a given time, or with no time until a newer entry arrives on it.",
+      "input": "crate::agent_inbox_lens::InboxItemLaterRequest",
+      "output": "crate::agent_inbox_lens::InboxItemMarked",
+      "call": "memory.inbox_item_later(&input)?",
+      "scope": "Write",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
       "name": "vault.skills.bootstrap",
       "description": "Reads the bootstrap four and their actual resident source, lifecycle and receipts without seeding or restoring missing skills.",
       "input": "EmptyRequest",

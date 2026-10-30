@@ -542,6 +542,12 @@ fn receipt_order(receipt: &ReceiptRecord) -> (u64, bool, &str) {
 }
 
 mod inbound;
+mod read_state;
+pub(crate) use read_state::erase_agent_inbox_read_marks_actor_in_txn;
+pub use read_state::{
+    AgentInboxBoardSlice, AgentInboxReadState, InboxItemLaterRequest, InboxItemMarked,
+    InboxItemMessage, InboxItemRequest, InboxItemView,
+};
 mod serve;
 pub use serve::*;
 mod text;

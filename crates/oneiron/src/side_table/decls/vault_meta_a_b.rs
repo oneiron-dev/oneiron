@@ -41,6 +41,10 @@ side_tables! {
         [refs: WIDEN_INTENT_REFS];
     /// Index from a widen proposal's public content-hash id to its intent row key. Key: hex64.
     AGENT_DISPATCH_WIDEN_PROPOSAL_INDEX: VaultMeta b"agent.dispatch.widen_id.v1\0" Raw;
+    /// OF-414: one agent's read state of one row of its own INBOX (open, later, done), the row's
+    /// newest entry time when written and when. Key: id16(actor) + string (row handle).
+    AGENT_INBOX_READ_MARK: VaultMeta b"agent.inbox.read_mark.v1\0" Named Engine
+        => crate::agent_inbox_lens::erase_agent_inbox_read_marks_actor_in_txn;
     /// Dedupe index from a caller-supplied dedupe key to the workflow root attempt id. Key: hash32.
     AGENT_WORKFLOW_DEDUPE: VaultMeta b"agent.workflow.dedupe.v1\0" Raw;
     /// Durable saved-composition record for one inert multi-step workflow wrapper attempt. Key: id16.
