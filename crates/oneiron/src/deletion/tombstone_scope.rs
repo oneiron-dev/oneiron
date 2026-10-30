@@ -97,7 +97,8 @@ pub(crate) fn deleted_scope_in(
 }
 
 /// A live row's scope is written. With no live row (none, or a deleted
-/// shell), an unbound row is bound to `request`; nothing else changes.
+/// shell), a held row is rebound to `request` whenever `request` is some and
+/// differs from the row's; nothing else changes.
 fn capture_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -117,11 +118,16 @@ fn capture_in_txn(
             scope,
             request: request.copied().or(held.and_then(|row| row.request)),
         },
-        (None, Some(held)) if held.request.is_none() && request.is_some() => DeletedRecordScope {
-            scope: held.scope,
-            request: request.copied(),
-        },
-        (None, _) => return Ok(()),
+        (None, Some(held)) => {
+            if request.is_none() || request == held.request.as_ref() {
+                return Ok(());
+            }
+            DeletedRecordScope {
+                scope: held.scope,
+                request: request.copied(),
+            }
+        }
+        (None, None) => return Ok(()),
     };
     TOMBSTONE_SCOPE.put(&vault.store, txn, &key, &row)
 }
