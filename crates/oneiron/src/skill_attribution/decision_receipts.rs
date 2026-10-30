@@ -1,6 +1,9 @@
 //! The decision receipts behind each attempt-lane judgment (FIX 11512): the
 //! judgment row is immutable by equality, so the receipts its judge's
-//! decisions gave are kept beside it, written once with it.
+//! decisions gave are kept beside it, written once with it. An outcome the
+//! judge left unclear or labelled environment makes no judgment; its
+//! receipts are kept the same way, beside its unclear and cause rows under
+//! the same sequence (FIX 12075).
 
 use serde::{Deserialize, Serialize};
 
@@ -48,8 +51,9 @@ pub(super) fn keep_decision_receipts_in_txn(
     )
 }
 
-/// The receipt of each decision that gave the attempt-lane judgment routed
-/// under `sequence`, in hunk order; empty when no ladder answered it.
+/// The receipt of each decision that gave the attempt-lane judgment, or the
+/// unclear or environment label, routed under `sequence`, in hunk order;
+/// empty when no ladder answered it.
 ///
 /// # Errors
 ///

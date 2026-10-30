@@ -88,7 +88,7 @@ pub fn run_attribution_projector(
 /// does not admit — leaves no judgment and files the evidence in the unclear
 /// ledger instead. Every settled label, those two included, is kept as the
 /// attempt's cause in the same write as the cursor (OF-568 L10), charging
-/// nobody.
+/// nobody; those two keep their decision receipts beside it (FIX 12075).
 pub fn run_attribution_projector_with_decisions(
     vault: &Vault,
     since_cursor: u64,
@@ -131,13 +131,19 @@ pub fn run_attribution_projector_with_decisions(
         };
         // Every settled label is kept before subject routing drops the ones
         // that charge nobody, `environment` and `unclear` among them
-        // (OF-568 L10).
+        // (OF-568 L10). Those two leave no judgment row, so their decision
+        // receipts are kept beside the cause (FIX 12075).
+        let held = matches!(
+            verdict,
+            AttributionVerdict::Unclear | AttributionVerdict::Environment
+        );
         causes.push((
             sequence,
             evidence.clone(),
             verdict,
             split.share_of(verdict),
             revision.clone(),
+            held.then(|| trace.receipts.clone()),
         ));
         if verdict == AttributionVerdict::Unclear {
             unclear.push((
@@ -218,10 +224,20 @@ pub fn run_attribution_projector_with_decisions(
         }
         // In the cursor's write: a cause that fails to land leaves its
         // evidence for the next pass.
-        for (sequence, evidence, label, share, revision) in &causes {
+        for (sequence, evidence, label, share, revision, receipts) in &causes {
             // The evidence as it stands in this write, so an erase since the
             // read is not undone (FIX 8988).
             let current = EVIDENCE.get(&vault.store, wtxn, sequence)?;
+            // An unclear or environment outcome's decision receipts, keyed by
+            // its sequence as its judgment's would be (FIX 12075): kept only
+            // while its evidence stands as the judge read it, and never beside
+            // a judgment an earlier pass made.
+            if let Some(receipts) = receipts
+                && current.as_ref().is_some_and(|row| row.evidence == *evidence)
+                && !JUDGMENT.contains(&vault.store, wtxn, sequence)?
+            {
+                keep_decision_receipts_in_txn(vault, wtxn, *sequence, receipts)?;
+            }
             let evidence = current.as_ref().map_or(evidence, |row| &row.evidence);
             super::causes::put_attribution_cause_in_txn(
                 vault,
