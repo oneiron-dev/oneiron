@@ -10136,7 +10136,7 @@ impl OneironClient {
     }
     pub fn vault_consent_create_auto_weave_grant(
         &self,
-        input: &oneiron::gate::weave_grant::AutoWeaveGrantRequest,
+        input: &oneiron::consent::lifecycle::AutoWeaveGrantRequest,
     ) -> Result<oneiron::consent::lifecycle::ConsentActReceipt, MemoryError> {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(

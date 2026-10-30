@@ -13849,7 +13849,7 @@ async fn execute_agent_verb_row_on(
                 &input,
             )
             .map_err(mcp_facade_error)?;
-            let input: oneiron::gate::weave_grant::AutoWeaveGrantRequest =
+            let input: oneiron::consent::lifecycle::AutoWeaveGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             let (output, listed) =
                 crate::api::facade::host_doors::vault_consent_create_auto_weave_grant(
