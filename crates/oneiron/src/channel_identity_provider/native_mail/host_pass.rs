@@ -21,6 +21,9 @@ pub struct NativeMailInboxPass {
     /// The identities whose read failed this pass, and why. Each is read
     /// again next pass from the cursor its last good page left.
     pub failed: Vec<(EntityId, String)>,
+    /// The messages this pass set aside, by identity, and why: each stopped
+    /// its inbox's polls in a row and has its durable set-aside row.
+    pub set_aside: Vec<(EntityId, String)>,
 }
 
 impl NativeMailPack {
@@ -29,7 +32,9 @@ impl NativeMailPack {
     /// the page's mail is admitted; a mailbox read to its end keeps its end
     /// cursor, so the next pass reads only what changed. A message that
     /// stops its page ends that identity's read for this pass, and is in
-    /// the pass's failures. An identity no longer active leaves `cursors`.
+    /// the pass's failures; one whose own failure stopped the polls in a
+    /// row is set aside and the read goes on. An identity no longer active
+    /// leaves `cursors`.
     ///
     /// # Errors
     ///
@@ -51,6 +56,16 @@ impl NativeMailPack {
                 match self.poll_inbox(vault, identity, policy, cursor.as_ref(), quarantine, now) {
                     Ok(outcome) => {
                         pass.admitted = pass.admitted.saturating_add(outcome.admissions.len());
+                        pass.set_aside
+                            .extend(outcome.set_aside.into_iter().map(|stop| {
+                                (
+                                    identity,
+                                    format!(
+                                        "message {} set aside: {}",
+                                        stop.message_id, stop.reason
+                                    ),
+                                )
+                            }));
                         if let Some(next) = outcome.next_cursor {
                             cursors.insert(identity, next);
                         }
