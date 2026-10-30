@@ -294,14 +294,16 @@ struct CommitFile {
 
 /// Every regular file of `commit`'s tree, read whole from the object
 /// store, or only those `wanted` names. A symlink or submodule link holds
-/// no key a remediation edits, and is passed over.
+/// no key a remediation edits, and is passed over. The files' bytes come
+/// from batched reads of their distinct blobs (FIX 10976), not two Git
+/// calls a file.
 fn commit_files(
     wire: &GitWire<'_>,
     repo: &GitWireRepo,
     commit: &GitOid,
     wanted: Option<&BTreeSet<String>>,
 ) -> Result<BTreeMap<String, CommitFile>> {
-    let mut files = BTreeMap::new();
+    let mut files: Vec<(String, GitOid)> = Vec::new();
     let mut pending = vec![(String::new(), commit.clone())];
     while let Some((prefix, tree)) = pending.pop() {
         for entry in wire.read_tree(repo, &tree)? {
@@ -323,15 +325,37 @@ fn commit_files(
                 }
                 0o100_644 | 0o100_755 => {
                     if wanted.is_none_or(|wanted| wanted.contains(&path)) {
-                        let content = wire.read_object(repo, &entry.oid)?;
-                        files.insert(path, CommitFile { content });
+                        files.push((path, entry.oid));
                     }
                 }
                 _ => {}
             }
         }
     }
-    Ok(files)
+    let blobs: Vec<GitOid> = files
+        .iter()
+        .map(|(_, oid)| oid.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let mut contents: BTreeMap<GitOid, Vec<u8>> = BTreeMap::new();
+    let whole = wire.for_each_blob(repo, &blobs, |oid, bytes| {
+        contents.insert(oid.clone(), bytes.to_vec());
+    })?;
+    if !whole {
+        return Err(invalid(
+            "a repository file's blob is not in its object store",
+        ));
+    }
+    files
+        .into_iter()
+        .map(|(path, oid)| {
+            let content = contents.get(&oid).cloned().ok_or(invalid(
+                "a repository file's blob is not in its object store",
+            ))?;
+            Ok((path, CommitFile { content }))
+        })
+        .collect()
 }
 
 /// The exact bytes of each of `paths` in the commit `repo` is pinned at,
