@@ -128,7 +128,7 @@ impl DeviceSyncHost {
         admission: Option<Admission>,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396).
-        let removal = removal_delivery::Receiver::start(&dial, mesh);
+        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault);
         match open(server, dial, mesh, admission).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {

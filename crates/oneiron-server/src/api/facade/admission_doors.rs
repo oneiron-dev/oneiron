@@ -79,7 +79,7 @@ pub(crate) fn call_verb<'a>(
         );
         let fingerprint = blake3::Hash::from_bytes(fingerprint).to_hex().to_string();
         let (server, call, verb) = (Arc::clone(server), call.owned(), verb.to_owned());
-        tokio::spawn(super::clock_ingress::scoped(restrictive, async move {
+        let worker = super::clock_ingress::scoped(restrictive, async move {
             // The receipt and worker start inside the same detached task:
             // hanging up during the durable write cannot orphan an intent.
             let vault = Arc::clone(server.vault());
@@ -108,8 +108,11 @@ pub(crate) fn call_verb<'a>(
             finish?;
             flight.settled = true;
             result
-        }))
-        .await
-        .map_err(|_| super::host_doors::support::internal("admission"))?
+        });
+        // A code run's or an action's call keeps its origin and run writes
+        // in the detached worker (FIX 10748).
+        tokio::spawn(super::host_doors::support::carrying_calling_run(worker))
+            .await
+            .map_err(|_| super::host_doors::support::internal("admission"))?
     }))
 }

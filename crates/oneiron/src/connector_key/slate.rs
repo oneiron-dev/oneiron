@@ -443,6 +443,46 @@ impl ConnectorGrantSlate {
     pub fn stamp_holds(&self) -> bool {
         self.stamped_aggregate == Some(self.aggregate())
     }
+    /// `prior`'s owner stamp, carried to this revision of it when this one
+    /// reaches no further (FIX 8681, 6041): its tools, settings and facets are
+    /// `prior`'s or narrower, so his ruling on `prior` covers it, as a narrow
+    /// needs no stamp. False, with nothing set, when `prior`'s stamp does not
+    /// hold or this revision expands it.
+    pub(in crate::connector_key) fn carry_owner_stamp(
+        &mut self,
+        prior: &ConnectorGrantSlate,
+        carry: &BTreeSet<(String, String)>,
+    ) -> bool {
+        if prior.owner_actor.is_none() || !prior.stamp_holds() || slate_expands(prior, self, carry)
+        {
+            return false;
+        }
+        self.revision = prior.revision;
+        self.owner_actor = prior.owner_actor.clone();
+        self.owner_authentication = prior.owner_authentication.clone();
+        self.stamped_aggregate = Some(self.aggregate());
+        true
+    }
+    /// This slate (`self_id`) bound to pack install `binding`, with its rows,
+    /// settings and facets: a pack update whose connector declaration did
+    /// not move (FIX 6041). Unstamped until [`Self::carry_owner_stamp`].
+    pub(in crate::connector_key) fn rebound_to_pack(
+        &self,
+        self_id: EntityId,
+        binding: SlatePackSource,
+    ) -> Result<ConnectorGrantSlate> {
+        let manifest = SlateManifest {
+            pack_source: Some(binding),
+            ..self.manifest.clone()
+        };
+        new_slate(
+            &manifest,
+            self.rows.clone(),
+            Some(self),
+            Some(self_id),
+            BTreeSet::new(),
+        )
+    }
 }
 
 fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
@@ -452,7 +492,9 @@ fn validate(manifest: &SlateManifest, rows: &[SlateDraftRow]) -> Result<()> {
     }
     let declared = &manifest.tools;
     let row_count = declared.len() + usize::from(manifest.elicitation.is_some());
-    if declared.is_empty() || rows.len() != row_count || declared.len() > 4096 {
+    // How many tools it declares never refuses (FIX 8684); admission
+    // measured the count.
+    if declared.is_empty() || rows.len() != row_count {
         return Err(invalid());
     }
     let tools: BTreeMap<_, _> = declared
