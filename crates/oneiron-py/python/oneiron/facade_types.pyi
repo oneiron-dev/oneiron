@@ -3836,6 +3836,7 @@ class VaultReceiptsPage(TypedDict):
     next_after: NotRequired[str | None]
     effective_limit: int
     limit_clamped: NotRequired[bool]
+    undecodable: int
 class AssetIngestRequest(TypedDict):
     asset_ref: NotRequired[str | None]
     embedding_kind: InputKind

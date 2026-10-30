@@ -354,7 +354,11 @@ pub(super) fn decode_durable_send_receipt(
 
 /// This projector reads its entire existing audit source; it has no source cap.
 pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
-    durable_send_receipts(vault).map(|(records, _)| ReceiptScan::from_complete_records(records))
+    durable_send_receipts(vault).map(|(records, undecodable)| {
+        let mut scan = ReceiptScan::from_complete_records(records);
+        scan.undecodable = u32::try_from(undecodable.len()).unwrap_or(u32::MAX);
+        scan
+    })
 }
 
 /// The send receipt rows that decode, beside the hex task refs of the rows
