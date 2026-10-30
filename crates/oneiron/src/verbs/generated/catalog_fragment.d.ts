@@ -2869,7 +2869,7 @@ declare namespace Sdk {
   type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels };
   type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } };
   type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction };
-  type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null };
+  type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null; judged_live?: LivePin | null };
   type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage" | "RunDeadline";
   type SlideUnitRefused = { target: PptxCommentTarget; reason: SlideUnitRefusalReason; offer?: PptxCommentTarget | null };
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgments: SlideJudgment[]; comments: PptxCommentPatch[]; abstained: SlideAbstention[]; refused: SlideUnitRefused[] };

@@ -165,6 +165,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: None,
+                    judged_live: None,
                 });
                 continue;
             }
@@ -214,6 +215,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: None,
+                    judged_live: None,
                 });
                 continue;
             }
@@ -297,6 +299,7 @@ pub fn review_slides(
                 abstained.push(SlideAbstention {
                     target: target.clone(),
                     decision: Some(decision),
+                    judged_live: None,
                 });
                 continue;
             }
@@ -483,6 +486,7 @@ pub(super) fn refusal(
         target: target.clone(),
         reason,
         offer,
+        judged_live: None,
     }
 }
 

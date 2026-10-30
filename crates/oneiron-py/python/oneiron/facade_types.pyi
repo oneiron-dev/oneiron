@@ -14232,6 +14232,7 @@ class PptxCommentPatch(TypedDict):
 class SlideAbstention(TypedDict):
     target: PptxCommentTarget
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage", "RunDeadline"]
 class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget

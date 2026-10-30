@@ -92,6 +92,15 @@ impl Vault {
             }
             self.measure_pptx_comment_patches(proposal);
         }
+        // The units the ladder left unanswered or refused name the live body
+        // they were read on, when they were read on one (FIX 12051).
+        let read_live = shown.map(|(pin, _)| pin.clone());
+        for unit in &mut run.abstained {
+            unit.judged_live.clone_from(&read_live);
+        }
+        for unit in &mut run.refused {
+            unit.judged_live.clone_from(&read_live);
+        }
         Ok(run)
     }
 }

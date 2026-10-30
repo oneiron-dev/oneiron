@@ -286,7 +286,9 @@ impl Vault {
     }
 
     /// [`Self::live_body_changed`] at the frontier `until` in place of the
-    /// head when one is given.
+    /// head when one is given. A deck compares what its slides show, as a
+    /// slide answer does: its nodes' bindings to the retained package move
+    /// on every export's rebind and change nothing shown (FIX 12050).
     pub(crate) fn live_body_changed_until(
         &self,
         artifact: &EntityId,
@@ -300,6 +302,11 @@ impl Vault {
                 None => return Ok(false),
             }
         };
+        if kind == OfficeBodyKind::Pptx {
+            return Ok(self
+                .live_slides(artifact, then, until)?
+                .is_some_and(|slides| slides.then != slides.now));
+        }
         Ok(self
             .live_span(artifact, kind, then, until)?
             .is_some_and(|(was, now)| was.get_deep_value() != now.get_deep_value()))

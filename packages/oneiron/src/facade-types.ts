@@ -5703,7 +5703,7 @@ export type PptxCommentAction = { add: { target: PptxCommentTarget; text: string
 /** `oneiron::edit_roundtrip::pptx::package::PptxCommentPatch` */
 export type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction }
 /** `oneiron::edit_roundtrip::slides_review::SlideAbstention` */
-export type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null }
+export type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null; judged_live?: LivePin | null }
 /** `oneiron::edit_roundtrip::slides_review::SlideUnitRefusalReason` */
 export type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage" | "RunDeadline"
 /** `oneiron::blob_artifact::verbs::SlideUnitRefused` */
