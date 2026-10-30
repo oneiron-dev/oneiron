@@ -4,6 +4,7 @@ use super::doc_actor::DocActor;
 use super::invalid;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::provenance::made_by::{MadeBy, MadeByClass};
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::write_envelope::WriteActor;
 use loro::{
@@ -55,7 +56,21 @@ pub struct EntityDoc {
 impl EntityDoc {
     /// Creates the first commit from the original text and birth provenance.
     pub fn open(entity: EntityId, initial: &str, actor: WriteActor, at: u64) -> Result<Self> {
-        Self::open_initialized(LoroDoc::new(), entity, initial, actor, at, |_| Ok(()), None)
+        Self::open_born(entity, initial, actor, at, None)
+    }
+
+    /// [`Self::open`] for a row that already holds its birth: `born`, its
+    /// `RowBirth.made_by`, is the birth commit's receipt when it names this
+    /// birth's actor at its time (FIX 10929).
+    pub(super) fn open_born(
+        entity: EntityId,
+        initial: &str,
+        actor: WriteActor,
+        at: u64,
+        born: Option<&MadeBy>,
+    ) -> Result<Self> {
+        let birth = BirthCommit::Stamp(born);
+        Self::open_with(LoroDoc::new(), entity, initial, actor, at, |_| Ok(()), birth)
     }
 
     pub(super) fn open_with_metadata(
@@ -64,8 +79,9 @@ impl EntityDoc {
         metadata: &std::collections::BTreeMap<String, Vec<u8>>,
         actor: WriteActor,
         at: u64,
+        born: Option<&MadeBy>,
     ) -> Result<Self> {
-        Self::open_initialized(
+        Self::open_with(
             LoroDoc::new(),
             entity,
             initial,
@@ -75,7 +91,7 @@ impl EntityDoc {
                 Self::replace_metadata(doc, metadata)?;
                 Self::set_record_fields(doc, &metadata.keys().cloned().collect::<Vec<_>>())
             },
-            None,
+            BirthCommit::Stamp(born),
         )
     }
 
@@ -89,6 +105,34 @@ impl EntityDoc {
         initialize: impl FnOnce(&LoroDoc) -> Result<()>,
         message: Option<&str>,
     ) -> Result<Self> {
+        let birth = message.map_or(BirthCommit::Stamp(None), BirthCommit::Message);
+        Self::open_with(doc, entity, initial, actor, at, initialize, birth)
+    }
+
+    /// [`Self::open_initialized`] with the engine stamp, its receipt `born`
+    /// as [`Self::open_born`] takes it (FIX 10929).
+    pub(super) fn open_initialized_born(
+        doc: LoroDoc,
+        entity: EntityId,
+        initial: &str,
+        actor: WriteActor,
+        at: u64,
+        initialize: impl FnOnce(&LoroDoc) -> Result<()>,
+        born: Option<&MadeBy>,
+    ) -> Result<Self> {
+        let birth = BirthCommit::Stamp(born);
+        Self::open_with(doc, entity, initial, actor, at, initialize, birth)
+    }
+
+    fn open_with(
+        doc: LoroDoc,
+        entity: EntityId,
+        initial: &str,
+        actor: WriteActor,
+        at: u64,
+        initialize: impl FnOnce(&LoroDoc) -> Result<()>,
+        commit: BirthCommit<'_>,
+    ) -> Result<Self> {
         doc.set_record_timestamp(true);
         let birth = Birth {
             entity: entity.to_hex(),
@@ -100,22 +144,24 @@ impl EntityDoc {
             .insert(0, initial)
             .map_err(|_| invalid("document birth text"))?;
         initialize(&doc)?;
-        if let Some(message) = message {
-            let timestamp =
-                i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
-            doc.commit_with(
-                CommitOptions::new()
-                    .commit_msg(message)
-                    .timestamp(timestamp),
-            );
-        } else {
-            stamp(&doc, actor, at, "birth")?;
+        match commit {
+            BirthCommit::Message(message) => {
+                let timestamp =
+                    i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
+                doc.commit_with(
+                    CommitOptions::new()
+                        .commit_msg(message)
+                        .timestamp(timestamp),
+                );
+            }
+            BirthCommit::Stamp(born) => stamp_birth(&doc, actor, at, born)?,
         }
         Ok(Self { doc, birth })
     }
 
     /// Fresh value document for canonical recovery. Old frontiers are not
-    /// imported; an erased birth actor stays no one.
+    /// imported; an erased birth actor stays no one. Its commit restates the
+    /// row's birth (FIX 10929).
     pub(crate) fn rebuild_value(
         entity: EntityId,
         text: &str,
@@ -135,7 +181,7 @@ impl EntityDoc {
                 .insert(0, text)
                 .map_err(|_| invalid("document recovery text"))?;
         }
-        doc.commit();
+        restate_birth(&doc);
         Ok(Self { doc, birth })
     }
 
@@ -278,6 +324,15 @@ pub(super) fn map_insert_bytes(map: &LoroMap, key: &str, value: &[u8]) -> Result
         .map_err(|_| invalid("document metadata write"))
 }
 
+/// How a document's birth commit is spelled.
+enum BirthCommit<'a> {
+    /// The caller's own message: a proposal artifact's receipted stamp.
+    Message(&'a str),
+    /// The engine stamp, with the row's own birth envelope as its receipt
+    /// when it names this birth (FIX 10929), else the generic receipt.
+    Stamp(Option<&'a MadeBy>),
+}
+
 pub(super) fn stamp(doc: &LoroDoc, actor: WriteActor, at: u64, verb: &str) -> Result<()> {
     stamp_with(doc, actor, at, verb, &[])
 }
@@ -290,19 +345,54 @@ pub(super) fn stamp_with(
     verb: &str,
     sources: &[EntityId],
 ) -> Result<()> {
-    // Sequence-bearing messages prevent Loro from folding two calls by the same
-    // actor into one change. Peer bindings remain the authority for remote stamps.
-    let stamped = format!(
+    let stamped = stamp_head(doc, actor, verb);
+    // The commit carries its made_by receipt (FIX 7790).
+    let message = super::commit_receipts::receipted(&stamped, actor, at, verb, sources)?;
+    commit_at(doc, &message, at)
+}
+
+/// The birth commit's stamp. Its receipt is `born`, the row's own birth
+/// envelope, when that names this birth's actor at its time with a class the
+/// actor may hold, so the reader vouches for it as for any receipt (FIX
+/// 10929); otherwise the generic receipt.
+fn stamp_birth(doc: &LoroDoc, actor: WriteActor, at: u64, born: Option<&MadeBy>) -> Result<()> {
+    let names_this_birth = |made_by: &&MadeBy| {
+        made_by.process.actor == actor.entity_ref()
+            && made_by.at == at
+            && made_by.process.is_valid()
+            && (made_by.process.class != MadeByClass::Stated
+                || actor.actor_class() == crate::EdgeActorClass::Human)
+    };
+    let Some(made_by) = born.filter(names_this_birth) else {
+        return stamp(doc, actor, at, "birth");
+    };
+    let stamped = stamp_head(doc, actor, "birth");
+    let message = super::commit_receipts::receipted_as(&stamped, made_by)?;
+    commit_at(doc, &message, at)
+}
+
+/// The engine stamp before its receipt. Sequence-bearing messages prevent
+/// Loro from folding two calls by the same actor into one change. Peer
+/// bindings remain the authority for remote stamps.
+fn stamp_head(doc: &LoroDoc, actor: WriteActor, verb: &str) -> String {
+    format!(
         "{STAMP} {verb} actor={}.{} op={:?}",
         actor.entity_ref().to_hex(),
         crate::edit_distance::actor_class_token(actor.actor_class()),
         doc.oplog_vv()
-    );
-    // The commit carries its made_by receipt (FIX 7790).
-    let message = super::commit_receipts::receipted(&stamped, actor, at, verb, sources)?;
+    )
+}
+
+fn commit_at(doc: &LoroDoc, message: &str, at: u64) -> Result<()> {
     let at = i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
-    doc.commit_with(CommitOptions::new().commit_msg(&message).timestamp(at));
+    doc.commit_with(CommitOptions::new().commit_msg(message).timestamp(at));
     Ok(())
+}
+
+/// Commits what canonical recovery replayed into `doc`: the commit restates
+/// the row's birth and names no one (FIX 10929).
+pub(super) fn restate_birth(doc: &LoroDoc) {
+    doc.commit_with(CommitOptions::new().commit_msg(super::commit_receipts::ROW_BIRTH_RESTATED));
 }
 
 /// Persisted operation attribution resolved through the existing peer binding

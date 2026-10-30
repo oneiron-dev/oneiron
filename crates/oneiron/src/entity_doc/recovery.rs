@@ -424,7 +424,7 @@ pub(crate) fn restore(
             let doc = EntityDoc::rebuild_value(entity, &row.text, birth_actor, row.birth_at)?;
             EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
             EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-            doc.doc.commit();
+            super::document::restate_birth(&doc.doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
@@ -499,6 +499,7 @@ fn refuse_loss(
 /// Replays the carried versions into fresh history: an empty birth commit,
 /// then each version as one commit on its parents, so the replayed causal
 /// order is the carried one. A purged document is cut at version 0 again.
+/// Each replayed commit restates the row's birth (FIX 10929).
 fn replay(
     entity: EntityId,
     row: &CanonicalEntityDocument,
@@ -507,7 +508,7 @@ fn replay(
     let texts = history.texts()?;
     let doc = EntityDoc::rebuild_value(entity, "", doc_actor(row.birth_actor)?, row.birth_at)?;
     EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-    doc.doc.commit();
+    super::document::restate_birth(&doc.doc);
     let root = doc.doc.oplog_frontiers();
     let mut frontiers: Vec<Frontiers> = Vec::with_capacity(texts.len());
     for (index, (version, text)) in history.versions.iter().zip(&texts).enumerate() {
@@ -543,7 +544,7 @@ fn replay(
                 i64::try_from(index).map_err(|_| invalid("entity document version count"))?,
             )
             .map_err(|_| invalid("entity document version replay"))?;
-        branch.commit();
+        super::document::restate_birth(&branch);
         let known = doc.doc.oplog_vv();
         let updates = branch
             .export(ExportMode::updates(&known))

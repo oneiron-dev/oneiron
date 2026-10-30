@@ -95,7 +95,10 @@ pub(crate) fn birth_summary_in_txn(
         .map_err(|_| super::invalid("summary purpose encoding"))?;
     let derivation = rmp_serde::to_vec_named(&metadata.derivation)
         .map_err(|_| super::invalid("summary derivation encoding"))?;
-    let doc = EntityDoc::open_initialized(
+    // A SUMMARY its writing door already stamped keeps that birth on its
+    // document's birth commit (FIX 10929).
+    let born = crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &entity)?;
+    let doc = EntityDoc::open_initialized_born(
         loro::LoroDoc::new(),
         entity,
         &text,
@@ -112,7 +115,7 @@ pub(crate) fn birth_summary_in_txn(
             map_insert_bytes(&meta, "keep", &keep)?;
             map_insert_bytes(&meta, "derivation", &derivation)
         },
-        None,
+        born.as_ref().map(|birth| &birth.made_by),
     )?;
     super::forks::bind_actor(vault, txn, &doc, actor, at)?;
     crate::federation::record_scope::restamp_document_pointer(

@@ -455,7 +455,10 @@ fn seeded(entity: &EntityId) -> Result<LoroDoc> {
     Ok(doc)
 }
 
-/// A birth that names no one: no stamp and no receipt, at the record's time.
+/// A birth that names no one: no stamp, at the record's time. Its commit
+/// restates the row's birth, the same message on every machine, so the
+/// births still join and the row's surviving birth is its receipt (FIX
+/// 10929).
 fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<EntityDoc> {
     doc.set_record_timestamp(true);
     let birth = Birth {
@@ -468,7 +471,11 @@ fn unattributed(doc: LoroDoc, entity: &EntityId, text: &str, at: u64) -> Result<
         .insert(0, text)
         .map_err(|_| invalid("document birth text"))?;
     let timestamp = i64::try_from(at).map_err(|_| invalid("document timestamp overflow"))?;
-    doc.commit_with(CommitOptions::new().timestamp(timestamp));
+    doc.commit_with(
+        CommitOptions::new()
+            .commit_msg(super::commit_receipts::ROW_BIRTH_RESTATED)
+            .timestamp(timestamp),
+    );
     EntityDoc::from_loro(doc)
 }
 
