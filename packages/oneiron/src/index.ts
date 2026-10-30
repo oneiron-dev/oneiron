@@ -659,6 +659,10 @@ export class Oneiron {
     cancel_stream: (input: Facade.CancelStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultCancelStream(input) as Facade.MessageStreamReceipt),
     /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
     message_stream_partial: (input: Facade.MessageStreamRequest): Facade.MessageStreamPartial => this.#call(() => this.#client.vaultMessageStreamPartial(input) as Facade.MessageStreamPartial),
+    message_streams: {
+      /** Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again. */
+      refused: (input: Facade.EmptyRequest = {}): Facade.StreamRecoveryRefusal[] => this.#call(() => this.#client.vaultMessageStreamsRefused(input) as Facade.StreamRecoveryRefusal[]),
+    },
     messages: {
       /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
       durability: (input: Facade.MessageDurabilityRequest): Facade.ScopedReadResult<Facade.MessageDurability | null> => this.#call(() => this.#client.vaultMessagesDurability(input) as Facade.ScopedReadResult<Facade.MessageDurability | null>),
