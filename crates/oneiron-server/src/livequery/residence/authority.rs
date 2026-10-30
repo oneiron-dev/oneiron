@@ -1,5 +1,7 @@
-//! The authority log over residence: its tail, range, checkpoint and append.
-//! `authority_tail`, `authority_range`, `authority_checkpoint` and `authority_append` serve `run`.
+//! The authority log over residence: its tail, range, checkpoint and append,
+//! and an entry past one frame in parts either way (FIX 8246).
+//! `authority_tail`, `authority_range`, `authority_checkpoint`, `authority_append`,
+//! `authority_entry` and `authority_append_part` serve `run`.
 //! The residence root defines the authority request DTOs; `oneiron::sync::residence` the folds.
 
 use super::*;
@@ -40,17 +42,33 @@ pub(super) fn authority_tail(
     } else {
         Vec::new()
     };
-    let entries: Vec<String> = entries
-        .iter()
-        .map(|bytes| base64::engine::general_purpose::STANDARD.encode(bytes))
-        .collect();
+    let (entries, parted) = parted_page(entries)?;
     Ok((
         json!({
             "entries": entries,
+            "parted": parted,
             "wanted": base64::engine::general_purpose::STANDARD.encode(wanted),
         }),
         Some(Vec::new()),
     ))
+}
+
+/// One page of entries as it goes (FIX 8246): those that ride inline, in
+/// base64, and each named by reference, its place, hash and length, for the
+/// machine to fetch in parts (`authority_entry`).
+fn parted_page(entries: Vec<Vec<u8>>) -> Result<(Vec<String>, Vec<Value>), AppError> {
+    let page = split_authority_page(entries)
+        .map_err(|_| AppError::internal_server_error("authority history unavailable"))?;
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    let inline = page.inline.iter().map(|entry| encode(entry)).collect();
+    let parted = page
+        .parted
+        .iter()
+        .map(|named| {
+            json!({ "place": named.place, "hash": encode(&named.hash), "total": named.total })
+        })
+        .collect();
+    Ok((inline, parted))
 }
 
 /// Concatenated 32-byte hashes in base64, as the authority RPCs pack them.
@@ -122,8 +140,9 @@ pub(super) fn authority_range(
             .limit
             .clamp(1, oneiron::authority::AUTHORITY_HISTORY_PAGE_MAX),
     };
-    let page = authority_range_for(&server.vault, peer, &fetch)
+    let mut page = authority_range_for(&server.vault, peer, &fetch)
         .map_err(|_| AppError::not_found("authority history", None))?;
+    let (rows, parted) = parted_page(std::mem::take(&mut page.rows))?;
     let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
     let unheld: Vec<u8> = page.unheld.iter().flatten().copied().collect();
     Ok((
@@ -131,7 +150,8 @@ pub(super) fn authority_range(
             "vault_id": page.vault_id.map(|id| encode(&id)),
             "checkpoint": page.checkpoint.map(|head| encode(&head)),
             "selection": encode(&page.selection),
-            "rows": page.rows.iter().map(|row| encode(row)).collect::<Vec<_>>(),
+            "rows": rows,
+            "parted": parted,
             "unheld": encode(&unheld),
             "next": page.next.map(|next| encode(&next)),
         }),
@@ -190,16 +210,83 @@ pub(super) fn authority_append(
     let progress = authority_append_progress_for(&server.vault, peer, &entries)
         .map_err(|_| AppError::bad_request("authority entries refused", Some("entries")))?
         .ok_or_else(|| AppError::not_found("authority history", None))?;
+    Ok(append_answer(&progress))
+}
+
+/// An append's outcome: how many rows the import wrote, and the entries that
+/// stand here now and those the door refused, as packed hashes.
+fn append_answer(progress: &AuthorityAppendProgress) -> Answer {
     let packed = |hashes: &std::collections::BTreeSet<oneiron::authority::AuthorityEntryHash>| {
         base64::engine::general_purpose::STANDARD
             .encode(hashes.iter().flatten().copied().collect::<Vec<u8>>())
     };
-    Ok((
+    (
         json!({
             "written": progress.written,
             "accepted": packed(&progress.accepted),
             "refused": packed(&progress.refused),
         }),
         Some(Vec::new()),
+    )
+}
+
+/// One part of a held authority entry a page named by reference, with its
+/// whole length (FIX 8246). Only a machine of the owner's is served; any
+/// other, an entry not held here or withheld from it, and an offset past its
+/// end look missing. The machine checks the joined entry against its hash.
+pub(super) fn authority_entry(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: AuthorityEntryRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let hash = one_hash(&input.hash)?;
+    let part = authority_entry_part_for(&server.vault, peer, &hash, input.offset)
+        .map_err(|_| AppError::not_found("authority entry", None))?
+        .ok_or_else(|| AppError::not_found("authority entry", None))?;
+    Ok((
+        json!({
+            "total": part.total,
+            "part": base64::engine::general_purpose::STANDARD.encode(&part.part),
+        }),
+        Some(Vec::new()),
     ))
+}
+
+/// One part of an authority entry the proved machine appends past one
+/// request frame (FIX 8246), held for this socket until it is whole, then
+/// imported as `authority_append` imports it. Answers how far the entry is
+/// staged while parts are to come, then the append's outcome. Only a machine
+/// of the owner's is heard; any other looks missing.
+pub(super) fn authority_append_part(
+    server: &SyncServer,
+    peer: PeerMachine,
+    params: Value,
+    stage: &mut Option<AuthorityAppendStage>,
+) -> Result<Answer, AppError> {
+    let input: AuthorityAppendPartRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let hash = one_hash(&input.hash)?;
+    let part = base64::engine::general_purpose::STANDARD
+        .decode(input.part)
+        .map_err(|_| AppError::invalid_params())?;
+    let outcome = authority_append_part_for(
+        &server.vault,
+        peer,
+        stage,
+        hash,
+        input.total,
+        input.offset,
+        &part,
+    )
+    .map_err(|_| AppError::bad_request("authority entry part refused", Some("part")))?
+    .ok_or_else(|| AppError::not_found("authority history", None))?;
+    Ok(match outcome {
+        AuthorityAppendPart::Held => (
+            json!({ "staged": input.offset + part.len() as u64 }),
+            Some(Vec::new()),
+        ),
+        AuthorityAppendPart::Whole(progress) => append_answer(&progress),
+    })
 }

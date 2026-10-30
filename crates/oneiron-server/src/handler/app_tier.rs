@@ -493,6 +493,7 @@ fn answer_app_message(
                 peer,
                 request,
                 &mut state.residence_index,
+                &mut state.authority_append_stage,
             )?
             .queued(conn)
         } else {

@@ -5,6 +5,7 @@
 mod tests;
 
 mod admission;
+mod authority_parts;
 mod authority_tail;
 mod bundle;
 mod bundle_access;
@@ -23,6 +24,11 @@ mod prune;
 mod recall_scope;
 mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
+pub use authority_parts::{
+    AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
+    AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage,
+    authority_append_part_for, authority_entry_part_for, split_authority_page,
+};
 pub use authority_tail::{
     AUTHORITY_APPEND_WORK_SLICE, AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
     AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
