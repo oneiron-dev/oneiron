@@ -86,6 +86,10 @@ pub struct DiaryReadRecord {
     /// What the read opened: `diary` for diary entries, `pad` for sealed
     /// scratchpads.
     pub source: String,
+    /// The ruled reader a sealed-pad read was admitted as, with no Grant:
+    /// `owner`, `admin` or `coach`. `None` for a read `diary.read` Grants
+    /// covered.
+    pub ruled_reader: Option<SealedPadReader>,
 }
 
 /// Where one reader's stated reason stands in the agent's review.
@@ -111,6 +115,9 @@ pub struct DiaryReadRequest {
     pub answered_at: Option<u64>,
     /// The read this request's yes admitted, once used.
     pub read: Option<EntityId>,
+    /// The ruled reader a sealed-pad read asks as, with no Grant: `owner`,
+    /// `admin` or `coach`. `None` for a read `diary.read` Grants cover.
+    pub ruled_reader: Option<SealedPadReader>,
 }
 
 /// Why a diary entry stays out of a read.
@@ -377,6 +384,7 @@ impl DiaryReadGate {
                         grants: state.grants.iter().cloned().collect(),
                         request: spent,
                         source: "diary".to_owned(),
+                        ruled_reader: None,
                     },
                 )?;
                 read_ref = Some(read);
@@ -394,6 +402,7 @@ impl DiaryReadGate {
                     state: DiaryReviewState::Pending,
                     answered_at: None,
                     read: None,
+                    ruled_reader: None,
                 };
                 DIARY_READ_REQUEST.put(&vault.store, txn, &(agent, row.request), &row)?;
                 request = Some(row);
@@ -798,11 +807,15 @@ impl Memory<'_> {
 impl Memory<'_> {
     /// Reads `agent`'s sealed scratchpads as this caller, stating `reason`, in
     /// ONE transaction (AGM-1+8, agent-mind §2.6). The ruled readers need no
-    /// Grant: a live vault owner reads their agents' sealed pads, and the
-    /// Coach reads a work agent's, never a companion's. The read lands in the
-    /// agent's read log beside its diary reads, so the agent sees who read
-    /// and why, and an agent that reviews reads answers the reason first. Any
-    /// other reader is not covered: a health flag never grants access.
+    /// Grant: a live vault owner reads their agents' sealed pads, an Admin of
+    /// a work vault reads its agents' through this same logged step (OF-490
+    /// = B), and the Coach reads a work agent's, never a companion's. The
+    /// read lands in the agent's read log beside its diary reads, recorded
+    /// as the ruled reader it was admitted as, so the agent sees who read,
+    /// as what and why, and the companion's owner sees an Admin's reads
+    /// ([`Memory::admin_pad_reads`]). An agent that reviews reads answers the
+    /// reason first. Any other reader is not covered: a health flag never
+    /// grants access, and a personal vault has no Admin reader.
     pub fn read_agent_sealed_pads(
         &self,
         reader: Option<&AuthenticatedOwner>,
@@ -813,22 +826,23 @@ impl Memory<'_> {
             let actor = self.diary_reader_in_txn(txn, reader)?;
             let reason = DiaryReadGate::new(actor, reason)?.reason;
             let reader = actor.entity_ref();
-            let ruled = reader == agent
-                || (actor.actor_class() == EdgeActorClass::Human
-                    && crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &reader)?)
-                || (reader == crate::dreamer_runner::authority::coach_actor_id()?
-                    && self
-                        .vault
-                        .read_agent_definition_in_txn(txn, &agent)
-                        .is_ok_and(|definition| {
-                            !matches!(
-                                definition.wake_cadence,
-                                Some(crate::agent_def::AgentWakeCadence::Companion { .. })
-                            )
-                        }));
-            if !ruled {
+            let human = actor.actor_class() == EdgeActorClass::Human;
+            // The agent itself reads as no ruled reader and is not logged.
+            let ruled = if reader == agent {
+                None
+            } else if human
+                && crate::policy_model::is_live_vault_owner_in_txn(self.vault, txn, &reader)?
+            {
+                Some(SealedPadReader::Owner)
+            } else if human && work_vault_admin_in_txn(self.vault, txn, reader)? {
+                Some(SealedPadReader::Admin)
+            } else if reader == crate::dreamer_runner::authority::coach_actor_id()?
+                && coach_reads_pads_in_txn(self.vault, txn, &agent)?
+            {
+                Some(SealedPadReader::Coach)
+            } else {
                 return Ok(DiaryReadOutcome::NotCovered);
-            }
+            };
             let review =
                 reader != agent && agent_reviews_diary_reads_in_txn(self.vault, txn, &agent)?;
             let mut request = if review {
@@ -861,6 +875,7 @@ impl Memory<'_> {
                         state: DiaryReviewState::Pending,
                         answered_at: None,
                         read: None,
+                        ruled_reader: ruled,
                     };
                     DIARY_READ_REQUEST.put(&self.vault.store, txn, &(agent, row.request), &row)?;
                     return Ok(DiaryReadOutcome::PendingReview {
@@ -911,6 +926,7 @@ impl Memory<'_> {
                     grants: Vec::new(),
                     request: spent,
                     source: "pad".to_owned(),
+                    ruled_reader: ruled,
                 },
             )?;
             Ok(DiaryReadOutcome::Granted {
@@ -935,12 +951,42 @@ pub struct DiaryReader {
 }
 
 /// A ruled reader of an agent's sealed scratchpads, who needs no Grant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum SealedPadReader {
     /// A live vault owner, for their own agents.
     Owner,
+    /// An Admin of a work vault, through the logged access step; the
+    /// companion's owner sees the log.
+    Admin,
     /// The Coach's health check, for an agent that is not a companion.
     Coach,
+}
+
+/// Whether `reader` is an Admin of this vault and the vault is a work vault:
+/// the roster's own standing test ([`crate::workspace_roster::vault_standing_in`],
+/// an Admin grant over the shared vault, a pen through its PERSON) and the
+/// vault's kind ([`crate::agent_def::VaultKind`]). A personal vault, the
+/// `Personal` preset included, has no Admin reader.
+fn work_vault_admin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, reader: EntityId) -> Result<bool> {
+    Ok(
+        vault.vault_kind_in_txn(txn)? == crate::agent_def::VaultKind::Work
+            && crate::workspace_roster::vault_standing_in(vault, txn, reader)?
+                == Some(crate::workspace_roster::VaultStanding::Admin),
+    )
+}
+
+/// Whether the Coach's health check reads `agent`'s sealed pads: a work
+/// agent's, never a companion's. The agent's kind is the role it wakes as,
+/// its definition's cadence dial or else the vault wake-policy row's absent
+/// role ([`crate::dreamer_wake::AgentWakePolicy::role_of`]), so an agent
+/// with no dial in a vault whose absent role is `companion` is a companion.
+fn coach_reads_pads_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, agent: &EntityId) -> Result<bool> {
+    let Ok(definition) = vault.read_agent_definition_in_txn(txn, agent) else {
+        return Ok(false);
+    };
+    Ok(vault.agent_wake_role_in_txn(txn, &definition)?
+        != crate::dreamer_wake::AgentWakeRole::Companion)
 }
 
 /// Who may read an agent's diary and its sealed scratchpads: the list the
@@ -953,22 +999,15 @@ pub struct DiaryReaderList {
 
 impl Memory<'_> {
     /// The ruled readers of this agent's sealed scratchpads, as
-    /// `read_agent_sealed_pads` admits them: a live vault owner, and the
-    /// Coach unless the agent is a companion.
+    /// `read_agent_sealed_pads` admits them: a live vault owner, a work
+    /// vault's Admins, and the Coach unless the agent is a companion.
     pub fn sealed_pad_readers(&self) -> MemoryResult<Vec<SealedPadReader>> {
         super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        let coach = self
-            .vault
-            .get_agent_definition(&self.actor)
-            .is_ok_and(|definition| {
-                definition.is_some_and(|definition| {
-                    !matches!(
-                        definition.wake_cadence,
-                        Some(crate::agent_def::AgentWakeCadence::Companion { .. })
-                    )
-                })
-            });
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        let admin = self.vault.vault_kind_in_txn(&txn)? == crate::agent_def::VaultKind::Work;
+        let coach = coach_reads_pads_in_txn(self.vault, &txn, &self.actor)?;
         Ok(std::iter::once(SealedPadReader::Owner)
+            .chain(admin.then_some(SealedPadReader::Admin))
             .chain(coach.then_some(SealedPadReader::Coach))
             .collect())
     }

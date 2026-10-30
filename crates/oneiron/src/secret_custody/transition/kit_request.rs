@@ -12,7 +12,9 @@
 //! The transition then names that request, and a receiver admits it only on
 //! it ([`kit_request_admits`]). A fault recording it leaves the push as it
 //! was, its request zero, warned: never a refusal, never a demand for a
-//! profile. Its permits are measured as an install's request's are, and past
+//! profile. The request is recorded in a savepoint, so a fault takes its
+//! staged pieces and frontier join with it, never orphaned (FIX 12016).
+//! Its permits are measured as an install's request's are, and past
 //! one row ride in pieces the anchor signs ahead of the request (FIX 11866).
 
 use ed25519_dalek::SigningKey;
@@ -36,6 +38,8 @@ use crate::temporal::TimeRange;
 /// in `wtxn`. Returns its entry hash once the fold here counts it; zero,
 /// warned, when it cannot be recorded or has no effect here, so the push
 /// goes on as it did (CUSTODY_NEW_CHECK_FAULT = WarnAndKeepCurrentPath).
+/// The request is written in a savepoint of `wtxn`: a fault drops every row
+/// it staged (its permit pieces and frontier join) with it (FIX 12016).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_kit_request_in_txn(
     vault: &Vault,
@@ -47,16 +51,26 @@ pub(super) fn record_kit_request_in_txn(
     permits: &[CustodyRecipientPermit],
     (anchor, root): (&SigningKey, RecoveryRootId),
 ) -> AuthorityEntryHash {
-    match record_in_txn(
-        vault,
-        wtxn,
-        fold,
-        actor,
-        id,
-        generation,
-        permits,
-        (anchor, root),
-    ) {
+    let recorded = vault
+        .store
+        .env
+        .nested_write_txn(wtxn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            let hash = record_in_txn(
+                vault,
+                &mut savepoint,
+                fold,
+                actor,
+                id,
+                generation,
+                permits,
+                (anchor, root),
+            )?;
+            savepoint.commit()?;
+            Ok(hash)
+        });
+    match recorded {
         Ok(hash) => hash,
         Err(error) => {
             tracing::warn!(

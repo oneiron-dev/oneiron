@@ -7,7 +7,9 @@
 //! that read names, and installed over a restored copy's or an activated
 //! archive's own while that store still holds what the caller saw there, its
 //! generations first brought to the source's where the source's rows prove
-//! them (`PadObjectMembership`).
+//! them (`PadObjectMembership`). A capture carries the bundle of each
+//! generation only the source keeps, from the copy's generations read first,
+//! never one the copy keeps (FIX 11824, [`CopyGenerations`]).
 //!
 //! Nothing here is a new refusal. An empty capture means the source keeps no
 //! pad object. A read, decode or identity fault leaves the objects
@@ -16,9 +18,12 @@
 //! does not read back in its own transaction, is undone in its savepoint
 //! before anything else changes: the store keeps its own objects.
 
-use heed::RwTxn;
+use std::collections::BTreeSet;
 
-use crate::error::Result;
+use heed::RwTxn;
+use heed::types::Bytes;
+
+use crate::error::{Error, Result};
 use crate::side_table;
 use crate::store::{PairedIdentityRows, PairedSourceAsk, PairedSyncRows, Store};
 #[cfg(feature = "sync")]
@@ -31,6 +36,9 @@ use crate::sync::residence::{
 
 /// A bundle part key's generation, in hex, after its table prefix.
 const GENERATION_HEX: usize = 48;
+
+/// The prefix of a kept generation's entry row, its generation in hex after.
+const GENERATION_PREFIX: &[u8] = side_table::SYNC_RESIDENCE_BUNDLE_GENERATION.prefix;
 
 /// The `sync_state` families a paired read takes: each kept generation, the
 /// stored parts, and the grants with the admission outbox.
@@ -59,16 +67,112 @@ pub(super) fn is_bundle_part_row(key: &[u8]) -> bool {
         .is_some_and(|rest| rest.get(GENERATION_HEX..GENERATION_HEX + 3) == Some(b":b:".as_slice()))
 }
 
+/// Whether a paired read takes the `sync_state` row `key` as a bundle part a
+/// capture carries: a bundle's stored part ([`is_bundle_part_row`]) of a
+/// generation `copy` does not keep (FIX 11824).
+fn is_carried_bundle_part(copy: &CopyGenerations, key: &[u8]) -> bool {
+    is_bundle_part_row(key)
+        && key
+            .strip_prefix(side_table::SYNC_RESIDENCE_BUNDLE_PART.prefix)
+            .and_then(|rest| rest.get(..GENERATION_HEX))
+            .is_some_and(|generation| copy.carries_bundle_of(generation))
+}
+
+/// The generations the copy a source's pad objects install over keeps, read
+/// before the source's capture, each by its generation in hex (FIX 11824).
+/// The capture carries the bundle of each generation the source keeps and
+/// the copy does not, the only ones the copy can adopt, and none of the ones
+/// it keeps, so of the up to `SEALED_BUNDLE_KEEP` sealed bundles a source
+/// keeps, memory holds only those. Which of the copy's own generations the
+/// source's keep rule retires is judged from the source's generation list
+/// alone, which every capture carries, never from a bundle's bytes.
+#[derive(Clone, Debug)]
+pub(crate) enum CopyGenerations {
+    /// The copy keeps these.
+    Kept(BTreeSet<Vec<u8>>),
+    /// The copy's generations did not read: every bundle is carried, as
+    /// before.
+    Unread,
+    /// No copy yet: a read that only names its source carries no bundle.
+    NoCopy,
+}
+
+impl CopyGenerations {
+    /// The generations `rows`, an image's `sync_state` rows by full key,
+    /// keep: the ones the copy a restore lands them in keeps.
+    pub(crate) fn of_rows(rows: &[(Vec<u8>, Vec<u8>)]) -> Self {
+        Self::Kept(
+            rows.iter()
+                .filter_map(|(key, _)| key.strip_prefix(GENERATION_PREFIX))
+                .map(<[u8]>::to_vec)
+                .collect(),
+        )
+    }
+
+    /// The generations `store` keeps, in a read of its own: `Unread`,
+    /// warned, when they do not read.
+    pub(crate) fn of_store(store: &Store) -> Self {
+        let read = (|| -> Result<Self> {
+            let txn = store.env.read_txn()?;
+            let state = store
+                .env
+                .open_database::<Bytes, Bytes>(&txn, Some("sync_state"))?
+                .ok_or(Error::CorruptedIndex("vault holds no sync state database"))?;
+            let mut kept = BTreeSet::new();
+            for row in state.prefix_iter(&txn, GENERATION_PREFIX)? {
+                let (key, _) = row?;
+                if let Some(generation) = key.strip_prefix(GENERATION_PREFIX) {
+                    kept.insert(generation.to_vec());
+                }
+            }
+            Ok(Self::Kept(kept))
+        })();
+        read.unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a copy's generations did not read; its source's capture carries every bundle"
+            );
+            Self::Unread
+        })
+    }
+
+    /// Whether a capture carries the bundle of the generation `generation`,
+    /// in hex, names.
+    fn carries_bundle_of(&self, generation: &[u8]) -> bool {
+        match self {
+            Self::Kept(kept) => !kept.contains(generation),
+            Self::Unread => true,
+            Self::NoCopy => false,
+        }
+    }
+
+    /// Whether a capture carries `generation`'s bundle.
+    #[cfg(feature = "sync")]
+    pub(crate) fn carries_bundle(
+        &self,
+        generation: &crate::world_keys::SealedBundleGeneration,
+    ) -> bool {
+        self.carries_bundle_of(crate::sync::residence::sealed_generation_hex(generation).as_bytes())
+    }
+}
+
 /// What a paired read takes beside a source's custody: its pad object rows
-/// under `prefixes` and, apart from them, its bundle parts; its install's
-/// machine id; and its AUTHORITY_LOG records, whose fold names its vault.
-pub(super) fn paired_source_ask<'a>(prefixes: &'a [&'a [u8]]) -> PairedSourceAsk<'a> {
+/// under `prefixes` and, apart from them, the bundle parts of each
+/// generation `copy` does not keep; its install's machine id; and its
+/// AUTHORITY_LOG records with the checkpoint image it adopted, pin row and
+/// image bytes, whose fold names its vault.
+pub(super) fn paired_source_ask<'a>(
+    prefixes: &'a [&'a [u8]],
+    copy: &'a CopyGenerations,
+) -> PairedSourceAsk<'a> {
     PairedSourceAsk {
         sync_state: prefixes,
         pad_object: is_pad_object_row,
-        bundle_part: is_bundle_part_row,
+        bundle_part: Box::new(move |key: &[u8]| is_carried_bundle_part(copy, key)),
         machine_id: side_table::IDENTITY_MACHINE_ID.prefix,
         entity_type: crate::registry::ENTITY_TYPE_AUTHORITY_LOG,
+        adopted_pin: crate::authority::adopted_pin_row_key(),
+        adopted_image: crate::authority::adopted_image_row_key,
     }
 }
 
@@ -95,11 +199,10 @@ pub(crate) enum UncapturedPadObjects {
     /// transaction.
     IdentityUnread,
     /// A source whose authority records fold to no one vault (no valid
-    /// genesis among them, more than one root, or a genesis held only
-    /// through an adopted checkpoint image), so which vault its objects are
-    /// for is not proven (CALLS: PAD-1 paired source identity): a vault read
-    /// off its disk, or one open in this process with no genesis yet
-    /// (FIX 11826).
+    /// genesis among them and no adopted checkpoint image, or more than one
+    /// root), so which vault its objects are for is not proven (CALLS: PAD-1
+    /// paired source identity): a vault read off its disk, or one open in
+    /// this process with no genesis yet (FIX 11826).
     SourceVaultUnfolded,
 }
 
@@ -123,7 +226,8 @@ pub(crate) enum PadSourceIdentity {
     /// transaction its custody and objects are read in, as its home names
     /// them to its machines. A vault open in this process folds its own log
     /// there; a vault read off its disk folds the AUTHORITY_LOG records that
-    /// read took, Store-free (`authority::folded_vault_id_of_records`).
+    /// read took, from the checkpoint image it adopted where it adopted one,
+    /// Store-free (`authority::folded_vault_id_of_records`, FIX 11823).
     /// A source whose records fold to no one vault keeps its objects
     /// uncarried; a disk source that keeps none is an empty capture.
     FoldedInCustodyRead,
@@ -195,8 +299,9 @@ pub(super) fn disk_capture(
 
 /// The vault and the home a disk source's objects are named for, from the
 /// read that read its custody: the vault id its stored authority records
-/// fold to, and its machine id (the zero id before it has one). `None` when
-/// the records fold to no one vault.
+/// fold to, from the checkpoint image it adopted where it adopted one, and
+/// its machine id (the zero id before it has one). `None` when the records
+/// fold to no one vault.
 #[cfg(feature = "sync")]
 fn disk_identity(
     identity: Result<PairedIdentityRows>,
@@ -209,10 +314,12 @@ fn disk_identity(
             .ok_or(crate::error::Error::CorruptedIndex("machine id row"))?,
         None => crate::entity_id::EntityId::from_bytes_unchecked([0; 16]),
     };
-    Ok(
-        crate::authority::folded_vault_id_of_records(&identity.records)?
-            .map(|vault_id| (vault_id, home)),
-    )
+    let vault_id = crate::authority::folded_vault_id_of_records(
+        &identity.records,
+        identity.adopted_pin.as_deref(),
+        identity.adopted_image.as_deref(),
+    )?;
+    Ok(vault_id.map(|vault_id| (vault_id, home)))
 }
 
 /// Not carried, for `reason`.
@@ -283,8 +390,9 @@ pub(crate) fn install_source_pad_objects_in_txn(
 
 /// Puts `baseline`, a store's own pad objects as an install read them, back
 /// over what that install wrote (`installed`), in a savepoint of `wtxn`, when
-/// the install did not read back once committed. Whether they are back and
-/// read back in it.
+/// the install did not read back once committed: each as the store held it,
+/// whole or not, and read back against `baseline` (FIX 11825). Whether they
+/// are back and read back in it.
 #[cfg(feature = "sync")]
 pub(crate) fn put_back_pad_objects_in_txn(
     store: &Store,

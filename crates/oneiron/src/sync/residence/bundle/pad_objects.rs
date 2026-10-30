@@ -513,11 +513,13 @@ pub(crate) fn capture_current_pad_objects_in_rows(
 /// each kept here alone retired where proven, the rest left as they are.
 /// Then each captured object of a generation kept here takes the place of
 /// the one kept, whole, with its grant rows; the admission outbox's rows
-/// land too. Every check comes before the first write: a store that moved,
-/// or a capture of another generation under the same name, writes nothing
-/// (`CurrentChanged`), nor does an object not whole of a generation kept
-/// here (`Unavailable`). The caller commits, then reads back
-/// ([`read_back_pad_objects_in_txn`]).
+/// land too. A store's own objects put back (`StoreOwnPutBack`) go back
+/// part by part as it held them, whole or not (FIX 11825). Every check
+/// comes before the first write: a store that moved, or a capture of
+/// another generation under the same name, writes nothing
+/// (`CurrentChanged`), nor does a source's object not whole of a generation
+/// kept here (`Unavailable`). The caller commits, then reads back
+/// ([`read_back_captured_in_txn`]).
 ///
 /// # Errors
 ///
@@ -547,22 +549,32 @@ pub(crate) fn install_captured_pad_objects_in_txn(
         if !same_generation(&here.entry, &meta.entry) {
             return Ok(PadObjectInstall::CurrentChanged);
         }
-        match whole(&meta.entry, &object.parts) {
-            Ok(bytes) => installs.push((here.entry, meta.entry.pads_digest, bytes, &object.grants)),
-            Err(offset) => {
-                return Ok(PadObjectInstall::Unavailable(PadObjectUnavailable {
-                    generation: meta.entry.generation,
-                    digest: meta.entry.pads_digest,
-                    offset,
-                }));
+        // `None`: a store's own object, put back as it held it.
+        let bytes = match membership {
+            PadObjectMembership::StoreOwnPutBack => None,
+            PadObjectMembership::SourceKeepRuleProvesRetired => {
+                match whole(&meta.entry, &object.parts) {
+                    Ok(bytes) => Some(bytes),
+                    Err(offset) => {
+                        return Ok(PadObjectInstall::Unavailable(PadObjectUnavailable {
+                            generation: meta.entry.generation,
+                            digest: meta.entry.pads_digest,
+                            offset,
+                        }));
+                    }
+                }
             }
-        }
+        };
+        installs.push((here.entry, meta.entry.pads_digest, bytes, object));
     }
     let change = membership::membership_change(&held, captured, membership);
     membership::write_membership_change_in_txn(store, wtxn, captured, &change)?;
-    for (entry, digest, bytes, grants) in installs {
-        put_pads(store, wtxn, entry, digest, &bytes)?;
-        for (key, raw) in grants {
+    for (entry, digest, bytes, object) in installs {
+        match bytes {
+            Some(bytes) => put_pads(store, wtxn, entry, digest, &bytes)?,
+            None => membership::put_pads_as_held(store, wtxn, entry, digest, &object.parts)?,
+        }
+        for (key, raw) in &object.grants {
             put_access(store, wtxn, key, raw)?;
         }
     }
@@ -607,8 +619,10 @@ pub(crate) fn read_back_pad_objects_in_txn(
 /// Whether the store holds what an install of `captured` wrote, in `txn`, a
 /// read after it, in the install's own transaction or once it committed:
 /// the revision `installed` names, and each kept pad object the capture
-/// carries whole. Another kept object whose bytes are missing stays as it
-/// is, and does not fail this read (PAD-1).
+/// carries as it carries it: whole where it carries it whole, else part for
+/// part, as a store's own object not whole goes back (FIX 11825). Another
+/// kept object whose bytes are missing stays as it is, and does not fail
+/// this read (PAD-1).
 ///
 /// # Errors
 ///
@@ -624,13 +638,18 @@ pub(crate) fn read_back_captured_in_txn(
         return Ok(false);
     }
     for meta in &held.entries {
-        if captured.object(&meta.entry.generation).is_none() {
+        let Some((carried, object)) = captured.object(&meta.entry.generation) else {
             continue;
-        }
+        };
         let parts = pad_parts(&meta.entry.generation, |family, prefix| {
             txn_rows(store, txn, family, prefix)
         })?;
-        if whole(&meta.entry, &parts).is_err() {
+        let as_carried = if whole(&carried.entry, &object.parts).is_ok() {
+            whole(&meta.entry, &parts).is_ok()
+        } else {
+            parts == object.parts
+        };
+        if !as_carried {
             return Ok(false);
         }
     }

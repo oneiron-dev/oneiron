@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4390 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
+// UniFFI census: 1212 facade rows, 4393 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1164.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -1051,6 +1051,17 @@ pub struct DiaryReadsRequest {
     pub include_used: Option<bool>,
 }
 
+/// `oneiron::memory::diary_read::SealedPadReader`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum SealedPadReader {
+    #[serde(rename = "owner")]
+    Owner,
+    #[serde(rename = "admin")]
+    Admin,
+    #[serde(rename = "coach")]
+    Coach,
+}
+
 /// `oneiron::memory::diary_read::DiaryReadRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct DiaryReadRecord {
@@ -1072,6 +1083,12 @@ pub struct DiaryReadRecord {
     pub request: Option<String>,
     #[serde(rename = "source")]
     pub source: String,
+    #[serde(
+        rename = "ruled_reader",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ruled_reader: Option<SealedPadReader>,
 }
 
 /// `oneiron::memory::diary_read::DiaryReviewState`.
@@ -1110,6 +1127,12 @@ pub struct DiaryReadRequest {
     pub answered_at: Option<u64>,
     #[serde(rename = "read", default, skip_serializing_if = "Option::is_none")]
     pub read: Option<String>,
+    #[serde(
+        rename = "ruled_reader",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ruled_reader: Option<SealedPadReader>,
 }
 
 /// `oneiron::memory::diary_read::DiaryReadsView`.
@@ -32065,6 +32088,29 @@ pub enum StandingGrantBound {
 pub struct CreateStandingGrantRequest {
     #[serde(rename = "bound")]
     pub bound: StandingGrantBound,
+}
+
+/// `oneiron::gate::weave_grant::AutoWeaveWriterClass`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
+pub enum AutoWeaveWriterClass {
+    #[serde(rename = "agent")]
+    Agent,
+    #[serde(rename = "system")]
+    System,
+}
+
+/// `oneiron::gate::weave_grant::AutoWeaveGrantRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct AutoWeaveGrantRequest {
+    #[serde(rename = "writer")]
+    pub writer: String,
+    #[serde(rename = "writer_class")]
+    pub writer_class: AutoWeaveWriterClass,
+    #[serde(rename = "scope")]
+    pub scope: String,
+    #[serde(rename = "scope_id")]
+    pub scope_id: String,
 }
 
 /// `oneiron::consent::registry::ConsentRegistryQuery`.

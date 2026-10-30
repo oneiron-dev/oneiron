@@ -29,11 +29,11 @@ pub(in crate::store) use self::checkpoint_custody::archived_by;
 #[cfg(feature = "sync")]
 pub(crate) use self::checkpoint_custody::put_back_pad_objects_in_txn;
 pub(crate) use self::checkpoint_custody::{
-    ExpectedPadObjects, LiveCustody, MadeDestination, PAD_SOURCE_IDENTITY, PadObjectsCapture,
-    PadObjectsLanding, PadSourceIdentity, UncapturedPadObjects, admit_existing_vault_root,
-    host_hold_rows_in_txn, install_source_pad_objects_in_txn, preflight_absent_custody_rows,
-    preflight_checkpoint_rows_rejected, read_live_custody, refuse_custody_beside,
-    replace_host_holds_in_txn,
+    CopyGenerations, ExpectedPadObjects, LiveCustody, MadeDestination, PAD_SOURCE_IDENTITY,
+    PadObjectsCapture, PadObjectsLanding, PadSourceIdentity, UncapturedPadObjects,
+    admit_existing_vault_root, host_hold_rows_in_txn, install_source_pad_objects_in_txn,
+    preflight_absent_custody_rows, preflight_checkpoint_rows_rejected, read_live_custody,
+    refuse_custody_beside, replace_host_holds_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::checkpoint_custody::{

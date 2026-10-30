@@ -280,6 +280,12 @@ pub(super) fn checkpoint_image_bytes_in_txn(
     CHECKPOINT_IMAGE.get(store, txn, id)
 }
 
+/// The full `vault_meta` key one kept image's bytes are stored under: what a
+/// read of a vault off its disk, with no `Store`, reads them by (FIX 11823).
+pub(super) fn checkpoint_image_row_key(id: &[u8; 32]) -> Vec<u8> {
+    CHECKPOINT_IMAGE.key_bytes(id)
+}
+
 /// The local checkpoint head and the rows its image covers, read without
 /// trusting it: naming a hash as covered history to fetch is not trust.
 pub(super) fn checkpoint_head_coverage_in_txn(
