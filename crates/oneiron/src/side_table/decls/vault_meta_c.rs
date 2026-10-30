@@ -418,6 +418,10 @@ side_tables! {
     CONNECTOR_SLATE_SCOPE_SIGNAL: VaultMeta b"connector.grant_slate.scope_signal.v1/" Named;
     /// Typed per-tool grant slate draft plus any authenticated-owner overrides. Key: id16.
     CONNECTOR_GRANT_SLATE: VaultMeta b"connector.grant_slate.v1/" LegacyJson;
+    /// The qualification kit the owner's last successful qualify of a catalog key used, which an
+    /// accepted issuer revision's re-run qualifies its dependent rows with (FIX 9304). Key: id16
+    /// (catalog key).
+    CONNECTOR_QUALIFICATION_KIT: VaultMeta b"connector.qualification_kit.v1/" Named;
     /// Idempotent wake-decision record for one connector-event subscription match. Key: hash32.
     CONNECTOR_WAKE_DECISION: VaultMeta b"connector.wake.v1:" LegacyJson;
     /// Permanent catalog-name to key-id index; never deleted on key removal. Key: string(catalog

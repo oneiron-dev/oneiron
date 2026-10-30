@@ -10,8 +10,9 @@ use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
     self, ConnectorCredentialBindingView, ConnectorIssuerReaskRequest, ConnectorRevisionSnoozeView,
     ConnectorScopeOutcomeRequest, ConnectorScopeOutcomeView, ConnectorSlateRevisionAcceptRequest,
-    ConnectorSlateRevisionAcceptedView, ConnectorSlateRevisionDeferRequest,
-    ConnectorSlateRevisionOffersRequest, ConnectorSlateRevisionOffersView,
+    ConnectorSlateRevisionAcceptedView, ConnectorSlateRevisionCauseView,
+    ConnectorSlateRevisionDeferRequest, ConnectorSlateRevisionOffersRequest,
+    ConnectorSlateRevisionOffersView,
 };
 use oneiron::{EntityId, Vault};
 
@@ -94,7 +95,9 @@ pub(crate) async fn vault_connectors_slates_defer_revision(
 }
 
 /// `vault.connectors.slates.accept_revision`: its recheck reads keys and
-/// grants by cause, so its rows are not known.
+/// grants by cause, so its rows are not known. An accepted issuer revision
+/// starts the re-run of its dependent rows' discovery and qualification in
+/// the background (FIX 9304); the answer does not wait on it.
 pub(crate) async fn vault_connectors_slates_accept_revision(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -107,6 +110,14 @@ pub(crate) async fn vault_connectors_slates_accept_revision(
         move |vault, owner| sdk::accept_connector_slate_revision(vault, owner, input),
     )
     .await;
+    if let Ok(ConnectorSlateRevisionAcceptedView {
+        cause: ConnectorSlateRevisionCauseView::CredentialIssuerChanged { binding_ref, .. },
+        ..
+    }) = &answer
+        && let Ok(binding_ref) = EntityId::from_hex(binding_ref)
+    {
+        crate::connector_admission_host::spawn_issuer_rerun(server, binding_ref);
+    }
     (answer, None)
 }
 

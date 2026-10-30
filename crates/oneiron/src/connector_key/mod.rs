@@ -21,6 +21,7 @@ mod manifest_drift;
 mod measure;
 mod meter;
 pub mod qualification;
+mod qualification_kit;
 mod record;
 mod setup;
 mod slate;
@@ -60,6 +61,7 @@ pub use self::meter::{
     EffectorBudgetLadderEvent, EffectorBudgetLocation, EffectorBudgetRead, EffectorBudgetRowId,
     EffectorBudgetRowRead, EffectorBudgetRowSource, EffectorPoolCharge,
 };
+pub use self::qualification_kit::{ConnectorIssuerRerunOutcome, ConnectorIssuerRerunStage};
 pub use self::record::{
     CalendarPeriod, CompiledConnectorPolicy, ConnectorCallClass, ConnectorCatalogEntry,
     ConnectorCharterBlock, ConnectorKeyRecord, ConnectorKeySpec, ConnectorKeyStatus,
