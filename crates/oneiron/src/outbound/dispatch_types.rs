@@ -278,6 +278,16 @@ impl OutboundDispatchRequest {
         self
     }
 
+    /// The host's whole handoff from sender selection: the context its
+    /// selection query asked with, its scope keys and identity faces
+    /// included ([`SendAutonomyContext::with_selection`]), so an unpinned
+    /// send's dispatch selects its sender by the vault's selection rules.
+    #[must_use]
+    pub fn send_autonomy_context(mut self, context: SendAutonomyContext) -> Self {
+        self.send_autonomy = Some(context);
+        self
+    }
+
     #[must_use]
     pub fn originating_session(mut self, session_ref: impl Into<String>) -> Self {
         self.originating_session_ref = Some(session_ref.into());
