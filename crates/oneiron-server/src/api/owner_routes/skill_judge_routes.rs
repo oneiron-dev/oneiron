@@ -25,9 +25,9 @@ use oneiron::skill_optimize::{
     JudgeSwapReceipt, PreferredResponse, ProjectGoalRevisionProposal, ResponsePairPick,
     SkillTradeoffAsk, SkillTradeoffPreferences, TradeoffChoice, judge_incumbent, judge_swap_policy,
     judge_swap_receipts, measure_skill_edit_goal_axes, pick_judge_swap_case, pick_response_pair,
-    project_goal_revision_proposals, resolve_skill_edit_tradeoff, response_pair_picks,
-    set_judge_swap_policy, set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project,
-    skill_tradeoff_asks_for, skill_tradeoff_preferences,
+    project_goal_revision_proposals, response_pair_picks, set_judge_swap_policy,
+    set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
+    skill_tradeoff_preferences,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,11 +39,14 @@ use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::replay_judge::{self, JournalRow, ServeAxisBandit};
 use crate::server::SyncServer;
 
+mod tradeoff_resolve;
+pub(crate) use self::tradeoff_resolve::tradeoff_resolve_body_schema;
+
 /// Most journal rows one read returns.
 const MAX_JOURNAL_ROWS: usize = 500;
 
 pub(super) fn owner_table() -> OwnerTable {
-    vec![
+    let mut table = vec![
         (
             OwnerRoute {
                 method: "get",
@@ -118,15 +121,6 @@ pub(super) fn owner_table() -> OwnerTable {
         ),
         (
             OwnerRoute {
-                method: "post",
-                path: "/skills/judge/tradeoff-asks/resolve",
-                summary: "The owner's decision on one exact pending tradeoff.",
-                row: None,
-            },
-            post(tradeoff_resolve),
-        ),
-        (
-            OwnerRoute {
                 method: "get",
                 path: "/skills/judge/goal-revisions",
                 summary: "The preferences the loop proposes for the project's goal in force, oldest first, for its goal interview to show.",
@@ -188,7 +182,9 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(set_swap_policy),
         ),
-    ]
+    ];
+    table.extend(tradeoff_resolve::owner_table());
+    table
 }
 
 /// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s body (FIX 11611):
@@ -264,12 +260,6 @@ pub(crate) fn tradeoff_pick_body_schema() -> serde_json::Value {
 /// [`Settled`].
 pub(crate) fn tradeoff_settled_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<Settled>()
-}
-
-/// The OpenAPI schema of `POST /v1/owner/skills/judge/tradeoff-asks/resolve`'s body (FIX 9125):
-/// [`TradeoffResolve`].
-pub(crate) fn tradeoff_resolve_body_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<TradeoffResolve>()
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -352,18 +342,6 @@ struct Settled {
     proposal: String,
     accepted: bool,
     goal_revision: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct TradeoffResolve {
-    /// The open optimizer proposal, as 32 hex.
-    proposal: String,
-    /// The pending verdict the ask names, as 32 hex.
-    pending: String,
-    /// The bounded decision evidence reference.
-    evidence: String,
-    choice: TradeoffChoice,
 }
 
 #[derive(Debug, Deserialize)]
@@ -580,39 +558,6 @@ async fn pick(
             &owner,
             &proposal,
             &request.question_digest,
-            request.choice,
-            unix_seconds(),
-        )?;
-        Ok(Settled {
-            proposal: request.proposal,
-            accepted: verdict.accepted,
-            goal_revision: verdict.goal_revision,
-        })
-    })
-    .await?;
-    Ok(Json(settled))
-}
-
-/// `POST /v1/owner/skills/judge/tradeoff-asks/resolve`: the owner's decision
-/// on one exact pending tradeoff, with decision evidence. An approval writes
-/// an accepted-tradeoff permission (or a deferred row the next scored cycle
-/// admits through); it learns no preference.
-async fn tradeoff_resolve(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<TradeoffResolve>,
-) -> OwnerReply<Settled> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let settled = blocking(move || -> OwnerResult<Settled> {
-        let proposal = entity_id("proposal", &request.proposal)?;
-        let pending = entity_id("pending", &request.pending)?;
-        let verdict = resolve_skill_edit_tradeoff(
-            server.vault(),
-            &proposal,
-            pending,
-            &owner,
-            &request.evidence,
             request.choice,
             unix_seconds(),
         )?;
