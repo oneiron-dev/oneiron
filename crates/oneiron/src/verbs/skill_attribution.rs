@@ -281,6 +281,10 @@ pub struct ProposalDeltaSettlement {
     pub final_text: String,
     /// `None` when no lane could measure the window.
     pub delta: Option<AmendmentDeltaView>,
+    /// The recorded window's Δ when the settlement splits (FIX 11540): the
+    /// artifact holds the proposed text but not the settled final, so `delta`
+    /// is the imported tail and this is the recorded part. `None` unsplit.
+    pub recorded_delta: Option<AmendmentDeltaView>,
     pub hunks: Vec<SettledHunkView>,
     /// Absent when the judge abstained; the delta and evidence still stand.
     pub judgment: Option<AmendmentJudgmentView>,
@@ -366,6 +370,13 @@ pub fn skill_attribution_settle_as_owner(
             Some(delta) => put_amendment_delta_in_txn(vault, wtxn, &receipt_id, delta)?,
             None => put_amendment_uncaptured_in_txn(vault, wtxn, &receipt_id)?,
         };
+        // A split settlement's recorded Δ rides its own receipt (FIX 11540);
+        // first-writer-wins holds per row, as the tail's.
+        if let (Some(recorded_receipt), Some(recorded_delta)) =
+            (&window.recorded_receipt_id, &window.recorded_delta)
+        {
+            put_amendment_delta_in_txn(vault, wtxn, recorded_receipt, recorded_delta)?;
+        }
         Ok(())
     })?;
     let mut evidence =
@@ -449,6 +460,7 @@ pub fn skill_attribution_settle_as_owner(
         proposed_text: input.proposed_text.clone(),
         final_text: expected_final,
         delta: window.delta.map(Into::into),
+        recorded_delta: window.recorded_delta.map(Into::into),
         hunks,
         judgment: judgment.map(Into::into),
         edit_cost_claims,
