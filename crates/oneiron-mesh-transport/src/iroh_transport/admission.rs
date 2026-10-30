@@ -15,6 +15,11 @@
 //! only then is admitted; one that expired waiting is never acknowledged.
 //! With a slot free, an admission is granted as it arrives.
 //!
+//! One caller holds at most one grant under way at a time (FIX 12249): its
+//! next admission keeps its turn and waits, within its own deadline, until
+//! that grant ends, which is within [`ACKNOWLEDGEMENT_TIMEOUT`]. No admission
+//! is refused for it, and other callers keep the shared slots as before.
+//!
 //! Every exit after the gate's proof leaves one path receipt through the
 //! admission's guard: admitted once its acknowledgement is sent, or failed
 //! with its stage (the deadline, the queue's close, the acknowledgement's
@@ -22,7 +27,7 @@
 //! before dispatch leaves the gate's refusal receipt instead. TLS, pre-gate
 //! and policy failures keep the receipts the gate already leaves.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::VecDeque;
 
 use tokio::sync::{Notify, oneshot};
 
@@ -61,9 +66,9 @@ struct Queue {
     waiting: BTreeMap<MachineId, VecDeque<Waiting>>,
     /// The callers with an admission waiting, in turn order.
     turns: VecDeque<MachineId>,
-    /// The admissions whose grants are under way: their acknowledgements
-    /// have not ended yet.
-    granted: BTreeSet<u64>,
+    /// The admissions whose grants are under way, each with its caller:
+    /// their acknowledgements have not ended yet. One per caller at most.
+    granted: BTreeMap<u64, MachineId>,
     /// Admitted connections for the next accepts, oldest first.
     ready: VecDeque<Admitted>,
     /// The id the next waiting admission takes.
@@ -134,7 +139,7 @@ impl Admissions {
     /// it stood.
     fn withdraw(&self, machine: MachineId, id: u64) -> Withdrawal {
         let mut queue = self.queue();
-        if queue.granted.contains(&id) {
+        if queue.granted.contains_key(&id) {
             return Withdrawal::Granted;
         }
         let Some(waiting) = queue.waiting.get_mut(&machine) else {
@@ -206,12 +211,24 @@ impl Queue {
     }
 
     /// Sends the next caller in turn the grant of its oldest admission:
-    /// round-robin across callers, first in first out for each. One past its
-    /// deadline, or whose admission already ended, is passed over. `false`
-    /// when none waits.
+    /// round-robin across callers, first in first out for each. A caller
+    /// whose grant is under way keeps its place and is passed until that
+    /// grant ends (FIX 12249). One past its deadline, or whose admission
+    /// already ended, is passed over. `false` when none waits that may take
+    /// a grant.
     fn grant_next(&mut self) -> bool {
         let now = Instant::now();
-        while let Some(machine) = self.turns.pop_front() {
+        loop {
+            let Some(at) = self
+                .turns
+                .iter()
+                .position(|machine| !self.granted.values().any(|held| held == machine))
+            else {
+                return false;
+            };
+            let Some(machine) = self.turns.remove(at) else {
+                return false;
+            };
             let Some(waiting) = self.waiting.get_mut(&machine) else {
                 continue;
             };
@@ -225,11 +242,10 @@ impl Queue {
                 && entry.deadline > now
                 && entry.grant.send(()).is_ok()
             {
-                self.granted.insert(entry.id);
+                self.granted.insert(entry.id, machine);
                 return true;
             }
         }
-        false
     }
 }
 
