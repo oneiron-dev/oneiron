@@ -6580,7 +6580,7 @@ export type AnonymousChatResponse = { type: "reply"; content: string; notices: G
 /** `oneiron::llm::registry::ModelWireFormat` */
 export type ModelWireFormat = "openai-compat" | "anthropic-messages" | "gemini" | "own-server" | "local"
 /** `oneiron_model::llm::catalog::LlmCatalogCost` */
-export type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null; currency: string | null }
+export type LlmCatalogCost = { input_per_million: string; output_per_million: string; cache_read_per_million?: string | null; cache_write_per_million?: string | null; currency?: string | null }
 /** `oneiron_model::llm::catalog::LlmCatalogEntry` */
 export type LlmCatalogEntry = { model: ModelId; display_name: string; locality: ModelLocality; context_window_tokens: number; max_output_tokens?: number | null; cost?: LlmCatalogCost | null; capabilities?: LlmCapability[]; metadata?: Record<string, unknown> }
 /** `oneiron::llm::registry::ModelRegistryRow` */

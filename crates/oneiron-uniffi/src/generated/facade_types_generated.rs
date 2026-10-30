@@ -52550,7 +52550,7 @@ pub struct LlmCatalogCost {
         skip_serializing_if = "Option::is_none"
     )]
     pub cache_write_per_million: Option<String>,
-    #[serde(rename = "currency", default)]
+    #[serde(rename = "currency", default, skip_serializing_if = "Option::is_none")]
     pub currency: Option<String>,
 }
 
