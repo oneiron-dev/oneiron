@@ -222,7 +222,7 @@ impl MergeQueue<'_> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(error.into()),
                 };
-                if actual != file.expected {
+                if !file.expects(actual.as_deref()) {
                     return Err(Error::ConcurrentWrite(
                         "proposal bytes overlap or base is stale",
                     ));
@@ -483,7 +483,7 @@ pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Re
                         "merge deletion requires a reviewed delete operation",
                     ));
                 }
-                None if file.expected == file.content => {
+                None if file.expects(file.content.as_deref()) => {
                     return Err(invalid("duplicate, oversized or empty merge edit"));
                 }
                 None => {}
@@ -493,7 +493,11 @@ pub(super) fn validate_proposals(proposals: &[MergeProposal], green: &str) -> Re
             }
             total = total
                 .saturating_add(file.content.as_ref().map_or(0, Vec::len))
-                .saturating_add(file.expected.as_ref().map_or(0, Vec::len));
+                .saturating_add(
+                    file.expected
+                        .as_ref()
+                        .map_or(0, super::MergeFileExpected::stored_len),
+                );
         }
     }
     if total > 64 * 1024 * 1024 {

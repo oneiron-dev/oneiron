@@ -11,13 +11,65 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeFile {
     pub path: String,
-    /// Exact previously reviewed bytes. Absence means a new path, not a wildcard.
-    pub expected: Option<Vec<u8>>,
+    /// The previously reviewed base. Absence means a new path, not a wildcard.
+    pub expected: Option<MergeFileExpected>,
     /// None deletes a file.
     pub content: Option<Vec<u8>>,
     /// A received bundle's reviewed exact Git state change of this path
     /// (G4 PR2); `None` on every ordinary file, which stages as before.
     pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
+}
+
+/// The base state a queue file is checked against (FIX 10974).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MergeFileExpected {
+    /// The exact previously reviewed bytes.
+    Bytes(Vec<u8>),
+    /// The BLAKE3 of bytes a withheld base keeps out of every queue row (a
+    /// secret remediation's file), compared by hash against the tested tree.
+    Blake3([u8; 32]),
+}
+
+impl MergeFileExpected {
+    /// Whether `actual` is this state.
+    #[must_use]
+    pub fn holds(&self, actual: &[u8]) -> bool {
+        match self {
+            Self::Bytes(bytes) => bytes.as_slice() == actual,
+            Self::Blake3(hash) => blake3::hash(actual).as_bytes() == hash,
+        }
+    }
+
+    /// The BLAKE3 of the state, so two states compare whatever they hold.
+    #[must_use]
+    pub fn blake3(&self) -> [u8; 32] {
+        match self {
+            Self::Bytes(bytes) => *blake3::hash(bytes).as_bytes(),
+            Self::Blake3(hash) => *hash,
+        }
+    }
+
+    /// The bytes this state keeps in a row.
+    #[must_use]
+    pub fn stored_len(&self) -> usize {
+        match self {
+            Self::Bytes(bytes) => bytes.len(),
+            Self::Blake3(hash) => hash.len(),
+        }
+    }
+}
+
+impl MergeFile {
+    /// Whether `actual` (`None`: no file) is the base this file expects,
+    /// compared by the state it holds.
+    #[must_use]
+    pub fn expects(&self, actual: Option<&[u8]>) -> bool {
+        match (&self.expected, actual) {
+            (None, None) => true,
+            (Some(expected), Some(actual)) => expected.holds(actual),
+            _ => false,
+        }
+    }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MergeProposal {

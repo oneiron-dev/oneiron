@@ -88,7 +88,8 @@ pub use tested_types::{
 };
 pub use types::{
     BatchState, CheckInvocation, CheckPhase, CheckReport, LandingPermit, MergeBatch, MergeFile,
-    MergeLanding, MergeProposal, MergeQueuePointers, Quarantine, SpeculativePath, TestedBatch,
+    MergeFileExpected, MergeLanding, MergeProposal, MergeQueuePointers, Quarantine,
+    SpeculativePath, TestedBatch,
 };
 
 pub struct MergeQueue<'a> {

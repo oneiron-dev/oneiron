@@ -108,10 +108,7 @@ pub(super) fn require_candidate(
         return Err(invalid("reviewed stack requires regular files"));
     }
     let expected = old.map(|entry| entry.content.as_slice());
-    if file.path != path
-        || file.content.as_deref() != Some(content)
-        || file.expected.as_deref() != expected
-    {
+    if file.path != path || file.content.as_deref() != Some(content) || !file.expects(expected) {
         return Err(invalid(
             "tested bytes differ from immutable reviewed operation",
         ));
@@ -191,15 +188,19 @@ fn require_bundle_candidate(
             .iter()
             .find(|entry| entry.path == reviewed.path);
         // A native remediation's file the snapshot withholds (FIX 7608
-        // slice 6): its kept mode is checked here, and its exact base
-        // bytes, which no snapshot holds, by the queue against the tested
-        // tree.
+        // slice 6): its kept mode is checked here, and its base, which no
+        // snapshot holds, by the BLAKE3 the remediation read it at, which
+        // the queue checks against the tested tree (FIX 10974).
         let withheld = matches!(row.operation, RepoProposalOperation::CommitFiles)
             && entry.is_some_and(|entry| entry.kind == StoredRepoSnapshotEntryKind::Withheld);
         let base_is = if withheld {
-            withheld_state_is(entry, &state.expected) && tested.expected.is_some()
+            withheld_state_is(entry, &state.expected)
+                && reviewed.withheld_base_blake3.is_some_and(|hash| {
+                    tested.expected == Some(crate::merge_queue::MergeFileExpected::Blake3(hash))
+                })
         } else {
-            snapshot_state_is(entry, &state.expected) && tested.expected == snapshot_bytes(entry)
+            snapshot_state_is(entry, &state.expected)
+                && tested.expects(snapshot_bytes(entry).as_deref())
         };
         if tested.path != reviewed.path
             || tested.content != reviewed.content
