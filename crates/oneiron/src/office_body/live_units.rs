@@ -224,10 +224,11 @@ impl Vault {
         }
         let at = match then {
             Some(pin) => pin.frontier.clone(),
-            None => self
-                .office_body_head(artifact)?
-                .ok_or(Error::EntityNotFound)?
-                .import_frontier,
+            // No head row reads as unmoved, as `live_span` reads it.
+            None => match self.office_body_head(artifact)? {
+                Some(head) => head.import_frontier,
+                None => return Ok(None),
+            },
         };
         Ok(Some(LiveUnits {
             then: deck_slides(&self.read_pptx_body(artifact, Some(at.as_slice()))?.deck)?,
