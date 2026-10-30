@@ -11,8 +11,8 @@ use crate::error::{Error, Result};
 use super::keys::{code_symbol_entity_id, derive_symbol_fingerprint, repo_identity_key};
 use super::text_diff::subtract_line_range;
 use super::types::{
-    CODE_SYMBOL_MANIFEST_MAX_SYMBOLS, CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingInput,
-    CodeSymbolGraph, CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
+    CODE_SYMBOL_NAME_MAX_BYTES, CodeChunk, CodeEmbeddingInput, CodeSymbolGraph,
+    CodeSymbolGraphEdge, CodeSymbolManifest, CodeSymbolRevision, CodeSymbolSource,
 };
 use super::validate::{validate_manifest_path, validate_text};
 use crate::error::CodeError;
@@ -90,12 +90,6 @@ pub(crate) fn prepare_code_symbol_graph<'a>(
             tree,
             symbol_indexes: source_symbol_indexes,
         });
-    }
-
-    if extracted.len() > CODE_SYMBOL_MANIFEST_MAX_SYMBOLS {
-        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "tree-sitter symbol extraction exceeded manifest symbol cap",
-        )));
     }
 
     let mut symbols_by_name = HashMap::<String, Vec<usize>>::new();

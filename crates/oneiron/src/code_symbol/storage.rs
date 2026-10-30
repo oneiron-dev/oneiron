@@ -16,6 +16,7 @@ use crate::ppr::{
     SeedWeighting, flush_deferred_ppr_cache_writes, ppr_query_in_txn_with_vad_deferred_cache,
 };
 use crate::registry::{ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -38,6 +39,37 @@ use super::validate::{
 };
 use crate::error::CodeError;
 
+/// Counts a manifest's rows and its longest producing-operation chain into
+/// their scan checks (FIX 9717, 9718, 9943): a manifest of any size is
+/// written whole, and past a threshold it asks whether everything is okay.
+fn observe_manifest_rows(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    code_artifact_id: &EntityId,
+    manifest: &CodeSymbolManifest,
+) -> Result<()> {
+    let scope = code_artifact_id.as_bytes();
+    let mut rows = ScanCount::start(store, txn, EngineScan::SymbolManifestRows, scope)?;
+    rows.rows(manifest.chunks.len().max(manifest.symbols.len()));
+    rows.defer(store);
+    let longest = manifest
+        .chunks
+        .iter()
+        .map(|chunk| chunk.producing_operations.len())
+        .chain(
+            manifest
+                .symbols
+                .iter()
+                .map(|symbol| symbol.producing_operations.len()),
+        )
+        .max()
+        .unwrap_or(0);
+    let mut chain = ScanCount::start(store, txn, EngineScan::SymbolOperationChain, scope)?;
+    chain.rows(longest);
+    chain.defer(store);
+    Ok(())
+}
+
 /// How many edges a graph writer holds before it applies them (FIX 5955;
 /// CALLS: CODE_SYMBOL_EDGE_BATCH = 1,024): a working buffer that bounds
 /// memory, never a cap. Every edge is written.
@@ -54,6 +86,7 @@ impl Vault {
         MANIFEST.encode_value(manifest)?;
         let mut wtxn = self.store.env.write_txn()?;
         validate_code_artifact_target(&self.store, &wtxn, code_artifact_id, &manifest.repo_ref)?;
+        observe_manifest_rows(&self.store, &wtxn, code_artifact_id, manifest)?;
         let manifest = keep_erased_actors(&self.store, &wtxn, code_artifact_id, manifest)?;
 
         delete_code_symbol_manifest_in_txn(&self.store, &mut wtxn, code_artifact_id)?;
@@ -144,6 +177,7 @@ impl Vault {
         validate_code_symbol_manifest(manifest)?;
         scan_code_symbol_manifest_metadata(manifest)?;
         validate_code_artifact_target(&self.store, wtxn, code_artifact_id, &manifest.repo_ref)?;
+        observe_manifest_rows(&self.store, wtxn, code_artifact_id, manifest)?;
 
         let mut batch = self.batch_in();
         let mut symbol_ids = BTreeSet::new();

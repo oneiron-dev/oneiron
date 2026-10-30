@@ -105,7 +105,7 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
         .chunks
         .iter()
         .map(|chunk| {
-            Ok(Value::Map(vec![
+            Value::Map(vec![
                 (Value::from(KEY_PATH), Value::from(chunk.path.as_str())),
                 (
                     Value::from(KEY_START_LINE),
@@ -121,16 +121,16 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
                 ),
                 (
                     Value::from("producing_operations"),
-                    encode_operations(&chunk.producing_operations)?,
+                    encode_operations(&chunk.producing_operations),
                 ),
-            ]))
+            ])
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let symbols = manifest
         .symbols
         .iter()
         .map(|symbol| {
-            Ok(Value::Map(vec![
+            Value::Map(vec![
                 (Value::from(KEY_PATH), Value::from(symbol.path.as_str())),
                 (Value::from(KEY_NAME), Value::from(symbol.name.as_str())),
                 (Value::from(KEY_KIND), Value::from(symbol.kind.as_str())),
@@ -163,11 +163,11 @@ pub fn encode_code_symbol_manifest(manifest: &CodeSymbolManifest) -> Result<Vec<
                 ),
                 (
                     Value::from("producing_operations"),
-                    encode_operations(&symbol.producing_operations)?,
+                    encode_operations(&symbol.producing_operations),
                 ),
-            ]))
+            ])
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Vec<_>>();
     let value = Value::Map(vec![
         (
             Value::from(KEY_REPO_REF),
@@ -617,13 +617,10 @@ pub(super) fn sha256_bytes(bytes: &[u8]) -> [u8; 32] {
     hasher.finalize().into()
 }
 
-fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
-    if ops.len() > 1024 {
-        return Err(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
-            "operation chain exceeds cap",
-        )));
-    }
-    Ok(Value::Array(
+/// The whole chain, however long (FIX 9718): its writer counts the longest
+/// in a scan check, never a refusal.
+fn encode_operations(ops: &[CodeProducingOperation]) -> Value {
+    Value::Array(
         ops.iter()
             .map(|op| {
                 // An erased actor's slot is nil (FIX 4476).
@@ -636,13 +633,12 @@ fn encode_operations(ops: &[CodeProducingOperation]) -> Result<Value> {
                 Value::Array(vec![operation, actor, turn, activity, intent])
             })
             .collect(),
-    ))
+    )
 }
 
 fn decode_operations(value: &Value) -> Result<Vec<CodeProducingOperation>> {
     let entries = value
         .as_array()
-        .filter(|v| v.len() <= 1024)
         .ok_or(Error::Code(CodeError::InvalidCodeSymbolManifestBody(
             "invalid operation chain",
         )))?;
