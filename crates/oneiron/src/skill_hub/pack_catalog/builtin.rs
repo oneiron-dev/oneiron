@@ -228,6 +228,9 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
     }
+    // The first-party weave lens pack has no connector to qualify: it
+    // installs Active with this seed (FIX 1524).
+    super::lenses::seed_weave_lens_pack_in_txn(vault, &mut txn)?;
     SEEDED.put(&vault.store, &mut txn, &(), &version)?;
     txn.commit()?;
     Ok(())
