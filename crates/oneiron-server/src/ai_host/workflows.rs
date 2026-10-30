@@ -178,7 +178,11 @@ fn pump(
             return;
         }
         ask_project_questions(vault, detection, &stopped);
-        let wake = match pump_once(runtime, vault, runner, status, decisions.get(), &stopped) {
+        let started = std::time::Instant::now();
+        let pass = pump_once(runtime, vault, runner, status, decisions.get(), &stopped);
+        let elapsed_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        tracing::debug!(target: "oneiron::workflow_pump", elapsed_us, "workflow pump pass");
+        let wake = match pass {
             Ok(wake) => wake,
             Err(error) => {
                 tracing::error!(%error, "workflow pump pass failed");
@@ -498,7 +502,8 @@ fn pump_once(
         }
     }
     recheck |= settle_workflow_tasks(vault, decisions);
-    let attempts = AttemptQueue::new(vault).list()?;
+    let attempts = AttemptQueue::new(vault)
+        .pump_wake_rows(oneiron::wave_orchestration::WAVE_PLAN_ATTEMPT_KIND)?;
     let now = now_secs();
     // A scheduled or backing-off try wakes the pump at its own instant, the
     // readiness instant its claim reads.

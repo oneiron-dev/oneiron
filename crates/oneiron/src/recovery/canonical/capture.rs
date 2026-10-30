@@ -74,6 +74,7 @@ pub(crate) fn capture_canonical_window_within(
             "message_docs",
             "withdrawn_cutoffs",
             "peer_origins",
+            "asset_body_refs",
         ]
         .contains(&name.as_str())
     }) {
@@ -95,7 +96,7 @@ pub(crate) fn capture_canonical_window_within(
         schema_manifest: CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 1,
+            container_schema_version: 2,
             analyzer_manifest_blake3: *blake3::hash(
                 vault
                     .analyzer
@@ -114,6 +115,7 @@ pub(crate) fn capture_canonical_window_within(
         peer_origins: Vec::new(),
         row_births: Vec::new(),
         withdrawn_cutoffs: Vec::new(),
+        asset_body_refs: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         // A pad row goes by its bare reference, its pad in current custody
@@ -410,11 +412,13 @@ pub(crate) fn capture_canonical_window_within(
     }
     // FIX 4550: the peer origins of the final rows, with their final bytes.
     peer_origins::capture(doc, &mut snapshot, budget)?;
-    // FIX 3069, 8820: the final rows' births, and the window's cutoffs.
+    // FIX 3069, 8820, 5489: the final rows' births, the window's cutoffs,
+    // and the body references that bind the final rows.
     #[cfg(feature = "sync")]
     {
         row_births::capture(vault, &txn, doc, &mut snapshot, budget)?;
         withdrawn_cutoffs::capture(vault, &txn, doc, &mut snapshot, budget)?;
+        asset_body_refs::capture(doc, &mut snapshot, budget)?;
     }
     // Only a TASK row carries a refusal: a forged fact may name any id as its
     // task, and the artifact's validation refuses a mark on anything else.

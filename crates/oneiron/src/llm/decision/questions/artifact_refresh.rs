@@ -2,20 +2,22 @@
 //! [`ARTIFACT_ADAPTER`] asks each of its artifacts on the head, once at first, then again
 //! when the artifact or a folder item it reads has a newer head that has been quiet for the
 //! vault's interval, and when its schedule falls due. Arrivals are found by polling heads
-//! against the versions last asked, so no append path is touched. Each ask holds its answers
-//! as a fresh proposal for Keep under a ref of its own. While that proposal or a wake's
-//! re-ask of it waits, the artifact is not asked again: the edit settle carry splits a held
-//! proposal and wakes its proposer. A Keep of one of them moves the head the question
-//! follows. An arrival asks again only the units whose reads moved since the versions the
-//! question answered (a row's read cells or its header, a paragraph's text, a folder item's
-//! file); a schedule asks them all. The ask is the question's principal's, on the
-//! question's dial and clock, through the host's decider; an artifact or file the principal
-//! cannot read is not asked.
+//! against the versions last asked, and live bodies against the frontiers last asked, so
+//! an edit never exported arrives too (FIX 2115); no append path is touched. Each ask
+//! holds its answers as a fresh proposal for Keep under a ref of its own. While that
+//! proposal or a wake's re-ask of it waits, the artifact is not asked again: the edit
+//! settle carry splits a held proposal and wakes its proposer. A Keep of one of them moves
+//! the head the question follows. An arrival asks again only the units whose reads moved
+//! since the versions the question answered (a row's read cells or its header, a
+//! paragraph's text, a folder item's file); a schedule asks them all. The ask is the
+//! question's principal's, on the question's dial and clock, through the host's decider;
+//! an artifact or file the principal cannot read is not asked.
 
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
 mod history;
+mod live;
 mod manual;
 mod unit_receipts;
 
@@ -39,6 +41,7 @@ use crate::edit_roundtrip::{
 };
 use crate::edit_settle::PendingProposalView;
 use crate::llm::decision::{DecisionBandPolicy, Reversibility};
+use crate::office_body::LivePin;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault, WriteActor};
 
@@ -63,6 +66,10 @@ pub(super) struct ArtifactAsked {
     /// logged one by one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ask_id: Option<EntityId>,
+    /// Each read artifact's live body when it was asked, those with one: an edit to it
+    /// never exported moves no version, and arrives as a move of the body (FIX 2115).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    live: Vec<(EntityId, LivePin)>,
 }
 
 /// One question a pass could not ask, at the artifact it stopped on; it is held, then
@@ -322,6 +329,7 @@ impl Asking<'_> {
         let selection = Selection::resolve(&units.selection)?;
         let mut files = selection.files();
         let mut observed = Vec::with_capacity(files.len() + 1);
+        let mut observed_live = Vec::new();
         let mut changed_at = 0;
         let stamp = {
             let txn = vault.store.env.read_txn()?;
@@ -332,6 +340,11 @@ impl Asking<'_> {
                 }
                 changed_at = changed_at.max(head.as_ref().map_or(0, |head| head.created_at));
                 observed.push((*id, head.map_or(0, |head| head.version)));
+                // A live body's newest commit is a change too (FIX 2115).
+                if let Some((pin, at)) = vault.office_body_pin_in_txn(&txn, id)? {
+                    changed_at = changed_at.max(at);
+                    observed_live.push((*id, pin));
+                }
             }
             ASKED.get(&vault.store, &txn, &(self.question, artifact))?
         };
@@ -342,7 +355,7 @@ impl Asking<'_> {
             };
             let refresh = &self.record.definition.refresh;
             let arrived = refresh.on_arrival
-                && baseline != observed
+                && (baseline != observed || stamp.live != observed_live)
                 && self.now >= changed_at.saturating_add(self.quiet);
             let scheduled = refresh
                 .every_seconds
@@ -352,10 +365,17 @@ impl Asking<'_> {
             }
             if !scheduled {
                 only = self.changed_units(artifact, &selection, &baseline, &observed)?;
+                // An edit to a live body never exported moves no version (FIX 2115).
+                if let Some(only) = only.as_mut()
+                    && let Some(live) = self.live_changed_units(artifact, &selection, &stamp.live)?
+                {
+                    only.merge(live);
+                }
                 // Nothing it reads moved: the question follows the head unasked.
                 if only.as_ref().is_some_and(Changed::is_empty) {
                     let stamp = ArtifactAsked {
                         versions: observed,
+                        live: observed_live,
                         ..stamp
                     };
                     vault.with_write_txn(|wtxn| {

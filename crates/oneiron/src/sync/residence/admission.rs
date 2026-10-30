@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 
 use crate::Vault;
 use crate::authority::{Destination, PeerMachine, VerifiedSlip, WorldPrivacyView};
-use crate::claim::ResidenceReadContext;
+use crate::claim::{CallerLocality, ResidenceReadContext};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::FederationGrantScope;
@@ -26,6 +26,9 @@ pub struct ResidenceAdmission<'v> {
     context: ResidenceReadContext<'v>,
     /// Every world whose read setting keeps it off the destination.
     withheld: BTreeSet<EntityId>,
+    /// A forwarded caller off its carrier (FIX 3550): the rows go on to a
+    /// machine nobody proved.
+    off_carrier: bool,
 }
 
 impl<'v> ResidenceAdmission<'v> {
@@ -51,12 +54,55 @@ impl<'v> ResidenceAdmission<'v> {
             vault,
             context,
             withheld,
+            off_carrier: false,
         })
     }
 
-    /// The machine this read serves, or `Unknown`.
+    /// [`Self::load`] for a caller its device forwarded (FIX 3550), `proof`
+    /// that caller's own slip and `carrier` the machine the forwarding
+    /// connection proved. A caller off the carrier reaches it over a hop the
+    /// home proved no machine for, so the read meets both destinations: the
+    /// worlds kept off the carrier and those kept off an unknown one. An
+    /// unknown destination reads only worlds every destination may, so this
+    /// read withholds as an unknown one does ([`Withhold::Unknown`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::load`].
+    pub fn load_forwarded(
+        vault: &'v Vault,
+        proof: &VerifiedSlip,
+        carrier: PeerMachine,
+        locality: CallerLocality,
+        scope: FederationGrantScope,
+        selector: &SyncSelector,
+    ) -> Result<Self> {
+        let txn = vault.store.env.read_txn()?;
+        let mut context =
+            ResidenceReadContext::load_in(vault, &txn, proof, carrier, scope, selector)?;
+        let view = WorldPrivacyView::load_in(vault, &txn)?;
+        let mut withheld = view.withheld_for(context.destination())?;
+        let off_carrier = locality == CallerLocality::OffDevice;
+        if off_carrier {
+            let unknown = view.withheld_for(Destination::Unknown)?;
+            context = context.withholding(&unknown);
+            withheld.extend(unknown);
+        }
+        Ok(Self {
+            vault,
+            context,
+            withheld,
+            off_carrier,
+        })
+    }
+
+    /// The machine this read serves, or `Unknown`: also for a forwarded
+    /// caller off its carrier, whose machine nobody proved.
     #[must_use]
     pub fn destination(&self) -> Destination {
+        if self.off_carrier {
+            return Destination::Unknown;
+        }
         self.context.destination()
     }
 

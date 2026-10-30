@@ -21,6 +21,7 @@ mod gate_staging;
 mod leader_chat_admission;
 mod lexical_query_hints;
 mod ops_pipeline;
+mod session_delete;
 mod person_substrate;
 mod phonetic_apply;
 pub(crate) use phonetic_apply::checkpoint;

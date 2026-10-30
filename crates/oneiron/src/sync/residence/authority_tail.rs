@@ -139,7 +139,7 @@ pub fn held_authority_history(vault: &Vault) -> Result<Vec<Vec<u8>>> {
 /// FIX 922 item 11 call: the tail and range leave out, for a machine that may not read a world,
 /// that world's side branch (its key records); every main-log row still goes, a world's
 /// settings edits included (the Engine call "OwnerAct world metadata to every linked machine").
-const ITEM11_AUTHORITY_FILTER_SCOPE: bool = true;
+pub(super) const ITEM11_AUTHORITY_FILTER_SCOPE: bool = true;
 
 /// The signed entries this home holds and `held` lacks, parents first, at most
 /// `limit`, for a linked machine of the vault whose proof stands here. Each
@@ -269,7 +269,7 @@ pub fn authority_checkpoint_part_for(
 /// included. Authority metadata goes to each; a world's key records and
 /// content stay recipient-filtered (`withheld_for_peer`), the owner's own
 /// recipient choice.
-fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<bool> {
+pub(super) fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     let fold = vault.authority_fold_readonly_in_txn(&txn)?;
     Ok(match peer {
@@ -279,7 +279,7 @@ fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<bool> {
 }
 
 /// Refuses every peer but a proven linked machine ([`owner_machine`]).
-fn require_owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
+pub(super) fn require_owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
     if !owner_machine(vault, peer)? {
         return Err(Error::sync_protocol(
             SyncProtocolValidation::DocumentAdmissionDenied,

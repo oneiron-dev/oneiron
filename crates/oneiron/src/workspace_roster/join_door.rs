@@ -105,7 +105,7 @@ impl Memory<'_> {
         history: HistoryChoice,
     ) -> MemoryResult<JoinOutcome> {
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let outcome = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;
@@ -130,7 +130,7 @@ impl Memory<'_> {
     /// project's home room invites only through its signed roster write.
     pub fn rooms_invite(&self, request: &JoinRequest) -> MemoryResult<JoinOutcome> {
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let outcome = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             Ok::<_, MemoryError>(owner_invite_in_txn(vault, txn, request, caller, now)?)
@@ -159,7 +159,7 @@ impl Memory<'_> {
             ));
         }
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let lane = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let outcome = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;

@@ -94,7 +94,8 @@ pub struct OutboxCardAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OutboxDivergedAnswer {
-    /// The copy stays, and his answer is recorded.
+    /// The copy moves aside under its own name, where the carrier leaves
+    /// it, so the member's next version lands.
     Keep,
     /// The copy is removed at the carrier's next turn.
     Remove,

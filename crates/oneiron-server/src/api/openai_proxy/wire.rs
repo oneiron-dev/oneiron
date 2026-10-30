@@ -157,6 +157,11 @@ pub(super) fn upstream_error(failure: LlmError) -> Response {
             "api_error",
             "kept_on_device",
         ),
+        LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "api_error",
+            "world_route_not_admitted",
+        ),
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "api_error", "upstream_error"),
     };
     let timing = super::timing::RetryTiming::of(&failure);

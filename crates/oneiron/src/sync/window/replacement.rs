@@ -33,9 +33,9 @@
 //!
 //! The candidate, its version and its history-free state are persisted in one transaction that
 //! also retires the old window's pending updates and the queued sends it took in, whose effects
-//! step 1 carried over, and clears the pending mirrors step 1 replayed. Preparation refused
-//! before that transaction leaves every mirror marker in place. The caller attaches observers
-//! last.
+//! step 1 carried over, and clears the pending mirrors (`pm:`, `lm:w:`) step 1 replayed; a
+//! `lm:w:` marker whose value comes back as a conflict stays owed. Preparation refused before
+//! that transaction leaves every mirror marker in place. The caller attaches observers last.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -61,7 +61,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::ports::{DeletionMarker, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
 use crate::sync::bridge::Materializer;
-use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
+use crate::sync::transport::{MAX_WINDOW_PAD_PAYLOAD_BYTES, is_window_admission_read_fault};
 use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, WINDOW_UPDATE};
 
 fn rejected() -> Error {
@@ -98,7 +98,9 @@ pub fn prepare_replacement(
 /// How long a replacement snapshot may be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::sync) enum ReplacementByteBound {
-    /// A peer's: one network frame's decoded payload, [`MAX_DECODED_PAYLOAD_BYTES`].
+    /// A peer's: its window pad envelope's payload, joined from frames each
+    /// within the frame floor and checked whole against its digest, up to
+    /// [`MAX_WINDOW_PAD_PAYLOAD_BYTES`] (FIX 8247).
     NetworkFrame,
     /// A base window of a sealed bundle a kit restore opened: the authenticated
     /// section that carried it, opened and decoded whole once its signer and
@@ -118,13 +120,22 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
 ) -> Result<PreparedReplacement> {
-    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_DECODED_PAYLOAD_BYTES {
+    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES
+    {
         return Err(rejected());
     }
     let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;
     let base = crate::sync::schema::create_window_doc("replacement", key);
+    // A fault reading this vault's own state is this vault's, never the
+    // peer's rejected snapshot (FIX 5926).
     super::validate_window_update_with_staged_worlds(vault, &base, snapshot, key, evidence)
-        .map_err(|_| rejected())?;
+        .map_err(|error| {
+            if is_window_admission_read_fault(&error) {
+                error
+            } else {
+                rejected()
+            }
+        })?;
     // A snapshot decodes into a fresh document whole, with a fresh author peer: the old
     // window's peer may hold counters the snapshot never saw.
     let candidate = LoroDoc::from_snapshot(snapshot).map_err(|_| rejected())?;
@@ -165,6 +176,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     // the old window, so the carry-over judges it like any other unseen write and never puts it
     // over a value the peer provably superseded. Its marker clears with the install below.
     let mirrored = replay_pending_mirrors_kept(vault, old, key)?;
+    // So does what a local write's `lm:w:` marker owes the window (FIX 11822).
+    let owed = vault.mirror_owed_into_replaced(old, key)?;
     // Delete semantics never weaken: no carried write or queued send may soften or remove a hard
     // delete the replacement holds, nor one of this vault's own once it is carried over.
     let mut hard = hard_tombstones(&candidate);
@@ -236,6 +249,12 @@ pub(in crate::sync) fn prepare_bounded_replacement(
         for marker in &mirrored {
             OFF_RECORD_PROMOTE_PICKUP.delete(&vault.store, wtxn, marker)?;
         }
+        // A row or edge the candidate does not hold as mirrored stays owed.
+        owed.retire_in_txn(vault, wtxn, |carrier| {
+            conflicts.iter().any(|conflict| {
+                matches!(conflict.map.as_str(), "entities" | "edges") && conflict.key == carrier
+            })
+        })?;
         write_window_svf_in_txn(vault, wtxn, key)
     })?;
     Ok(PreparedReplacement {

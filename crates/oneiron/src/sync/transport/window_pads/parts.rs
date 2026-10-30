@@ -1,5 +1,6 @@
 //! A window pad envelope put back together on its socket (KS-5, FIX 7107):
-//! the first frame, then its `WINDOW_PAD_PART` frames in order. The bytes
+//! the first frame, then its `WINDOW_PAD_PART` frames in order, each at its
+//! offset past the header, a payload past one frame included (FIX 8247). The bytes
 //! are held in memory for that delivery alone. A part that names no envelope
 //! here, or breaks one, ends the delivery as a lost frame would; a first
 //! frame for a window whose earlier envelope is still incomplete takes its
@@ -24,8 +25,6 @@ struct Pending {
     sub_tag: u8,
     id: [u8; 32],
     bytes: Vec<u8>,
-    /// Where its payload ends.
-    head: usize,
     total: usize,
 }
 
@@ -67,7 +66,9 @@ impl WindowPadAssembly {
         if header.kind != kind {
             return Err(invalid("window pad envelope of another kind"));
         }
-        if payload.len() < header.head() || payload.len() > total {
+        // The first frame may end inside the payload: the rest of it comes in
+        // parts (FIX 8247).
+        if payload.len() > total {
             return Err(invalid("window pad envelope length"));
         }
         self.pending.remove(window_key);
@@ -81,7 +82,6 @@ impl WindowPadAssembly {
                 sub_tag,
                 id: *blake3::hash(&payload[..WINDOW_PAD_HEADER_BYTES]).as_bytes(),
                 bytes: payload.to_vec(),
-                head: header.head(),
                 total,
             },
         );
@@ -102,7 +102,7 @@ impl WindowPadAssembly {
             return Ok(WindowPadArrival::Broken);
         };
         if pending.id != id
-            || offset != (pending.bytes.len() - pending.head) as u64
+            || offset != (pending.bytes.len() - WINDOW_PAD_HEADER_BYTES) as u64
             || pending.bytes.len() + bytes.len() > pending.total
         {
             self.pending.remove(window_key);

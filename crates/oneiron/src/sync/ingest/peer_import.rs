@@ -21,7 +21,7 @@ use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
 use crate::batch::EntityMetadataHeader;
 use crate::error::{Error, Result};
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_EMBEDDING_SETUP};
+use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_EMBEDDING_SETUP, ENTITY_TYPE_MESSAGE};
 use crate::side_table::{self, Raw, SideTable};
 use crate::sync::loro_support::{
     map_delete, map_for_each_value_bytes, map_get_bytes, map_insert_bytes,
@@ -32,8 +32,14 @@ use crate::{EntityId, Vault};
 /// bytes a peer's import brought for it (FIX 2902; a call, the wire key).
 pub(in crate::sync) const PEER_ORIGIN_MAP: &str = "peer_origins";
 
-/// The kinds whose door judges a peer's row apart from this vault's own.
-const PEER_JUDGED_KINDS: [u8; 2] = [ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_EMBEDDING_SETUP];
+/// The kinds whose door judges a peer's row apart from this vault's own. A
+/// MESSAGE row takes the own-device lane only when no peer's import brought
+/// it, on whichever own machine it lands (FIX 11709).
+const PEER_JUDGED_KINDS: [u8; 3] = [
+    ENTITY_TYPE_AGENT_DEF,
+    ENTITY_TYPE_EMBEDDING_SETUP,
+    ENTITY_TYPE_MESSAGE,
+];
 
 /// The blake3 digest of the bytes a peer's import brought for one row of a
 /// window. Key: hex32 (entity id) ":" window key.

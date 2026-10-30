@@ -35,7 +35,6 @@ pub(super) struct Owners {
     pub(super) task_body_without_streaks: Option<Vec<u8>>,
     pub(super) pad_stored_body: Option<Vec<u8>>,
     pub(super) escalated_skill_body: Option<Vec<u8>>,
-    pub(super) reconciled_critical_claim_body: Option<Vec<u8>>,
 }
 
 /// Type-dispatch verdicts the CLAIM and per-kind arms produce for the later

@@ -10,7 +10,8 @@
 //! document of the same tab, on the same page of the same guest. The press is a person's, per send, and pays no reviewed
 //! batch. A row, page or guest that changed runs nothing: the press never
 //! moves to another target. What the act came to settles the wait, and its
-//! reply wakes the run with the act's own answer.
+//! reply wakes the run with the act's own answer, through the post hooks
+//! the first pass never reached when the wait kept its pre (FIX 11497).
 
 use std::sync::PoisonError;
 
@@ -50,7 +51,7 @@ pub(super) fn resume_answered_browser(
     let Some(admitted) = vault.admit_browser_code_consent_wait(wait_id)? else {
         return Ok(());
     };
-    let outcome = run_held_act(server, &admitted);
+    let outcome = run_held_act(server, vault, &admitted);
     vault.settle_browser_code_consent_wait(wait_id, outcome)?;
     Ok(())
 }
@@ -60,7 +61,11 @@ pub(super) fn resume_answered_browser(
 /// that is gone or a target that changed; or, for an act whose input was
 /// sent and whose page did not read after, an unknown delivery with its
 /// receipt.
-fn run_held_act(server: &SyncServer, admitted: &AdmittedBrowserAct) -> CodeConsentBrowserOutcome {
+fn run_held_act(
+    server: &SyncServer,
+    vault: &Vault,
+    admitted: &AdmittedBrowserAct,
+) -> CodeConsentBrowserOutcome {
     let refused = |reasons: &[&str]| {
         CodeConsentBrowserOutcome::Refused(reasons.iter().map(|code| (*code).to_owned()).collect())
     };
@@ -94,6 +99,21 @@ fn run_held_act(server: &SyncServer, admitted: &AdmittedBrowserAct) -> CodeConse
                 }
                 object.insert("engine".into(), Value::from(driver.engine().as_str()));
             }
+            // The post hooks the first pass never reached (FIX 11497),
+            // over the answer as the manifest and engine lines leave it,
+            // as the first pass's own post met them. A wait kept before
+            // this kept no pre, and its answer delivers as before. A post
+            // that errors delivers the act's answer as found, never a
+            // refusal the first pass would not have made (CALLS).
+            let answer = match action.hook_pre.clone() {
+                Some(snapshot) => oneiron::task_verb::verb_hook_boundary::row_post(
+                    vault,
+                    snapshot.into_post_pre(),
+                    answer.clone(),
+                )
+                .unwrap_or(answer),
+                None => answer,
+            };
             CodeConsentBrowserOutcome::Delivered(answer)
         }
         Err(error @ BrowserError::NeedsPress(_)) => {
