@@ -536,13 +536,15 @@ impl TransferredBounds {
     /// Whether the archived record `id`, which stood at `position` when the
     /// removal froze it, lies inside these bounds at `now`. A record frozen
     /// with no position is judged as if it stood everywhere: only bounds no
-    /// caveat narrowed take it. A one-shot or pact-bound transfer takes
-    /// nothing here: an archive read is no one-shot redemption, and a
-    /// removal archive is no pact's reach. Nor does a channel-bound one: an
-    /// archived record stood on no channel, and this door is none.
+    /// caveat narrowed take it. A one-shot transfer is judged as any other:
+    /// the archive doors take it once and spend it in the writer that serves
+    /// it ([`Self::single_use`], FIX-LIST 10773). A pact-bound transfer
+    /// takes nothing here: a removal archive is no pact's reach. Nor does a
+    /// channel-bound one: an archived record stood on no channel, and this
+    /// door is none.
     #[must_use]
     pub(crate) fn admits(&self, id: crate::EntityId, position: Option<&Scope>, now: u64) -> bool {
-        if now >= self.deadline || self.single_use || self.pact || self.channel_bound {
+        if now >= self.deadline || self.pact || self.channel_bound {
             return false;
         }
         if self
@@ -564,6 +566,14 @@ impl TransferredBounds {
             && self
                 .scope
                 .admits(REMOVAL_ARCHIVE_TRANSFER_VERB, &record, &Scope::top())
+    }
+
+    /// Whether the mint or a caveat made the transfer one-shot: an archive
+    /// door serves it once, and the first answer that takes anything spends
+    /// the slip (FIX-LIST 10773).
+    #[must_use]
+    pub(crate) const fn single_use(&self) -> bool {
+        self.single_use
     }
 }
 
