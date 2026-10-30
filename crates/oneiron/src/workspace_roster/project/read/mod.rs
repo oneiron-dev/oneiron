@@ -528,14 +528,15 @@ impl<'a, 't> ProjectReader<'a, 't> {
         id: EntityId,
         hash: ProjectRevisionHash,
         authority: &ProjectAuthority,
-        proof: &ProjectWriteProof,
+        proof: &ProjectRevisionProof,
+        anchor: &[ProjectAnchorLink],
     ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
         if let Some(known) = self.verified.borrow().get(&(id, hash)) {
             return Ok(known.clone());
         }
         #[cfg(test)]
         REVISIONS_VERIFIED.with(|count| count.set(count.get() + 1));
-        let verified = self.verify(id, authority, proof)?;
+        let verified = self.verify(id, authority, proof, anchor)?;
         self.verified
             .borrow_mut()
             .insert((id, hash), verified.clone());
@@ -561,16 +562,17 @@ impl<'a, 't> ProjectReader<'a, 't> {
         Ok(verified)
     }
 
-    /// Verifies the slip chain and holder signature as of the signed time.
+    /// Verifies the slip chain and holder signature as of the signed time,
+    /// over `anchor`, the links under the signed state, root first.
     pub(super) fn verify(
         &self,
         id: EntityId,
         authority: &ProjectAuthority,
-        proof: &ProjectWriteProof,
+        proof: &ProjectRevisionProof,
+        anchor: &[ProjectAnchorLink],
     ) -> Result<std::result::Result<Holder, ProjectVerdict>> {
         // A v2 proof over a roster, or a v3 proof without one, signs nothing.
-        let Ok(challenge) =
-            authority.write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+        let Ok(challenge) = authority.write_challenge(id, proof.version, proof.signed_at, anchor)
         else {
             return Ok(Err(ProjectVerdict::Quarantined(
                 "invalid project write proof",

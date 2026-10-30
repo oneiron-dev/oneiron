@@ -10,7 +10,8 @@ use crate::{EntityId, Error, Result, Vault};
 /// selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnselectedLensProposalErase {
-    /// The proposal goes, with its intent.
+    /// The proposal goes, with its intent, its CODE kind=lens row and its
+    /// `lens/intent` NOTE (FIX 11259).
     Delete,
     /// The proposal stays and names no one, as a selected one does.
     Keep,
@@ -29,10 +30,10 @@ use crate::deletion::names_no_actor;
 
 /// Erasing `actor` from the lens proposals it made (FIX 3520): one its slot
 /// selects keeps its tree, slot, hashes and time and names no one; one no
-/// slot selects goes with its intent, when
-/// [`ACTOR_ERASE_UNSELECTED_LENS_PROPOSAL`] says so. The pack and its skill
-/// stay. One-way, in the erase's own transaction. An id whose entity is no
-/// actor scans nothing.
+/// slot selects goes with its intent and its two vault rows (FIX 11259),
+/// when [`ACTOR_ERASE_UNSELECTED_LENS_PROPOSAL`] says so. The pack and its
+/// skill stay. One-way, in the erase's own transaction. An id whose entity
+/// is no actor scans nothing.
 ///
 /// # Errors
 ///
@@ -62,9 +63,47 @@ pub(crate) fn erase_proposal_actor_in_txn(
         {
             PROPOSALS.delete(&vault.store, wtxn, &lens_ref)?;
             INTENTS.delete(&vault.store, wtxn, &lens_ref)?;
+            tear_lens_rows_in_txn(vault, wtxn, &lens_ref, &record.prompt_ref)?;
         } else {
             record.proposed_by = ERASED_CALL_IDENTITY.to_owned();
             PROPOSALS.put(&vault.store, wtxn, &lens_ref, &record)?;
+        }
+    }
+    Ok(())
+}
+
+/// Tears an erased proposal's CODE kind=lens row `lens_ref` and its
+/// `lens/intent` NOTE `prompt_ref` in the erase's own transaction (FIX
+/// 11259), as a cascade tears a row: its indexes, edges and side rows go,
+/// and its replicas get its tombstone. A row a legal hold keeps stays, as
+/// every tear keeps it; a prompt ref that is no id names nothing to tear.
+fn tear_lens_rows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    lens_ref: &EntityId,
+    prompt_ref: &str,
+) -> Result<()> {
+    let prompt = EntityId::from_hex(prompt_ref).ok();
+    for id in std::iter::once(*lens_ref).chain(prompt) {
+        if crate::store::legal_hold::held_in_txn(&vault.store, wtxn, id.as_bytes())? {
+            continue;
+        }
+        if Some(id) == prompt {
+            crate::note::delete_document_in_txn(&vault.store, wtxn, &id)?;
+        }
+        crate::provenance::erase_row_provenance_in_txn(&vault.store, wtxn, &id, true)?;
+        let (existed, vector, graph, neighbors) =
+            crate::batch::deindex_entity(&vault.store, wtxn, &id)?;
+        if !existed {
+            continue;
+        }
+        crate::batch::stage_cascade_tombstone_in_txn(&vault.store, wtxn, &id)?;
+        crate::ppr::invalidate_ppr_for_delete(&vault.store, wtxn, &id, &neighbors)?;
+        if graph {
+            crate::ppr::increment_graph_version(&vault.store, wtxn)?;
+        }
+        if vector {
+            crate::hnsw::increment_vector_version(&vault.store, wtxn)?;
         }
     }
     Ok(())

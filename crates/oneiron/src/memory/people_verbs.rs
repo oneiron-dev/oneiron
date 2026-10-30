@@ -16,7 +16,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
 use crate::context_board::{People, PersonRow};
 use crate::conversation::{ConversationBody, ConversationKind};
-use crate::{EdgeActorClass, EntityId, WriteActor};
+use crate::{EdgeActorClass, EntityId};
 
 mod grants;
 
@@ -443,7 +443,7 @@ impl Memory<'_> {
                             wtxn,
                             room,
                             projects,
-                            WriteActor::new(self.actor, self.actor_class),
+                            self.write_actor(),
                             now_ms / 1_000,
                         )?;
                         Ok(())
@@ -463,7 +463,7 @@ impl Memory<'_> {
                                     member_ids: pair.to_vec(),
                                     ..Default::default()
                                 },
-                                WriteActor::new(self.actor, self.actor_class),
+                                self.write_actor(),
                                 crate::TimeRange { start: at, end: at },
                                 at,
                                 &[],

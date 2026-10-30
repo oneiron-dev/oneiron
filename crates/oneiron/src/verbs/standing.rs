@@ -10,7 +10,7 @@ use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consoli
 use crate::llm::ModelTierRef;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult};
 use crate::persona_snapshot::standing::{StandingBlockEdit, StandingBlockHandle};
-use crate::{EntityId, TimeRange, Vault, WriteActor};
+use crate::{EntityId, TimeRange, Vault};
 
 /// One configured standing block: its durable handle and floor.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -185,7 +185,7 @@ pub fn edit_own_standing_block(
     });
     let claim_ref = vault.edit_standing_block(
         &handle,
-        WriteActor::new(memory.actor(), memory.actor_class()),
+        memory.write_actor(),
         &input.run_ref,
         StandingBlockEdit::Claim {
             field: input.field.clone(),

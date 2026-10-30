@@ -22,6 +22,7 @@ use crate::sync::local_claims::withheld_claim_carriers;
 use crate::sync::loro_support::{
     map_for_each_tombstone_value, map_for_each_value_bytes, map_insert_bytes,
 };
+use crate::sync::note::NoteSelection;
 use crate::sync::row_birth::{BirthReach, copy_births_within};
 use crate::sync::schema::create_window_doc;
 use crate::sync::types::WindowKey;
@@ -266,7 +267,9 @@ pub(super) fn strip_guest_share_metadata(
     // Its NOTEs already passed the selection that made `source`. A guest is
     // another vault, as far as its rows' births go.
     copy_births_within(source, &out, BirthReach::OtherVault(withheld))?;
-    crate::sync::note::copy_selected(source, &out, &BTreeSet::new())?;
+    // A body reference rides beside the owner it binds (FIX 5489).
+    crate::sync::asset_body::references::copy_refs_within(source, &out)?;
+    crate::sync::note::copy_selected(source, &out, &NoteSelection::carried())?;
     out.commit();
     Ok(out)
 }
@@ -464,12 +467,6 @@ pub(super) fn filter_window_doc(
             .into_iter()
             .map(|(_, id)| id),
     );
-    // So does a file-plane ASSET, whose row holds no bytes (FIX 5393).
-    custody_withheld.extend(crate::sync::asset_body::file_rows_in(
-        &vault.store,
-        &rtxn,
-        &source_entities,
-    )?);
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
@@ -688,15 +685,14 @@ pub(super) fn filter_window_doc(
     // flag is policy, not authority: promotion authority keeps a NOTE the
     // flag holds here, as it keeps every other row (this corrects #1402's
     // authority-mode NOTE drop).
-    let notes_dropped = crate::sync::note::dropped_in(vault, &rtxn, &flagged, source, &kept)?;
+    let grant_selector = Some((grant.scope, selector));
+    let notes = NoteSelection::judged_in(vault, &rtxn, &flagged, source, &kept, grant_selector)?;
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
     // after every other withholding and before anything is written.
     let mut shipped = kept
         .iter()
-        .filter(|id| {
-            !tombstoned.contains(id) && !incomplete.contains(id) && !notes_dropped.contains(id)
-        })
+        .filter(|id| !tombstoned.contains(id) && !incomplete.contains(id) && !notes.drops(id))
         .copied()
         .collect::<BTreeSet<_>>();
     let withheld = unbacked_epochs(vault, &rtxn, source, &shipped)?;
@@ -780,6 +776,7 @@ pub(super) fn filter_window_doc(
     // Rule A: a birth crosses only beside an owner this filter shipped, and
     // only as far as `reach` lets it.
     copy_births_within(source, &out, reach)?;
+    crate::sync::asset_body::references::copy_refs_within(source, &out)?;
     // FIX 2902: a proved machine of this vault's takes, beside each shipped
     // row, the origin this vault's import judged its bytes by.
     if matches!(reach, BirthReach::OwnMachines)
@@ -787,7 +784,7 @@ pub(super) fn filter_window_doc(
     {
         crate::sync::ingest::copy_peer_origins(source, &out)?;
     }
-    crate::sync::note::copy_selected(source, &out, &notes_dropped)?;
+    crate::sync::note::copy_selected(source, &out, &notes)?;
     out.commit();
     Ok(out)
 }

@@ -2,12 +2,16 @@
 //! the wake's pin, the partition's model work, and what its outcome settles
 //! (accepted candidates, a checkpoint, a park or a deferral).
 
+use std::time::Instant;
+
+use super::super::stage_log::{PartitionStages, ms_since};
 use super::super::{PreparedConsolidationAttempt, PreparedWake};
 use super::*;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 
 impl ConsolidationExecutor<'_> {
-    /// Runs `plan`, prepared on `wake`, and settles its outcome.
+    /// Runs `plan`, prepared on `wake`, and settles its outcome. However it
+    /// ends, it logs one line of its stages' wall ms (L07 DREAM-OBSERVE).
     pub(super) async fn execute_prepared_partition(
         &mut self,
         attempt: &DreamerAdmittedAttempt,
@@ -15,10 +19,29 @@ impl ConsolidationExecutor<'_> {
         plan: &PreparedConsolidationAttempt,
         wake: &PreparedWake,
     ) -> Result<DreamerAttemptExecution> {
+        let mut stages = PartitionStages::start(wake.prepared_ms());
+        let executed = self
+            .run_prepared_partition(attempt, ctx, plan, wake, &mut stages)
+            .await;
+        stages.log(attempt, plan.turn_ids().len(), &executed);
+        executed
+    }
+
+    async fn run_prepared_partition(
+        &mut self,
+        attempt: &DreamerAdmittedAttempt,
+        ctx: &WakeAttemptContext<'_>,
+        plan: &PreparedConsolidationAttempt,
+        wake: &PreparedWake,
+        stages: &mut PartitionStages,
+    ) -> Result<DreamerAttemptExecution> {
         let payload = plan.input().clone();
+        let opened = Instant::now();
+        let resources = BranchResources::open_prepared(ctx.vault, self.actor, plan, wake);
+        stages.branch_ms = ms_since(opened);
         // A turn demoted since the wake prepared it waits for its promotion
         // (FIX 3861), as one away at preparation does.
-        let resources = match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
+        let resources = match resources {
             Err(error) if super::super::residency::waits_on_residency(&error) => {
                 return Ok(super::super::residency::residency_deferral(
                     ctx.now_ms,
@@ -30,7 +53,8 @@ impl ConsolidationExecutor<'_> {
         };
         let run_id = attempt.status.attempt.run_id.clone();
         let mut charges = StepChargeTally::default();
-        match self
+        let run_started = Instant::now();
+        let run = self
             .run_partition_attempt(
                 &payload,
                 &resources,
@@ -38,9 +62,11 @@ impl ConsolidationExecutor<'_> {
                 attempt.status.attempt.id,
                 run_id,
                 &mut charges,
+                stages,
             )
-            .await
-        {
+            .await;
+        stages.close_model_run(run_started);
+        match run {
             // A finished partition lands while its landing window is still
             // open, even past the pass ceiling (FIX 11570): its model steps
             // are done, so there is nothing left to checkpoint for. It
@@ -60,8 +86,8 @@ impl ConsolidationExecutor<'_> {
             // A turn demoted after the model answered waits too (FIX 6060),
             // settling what the attempt already spent.
             Ok(PartitionRun::Completed { candidates }) => {
-                if let Err(error) = resources
-                    .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
+                if let Err(error) = self
+                    .commit_candidates(&resources, candidates, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -75,8 +101,8 @@ impl ConsolidationExecutor<'_> {
                 candidates,
                 retry_at_ms,
             }) => {
-                if let Err(error) = resources
-                    .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
+                if let Err(error) = self
+                    .commit_candidates(&resources, candidates, ctx, stages)
                     .await
                 {
                     return super::super::residency::spent_or_deferred(error, ctx, &charges);
@@ -104,5 +130,27 @@ impl ConsolidationExecutor<'_> {
                 &mut charges,
             )),
         }
+    }
+
+    /// Hands `candidates` to the sink, its wall ms the commit stage.
+    async fn commit_candidates(
+        &mut self,
+        resources: &BranchResources<'_>,
+        candidates: Vec<VerifiedCandidate>,
+        ctx: &WakeAttemptContext<'_>,
+        stages: &mut PartitionStages,
+    ) -> Result<()> {
+        let started = Instant::now();
+        let accepted = resources
+            .accept_until(
+                resources.scope(),
+                self.sink,
+                candidates,
+                ctx.deadline,
+                stages.landing(),
+            )
+            .await;
+        stages.commit_ms = ms_since(started);
+        accepted
     }
 }

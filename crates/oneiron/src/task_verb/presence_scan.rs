@@ -1,31 +1,29 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 
 use crate::Vault;
 use crate::agent_dispatch::{
     AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
 };
-use crate::attempt_queue::{
-    AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, AttemptState,
-    SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
-};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::{
-    CancelRejectionPathology, JobPresence, TaskBoardStatus, TaskIntentPresence, fold_up_status,
-    one_line_token, task_is_acked, task_is_cancelled,
+    JobPresence, TaskBoardStatus, TaskIntentPresence, fold_up_status, task_is_acked,
+    task_is_cancelled,
 };
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::habit::TaskRole;
-use crate::memory::{BRIDGE_OUTBOUND_ATTEMPT_KIND, MemoryError, MemoryResult};
+use crate::memory::{MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_TASK;
-use crate::run_tree::{RunTreeAdapter, RunTreeNode, RunTreeStatus};
+use crate::run_tree::RunTreeStatus;
 
 use super::consult_result::CancelTargetState;
 use super::follow_up::peer_handle_in;
-use super::highway_runner::workflow_try::{bound_wrapper_job, open_task_status};
+use super::highway_runner::workflow_try::open_task_status;
 use super::presence_diagnostics::record_read_failure;
 pub(super) use super::presence_diagnostics::{TaskPresenceReadFailure, TaskPresenceReadStage};
+use super::presence_jobs::{JobBacklinks, job_backlinks, job_backlinks_for_task};
 pub(super) use super::presence_pages::scan_task_entity_pages;
 use super::presence_pages::{device_admitted_task_page, retain_readable_owners};
 use super::rate_limit::task_create_owner_in;
@@ -36,96 +34,6 @@ use super::terminal_state::{
 };
 use super::verb_kind::TaskAssignee;
 use super::wire_decode::{task_entity_role_in, task_verb_body_in};
-
-/// The attempt/run-tree job projection, shared by the bounded board scan and
-/// the direct-by-id path so both see identical job identity and ordering.
-struct JobBacklinks {
-    /// Realizing jobs keyed by the hex TASK ref their attempt backlinks.
-    realizing: BTreeMap<String, Vec<JobPresence>>,
-    /// Jobs that were bare from the start — no task backlink at all.
-    bare: Vec<JobPresence>,
-}
-
-fn job_backlinks(vault: &Vault) -> Result<JobBacklinks> {
-    let records = AttemptQueue::new(vault).list()?;
-    let task_refs_by_attempt: BTreeMap<String, Option<String>> = records
-        .iter()
-        .map(|record| (attempt_hex(record.id), record.task_ref.clone()))
-        .collect();
-    let superseded: HashSet<String> = superseded_attempt_ids(&records)
-        .into_iter()
-        .map(attempt_hex)
-        .collect();
-    // ONE-1896 §1: the owner's own surface is where repeated refusal has to
-    // land, so the signal is derived HERE, from the durable rows this scan
-    // already read, and folded onto the job it belongs to.
-    let pathology_by_attempt: BTreeMap<String, CancelRejectionPathology> = records
-        .iter()
-        .filter_map(|record| {
-            cancel_rejection_pathology(record).map(|pathology| (attempt_hex(record.id), pathology))
-        })
-        .collect();
-    let tree = RunTreeAdapter::new(vault).read()?;
-    let mut nodes = Vec::new();
-    collect_run_tree_nodes(&tree.roots, &mut nodes);
-    let mut realizing: BTreeMap<String, Vec<JobPresence>> = BTreeMap::new();
-    let mut bare = Vec::new();
-    for node in nodes {
-        // Only retry-chain HEADS reach the board: a superseded try is replaced
-        // work whose successor owns the realization. The run tree keeps every
-        // try — nested under the one it replaces — as the forensic surface.
-        if superseded.contains(&node.attempt_id) {
-            continue;
-        }
-        let Some(job) = JobPresence::from_run_tree_node(node) else {
-            continue;
-        };
-        let job = job.with_cancel_pathology(pathology_by_attempt.get(&node.attempt_id).cloned());
-        match task_refs_by_attempt.get(&node.attempt_id) {
-            Some(Some(task_ref)) => realizing
-                .entry(task_ref.clone())
-                .or_default()
-                .push(bound_wrapper_job(node, job, &superseded)),
-            _ if node.worker_kind == BRIDGE_OUTBOUND_ATTEMPT_KIND => {}
-            _ => bare.push(job),
-        }
-    }
-    Ok(JobBacklinks { realizing, bare })
-}
-
-/// The owner-visible refusal signal for one ATTEMPT, or `None` when the worker
-/// is behaving.
-///
-/// Only crossing [`SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD`] surfaces
-/// anything: one "not yet, I am mid-commit" is a legitimate answer and must not
-/// clutter the board. A settled row is silent too — an attempt that refused and
-/// then finished is history, not something an owner can still act on.
-fn cancel_rejection_pathology(record: &AttemptRecord) -> Option<CancelRejectionPathology> {
-    if record.state.is_terminal() || !record.soft_cancel_pathology() {
-        return None;
-    }
-    // The worker's OWN last word on why it will not stop, so the owner is not
-    // acting on a bare number. Status first, refusal reason second: the status
-    // is what the protocol asks a refusing worker to report.
-    let last_status = record
-        .cancel_receipts()
-        .iter()
-        .rev()
-        .find(|receipt| receipt.kind == AttemptCancelReceiptKind::SoftRejected)
-        .and_then(|receipt| {
-            receipt
-                .status
-                .clone()
-                .or_else(|| receipt.reason.clone())
-                .map(|line| one_line_token(&line))
-        });
-    Some(CancelRejectionPathology {
-        attempt_id: attempt_hex(record.id),
-        rejections: record.cancel_pressure().rejections,
-        threshold: SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD,
-        last_status,
-    })
-}
 
 /// Number of TASK ids fetched per sanctioned `entities_by_type_page` call.
 pub(super) const TASK_PRESENCE_PAGE_SIZE: usize = 256;
@@ -384,10 +292,7 @@ fn by_id_inputs(
         return Ok(None);
     }
     let task_hex = task_ref.to_hex();
-    let jobs = job_backlinks(vault)?
-        .realizing
-        .remove(&task_hex)
-        .unwrap_or_default();
+    let jobs = job_backlinks_for_task(vault, &task_hex)?;
     let acked = task_is_acked(vault, task_ref)?;
     Ok(Some((task_hex, jobs, acked)))
 }
@@ -589,16 +494,6 @@ fn consult_result_presence(record: &TaskTerminalRecord) -> Option<ConsultResultP
             result_ref,
             reason_ref: reason_ref.short_ref(),
         }),
-    }
-}
-
-/// Every node of `nodes` and their subtrees, in pre-order, on a heap stack
-/// (FIX 10603).
-fn collect_run_tree_nodes<'a>(nodes: &'a [RunTreeNode], out: &mut Vec<&'a RunTreeNode>) {
-    let mut pending: Vec<&RunTreeNode> = nodes.iter().rev().collect();
-    while let Some(node) = pending.pop() {
-        out.push(node);
-        pending.extend(node.children.iter().rev());
     }
 }
 

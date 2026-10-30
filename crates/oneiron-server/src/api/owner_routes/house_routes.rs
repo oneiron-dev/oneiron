@@ -21,7 +21,7 @@ pub(super) fn owner_table() -> OwnerTable {
         OwnerRoute {
             method: "post",
             path: "/workspace/finish",
-            summary: "\"<ref>\"}: a repeat leaves the root as the first finish signed it.",
+            summary: "Finish one stored workspace (`workspace_ref`): the house its stored preset names takes the root project's lead. A repeat leaves the root as the first finish signed it.",
             row: None,
         },
         post(finish),

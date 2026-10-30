@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 
 use super::offer_activity::{is_current_in_txn, room_offer_expired};
 use super::offers::{OFFERS, OfferCard, OfferState, is_offer_id, join_refused};
-use crate::WriteActor;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::workspace_roster::JoinDecision;
@@ -47,7 +46,7 @@ impl Memory<'_> {
             ));
         }
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let card = vault.try_with_write_txn_grouped(|txn| {
             let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
             vault.verify_write_actor_in_txn(txn, &caller)?;

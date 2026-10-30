@@ -483,11 +483,25 @@ pub(super) fn promote_one_answering(
     // a hint is a stale side CLAIM, and a machine claim birth refuses every
     // stale birth (claim/machine_birth.rs), so a hint would fail the whole
     // candidate. The belief itself still lands.
-    let hints: Vec<&str> = if envelope.machine_signature().is_some() {
+    let signed = envelope.machine_signature().is_some();
+    let hints: Vec<&str> = if signed {
         Vec::new()
     } else {
         prospective_queries.iter().map(String::as_str).collect()
     };
+    // A newborn claim has no earlier revision for idle publication to index,
+    // so its own words reach the lexical index in its birth batch, as a
+    // reaction's do (reaction/write.rs). A signed promotion indexes its
+    // prospective queries there too, since it carries no hint claims: an
+    // agent's recall finds the belief the pass landed.
+    let birth_text = birth_lexical_text(
+        &probe_body,
+        if signed {
+            prospective_queries.as_slice()
+        } else {
+            &[]
+        },
+    );
     // The checker's turn, waited for here, before the batch announces its
     // write (FIX 8751, 8701): the gate inside never waits for capacity.
     let checker = checker
@@ -505,6 +519,7 @@ pub(super) fn promote_one_answering(
                 candidate.learned_at,
                 &hints,
             )
+            .text(&candidate.claim_id, &[("val", birth_text.as_str())])
             .commit_with_checker_guard_and_then(checker, read_prior, finish_promotion)
     } else {
         // Preserve the original single-pass transaction for every None caller.
@@ -520,6 +535,7 @@ pub(super) fn promote_one_answering(
                     candidate.learned_at,
                     &hints,
                 )
+                .text(&candidate.claim_id, &[("val", birth_text.as_str())])
                 .apply_recording_gate_decisions(wtxn)?;
             finish_promotion(wtxn)
         })
@@ -532,6 +548,20 @@ pub(super) fn promote_one_answering(
     // predicate, source, and taint. A failure cannot roll back the committed
     // writes; it rejects the candidate, and the caller must not complete the attempt.
     verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
+}
+
+/// What a promoted claim's birth batch indexes under `val`: its value as the
+/// embedder projects a claim (embed.rs `claim_text`), then `queries`.
+fn birth_lexical_text(body: &crate::claim::ClaimBody, queries: &[String]) -> String {
+    let mut text = body
+        .value
+        .as_str()
+        .map_or_else(|| body.value.to_string(), str::to_owned);
+    for query in queries {
+        text.push(' ');
+        text.push_str(query);
+    }
+    text
 }
 
 /// Re-reads a landed claim and checks it is the claim we wrote. A missing

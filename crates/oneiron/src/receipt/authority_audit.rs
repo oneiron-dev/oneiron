@@ -640,6 +640,19 @@ fn classify(op: &AuthorityOp) -> (AuthorityAuditEventKind, &'static str, OpField
                 ..OpFields::default()
             },
         ),
+        // A custody request's permit piece (FIX 11866): its place among the
+        // pieces of its set, value-free.
+        AuthorityOp::CustodyPermitPiece(piece) => (
+            Other,
+            "custody_permit_piece",
+            OpFields {
+                detail: Some(format!(
+                    "piece {} of {}",
+                    piece.index, piece.commitment.pieces
+                )),
+                ..OpFields::default()
+            },
+        ),
         AuthorityOp::AgentGrantAct(record) => agent_grant_act::classify(record),
         AuthorityOp::PolicySettingSet(set) => carried_act::classify_policy_setting(set),
         AuthorityOp::ExportAct(record) => carried_act::classify_export(record),

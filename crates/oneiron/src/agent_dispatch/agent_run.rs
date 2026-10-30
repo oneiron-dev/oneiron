@@ -47,14 +47,12 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> Result<Vec<(AttemptId, EntityId)>> {
         let queue = AttemptQueue::new(self.vault);
-        let rows = queue.list_kind_bounded(
-            DREAMER_RUNNER_ATTEMPT_KIND,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        )?;
         let txn = self.vault.store.env.read_txn()?;
+        let rows = queue.ready_rows_in_txn(&txn)?;
         let mut ready = Vec::new();
         for row in rows {
-            if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+            if row.kind != DREAMER_RUNNER_ATTEMPT_KIND
+                || !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
                 || row
                     .scheduled_at
                     .or(row.backoff_until)

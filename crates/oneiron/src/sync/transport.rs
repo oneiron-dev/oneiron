@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::debug_assert_matches;
 use std::ops::{Deref, DerefMut};
 
+mod admission_fault;
+pub(crate) use admission_fault::is_window_admission_read_fault;
 mod asset_bodies;
 pub use asset_bodies::{
     ASSET_BODY_FRAME_BYTES, ASSET_BODY_RETRY, AssetBodyAddress, AssetBodyData, AssetBodyEnd,
@@ -22,17 +24,25 @@ pub use asset_bodies::{
     encode_asset_body_want,
 };
 mod codec;
+mod leaf_keys;
 pub use codec::{
     CODEC_MIN_FRAME_BYTES, CODEC_ZSTD_LEVEL, DECODED_CODEC_IDS, LinkBytes, MAX_CODEC_INNER_BYTES,
     MAX_HELLO_CODECS, TAG_CODEC, TagBytesRow, WireCodecs, WireSocket, codec_ids,
     decode_codec_frame, decode_protocol_hello_codecs, encode_codec_frame, encode_http_body,
     process_link_bytes,
 };
+pub use leaf_keys::{
+    LEAF_KEY_RETRY, TAG_LEAF_KEY_ANSWER, TAG_LEAF_KEY_FAILURE, TAG_LEAF_KEY_REQUEST,
+    decode_leaf_key_answer, decode_leaf_key_failure, decode_leaf_key_request,
+    encode_leaf_key_answer, encode_leaf_key_failure, encode_leaf_key_request, leaf_key_request_hex,
+};
+mod unsplit_frame;
+pub use unsplit_frame::{MAX_WINDOW_PAD_PAYLOAD_BYTES, encode_unsplit_window_sync};
 mod window_pads;
 pub use window_pads::{
     WINDOW_PAD_HEADER_BYTES, WindowPadArrival, WindowPadAssembly, WindowPadBinding,
     WindowPadEnvelope, WindowPadForm, WindowPadKind, WindowPadReadiness, WindowPadReceipt,
-    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member,
+    WindowPadSidecar, decode_window_pad_envelope, validate_window_pad_member, window_pad_frame_id,
     window_pad_frame_payload, window_pad_part_id, window_pad_refs_digest,
 };
 mod documents;

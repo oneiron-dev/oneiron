@@ -355,10 +355,7 @@ impl Vault {
         let readable = scoped.read(&reads, None)?;
         let read_receipt = readable.receipt;
         let mut claims = Vec::new();
-        let txn = match disclosure {
-            Some(_) => Some(self.store.env.read_txn()?),
-            None => None,
-        };
+        let txn = self.store.env.read_txn()?;
         // Decode the bytes the receipt admitted; a re-fetch could see a body
         // written after the gated read.
         for row in readable.value.into_iter().flatten() {
@@ -379,11 +376,12 @@ impl Vault {
                 )
                 || body.lifecycle != ClaimLifecycleStatus::Active
                 || body.stale
+                || !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, &txn, &id)?
             {
                 continue;
             }
-            if let (Some(disclosure), Some(txn)) = (disclosure, txn.as_ref())
-                && !disclosure.admits(&self.store, txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
+            if let Some(disclosure) = disclosure
+                && !disclosure.admits(&self.store, &txn, &id, ENTITY_TYPE_CLAIM, Some(&body))?
             {
                 continue;
             }

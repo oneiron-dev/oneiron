@@ -32,6 +32,7 @@ mod result_scrub;
 mod scope;
 pub mod tool_call;
 mod tool_schema;
+mod zeroizing_wire;
 
 #[cfg(test)]
 mod tests;
@@ -49,7 +50,7 @@ pub use self::connector_call::{
 };
 pub(crate) use self::connector_call::{connector_call_effector, held_connector_call_in_txn};
 pub(crate) use self::connector_call_code::{
-    code_wait_admission_in_txn, settle_code_owned_call_in_txn,
+    code_owned_call_rows_in_txn, code_wait_admission_in_txn, settle_code_owned_call_in_txn,
 };
 pub(crate) use self::connector_call_consent::{
     SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_in_txn,
@@ -85,6 +86,7 @@ pub use self::scope::{
     evaluate_scoped_mcp_call, evaluate_scoped_mcp_calls,
 };
 pub use self::tool_call::FrozenToolCallView;
+pub use self::zeroizing_wire::{ZeroizingBufReader, zeroize_json, zeroizing_json_body};
 
 // The flat outbound_consent.rs module used to provide these names to the
 // sibling test module through `use super::*`: its own private crate import

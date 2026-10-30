@@ -1,6 +1,6 @@
 //! Identity topology ingest, endpoint hydration, and edge key/value helpers.
 
-use loro::LoroMap;
+use loro::LoroDoc;
 
 use crate::affect::Vad;
 use crate::batch::EntityMetadataHeader;
@@ -200,7 +200,7 @@ thread_local! {
 pub(super) fn ensure_entity_materialized_from_crdt(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    entities_map: &LoroMap,
+    doc: &LoroDoc,
     tombstones: &TombstoneIndex,
     window_key: &str,
     id: &EntityId,
@@ -265,7 +265,7 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     }
 
     let hex_id = id.to_hex();
-    let Some(blob) = map_get_bytes(entities_map, &hex_id) else {
+    let Some(blob) = map_get_bytes(&doc.get_map("entities"), &hex_id) else {
         return Ok(EndpointHydration::Deferred);
     };
     // Structural pre-validation of the REMOTE blob (the ingest ladder's
@@ -278,7 +278,8 @@ pub(super) fn ensure_entity_materialized_from_crdt(
     // Late body/project validation can fail after staging. The edge batch
     // quarantines remote failures and commits siblings, so hydration needs
     // the same per-entity rollback boundary as the entity-delta observer.
-    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones);
+    // A carrier its window binds by reference is the body it names (FIX 5489).
+    let ingest = IngestCtx::new(vault, window_key, lease_vault_id, tombstones).with_body_refs(doc);
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     let step = ingest_entity_in_txn(&ingest, &mut savepoint, &hex_id, Some(&blob))?;
     if let EntityStep::Quarantine(refusal) = step {

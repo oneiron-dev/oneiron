@@ -652,10 +652,20 @@ pub(crate) fn verify_machine_claim_in_txn(
                 }
                 // A first birth may reach replay before its scoped controls.
                 // Origin-verifiable rows are provisional; malformed proofs
-                // quarantine without requiring enrollment arrival order.
+                // quarantine without requiring enrollment arrival order. A
+                // well-formed origin whose signature does not cover this
+                // replicated body may sign its birth under a later
+                // transition, which only its history proves: the row waits
+                // on that history and lands when it resolves (FIX 4295).
                 let transcript = machine_claim_transcript(&vault_id, id, body)?;
                 key.verify_strict(&transcript, &Signature::from_bytes(&proof.signature))
-                    .map_err(|_| invalid_origin(replicated))?;
+                    .map_err(|_| {
+                        if replicated {
+                            Error::Claim(ClaimError::RemoteMachineHistoryPending)
+                        } else {
+                            denied()
+                        }
+                    })?;
             }
             Err(Error::Claim(ClaimError::InvalidMachineClaimProof)) => {
                 return Err(invalid_origin(replicated));

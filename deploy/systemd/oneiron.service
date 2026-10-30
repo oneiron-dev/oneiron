@@ -21,6 +21,8 @@ Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
 PrivateTmp=true
+# The organ descendant fence: a cgroup cell of its own for each organ process.
+Delegate=yes
 
 [Install]
 WantedBy=default.target

@@ -464,25 +464,41 @@ impl Memory<'_> {
             } => {
                 // FIX 6424 part 3: a retry of a kept delegated bind binds the
                 // row its first call provisioned; it is never provisioned
-                // twice.
-                let provisioned = self
-                    .vault
-                    .get_channel_identity(&identity_id)
-                    .ok()
-                    .flatten()
-                    .is_some();
-                if !provisioned {
-                    self.vault.provision_delegated_identity(
+                // twice. FIX 6905: the check and the provision share one
+                // writer keyed on the kept id, so of two concurrent first
+                // calls one provisions and the other finds its row; an
+                // already-exists for that same id reads as provisioned.
+                let vault = self.vault;
+                vault.with_write_txn(|wtxn| {
+                    let provisioned = |wtxn: &heed::RwTxn<'_>| {
+                        vault
+                            .get_channel_identity_in_txn(wtxn, &identity_id)
+                            .ok()
+                            .flatten()
+                            .is_some()
+                    };
+                    if provisioned(wtxn) {
+                        return Ok(());
+                    }
+                    let request = DelegatedProvisionRequest {
+                        channel,
+                        address_or_handle,
+                        binding,
+                        grant,
+                    };
+                    match vault.provision_delegated_identity_in_txn(
+                        wtxn,
                         &identity_id,
-                        DelegatedProvisionRequest {
-                            channel,
-                            address_or_handle,
-                            binding,
-                            grant,
-                        },
+                        request,
                         requested_at,
-                    )?;
-                }
+                    ) {
+                        Ok(_) => Ok(()),
+                        Err(crate::Error::Record(
+                            crate::error::RecordError::ChannelIdentityAlreadyExists,
+                        )) if provisioned(wtxn) => Ok(()),
+                        Err(error) => Err(error),
+                    }
+                })?;
                 fulfillment_mode
             }
         };
