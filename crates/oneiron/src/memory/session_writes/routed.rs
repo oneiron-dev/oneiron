@@ -198,7 +198,7 @@ impl Memory<'_> {
             needs,
             ops,
             attachments: RoomRowAttachments::note(
-                crate::WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 "vault.notes.create",
                 evidence,
                 at,

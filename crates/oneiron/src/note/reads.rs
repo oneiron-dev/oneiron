@@ -2,11 +2,11 @@
 
 use super::documents::{NoteDocument, invalid, live_doc_in};
 use super::{NoteAnchor, NoteAuthorship, NoteKind, NoteVersion};
+use crate::EntityId;
 use crate::claim::{ClaimReadStatus, PointRead, ReadRow, ScopedReadResult};
 use crate::memory::{DiaryEntryAdmission, DiaryReadGate, Memory, MemoryError, MemoryResult};
 use crate::scan_check::PendingScanChecks;
 use crate::store::ManifestDbs;
-use crate::{EntityId, WriteActor};
 use serde::{Deserialize, Serialize};
 
 /// One explicit NOTE read. Private notes require the caller's stated reason.
@@ -262,7 +262,7 @@ impl Memory<'_> {
         )? == super::ContextDefault::OwnerOnly;
         let mut gate = if private || core.kind == NoteKind::Diary {
             Some(DiaryReadGate::new(
-                WriteActor::new(self.actor(), self.actor_class()),
+                self.write_actor(),
                 input.reason.as_deref().unwrap_or_default(),
             )?)
         } else {

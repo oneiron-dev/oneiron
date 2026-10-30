@@ -44,7 +44,7 @@ impl Memory<'_> {
 
     fn import_web_pages(&self, pages: &[FetchResult]) -> MemoryResult<()> {
         self.vault.ensure_text_index_trusted()?;
-        let writer = WriteActor::new(self.actor, self.actor_class);
+        let writer = self.write_actor();
         let mut sources = Vec::new();
         self.with_actor_content_write_txn(|content| {
             for page in pages {

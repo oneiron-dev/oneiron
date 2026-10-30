@@ -4,7 +4,6 @@ use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::artifact_hosting::door_types::*;
 use crate::artifact_hosting::{ArtifactPointer, ArtifactPublishVerbRequest, ArtifactServeTier};
 use crate::consent::AuthenticatedOwner;
-use crate::write_envelope::WriteActor;
 
 impl Memory<'_> {
     fn artifact_hosting_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<()> {
@@ -41,7 +40,7 @@ impl Memory<'_> {
             channel: input.channel,
             export: input.export,
             serve_tier: input.serve_tier,
-            actor: WriteActor::new(self.actor, self.actor_class),
+            actor: self.write_actor(),
             publish_id: input.publish_id,
             occurred_at: input.occurred_at,
         })
@@ -102,7 +101,7 @@ impl Memory<'_> {
                 channel: input.channel,
                 export: input.export,
                 serve_tier: input.serve_tier,
-                actor: WriteActor::new(self.actor, self.actor_class),
+                actor: self.write_actor(),
                 publish_id: input.publish_id,
                 occurred_at: input.occurred_at,
             })?;

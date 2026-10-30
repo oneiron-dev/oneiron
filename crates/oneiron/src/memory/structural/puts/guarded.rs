@@ -151,7 +151,7 @@ impl Memory<'_> {
         let birth = if type_byte == ENTITY_TYPE_ASSET_TEXT {
             let inputs: Vec<_> = sources.iter().map(|(source, _)| *source).collect();
             RowBirth::written(
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 MadeByClass::of_writer(self.actor_class),
                 "structural.asset_text",
                 &inputs,

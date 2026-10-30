@@ -182,7 +182,7 @@ impl Memory<'_> {
                 require_claim_self_grant_in_txn(
                     self.vault,
                     wtxn,
-                    crate::WriteActor::new(self.actor, self.actor_class),
+                    self.write_actor(),
                     id,
                     &body,
                     "memory.claim.demote",

@@ -112,7 +112,7 @@ impl Memory<'_> {
         match self.host_envelope(approval)? {
             Some(envelope) => Ok(envelope),
             None => Ok(crate::WriteEnvelope::new(
-                crate::WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 source,
                 crate::WriteProvenance::new(facade_provenance(verb))?,
                 approval,
@@ -200,6 +200,26 @@ impl Memory<'_> {
         self.actor_class
     }
 
+    /// The actor this surface's doors write as: the bound actor, carrying
+    /// the run attempt its host origin's envelope binds (FIX 11920), so a
+    /// delegated run's writes through every door meet its live delegation
+    /// chain at the Gate. It equals the bound actor by identity; with no
+    /// origin, or an origin with no attempt, it is that actor alone.
+    #[must_use]
+    pub(crate) fn write_actor(&self) -> crate::WriteActor {
+        let actor = crate::WriteActor::new(self.actor, self.actor_class);
+        match self
+            .host_origin
+            .as_ref()
+            .map(|origin| origin.envelope.actor())
+            .filter(|bound| *bound == actor)
+            .and_then(crate::WriteActor::run_attempt)
+        {
+            Some(attempt) => actor.with_run_attempt(attempt),
+            None => actor,
+        }
+    }
+
     /// One actor-bound content writer. Its interface exposes read-only
     /// observation and typed content programs; ordinary content cannot take
     /// a raw mutable transaction from this entry.
@@ -207,10 +227,7 @@ impl Memory<'_> {
         &self,
         write: impl FnOnce(&mut crate::federation::ActorContentTxn<'_, '_, '_>) -> MemoryResult<T>,
     ) -> MemoryResult<T> {
-        self.with_actor_content_write_txn_as(
-            crate::WriteActor::new(self.actor, self.actor_class),
-            write,
-        )
+        self.with_actor_content_write_txn_as(self.write_actor(), write)
     }
 
     /// Preserve the observed authority frontier when a typed Vault NOTE door
@@ -268,7 +285,7 @@ impl Memory<'_> {
             self.vault.authorize_shared_vault_write_in_txn(
                 txn,
                 creation.vault_id,
-                &crate::WriteActor::new(self.actor, self.actor_class),
+                &self.write_actor(),
                 &crate::federation::SharedVaultWrite::Content(crate::federation::Scope::top()),
             )?;
         }

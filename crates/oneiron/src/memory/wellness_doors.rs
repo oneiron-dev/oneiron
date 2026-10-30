@@ -7,7 +7,7 @@ use crate::affect::state_index::StateIndex;
 use crate::claim::ClaimReadStatus;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::action_mode::{ActionModePolicy, ActionModeRule};
-use crate::{EntityId, Error, WriteActor};
+use crate::{EntityId, Error};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -170,7 +170,7 @@ impl Memory<'_> {
                     .map(EntityId::from_hex)
                     .transpose()?;
                 let decision = super::authorship::decision(
-                    WriteActor::new(self.actor, self.actor_class),
+                    self.write_actor(),
                     "wellness_projection",
                     "approved",
                     "gate.affect.wellness.configured_policy",

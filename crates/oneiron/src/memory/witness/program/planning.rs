@@ -149,7 +149,7 @@ impl Memory<'_> {
         // verbatim, so an envelope the base boundary refuses is refused at
         // staging too, before the overlay segment installs.
         let policy = resolve_policy_manifest(&self.vault.store, wtxn)?;
-        let write_actor = WriteActor::new(self.actor, self.actor_class);
+        let write_actor = self.write_actor();
         let mut authorized = Vec::with_capacity(plan.messages.len());
         for planned in &plan.messages {
             // The Coach's own question about a pending training offer may

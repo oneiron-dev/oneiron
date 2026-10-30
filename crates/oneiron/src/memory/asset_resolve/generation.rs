@@ -151,7 +151,7 @@ impl Memory<'_> {
         };
         let weight = EdgeKind::DerivedFrom.default_weight().unwrap_or(1.0);
         self.vault.ensure_text_index_trusted()?;
-        let writer = crate::WriteActor::new(self.actor, self.actor_class);
+        let writer = self.write_actor();
         self.vault.try_with_write_txn_grouped(|wtxn| {
             crate::memory::verify_actor_binding_in_txn(
                 self.vault,

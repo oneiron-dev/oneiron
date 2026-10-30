@@ -104,7 +104,7 @@ impl Memory<'_> {
         let envelope = match self.host_envelope(ClaimApprovalStatus::Proposed)? {
             Some(envelope) => envelope,
             None => WriteEnvelope::new(
-                WriteActor::new(self.actor(), self.actor_class()),
+                self.write_actor(),
                 ClaimSource::ToolOutput,
                 WriteProvenance::new(provenance)?,
                 ClaimApprovalStatus::Proposed,

@@ -11,7 +11,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
-use crate::{EntityId, Error, WriteActor};
+use crate::{EntityId, Error};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -185,7 +185,7 @@ impl Memory<'_> {
                 .collect::<crate::Result<Vec<_>>>()?;
             let read = bytes.iter().map(Vec::as_slice).collect::<Vec<_>>();
             let birth = RowBirth::written(
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 MadeByClass::Concluded,
                 "vault.affect.coping.update",
                 &inputs,
@@ -218,7 +218,7 @@ impl Memory<'_> {
                 .get_claim_in_txn(txn, &result.active_claim_id)?
                 .ok_or(Error::EntityNotFound)?;
             let decision = super::authorship::decision(
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 "coping_outcome",
                 "approved",
                 "gate.affect.coping.turn_vad",

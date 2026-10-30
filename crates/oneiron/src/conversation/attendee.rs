@@ -200,7 +200,7 @@ impl Memory<'_> {
             return self.task_work_memory().attendee_entered(event, ask);
         }
         let vault = self.vault();
-        let writer = WriteActor::new(self.actor(), self.actor_class());
+        let writer = self.write_actor();
         self.with_verified_actor_write_txn(|txn| {
             body::body_in(vault, txn, event.container)?;
             // A project room keeps its own rule: a PERSON enters it through

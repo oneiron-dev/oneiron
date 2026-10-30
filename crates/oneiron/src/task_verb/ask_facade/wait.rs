@@ -110,7 +110,7 @@ impl Memory<'_> {
                             .ok_or_else(|| MemoryError::bad_request("wait identity"))?,
                     )?,
                     run_id: None,
-                    envelope_actor: crate::WriteActor::new(self.actor(), self.actor_class()),
+                    envelope_actor: self.write_actor(),
                     subject: self.actor(),
                     deadline: None,
                     now_ms,

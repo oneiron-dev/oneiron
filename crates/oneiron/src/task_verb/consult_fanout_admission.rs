@@ -515,7 +515,7 @@ impl Memory<'_> {
         let own = match status {
             Some(status) if status.payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE => {
                 agent_dispatch_actor(&decode_agent_dispatch_input(&status.payload.input)?)?
-                    == crate::WriteActor::new(self.actor(), self.actor_class())
+                    == self.write_actor()
             }
             _ => false,
         };

@@ -6,7 +6,7 @@ use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::derived_domains::KEY_VALUE;
 use crate::gate::record_references::{receipt_landed_prose, unlinked_prose_links};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteActor};
+use crate::write_envelope::ClaimCandidate;
 use std::sync::atomic::Ordering;
 
 impl Memory<'_> {
@@ -109,7 +109,7 @@ impl Memory<'_> {
                     ))?;
                 content.update_claim(prior_id, |txn| {
                     self.vault.supersede_claim_in_txn_as(txn, &id, &prior_id, now,
-                        Some(WriteActor::new(self.actor, self.actor_class)))
+                        Some(self.write_actor()))
                 })?;
             }
             Ok((self.key_value_item(content.read(), id, stored)?, false))
@@ -143,7 +143,7 @@ impl Memory<'_> {
                     txn,
                     &id,
                     crate::unix_seconds_now(),
-                    Some(WriteActor::new(self.actor, self.actor_class)),
+                    Some(self.write_actor()),
                 )?;
                 Ok(KeyValueDeleteReceipt {
                     existed: true,
