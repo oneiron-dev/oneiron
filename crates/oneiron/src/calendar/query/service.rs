@@ -59,7 +59,7 @@ fn read_event_in(
     let Some(row) = event_row(read, id)? else {
         return Ok(None);
     };
-    Ok(Some(project(read.vault(), &row)?))
+    Ok(Some(project(&row)?))
 }
 
 /// Searches calendar EVENTs through the internal lane.
@@ -93,7 +93,6 @@ fn search_events_in(
         .filter(|text| !text.is_empty())
         .map(str::to_lowercase);
 
-    let vault = read.vault();
     let mut rows = Vec::new();
     visit_calendar_events(read, |row| {
         rows.push(row);
@@ -110,7 +109,7 @@ fn search_events_in(
         if !matches_selectors(row.facts.systems(), &req.calendars) {
             continue;
         }
-        let view = project(vault, &row)?;
+        let view = project(&row)?;
         if needle
             .as_deref()
             .is_some_and(|needle| !matches_text(&view, needle))
@@ -156,7 +155,9 @@ fn matches_text(view: &CalendarEventView, needle: &str) -> bool {
         .is_some_and(|name| name.to_lowercase().contains(needle))
 }
 
-fn project(vault: &Vault, row: &CalendarEventRow) -> Result<CalendarEventView> {
+/// The row as the surface shows it: every field, the name included, from the
+/// snapshot and the lane the row was admitted through.
+fn project(row: &CalendarEventRow) -> Result<CalendarEventView> {
     Ok(CalendarEventView {
         origin: row
             .facts
@@ -165,7 +166,7 @@ fn project(vault: &Vault, row: &CalendarEventRow) -> Result<CalendarEventView> {
             .as_str()
             .to_owned(),
         event_ref: row.id.to_hex(),
-        name: vault.get(&row.id)?.as_deref().and_then(event_name),
+        name: row.name.clone(),
         start_utc: row.occurred.map(|at| at.start),
         end_utc: row.occurred.map(|at| at.end),
         calendar_systems: row.facts.systems().to_vec(),
@@ -175,7 +176,7 @@ fn project(vault: &Vault, row: &CalendarEventRow) -> Result<CalendarEventView> {
 
 /// Reads the EVENT body's `name` field, tolerating bodies that are not a
 /// MessagePack map: the EVENT profile is app-shaped, not engine-pinned.
-fn event_name(body: &[u8]) -> Option<String> {
+pub(super) fn event_name(body: &[u8]) -> Option<String> {
     let mut cursor = Cursor::new(body);
     let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut cursor) else {
         return None;
