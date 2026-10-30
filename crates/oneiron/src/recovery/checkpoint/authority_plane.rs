@@ -61,16 +61,16 @@ fn fenced_id(key: &[u8]) -> Option<Vec<u8>> {
         .map(<[u8]>::to_vec)
 }
 
-/// Rewrites `databases` so every live row is `current`'s, or refuses when a
-/// refused family moved since the checkpoint. Returns the notes for the home
-/// tables that came from the image (FIX 5661 C2b), and `current`'s pad
-/// objects captured in the read its live rows came from (PAD-1).
+/// Rewrites `databases` so every live row, by `classes` (FIX 6994), is
+/// `current`'s, or refuses when a refused family moved since the checkpoint.
+/// Returns the notes for the home tables that came from the image (FIX 5661
+/// C2b), and `current`'s pad objects captured in the read of its live rows (PAD-1).
 pub(super) fn carry_current_authority(
     databases: &mut BTreeMap<String, CanonicalRows>,
     current: &Vault,
+    classes: &Classes,
 ) -> Result<(Vec<super::HomeTableNote>, crate::store::PadObjectsCapture)> {
-    let classes = Classes::new(current, databases)?;
-    let live = current_rows(current, &classes)?;
+    let live = current_rows(current, classes)?;
     // A store's random id, minted at its first open, names the vault even
     // before it has an authority log. Every image carries one; a missing or
     // different id is another vault.
@@ -111,7 +111,7 @@ pub(super) fn carry_current_authority(
         .filter_map(|(key, _)| fenced_id(key))
         .collect();
     let mut moved = authority_moved(
-        &classes,
+        classes,
         &databases["entities"],
         &image_entities,
         &image_fences,
@@ -119,7 +119,7 @@ pub(super) fn carry_current_authority(
         databases.get("edges_in").map_or(&[][..], Vec::as_slice),
     );
     for (database, live_rows) in &live.rows {
-        let scoped = |rows, fenced| refused(&classes, database, rows, &image_entities, fenced);
+        let scoped = |rows, fenced| refused(classes, database, rows, &image_entities, fenced);
         let image = scoped(&databases[*database], &image_fences);
         let current = scoped(live_rows, &live.fences);
         for what in image.keys().chain(current.keys()) {
