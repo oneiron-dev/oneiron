@@ -17,12 +17,13 @@ use serde::{Deserialize, Serialize};
 
 const ORGAN_DIR: &str = "organs/";
 const ORGAN_MANIFEST: &str = "ORGAN.json";
-/// The largest organ build a pack may pin.
-pub const MAX_ORGAN_BUILD_BYTES: u64 = 128 * 1024 * 1024;
-const MAX_ORGANS: usize = 32;
-const MAX_ORGAN_BUILDS: usize = 16;
-const MAX_ORGAN_LIST: usize = 64;
 const MAX_ORGAN_MEMORY_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+/// The calls at once an organ runs with when its facet names no `threads`,
+/// as the organ host's first-party spec sets it.
+const DEFAULT_ORGAN_THREADS: u16 = 2;
+/// The memory an organ runs with when its facet names no `memory_bytes`,
+/// as the organ host's first-party spec sets it.
+const DEFAULT_ORGAN_MEMORY_BYTES: u64 = 512 * 1024 * 1024;
 
 /// One organ a pack carries.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -90,17 +91,15 @@ impl PackOrgan {
         unique_list(&facet.verbs, 128, is_name)?;
         unique_list(&facet.kinds, 256, is_name)?;
         unique_list(&facet.media_types, 255, is_media_type)?;
-        if facet
-            .threads
-            .is_some_and(|threads| threads == 0 || threads > 256)
+        if facet.threads == Some(0)
             || facet
                 .memory_bytes
                 .is_some_and(|bytes| bytes == 0 || bytes > MAX_ORGAN_MEMORY_BYTES)
         {
             return Err(invalid("organ resource ask is out of bounds"));
         }
-        if facet.builds.is_empty() || facet.builds.len() > MAX_ORGAN_BUILDS {
-            return Err(invalid("an organ pins one to sixteen builds"));
+        if facet.builds.is_empty() {
+            return Err(invalid("an organ pins at least one build"));
         }
         let mut platforms = BTreeSet::new();
         for build in &facet.builds {
@@ -108,8 +107,8 @@ impl PackOrgan {
                 return Err(invalid("organ build platform is invalid or repeated"));
             }
             build.hash()?;
-            if build.bytes == 0 || build.bytes > MAX_ORGAN_BUILD_BYTES {
-                return Err(invalid("organ build length is out of bounds"));
+            if build.bytes == 0 {
+                return Err(invalid("an organ build is empty"));
             }
         }
         Ok(Self {
@@ -129,7 +128,10 @@ impl PackOrgan {
         self.builds.iter().find(|build| build.platform == platform)
     }
 
-    /// The organ's permission-card tokens: its ask and its pinned builds.
+    /// The organ's permission-card tokens: its ask and its pinned builds. Its
+    /// `threads` and `memory` ceilings are always named, an omitted one at
+    /// the value the organ runs with, so an update compares effective
+    /// ceilings.
     pub(super) fn capability_tokens(&self) -> Vec<String> {
         let name = &self.name;
         let mut tokens = Vec::new();
@@ -148,12 +150,14 @@ impl PackOrgan {
                 .iter()
                 .map(|media| format!("organ:{name}:media:{media}")),
         );
-        if let Some(threads) = self.threads {
-            tokens.push(format!("organ:{name}:threads:{threads}"));
-        }
-        if let Some(bytes) = self.memory_bytes {
-            tokens.push(format!("organ:{name}:memory:{bytes}"));
-        }
+        tokens.push(format!(
+            "organ:{name}:threads:{}",
+            self.threads.unwrap_or(DEFAULT_ORGAN_THREADS)
+        ));
+        tokens.push(format!(
+            "organ:{name}:memory:{}",
+            self.memory_bytes.unwrap_or(DEFAULT_ORGAN_MEMORY_BYTES)
+        ));
         tokens.extend(
             self.builds
                 .iter()
@@ -225,9 +229,6 @@ fn is_platform(value: &str) -> bool {
 }
 
 fn unique_list(values: &[String], max_bytes: usize, valid: fn(&str) -> bool) -> Result<()> {
-    if values.len() > MAX_ORGAN_LIST {
-        return Err(invalid("organ list too long"));
-    }
     let mut seen = BTreeSet::new();
     for value in values {
         if value.is_empty() || value.len() > max_bytes || !valid(value) || !seen.insert(value) {
@@ -295,14 +296,15 @@ pub(super) fn parse_source_organs(
         .collect()
 }
 
-/// A fetched or put pack tree: its text source and the organ builds it
-/// carried, each checked against its pin.
+/// A fetched or put pack tree: its text source and the organ builds and lens
+/// components it carried, each checked against its pin.
 pub struct PackTree {
     pub source: PackSource,
     /// The canonical hash of every file, builds included: what a hub
     /// content pin names.
     pub tree_hash: SkillContentHash,
     pub(super) builds: Vec<Vec<u8>>,
+    pub(super) lens_components: Vec<Vec<u8>>,
 }
 
 impl From<PackSource> for PackTree {
@@ -311,25 +313,38 @@ impl From<PackSource> for PackTree {
             tree_hash: source.content_hash(),
             source,
             builds: Vec::new(),
+            lens_components: Vec::new(),
         }
     }
 }
 
 impl PackSource {
-    /// A tree that may carry organ builds at `organs/<name>/<platform>`. The
-    /// builds leave the source, and each must match its facet's pin.
+    /// A tree that may carry organ builds at `organs/<name>/<platform>` and
+    /// lens components at `lenses/<name>/lens.wasm`. Both leave the source,
+    /// and each must match its facet's pin.
     pub fn from_tree(files: Vec<HubFile>) -> Result<PackTree> {
         let tree_hash = canonical_skill_tree_hash(
             files
                 .iter()
                 .map(|file| (file.path.as_str(), file.content.as_slice())),
         )?;
-        let (carried, text): (Vec<_>, Vec<_>) = files
-            .into_iter()
-            .partition(|file| organ_build_path(&file.path).is_some());
+        let (carried, text): (Vec<_>, Vec<_>) = files.into_iter().partition(|file| {
+            organ_build_path(&file.path).is_some()
+                || super::lenses::lens_component_folder(&file.path).is_some()
+        });
         let source = Self::from_files(text)?;
         let mut builds = Vec::new();
+        let mut lens_components = Vec::new();
         for file in carried {
+            if let Some(lens) = super::lenses::lens_component_folder(&file.path) {
+                source
+                    .lens(lens)
+                    .and_then(|declared| declared.component.as_ref())
+                    .ok_or_else(|| invalid("lens component is not a pinned build"))?
+                    .verify(&file.content)?;
+                lens_components.push(file.content);
+                continue;
+            }
             let (organ, platform) = organ_build_path(&file.path).expect("partitioned");
             source
                 .organs()
@@ -344,6 +359,7 @@ impl PackSource {
             source,
             tree_hash,
             builds,
+            lens_components,
         })
     }
 }

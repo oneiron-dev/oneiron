@@ -224,6 +224,7 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             agent: None,
             installed_at: 0,
             notices: Vec::new(),
+            owner_activated: Vec::new(),
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
     }

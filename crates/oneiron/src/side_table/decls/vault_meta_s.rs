@@ -56,6 +56,11 @@ side_tables! {
     /// staged to retire) or still owed. Never a value, key, name or count; a re-entered credential
     /// takes a new id. Key: id16 (custody record id).
     SECRET_CUSTODY_ERASE: VaultMeta b"secret_custody:erase:v1:" Raw Engine;
+    /// The sealed copy one export secret request's holder committed (FIX 4624(b)): the custody
+    /// value sealed to the recipient machine the owner chose, in its numbered envelopes, kept for
+    /// the owner to fetch. Holds no plaintext; its signed result names its digest. Key: hash32 (the
+    /// request's entry hash).
+    SECRET_CUSTODY_EXPORT_OUTPUT: VaultMeta b"secret_custody:export_output:v1:" Raw Ciphertext;
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId, then the name's
     /// generation high-water as a big-endian u32, kept after the record is gone (FIX 5958). Key:
@@ -473,6 +478,9 @@ side_tables! {
     /// Hub-import receipt for one entity, keyed by (entity, source hub id, hash of the source ref
     /// string). Key: id16 + id16 + hash32.
     SKILL_HUB_IMPORT_RECEIPT: VaultMeta b"skill_hub/import-receipt/v1\0" LegacyJson;
+    /// Owner switch (`0` off, `1` on) turning a dependency advisory hit into one owner ask on a
+    /// ready marketplace fit; an absent row is on. Key: ().
+    SKILL_HUB_MARKETPLACE_ADVISORY_ASK: VaultMeta b"skill_hub/marketplace-advisory-ask/v1" Raw;
     /// Owner blocking rule (`0` off, `1` on) on one canonical marketplace content hash. Key: hash32.
     SKILL_HUB_MARKETPLACE_BLOCKED_HASH: VaultMeta b"skill_hub/marketplace-blocked-hash/v1\0" Raw;
     /// Revision (u64be) of the owner's code auto-install switch, bound into each change's consent.

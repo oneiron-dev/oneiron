@@ -88,7 +88,7 @@ pub async fn explain_review_bundle(
             .map(|fork| fork.record.fork.clone())
             .collect(),
         input_hash: blake3::hash(&input_bytes).to_hex().to_string(),
-        skill: execution.skill,
+        skill: loaded.entity,
         skill_version: loaded.record.version.clone(),
         skill_content_hash: hash.to_hex(),
         calls: Vec::new(),
@@ -195,6 +195,7 @@ async fn generate(
                 ResponseFormat::Text
             },
             locality: route.locality,
+            host_keyless: false,
             seat_effort: Some(effort),
         },
         messages: vec![

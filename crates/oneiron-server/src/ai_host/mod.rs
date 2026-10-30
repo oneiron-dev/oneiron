@@ -36,6 +36,7 @@ mod coach_browser_programs;
 pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
+mod coach_site_skills;
 mod code_fix;
 mod confession_wording;
 mod connector_event;

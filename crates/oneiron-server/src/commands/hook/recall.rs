@@ -190,9 +190,12 @@ pub(super) fn admits(
     deadline: Instant,
 ) -> anyhow::Result<Option<String>> {
     let mut bridge = Bridge::start(oneiron, url, auth, deadline, Stdio::inherit())?;
-    let answered = bridge
-        .initialize()
-        .map(|result| result.get("vault_id").and_then(Value::as_str).map(str::to_owned));
+    let answered = bridge.initialize().map(|result| {
+        result
+            .get("vault_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    });
     bridge.close();
     answered
 }

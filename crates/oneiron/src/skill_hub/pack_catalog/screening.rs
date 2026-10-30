@@ -25,12 +25,10 @@ impl Vault {
         owner: &AuthenticatedOwner,
         rules: &PackInstallRules,
     ) -> Result<()> {
-        if rules.removed_hashes.len() > 1024
-            || rules.known_bad_patterns.len() > 128
-            || rules
-                .removed_hashes
-                .iter()
-                .any(|h| SkillContentHash::parse_hex(h).is_err())
+        if rules
+            .removed_hashes
+            .iter()
+            .any(|h| SkillContentHash::parse_hex(h).is_err())
             || rules
                 .known_bad_patterns
                 .iter()

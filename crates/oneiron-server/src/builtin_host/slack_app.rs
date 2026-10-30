@@ -1,16 +1,15 @@
 //! The served Slack app and the provider URLs of the built-in channels
 //! (OF-519): the manifest the owner creates the app from, the URLs each
 //! built-in channel's setup shows, and the app's OAuth install. The install
-//! starts at an owner door, which holds the owner's proof under one
+//! starts at an owner door, which holds the install in the vault under one
 //! single-use `state`. Slack's redirect to `/v1/hooks/slack/oauth` redeems
 //! that state, trades the code for the bot token, stores it in custody under
-//! the held proof and checks the connection, so the redirect itself carries
-//! no authority.
+//! a fresh proof minted from the row and checks the connection, so the
+//! redirect itself carries no authority.
 
-use std::collections::HashMap;
 use std::io::Read as _;
-use std::sync::{Arc, Mutex, PoisonError};
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
 
 use axum::extract::{Query, State};
 use axum::http::StatusCode;
@@ -25,7 +24,9 @@ use oneiron::error::{Error, SecretError};
 use oneiron::secret_custody::{
     CustodyClass, CustodyPlan, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
-use oneiron::skill_hub::pack_catalog::{PackSetupCheck, PackSetupView};
+use oneiron::skill_hub::pack_catalog::{
+    PackSetupCheck, PackSetupView, SlackInstallHold, SlackInstallRedeemed,
+};
 use rand_core::RngCore as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -57,8 +58,6 @@ const SLACK_AUTHORIZE_URL: &str = "https://slack.com/oauth/v2/authorize";
 const SLACK_OAUTH_ACCESS_URL: &str = "https://slack.com/api/oauth.v2.access";
 /// How long an install link stays redeemable.
 const INSTALL_TTL: Duration = Duration::from_secs(10 * 60);
-/// Install links held at once; a new one pushes out the oldest.
-const MAX_PENDING_INSTALLS: usize = 8;
 const MAX_OAUTH_REPLY_BYTES: u64 = 64 * 1024;
 
 /// The host's public origin from `oauth_resource_indicator`: https, with no
@@ -177,65 +176,21 @@ pub(crate) struct SlackInstallLink {
     expires_in_secs: u64,
 }
 
-/// The installs started at the owner door and not yet redeemed.
-#[derive(Default)]
-pub(crate) struct SlackInstalls {
-    pending: Mutex<HashMap<String, PendingInstall>>,
-}
-
-struct PendingInstall {
-    /// The proof of the owner who started the install. Every write it makes
-    /// revalidates it, so a slip revoked meanwhile stops the install.
-    owner: AuthenticatedOwner,
-    /// Where the owner's install request reached this install, as that
-    /// request proved it: the credential writes record it, audit only, never
-    /// the OAuth callback's (FIX 4650).
-    surface: ActSurface,
-    /// The setup's exact source, as the install door was asked.
-    source: Option<String>,
-    client_id: String,
-    redirect_url: String,
-    expires_at: Instant,
-}
-
-impl SlackInstalls {
-    fn hold(&self, state: String, install: PendingInstall) {
-        let mut pending = self.pending.lock().unwrap_or_else(PoisonError::into_inner);
-        let now = Instant::now();
-        pending.retain(|_, held| held.expires_at > now);
-        while pending.len() >= MAX_PENDING_INSTALLS {
-            let Some(oldest) = pending
-                .iter()
-                .min_by_key(|(_, held)| held.expires_at)
-                .map(|(state, _)| state.clone())
-            else {
-                break;
-            };
-            pending.remove(&oldest);
-        }
-        pending.insert(state, install);
-    }
-
-    /// Redeems one state, once.
-    fn take(&self, state: &str) -> Option<PendingInstall> {
-        self.pending
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .remove(state)
-            .filter(|held| held.expires_at > Instant::now())
-    }
-}
-
 /// Starts one install for the owner: the bot scopes are the ones the owner
 /// allowed on the setup's permission card, the client id comes out of
-/// custody, and the owner's proof waits under a fresh state for Slack's
-/// redirect, with where his request reached this install (`surface`, audit
-/// only).
+/// custody, and the install waits in the vault under a fresh state for
+/// Slack's redirect, with where his request reached this install (`surface`,
+/// audit only). Every issued state stays until redeemed or expired. The bot
+/// token takes the named custody; absent fields keep the install's usual
+/// portable, replicating, doored one.
 pub(crate) fn start_slack_install(
     server: &SyncServer,
     owner: AuthenticatedOwner,
     surface: ActSurface,
     source: Option<String>,
+    class: Option<String>,
+    device_only: Option<bool>,
+    rung: Option<u8>,
 ) -> Result<SlackInstallLink, OwnerError> {
     let origin = public_origin(server.config.oauth_resource_indicator.as_deref()).ok_or_else(|| {
         OwnerError::Invalid(
@@ -243,6 +198,23 @@ pub(crate) fn start_slack_install(
                 .to_owned(),
         )
     })?;
+    let class = match class {
+        None => CustodyClass::CustodyPortable,
+        Some(class) => CustodyClass::parse(&class).ok_or_else(|| {
+            OwnerError::Invalid(
+                "class must be custody-portable, custody-device-bound or cross-vault".to_owned(),
+            )
+        })?,
+    };
+    let device_only = device_only.unwrap_or(false);
+    let rung = match rung {
+        None => CustodyTier::T0Doored,
+        Some(rung) => CustodyTier::from_u8(rung).ok_or_else(|| {
+            OwnerError::Invalid(
+                "a rung is 0 (doored), 1 (leased) or 2 (local-registered)".to_owned(),
+            )
+        })?,
+    };
     let vault = server.vault();
     let setup = vault.pack_setup(&owner, SLACK_PACK, source.as_deref())?;
     let scopes = allowed_scopes(&setup)?;
@@ -267,17 +239,18 @@ pub(crate) fn start_slack_install(
             OwnerError::Invalid(format!("the Slack install link is invalid: {error}"))
         })?
         .to_string();
-    server.builtin_handles.slack_installs.hold(
-        state,
-        PendingInstall {
-            owner,
-            surface,
-            source,
-            client_id,
-            redirect_url: redirect_url.clone(),
-            expires_at: Instant::now() + INSTALL_TTL,
-        },
-    );
+    vault.hold_slack_install(SlackInstallHold {
+        owner: &owner,
+        state: &state,
+        surface,
+        source: source.as_deref(),
+        client_id: &client_id,
+        redirect_url: &redirect_url,
+        class,
+        device_only,
+        rung,
+        ttl_secs: INSTALL_TTL.as_secs(),
+    })?;
     Ok(SlackInstallLink {
         authorize_url,
         redirect_url,
@@ -362,25 +335,56 @@ pub(crate) struct SlackOAuthRedirect {
     error: Option<String>,
 }
 
-/// `GET /v1/hooks/slack/oauth`: keyless. The state redeems the owner's proof
+/// `GET /v1/hooks/slack/oauth`: keyless. The state redeems the install
 /// held at the install door, once; the page is plain text for the owner's
 /// browser tab.
 pub(crate) async fn slack_oauth(
     State(server): State<Arc<SyncServer>>,
     Query(redirect): Query<SlackOAuthRedirect>,
 ) -> Response {
-    let Some(install) = redirect
-        .state
-        .as_deref()
-        .and_then(|state| server.builtin_handles.slack_installs.take(state))
-    else {
+    let state = redirect.state;
+    let error = redirect.error;
+    let code = redirect.code;
+    match tokio::task::spawn_blocking(move || oauth_in_blocking(&server, state, error, code)).await
+    {
+        Ok(response) => response,
+        Err(_) => page(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "The Slack install failed on this host.".to_owned(),
+        ),
+    }
+}
+
+/// The redirect's vault work: the state redeems the install and the code
+/// finishes it. The take consumes the state however the redirect reads, so
+/// a declined or codeless callback still spends its link.
+fn oauth_in_blocking(
+    server: &SyncServer,
+    state: Option<String>,
+    error: Option<String>,
+    code: Option<String>,
+) -> Response {
+    let held = match state.as_deref() {
+        Some(state) => match server.vault().take_slack_install(state) {
+            Ok(held) => held,
+            Err(error) => {
+                tracing::warn!(%error, "Slack install take failed");
+                return page(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "The Slack install failed on this host.".to_owned(),
+                );
+            }
+        },
+        None => None,
+    };
+    let Some(install) = held else {
         return page(
             StatusCode::BAD_REQUEST,
             "This install link is unknown, used or expired. Start the Slack install again from the pack's setup."
                 .to_owned(),
         );
     };
-    if let Some(error) = redirect.error {
+    if let Some(error) = error {
         let error: String = error
             .chars()
             .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
@@ -393,25 +397,21 @@ pub(crate) async fn slack_oauth(
             ),
         );
     }
-    let Some(code) = redirect.code else {
+    let Some(code) = code else {
         return page(
             StatusCode::BAD_REQUEST,
             "Slack sent no code. Start the install again from the pack's setup.".to_owned(),
         );
     };
-    match tokio::task::spawn_blocking(move || finish_install(&server, &install, &code)).await {
-        Ok(Ok(message)) => page(StatusCode::OK, message),
-        Ok(Err(error)) => {
+    match finish_install(server, &install, &code) {
+        Ok(message) => page(StatusCode::OK, message),
+        Err(error) => {
             tracing::warn!(%error, "Slack install did not finish");
             page(
                 StatusCode::BAD_GATEWAY,
                 format!("The Slack install did not finish: {error}"),
             )
         }
-        Err(_) => page(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "The Slack install failed on this host.".to_owned(),
-        ),
     }
 }
 
@@ -423,7 +423,7 @@ fn page(status: StatusCode, text: String) -> Response {
 /// and checks the connection, which qualifies the pack once it is ready.
 fn finish_install(
     server: &SyncServer,
-    install: &PendingInstall,
+    install: &SlackInstallRedeemed,
     code: &str,
 ) -> oneiron::Result<String> {
     let vault = server.vault();
@@ -434,6 +434,9 @@ fn finish_install(
         install.surface,
         SLACK_BOT_TOKEN,
         &grant.access_token,
+        install.class,
+        install.device_only,
+        install.rung,
     )?;
     if let Some(user_token) = &grant.user_token {
         store(
@@ -442,6 +445,9 @@ fn finish_install(
             install.surface,
             SLACK_USER_TOKEN,
             user_token,
+            install.class,
+            install.device_only,
+            install.rung,
         )?;
     }
     let checks = HostConnectionChecks::new(server)?;
@@ -500,7 +506,7 @@ struct OAuthUser {
 /// door, bound to the exact redirect URL the install link named.
 fn exchange_code(
     vault: &Vault,
-    install: &PendingInstall,
+    install: &SlackInstallRedeemed,
     code: &str,
 ) -> oneiron::Result<SlackGrant> {
     let invalid = |message: String| Error::InvalidConfig(message);
@@ -579,13 +585,16 @@ fn store(
     surface: ActSurface,
     name: &str,
     value: &str,
+    class: CustodyClass,
+    device_only: bool,
+    rung: CustodyTier,
 ) -> oneiron::Result<()> {
     let at = vault.now_recorded_at();
     let registration = OwnerSecretRegistration {
         name,
-        class: CustodyClass::CustodyPortable,
-        device_only: false,
-        rung: CustodyTier::T0Doored,
+        class,
+        device_only,
+        rung,
         bindings: vec![RequestedBinding {
             effector: SLACK_EFFECTOR.to_owned(),
             tier_ceiling: None,
