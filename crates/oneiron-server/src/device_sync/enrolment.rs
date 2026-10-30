@@ -22,6 +22,7 @@ use crate::config::KeystoreConfig;
 use crate::config::device_sync::{parse_machine, validate_home_url};
 
 pub(crate) mod home_bind;
+pub(crate) mod join;
 
 /// What a device keeps from its enrolment, beside its credential.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -198,11 +199,14 @@ const REDEEM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 /// a home that already holds this machine live in its class pairs it again,
 /// credential only (FIX 8636); the answer says whether it did. This machine's
 /// mesh endpoint key and its two binding proofs go along, for the home to
-/// bind and grant the sync ALPN (FIX 3374).
+/// bind and grant the sync ALPN (FIX 3374). A vault that joins from empty
+/// (`join`, FIX 3375) enrols for the genesis its verified pin names, and the
+/// pin and slip the home answers must match that pin, field by field.
 pub(crate) fn enrol(
     vault: &oneiron::Vault,
     files: &EnrolmentFiles,
     link: &str,
+    join: Option<&join::JoinPin>,
 ) -> anyhow::Result<Enrolled> {
     use base64::Engine as _;
     use ed25519_dalek::Signer;
@@ -236,12 +240,7 @@ pub(crate) fn enrol(
     if !base.path().ends_with('/') {
         base.set_path(&format!("{}/", base.path()));
     }
-    let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
-        anyhow::anyhow!(
-            "this vault has no authority root yet, so it is not the home's vault; a device \
-             enrols a copy of its home's vault"
-        )
-    })?;
+    let vault_id = enrolment_vault_id(vault, join)?;
     let request =
         vault.machine_enrolment_request(vault_id, vault.machine_encryption_key(vault_id)?)?;
     let key = ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng);
@@ -308,6 +307,12 @@ pub(crate) fn enrol(
         "the home's checkpoint pin is not the one the pairing link names; enrol again with a \
          new link from the owner"
     );
+    if let Some(join) = join {
+        let slip_vault_id = oneiron::authority::CapabilitySlip::from_token(&paired.token)?
+            .claims
+            .vault_id;
+        join::check_answered(join, paired.pin.as_ref(), slip_vault_id)?;
+    }
     let home = paired.home.ok_or_else(|| {
         anyhow::anyhow!(
             "the home named neither its MACHINE nor its sync node id; pass a link made with \
@@ -327,6 +332,25 @@ pub(crate) fn enrol(
         record,
         re_paired: paired.re_paired,
         mesh_bind: paired.mesh_bind,
+    })
+}
+
+/// The vault id this machine's enrolment request signs for: the home's
+/// genesis its verified pin names when it joins from empty, else the
+/// authority root its copy of the home's vault holds.
+pub(crate) fn enrolment_vault_id(
+    vault: &oneiron::Vault,
+    join: Option<&join::JoinPin>,
+) -> anyhow::Result<[u8; 32]> {
+    if let Some(join) = join {
+        return Ok(join.genesis());
+    }
+    vault.authority_fold()?.vault_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "this vault has no authority root yet, so it is not the home's vault; a device \
+             enrols a copy of its home's vault, or joins from an empty one with a link that \
+             pins a checkpoint"
+        )
     })
 }
 

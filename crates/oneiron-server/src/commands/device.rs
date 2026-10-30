@@ -3,6 +3,12 @@
 //! is JSON on stdout, never the credential: with the request code this
 //! machine shows and the enrolment request it sent, which the owner's kit
 //! anchoring takes (FIX 4956).
+//!
+//! A vault with no authority root joins its home from empty (FIX 3375): the
+//! pin the owner's link keeps is read from the home and verified
+//! ([`crate::device_sync::join`]), the empty store is set aside beside the
+//! vault, and a fresh one is created under the home's storage id before the
+//! machine enrols for the home's genesis.
 
 use base64::Engine as _;
 use serde::Serialize;
@@ -29,6 +35,9 @@ struct Enrolled {
     /// made, or why it made none.
     #[serde(skip_serializing_if = "Option::is_none")]
     mesh_bind: Option<serde_json::Value>,
+    /// Where the empty store this vault joined from was set aside (FIX 3375).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    empty_store_set_aside: Option<String>,
     record: String,
     credential_file: String,
     /// The code this machine shows the owner, 26 characters: he types it
@@ -47,12 +56,11 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         vault_path: Some(args.path),
         ..ServeArgs::default()
     })?;
-    let vault = super::owner::open_stopped_vault_with(
+    let mut vault = super::owner::open_stopped_vault_with(
         &config,
         super::owner::vault_config(&config),
         "then enrol again",
     )?;
-    let files = crate::device_sync::EnrolmentFiles::for_vault(&config.keystore, &vault)?;
     let mut link = String::new();
     std::io::stdin().read_line(&mut link)?;
     anyhow::ensure!(
@@ -60,10 +68,21 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         "pass the pairing link on stdin: `oneiron token pair --machine yours` prints it on the \
          home"
     );
+    // A vault with no authority root joins from empty; any other enrols as
+    // the copy of its home's vault it is.
+    let (join, set_aside) = if vault.authority_fold()?.vault_id.is_none() {
+        let join = crate::device_sync::join::fetch_join_pin(&link)?;
+        let (joined, set_aside) = open_joining_store(&config, vault, &join)?;
+        vault = joined;
+        (Some(join), Some(set_aside))
+    } else {
+        (None, None)
+    };
+    let files = crate::device_sync::EnrolmentFiles::for_vault(&config.keystore, &vault)?;
     // Read before the enrolment, as it reads it: nothing that can fail runs
     // after the link is spent.
-    let (request_code, enrolment) = shown_request(&vault)?;
-    let enrolled = crate::device_sync::enrol(&vault, &files, &link)?;
+    let (request_code, enrolment) = shown_request(&vault, join.as_ref())?;
+    let enrolled = crate::device_sync::enrol(&vault, &files, &link, join.as_ref())?;
     let record = enrolled.record;
     super::owner::emit(&Enrolled {
         home_machine: record.home_machine,
@@ -73,6 +92,7 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         re_paired: enrolled.re_paired,
         home_mesh: record.home_mesh.is_some(),
         mesh_bind: enrolled.mesh_bind,
+        empty_store_set_aside: set_aside.map(|path| path.display().to_string()),
         record: files.record.display().to_string(),
         credential_file: files.credential.display().to_string(),
         request_code,
@@ -80,17 +100,65 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     })
 }
 
+/// Sets the empty store `vault` holds aside, beside the vault directory, and
+/// creates a fresh store there under the home's storage id the verified
+/// `join` pin names (`OpenOptions::adopt_storage_id`, L01 04:55); returns it
+/// and where the empty store went. Nothing of the empty store is deleted.
+fn open_joining_store(
+    config: &crate::config::ServeConfig,
+    vault: oneiron::Vault,
+    join: &crate::device_sync::join::JoinPin,
+) -> anyhow::Result<(oneiron::Vault, std::path::PathBuf)> {
+    use crate::device_sync::join::JoinRefusal;
+
+    let storage_id = oneiron::VaultStorageId::from_verified_pin(&join.pin);
+    drop(vault);
+    let path = &config.vault_path;
+    let name = path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("vault path {} names no directory", path.display()))?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let set_aside = path.with_file_name(format!("{}.empty-{stamp}", name.to_string_lossy()));
+    anyhow::ensure!(
+        !set_aside.exists(),
+        "{} already exists; move it and enrol again",
+        set_aside.display()
+    );
+    std::fs::rename(path, &set_aside).map_err(|error| {
+        anyhow::anyhow!(
+            "set the empty vault {} aside as {}: {error}",
+            path.display(),
+            set_aside.display()
+        )
+    })?;
+    let vault = oneiron::Vault::open_owned_with(
+        path,
+        super::owner::vault_config(config),
+        oneiron::OpenOptions::default().adopt_storage_id(storage_id),
+    )
+    .map_err(|error| anyhow::anyhow!("create vault {}: {error}", path.display()))?;
+    config.keystore.install_on(&vault, path);
+    vault.ensure_serving_install_profile_at_start(
+        super::owner::configured_host_issuer(config, &vault, false).as_ref(),
+        "device enrol",
+    );
+    if vault.vault_key_vault_id() != *storage_id.as_bytes() {
+        return Err(JoinRefusal::StorageId.into());
+    }
+    Ok((vault, set_aside))
+}
+
 /// This machine's enrolment request for its vault, the one `enrol` sends
 /// (the same request: its proof is a deterministic signature), and the code
 /// it shows for it (`RequestCode::to_text`).
-fn shown_request(vault: &oneiron::Vault) -> anyhow::Result<(String, serde_json::Value)> {
+fn shown_request(
+    vault: &oneiron::Vault,
+    join: Option<&crate::device_sync::join::JoinPin>,
+) -> anyhow::Result<(String, serde_json::Value)> {
     use crate::owner::vault_key::hex;
-    let vault_id = vault.authority_fold()?.vault_id.ok_or_else(|| {
-        anyhow::anyhow!(
-            "this vault has no authority root yet, so it is not the home's vault; a device \
-                 enrols a copy of its home's vault"
-        )
-    })?;
+    let vault_id = crate::device_sync::enrolment_vault_id(vault, join)?;
     let request =
         vault.machine_enrolment_request(vault_id, vault.machine_encryption_key(vault_id)?)?;
     let enrolment = serde_json::json!({
