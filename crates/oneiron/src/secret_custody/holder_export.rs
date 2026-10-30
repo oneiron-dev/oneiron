@@ -22,10 +22,16 @@
 //! owner imports (`crate::batch::export`'s secret supplement). The copy is
 //! kept with the second it was sealed at, and rides the window plane to the
 //! owner's other installs, each of which keeps it once it folds the result
-//! that names it (`relay`, FIX 11843).
+//! that names it (`relay`, FIX 11843). A kept copy whose secret an admitted
+//! revoke ended or an erase here fenced is forgotten (`settle`, FIX 12064).
+//! Once the owner's import of a copy commits, the recipient marks its
+//! request imported, and no install relays the copy any more (`import_mark`,
+//! FIX 12062).
 
+mod import_mark;
 mod relay;
 mod sealed;
+mod settle;
 
 use base64::Engine as _;
 use zeroize::Zeroizing;
@@ -284,7 +290,7 @@ impl Vault {
         let row: ArchiveSecretCustody = serde_json::from_slice(&plain).map_err(|_| {
             Error::InvalidConfig("this export secret supplement holds no archive row".to_owned())
         })?;
-        let opened = OpenedSecretSupplement { row };
+        let opened = OpenedSecretSupplement { request, row };
         if opened.row.id != work.secret.to_hex() {
             return Err(Error::InvalidConfig(
                 "this export secret supplement names another secret".to_owned(),

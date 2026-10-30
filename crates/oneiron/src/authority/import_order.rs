@@ -151,6 +151,9 @@ fn wanted(entry: &AuthorityLogEntry) -> Vec<Grant> {
                 entry.signer_key().clone(),
             )]
         }
+        AuthorityOp::ExportSupplementImported(mark) => {
+            vec![Grant::InstallKey(mark.carrier, entry.signer_key().clone())]
+        }
         // A custody request's permit piece waits as the request it leads to
         // (FIX 11866): for its carrier's install key, or with no carrier for
         // its signer to be an owner anchor.

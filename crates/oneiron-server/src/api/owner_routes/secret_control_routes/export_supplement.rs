@@ -5,22 +5,21 @@
 //! {request}` reads the holder's sealed copy, and this route takes that copy
 //! back as it was read, opens it on this install and restores its secret
 //! through the archive import's custody restore. The value never leaves the
-//! engine: the reply names only what the import did.
+//! engine: the reply names only what the import did. `oneiron secrets
+//! import-supplement` runs the same import ([`crate::owner::export_supplement`]).
 
 use std::sync::Arc;
 
 use axum::extract::State;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::post;
-use base64::Engine as _;
-use oneiron::authority::SecretSupplementImport;
-use oneiron::consent::AuthenticatedOwner;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult};
+use crate::owner::export_supplement::{self, SupplementImported};
 use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
@@ -58,47 +57,26 @@ struct ImportBody {
     sealed: String,
 }
 
-/// What the import of one supplement did.
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-struct SupplementImported {
-    /// The export secret request, as 64 hex.
-    request: String,
-    outcome: SecretSupplementImport,
-}
-
 /// `POST /v1/owner/secrets/export-supplements/import` with `{"request",
 /// "sealed"}`: opens the sealed copy for the owner whose export asked for
 /// it, here, and imports its secret. A copy sealed to another machine, or
 /// not the one its holder's signed result names, opens nowhere but there.
+/// Its import mark records where his request reached this install, as this
+/// request proves it (`machine_routes::act_surface_admitted`): audit only.
 async fn import(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
     payload: OwnerJsonBody<ImportBody>,
 ) -> OwnerReply<SupplementImported> {
     let owner = owner(&auth, &server)?;
+    let surface =
+        super::super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
     let body = payload.read(&server).await?;
-    let imported = blocking(move || import_supplement(server.vault(), &owner, &body)).await?;
-    Ok(Json(imported))
-}
-
-fn import_supplement(
-    vault: &oneiron::Vault,
-    owner: &AuthenticatedOwner,
-    body: &ImportBody,
-) -> OwnerResult<SupplementImported> {
-    let request = blake3::Hash::from_hex(&body.request)
-        .map_err(|_| OwnerError::Invalid("request must be a 64-hex authority entry".to_owned()))?;
-    let sealed = base64::engine::general_purpose::STANDARD
-        .decode(&body.sealed)
-        .map_err(|_| {
-            OwnerError::Invalid(
-                "sealed must be standard base64, as the supplement read returns it".to_owned(),
-            )
-        })?;
-    let opened = vault.open_export_secret_supplement(owner, *request.as_bytes(), &sealed)?;
-    let outcome = vault.import_secret_supplement(owner, &opened)?;
-    Ok(SupplementImported {
-        request: request.to_hex().to_string(),
-        outcome,
+    let imported = blocking(move || {
+        export_supplement::import(server.vault(), &owner, surface, &body.request, &body.sealed)
     })
+    .await?;
+    Ok(Json(imported))
 }
