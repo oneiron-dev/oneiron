@@ -1,5 +1,7 @@
 //! A window's residence index: its paged projection, touches, promotions and version vector.
-//! `index`, `touch`, `promote` and `window_vv` are its call surface, dispatched by `run`.
+//! `index`, `touch`, `touch_part`, `promote` and `window_vv` are its call surface, dispatched
+//! by `run`. A touch whose row and document pass one reply names what does not fit by
+//! reference, fetched in parts, as an authority page does (FIX 12116).
 //! The residence root defines the request DTOs and `ResidenceIndexCache`.
 
 use super::*;
@@ -245,6 +247,10 @@ pub(super) fn index_changed() -> AppError {
     )
 }
 
+/// One item's touch: its row and its document, each in base64 while the room
+/// [`RESIDENCE_PAGE_REPLY_BYTES`] leaves holds it, the row first, and else by
+/// reference, its BLAKE3 and length, for the machine to fetch in parts
+/// (`touch_part`, FIX 12116).
 pub(super) fn touch(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -253,6 +259,99 @@ pub(super) fn touch(
 ) -> Result<Answer, AppError> {
     let input: TouchRequest =
         serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let touched = touched(server, auth, peer, &input, None)?;
+    let mut room = RESIDENCE_PAGE_REPLY_BYTES;
+    let blob = touch_item(touched.blob.as_deref().unwrap_or_default(), &mut room);
+    let document = touch_item(touched.document.as_deref().unwrap_or_default(), &mut room);
+    Ok((
+        json!({
+            "window": touched.window.as_str(),
+            "entityId": touched.id.to_hex(),
+            "blob": blob,
+            "document": document,
+        }),
+        touched.rows,
+    ))
+}
+
+/// One part of a touched item's row or document a touch named by reference,
+/// read and admitted again as the touch read it, with its whole length (FIX
+/// 12116). Bytes that are no longer the ones the touch named, and an offset at
+/// or past their end, look missing; the machine checks the joined bytes
+/// against the hash.
+pub(super) fn touch_part(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    params: Value,
+) -> Result<Answer, AppError> {
+    let input: TouchPartRequest =
+        serde_json::from_value(params).map_err(|_| AppError::invalid_params())?;
+    let hash = one_hash(&input.hash)?;
+    let touch = TouchRequest {
+        window: input.window,
+        selector: input.selector,
+        entity_id: input.entity_id,
+    };
+    let touched = touched(server, auth, peer, &touch, Some(input.item))?;
+    let bytes = match input.item {
+        TouchItem::Blob => touched.blob,
+        TouchItem::Document => touched.document,
+    }
+    .unwrap_or_default();
+    let missing = || AppError::not_found("item", None);
+    if *blake3::hash(&bytes).as_bytes() != hash {
+        return Err(missing());
+    }
+    let rest = usize::try_from(input.offset)
+        .ok()
+        .and_then(|offset| bytes.get(offset..))
+        .filter(|rest| !rest.is_empty())
+        .ok_or_else(missing)?;
+    let part = &rest[..rest.len().min(RESIDENCE_PAGE_REPLY_BYTES)];
+    Ok((
+        json!({
+            "total": bytes.len(),
+            "part": base64::engine::general_purpose::STANDARD.encode(part),
+        }),
+        touched.rows,
+    ))
+}
+
+/// One of a touch's two items as its reply carries it (FIX 12116): `inline`
+/// in base64 while `room` holds it, which it then takes, and else by
+/// reference, its BLAKE3 and length.
+fn touch_item(bytes: &[u8], room: &mut usize) -> Value {
+    let encode = |bytes: &[u8]| base64::engine::general_purpose::STANDARD.encode(bytes);
+    if bytes.len() <= *room {
+        *room -= bytes.len();
+        json!({ "inline": encode(bytes) })
+    } else {
+        json!({ "hash": encode(blake3::hash(bytes).as_bytes()), "total": bytes.len() })
+    }
+}
+
+/// An item's touch, read for the machine this socket proved: its window and
+/// id, its row and its document (only the one `only` names, when it names
+/// one: the document is the costly read), and the rows its receipt carries.
+struct Touched {
+    window: WindowKey,
+    id: EntityId,
+    blob: Option<Vec<u8>>,
+    document: Option<Vec<u8>>,
+    rows: Option<Vec<EntityId>>,
+}
+
+/// The touch `input` asks for, admitted as a touch is: the grant, the actor's
+/// live scoped-read floor and the destination machine's world read settings
+/// each admit the exact target, and either denial looks missing.
+fn touched(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    peer: PeerMachine,
+    input: &TouchRequest,
+    only: Option<TouchItem>,
+) -> Result<Touched, AppError> {
     let id = EntityId::from_hex(&input.entity_id).map_err(|_| AppError::invalid_params())?;
     let (window, selector, doc) = selected_window(server, auth, &input.window, &input.selector)?;
     // A stored grant constrains the selector; the actor's live scoped-read
@@ -278,37 +377,40 @@ pub(super) fn touch(
     .ok_or_else(|| AppError::not_found("item", None))?;
     // The export opens the document: past the live-document row it waits its
     // turn off the runtime worker (rule 5).
-    let document = crate::server::blocking(|| {
-        server.reassert_manager.export_document_in_window_with(
-            id,
-            &window,
-            crate::handler::selector_grant_scope(),
-            &selector,
-            admission.withhold(),
-            &loro::VersionVector::new().encode(),
-        )
+    let document = if only == Some(TouchItem::Blob) {
+        None
+    } else {
+        let exported = crate::server::blocking(|| {
+            server.reassert_manager.export_document_in_window_with(
+                id,
+                &window,
+                crate::handler::selector_grant_scope(),
+                &selector,
+                admission.withhold(),
+                &loro::VersionVector::new().encode(),
+            )
+        });
+        Some(exported.map_err(|error| {
+            if error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut {
+                AppError::waited_out()
+            } else {
+                AppError::internal_server_error("item document unavailable")
+            }
+        })?)
+    };
+    // FIX 7608 slice 4: the row a copy id names is its source.
+    let rows = Some(vec![
+        oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+            .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
+            .stored(&id),
+    ]);
+    Ok(Touched {
+        window,
+        id,
+        blob: (only != Some(TouchItem::Document)).then_some(blob),
+        document,
+        rows,
     })
-    .map_err(|error| {
-        if error.kind() == oneiron::ErrorKind::LiveDocumentWaitedOut {
-            AppError::waited_out()
-        } else {
-            AppError::internal_server_error("item document unavailable")
-        }
-    })?;
-    Ok((
-        json!({
-            "window": window.as_str(),
-            "entityId": id.to_hex(),
-            "blob": base64::engine::general_purpose::STANDARD.encode(blob),
-            "document": base64::engine::general_purpose::STANDARD.encode(document),
-        }),
-        // FIX 7608 slice 4: the row a copy id names is its source.
-        Some(vec![
-            oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
-                .map_err(|_| AppError::internal_server_error("item aliases unavailable"))?
-                .stored(&id),
-        ]),
-    ))
 }
 
 pub(super) fn promote(
