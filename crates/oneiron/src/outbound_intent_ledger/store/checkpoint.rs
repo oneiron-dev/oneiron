@@ -150,7 +150,10 @@ pub(super) fn unavailable_calls_since_in_txn(
     let mut counted = 0_u32;
     for row in UNAVAILABLE.iter_raw_from(&vault.store, txn, &[])? {
         let (key, bytes) = row?;
-        let counts = match (AttemptCallKey::decode_key(&key), UNAVAILABLE.decode_value(&bytes)) {
+        let counts = match (
+            AttemptCallKey::decode_key(&key),
+            UNAVAILABLE.decode_value(&bytes),
+        ) {
             (Some(call), Ok(unavailable)) => {
                 unavailable.bound == bound
                     && unavailable.created_ms.max(unavailable.updated_ms) >= since_ms
