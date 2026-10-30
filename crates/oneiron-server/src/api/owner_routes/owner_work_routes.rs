@@ -41,7 +41,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::machine_routes::{act_surface_admitted, parse_revision};
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{CHANGED, OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -55,6 +55,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/owner-work/{request}",
                 summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",
                 row: None,
+                shape: None,
             },
             get(status),
         ),
@@ -64,6 +65,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/owner-work/{request}/diagnostics",
                 summary: "What blocks one pending owner work request, as its executor observes it: a re-assertion's keys and their blockers (paged by offset), or a bundle publication's home, relay reach, outer capsules and unresolved attempt. Ids and closed reasons only; any other install answers that the executor's observation is unavailable here.",
                 row: None,
+                shape: None,
             },
             get(diagnostics),
         ),
@@ -73,6 +75,16 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/bundles/publications",
                 summary: "Records the owner's ask that the vault's sealed bundle be published to one linked home, ids only; the receipt is recorded and awaiting a holder, polled at /v1/owner/owner-work/{request}, or says why nothing was recorded.",
                 row: None,
+                shape: Some(
+                    RestShape::json(bundle_publication_body_schema, owner_work_view_schema)
+                        .refusing(&[
+                            (
+                                "400",
+                                "`home` is not a 32-hex install id, or the body names another field.",
+                            ),
+                            CHANGED,
+                        ]),
+                ),
             },
             post(publish_bundle),
         ),

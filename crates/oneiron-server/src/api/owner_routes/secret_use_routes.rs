@@ -14,7 +14,7 @@ use axum::routing::post;
 use oneiron::secret_custody::SecretBindRequest;
 use serde::Deserialize;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
@@ -29,6 +29,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/bind",
                 summary: "With {\"handle\"} or {\"name\"}, \"effector\", and optionally \"tier_ceiling\" and \"scopes\".",
                 row: None,
+                shape: Some(RestShape::json(bind_body_schema, bound_view_schema)),
             },
             post(bind),
         ),
@@ -38,6 +39,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/secrets/unbind",
                 summary: "With {\"handle\"} or {\"name\"} and \"effector\": withdraws that one binding; every other stays.",
                 row: None,
+                shape: Some(RestShape::json(unbind_body_schema, bound_view_schema)),
             },
             post(unbind),
         ),

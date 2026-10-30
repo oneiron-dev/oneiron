@@ -14,7 +14,7 @@ use oneiron::consent::{ConsentGrant, ConsentReceipt};
 use oneiron::memory::DiaryReadOutcome;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -28,6 +28,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/diary/review",
                 summary: "Whether an agent reviews each read first.",
                 row: None,
+                shape: Some(RestShape::json(
+                    diary_review_body_schema,
+                    diary_review_schema,
+                )),
             },
             post(review),
         ),
@@ -37,6 +41,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/diary/grants",
                 summary: "A diary.read Grant for one reader.",
                 row: None,
+                shape: Some(RestShape::json(diary_grant_body_schema, diary_grant_schema)),
             },
             post(grant),
         ),
@@ -46,6 +51,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/diary/read",
                 summary: "The owner reads a diary under its Grant.",
                 row: None,
+                shape: Some(RestShape::json(
+                    read_diary_body_schema,
+                    diary_read_outcome_schema,
+                )),
             },
             post(read),
         ),

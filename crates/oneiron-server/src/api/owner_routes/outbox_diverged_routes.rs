@@ -18,7 +18,7 @@ use oneiron::task_verb::sdk::{
     OutboxDivergedAnswerReceipt, OutboxDivergedAnswerRequest, OutboxDivergedPage,
 };
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::facade::outbox_diverged_doors::{answer_diverged_copy, diverged_page};
 use crate::auth::CoreAuth;
@@ -33,6 +33,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/outbox/diverged",
                 summary: "A vault VM's outbox carrier members the owner should see (FIX 11074): each copy kept that the carrier never agreed on, after its origin retired the agreed version (`diverged_unagreed`: kind, member, the end that holds it, both digests, his answer), and each file held back as damaged at its source (`source_digest_mismatch`), each with a card. `carrier` is false where no companion answers.",
                 row: None,
+                shape: None,
             },
             get(members),
         ),
@@ -42,6 +43,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/outbox/diverged",
                 summary: "With {\"kind\", \"member\", \"held\", \"answer\": \"remove\" | \"keep\"}: passes the owner's answer to the diverged copy the page lists with that digest to the companion, which carries it out at its next turn; nothing removes the copy without it.",
                 row: None,
+                shape: Some(RestShape::json(answer_body_schema, answer_receipt_schema)),
             },
             post(answer),
         ),

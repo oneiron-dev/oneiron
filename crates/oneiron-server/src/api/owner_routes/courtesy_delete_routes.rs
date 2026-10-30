@@ -16,7 +16,7 @@ use oneiron::task_verb::sdk::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::ApiErrorEnvelope;
@@ -31,6 +31,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/courtesy-delete/send",
                 summary: "Send.",
                 row: None,
+                shape: Some(RestShape::json(
+                    courtesy_send_body_schema,
+                    courtesy_sent_schema,
+                )),
             },
             post(send),
         ),
@@ -40,6 +44,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/courtesy-delete/sent",
                 summary: "Sent.",
                 row: None,
+                shape: None,
             },
             get(sent),
         ),
@@ -49,6 +54,7 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/courtesy-delete/incoming",
                 summary: "Incoming.",
                 row: None,
+                shape: None,
             },
             get(incoming),
         ),
@@ -58,6 +64,10 @@ pub(super) fn owner_table() -> OwnerTable {
                 path: "/courtesy-delete/answer",
                 summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",
                 row: None,
+                shape: Some(RestShape::json(
+                    courtesy_answer_body_schema,
+                    courtesy_incoming_schema,
+                )),
             },
             post(answer),
         ),
