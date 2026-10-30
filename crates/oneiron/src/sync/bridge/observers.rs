@@ -604,6 +604,26 @@ pub(crate) fn register_message_docs_observer(
     )
 }
 
+/// Observer B for the base window's office proposal map (FIX 2691): each
+/// proposal an import brings is merged into this vault's.
+pub(crate) fn register_office_proposals_observer(
+    doc: &LoroDoc,
+    vault: &Arc<Vault>,
+    materializer: &Arc<Materializer>,
+    window_key: &str,
+) -> Subscription {
+    let office_proposals_map = doc.get_map(crate::sync::office_proposals::OFFICE_PROPOSALS_MAP);
+    subscribe_map_observer(
+        doc,
+        &office_proposals_map,
+        vault,
+        materializer,
+        window_key,
+        crate::sync::office_proposals::materialize_office_proposals_from_delta,
+        ("office_proposals", None),
+    )
+}
+
 /// Subscribes to a map's changes, filtering out bridge-origin events and
 /// delegating to a materializer function under the materializer lock.
 fn subscribe_map_observer(

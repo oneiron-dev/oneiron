@@ -51,7 +51,8 @@ pub(in crate::sync) fn record_in_txn(
 /// written. Only replay surfaces with a stable entity scope participate:
 /// `entities` rows name their entity directly, while `edges` rows retry by
 /// source entity. Tombstone replay already has stricter purge-specific rm:
-/// handling; lease rows are root-scoped and have no entity marker.
+/// handling; lease rows are root-scoped and have no entity marker, and a
+/// divergent office proposal does not resolve on a retry.
 #[must_use]
 pub(in crate::sync) fn remat_marker_entity_for_quarantine(
     container: QuarantineContainer,
@@ -62,7 +63,9 @@ pub(in crate::sync) fn remat_marker_entity_for_quarantine(
         QuarantineContainer::Edges => {
             crate::sync::bridge::parse_edge_key(crdt_key).map(|(src, _, _)| src)
         }
-        QuarantineContainer::Tombstones | QuarantineContainer::Leases => None,
+        QuarantineContainer::Tombstones
+        | QuarantineContainer::Leases
+        | QuarantineContainer::OfficeProposals => None,
     }
 }
 
