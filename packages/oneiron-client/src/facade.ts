@@ -1907,7 +1907,7 @@ export interface FacadeResults {
   "vault.code.origin.publications": Facade.OriginPublicationsView;
   "vault.code.checkout.bind": Facade.CheckoutDoorBinding;
   "vault.code.checkout.claim": Facade.CheckoutLeaseView;
-  "vault.code.checkout.get": Facade.CheckoutLeaseView;
+  "vault.code.checkout.get": Facade.ScopedReadResult<Facade.CheckoutLeaseView | null>;
   "vault.code.checkout.renew": Facade.CheckoutLeaseView;
   "vault.code.checkout.reclaim": Facade.CheckoutLeaseView;
   "vault.code.checkout.takeover": Facade.CheckoutLeaseView;

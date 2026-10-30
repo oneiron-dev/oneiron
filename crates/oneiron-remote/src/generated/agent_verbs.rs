@@ -2132,7 +2132,9 @@ impl OneironClient {
                     oneiron::memory::checkout_doors::CheckoutLeaseView,
                 >(client, verb, &input),
                 "vault.code.checkout.get" => remote_agent_verb_output::<
-                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::memory::checkout_doors::CheckoutLeaseView>,
+                    >,
                 >(client, verb, &input),
                 "vault.code.checkout.renew" => remote_agent_verb_output::<
                     oneiron::memory::checkout_doors::CheckoutLeaseView,
@@ -12186,7 +12188,12 @@ impl OneironClient {
     pub fn vault_code_checkout_get(
         &self,
         input: &oneiron::memory::checkout_doors::CheckoutGetInput,
-    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<
+            Option<oneiron::memory::checkout_doors::CheckoutLeaseView>,
+        >,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

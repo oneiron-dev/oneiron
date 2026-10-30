@@ -10604,7 +10604,7 @@
       "name": "vault.code.checkout.get",
       "description": "Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it.",
       "input": "crate::memory::checkout_doors::CheckoutGetInput",
-      "output": "crate::memory::checkout_doors::CheckoutLeaseView",
+      "output": "crate::claim::ScopedReadResult<Option<crate::memory::checkout_doors::CheckoutLeaseView>>",
       "call": "crate::task_verb::sdk::host_only(memory, \"vault.code.checkout.get\", &input)?",
       "scope": "Read",
       "admission": {
