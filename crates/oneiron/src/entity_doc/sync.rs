@@ -184,7 +184,8 @@ pub(crate) fn edit_sync_text_in_txn(
 /// this vault's own birth of the same row first; a record's sequence rows
 /// take the update as their next one. `masked` is the re-masked copy text a
 /// copy edit landed from: the scan reads it in place of the document's
-/// text. Whether the text moved.
+/// text. A typed body's frame joins the body instead (FIX 2458). Whether the
+/// text moved.
 pub(crate) fn join_sync_update_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -192,6 +193,17 @@ pub(crate) fn join_sync_update_in_txn(
     update: &[u8],
     masked: Option<&str>,
 ) -> Result<bool> {
+    // FIX 2458: whatever plane the record's text keeps here, a typed body's
+    // frame joins its body through the office merge preflight.
+    if let Some(moved) = crate::typed_body::sync_frame::join_typed_body_frame_in_txn(
+        vault,
+        txn,
+        entity,
+        update,
+        &super::office::OFFICE_BODY_OWNER,
+    )? {
+        return Ok(moved);
+    }
     let (mut h, whole) = match plane_in(vault, txn, entity)? {
         Plane::Document(h) => (h, whole_document(update)),
         Plane::Unborn => match whole_document(update) {

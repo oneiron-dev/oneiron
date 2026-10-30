@@ -483,4 +483,84 @@ impl Vault {
         }
         Ok(DocumentMerge::Written)
     }
+
+    /// The office facts a body's sync frame carries beside its frontiers
+    /// (FIX 2458): its format and the package version it imported, so the
+    /// machine that takes the body reads it as the office body it is. `None`
+    /// for an entity with no office body.
+    pub(crate) fn office_frame_record_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        artifact: &EntityId,
+    ) -> Result<Option<Vec<u8>>> {
+        SOURCES
+            .get(&self.store, txn, artifact)?
+            .map(|source| {
+                rmp_serde::to_vec_named(&source).map_err(|_| invalid("office body source encode"))
+            })
+            .transpose()
+    }
+
+    /// Installs `record`, the office facts a carried body's frame brought,
+    /// for `artifact`, whose body of `schema` was born here from that frame
+    /// (FIX 2458). Facts this vault holds stand.
+    pub(crate) fn adopt_office_frame_record_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &EntityId,
+        schema: &str,
+        record: &[u8],
+    ) -> Result<()> {
+        if record.is_empty() || SOURCES.contains(&self.store, wtxn, artifact)? {
+            return Ok(());
+        }
+        let source: OfficeBodySource =
+            rmp_serde::from_slice(record).map_err(|_| invalid("office body frame source"))?;
+        if source.kind.schema() != schema {
+            return Err(invalid(
+                "an office body frame's source names another format",
+            ));
+        }
+        SOURCES.put(&self.store, wtxn, artifact, &source)
+    }
+
+    /// The office merge preflight a carried body's operations pass before
+    /// they land on the head here (FIX 2458): the merged body still reads as
+    /// its format, and, for a DOCX or XLSX body, the carried head's changes
+    /// since the frontier both hold block nothing and meet no block or cell
+    /// the head changed too, as a reviewed fork's must to land. A deck's
+    /// operations merge as its tree allows. `false` opens a fork the owner
+    /// resolves; a schema no office body has lands as merged.
+    pub(crate) fn preflight_carried_office_body(
+        &self,
+        schema: &str,
+        carried: &crate::typed_body::sync_frame::CarriedBody<'_>,
+    ) -> Result<bool> {
+        let kinds = [
+            OfficeBodyKind::Docx,
+            OfficeBodyKind::Xlsx,
+            OfficeBodyKind::Pptx,
+        ];
+        let Some(kind) = kinds.into_iter().find(|kind| kind.schema() == schema) else {
+            return Ok(true);
+        };
+        if validate(kind, carried.merged).is_err() {
+            return Ok(false);
+        }
+        if kind == OfficeBodyKind::Pptx {
+            return Ok(true);
+        }
+        let diff = three_way(
+            kind,
+            carried.live,
+            carried.theirs,
+            carried.base,
+            carried.head,
+        )?;
+        Ok(!diff.blocking()
+            && !diff
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.kind == ConflictKind::BothEdited))
+    }
 }
