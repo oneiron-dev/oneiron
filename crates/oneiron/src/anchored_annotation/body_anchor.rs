@@ -139,7 +139,13 @@ impl Vault {
                     }
                 };
                 let new_head = self.write_thread_head_in_txn(
-                    wtxn, artifact, &plan.head, actor, op, occurred, now,
+                    wtxn,
+                    artifact,
+                    &plan.head,
+                    actor,
+                    op,
+                    occurred,
+                    now,
                 )?;
                 self.supersede_claim_in_txn(wtxn, &new_head, &plan.thread.head_claim_id, now)?;
                 written = written.saturating_add(1);
@@ -153,9 +159,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         artifact: &EntityId,
     ) -> Result<Vec<Planned>> {
-        let Some(head) = self.office_body_frontier_in_txn(txn, artifact)? else {
-            return Ok(Vec::new());
-        };
+        // A body with no attached comment reads no body.
         let threads: Vec<AnnotationThread> = self
             .effect_annotation_threads_for_artifact_in_txn(txn, artifact)?
             .into_iter()
@@ -164,6 +168,9 @@ impl Vault {
         if threads.is_empty() {
             return Ok(Vec::new());
         }
+        let Some(head) = self.office_body_frontier_in_txn(txn, artifact)? else {
+            return Ok(Vec::new());
+        };
         let export = self.office_body_latest_export_in_txn(txn, artifact)?;
         let (mut units, mut filed) = (UnitsAt::new(), FiledAt::new());
         let mut plans = Vec::new();
