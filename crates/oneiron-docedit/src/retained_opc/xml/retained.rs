@@ -11,14 +11,6 @@ use std::{
     ops::Range,
 };
 
-/// Caller-resolved XML counts a package carries as policy data. Both are
-/// observations: no reader refuses a part for its depth or node count.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct XmlLimits {
-    pub max_depth: usize,
-    pub max_nodes: usize,
-}
-
 #[derive(Debug)]
 pub(super) struct Node<'a> {
     pub name: &'a str,

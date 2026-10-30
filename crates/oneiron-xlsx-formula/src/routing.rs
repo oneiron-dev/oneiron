@@ -20,7 +20,7 @@
 use formualizer_parse::parser::{ASTNodeType, ReferenceType};
 use formualizer_parse::{TokenStream, TokenSubType, TokenType};
 
-use oneiron_docedit::retained_opc::{Limits, Package, XmlLimits};
+use oneiron_docedit::retained_opc::{Limits, Package};
 
 pub use crate::calc::RouteDecision;
 
@@ -49,7 +49,7 @@ pub fn preserve_external_links(
             .map_err(|_| "unreadable input part")?
             .ok_or("missing external-link input part")?;
         let protected = link_part
-            || !route_workbook([], [part.as_slice()], [], limits.xml, resources).is_in_process();
+            || !route_workbook([], [part.as_slice()], [], resources).is_in_process();
         if protected
             && after
                 .part(name)
@@ -79,16 +79,15 @@ pub fn preserve_external_links(
 /// XML, and parsed formulas.
 ///
 /// `part_names` are OPC part paths; `rels_xml` are the bytes of every `.rels`
-/// part, read under `limits`; `formulas` are UI formula strings, parsed here
-/// within the crate's formula bounds so a parse failure, or a formula over
-/// the bounds, also fails closed. The rels parses reserve through the
-/// caller's `resources` port (FIX 10588). Pure and deterministic: same
-/// inputs, same decision.
+/// part; `formulas` are UI formula strings, parsed here within the crate's
+/// formula bounds so a parse failure, or a formula over the bounds, also
+/// fails closed. The rels parses reserve through the caller's `resources`
+/// port (FIX 10588, 10590). Pure and deterministic: same inputs, same
+/// decision.
 pub fn route_workbook<'a>(
     part_names: impl IntoIterator<Item = &'a str>,
     rels_xml: impl IntoIterator<Item = &'a [u8]>,
     formulas: impl IntoIterator<Item = &'a str>,
-    limits: XmlLimits,
     resources: &oneiron_docedit::resource::Resources,
 ) -> RouteDecision {
     for name in part_names {
@@ -99,7 +98,7 @@ pub fn route_workbook<'a>(
         }
     }
     for xml in rels_xml {
-        if rels_has_external_target(xml, limits, resources) {
+        if rels_has_external_target(xml, resources) {
             return RouteDecision::Openpyxl {
                 reason: "external-rels-target",
             };
@@ -123,7 +122,6 @@ pub fn route_workbook<'a>(
 /// elsewhere in the part is ignored, never stripped or rewritten.
 fn rels_has_external_target(
     xml: &[u8],
-    _limits: XmlLimits,
     resources: &oneiron_docedit::resource::Resources,
 ) -> bool {
     crate::xml::Xml::parse(xml, resources).map_or(true, |xml| {

@@ -383,11 +383,8 @@ impl Inflate {
 pub(super) fn check_limits(limits: Limits) -> Result<()> {
     if [
         limits.archive_bytes,
-        limits.entries,
         limits.part_bytes,
         limits.expanded_bytes,
-        limits.xml.max_depth,
-        limits.xml.max_nodes,
     ]
     .contains(&0)
     {

@@ -6,7 +6,7 @@ use super::journal::{self, CaseLine, Header, JOURNAL_SCHEMA, Journal, Line, writ
 use super::schema::{SchemaEvidence, Validator};
 use super::spec::CaseManifest;
 use crate::live::deck_export::{PROJECTOR_VERSION, StepOutcome};
-use crate::retained_opc::{Limits, XmlLimits};
+use crate::retained_opc::Limits;
 use serde::{Deserialize, Serialize};
 use sha2::Digest as _;
 use std::fmt::Write as _;
@@ -82,13 +82,8 @@ pub(super) fn sha256_hex(bytes: &[u8]) -> String {
 pub(super) fn engine_limits() -> Limits {
     Limits {
         archive_bytes: 512 * 1024 * 1024,
-        entries: 10_000,
         part_bytes: 64 * 1024 * 1024,
         expanded_bytes: 512 * 1024 * 1024,
-        xml: XmlLimits {
-            max_depth: 256,
-            max_nodes: 1_000_000,
-        },
     }
 }
 
