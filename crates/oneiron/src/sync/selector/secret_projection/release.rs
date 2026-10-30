@@ -16,6 +16,7 @@ use loro::LoroDoc;
 
 use super::SyncSecretProjection;
 use super::frames::WindowAdmission;
+use super::rows::Landing;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -24,14 +25,41 @@ use crate::error::Result;
 #[derive(Debug)]
 pub enum RepoSyncAdmission<'a> {
     /// Persist, import and relay these bytes as today: the blob as it came,
-    /// or its copy edits translated onto their sources.
-    Admit(Cow<'a, [u8]>),
+    /// or its copy edits translated onto their sources, with the new bytes
+    /// they land, which the writer that persists them marks (FIX 10732).
+    Admit(Cow<'a, [u8]>, RepoSyncLandings),
     /// An edit of a copy the visible diff holds on a ruled cause
     /// (`projection_edit_conflict` / `sealed_file_edited`): its held record
     /// is written (the owner's `sync_doctor` lists it), and nothing of the
     /// blob persists, imports or relays. A home acknowledges it so the device
     /// stops sending it (FIX 10598); no edit of it is ever applied.
     Held,
+}
+
+/// The new bytes an admitted window blob's translated copy edits land on
+/// their marked sources (FIX 10732, L04 05:5x): none for a blob that edits no
+/// copy, or edits one only back to its stored bytes.
+#[derive(Debug, Default)]
+pub struct RepoSyncLandings(Vec<Landing>);
+
+impl RepoSyncLandings {
+    /// Marks each landing in `wtxn`, the writer that persists the update
+    /// carrying it, so its bytes are never committed without their mark.
+    ///
+    /// # Errors
+    /// The carry's own failure: the persist aborts with it.
+    pub(crate) fn mark_in_txn(&self, vault: &Vault, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
+        for landing in &self.0 {
+            crate::origin::secret_marks::carry_repo_secret_marks_in_txn(
+                vault,
+                wtxn,
+                &landing.blob,
+                &landing.body,
+                landing.source,
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// `payload`, a window blob leaving this device for a sync peer, as the peer
@@ -81,7 +109,9 @@ pub fn admit_repo_sync_frame<'a>(
     let projection = SyncSecretProjection::read(vault)?;
     Ok(
         match projection.admit_window_blob(&vault.store, payload, context)? {
-            WindowAdmission::Admit(bytes) => RepoSyncAdmission::Admit(bytes),
+            WindowAdmission::Admit(bytes, landings) => {
+                RepoSyncAdmission::Admit(bytes, RepoSyncLandings(landings))
+            }
             WindowAdmission::Held(held) => {
                 for edit in &held {
                     tracing::warn!(

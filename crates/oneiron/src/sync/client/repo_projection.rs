@@ -30,8 +30,8 @@ impl SyncClient {
         )
         .map_err(|error| TransportError::Storage(error.to_string()))?;
         Ok(match admitted {
-            RepoSyncAdmission::Admit(std::borrow::Cow::Borrowed(_)) => Some(payload),
-            RepoSyncAdmission::Admit(std::borrow::Cow::Owned(translated)) => Some(translated),
+            RepoSyncAdmission::Admit(std::borrow::Cow::Borrowed(_), _) => Some(payload),
+            RepoSyncAdmission::Admit(std::borrow::Cow::Owned(translated), _) => Some(translated),
             RepoSyncAdmission::Held => None,
         })
     }
@@ -55,8 +55,8 @@ impl SyncClient {
             crate::sync::selector::admit_repo_sync_frame(&self.vault, key.as_str(), &payload, None)
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
         Ok(match admitted {
-            RepoSyncAdmission::Admit(std::borrow::Cow::Owned(translated)) => translated,
-            RepoSyncAdmission::Admit(std::borrow::Cow::Borrowed(_)) => payload,
+            RepoSyncAdmission::Admit(std::borrow::Cow::Owned(translated), _) => translated,
+            RepoSyncAdmission::Admit(std::borrow::Cow::Borrowed(_), _) => payload,
             RepoSyncAdmission::Held => {
                 return Err(TransportError::Storage(
                     "a whole window state holds a copy edit on its ruled cause; it is not imported"
