@@ -379,11 +379,14 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?;
             // Symbol rows first, then every edge a working batch at a time.
-            let symbol_graph = prepare_code_symbol_graph(
+            let mut symbol_graph = prepare_code_symbol_graph(
                 repo_ref.clone(),
                 Some(commit_hash.to_owned()),
                 symbol_sources,
             )?;
+            // Each symbol names the operations that wrote it, read from its
+            // file document when that holds these exact bytes (FIX 342).
+            symbol_graph.fill_producing_operations_in_txn(&self.store, read)?;
             self.put_prepared_code_symbol_graph_in_txn(
                 wtxn,
                 &code_artifact_id,
