@@ -17,7 +17,7 @@ use super::{
     CodeFixSource, CodeFixWithheld, FailureSource, InventedExampleDraft, code_fix_subject_in,
     failure_source_in, invented_text,
 };
-use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::authority::AuthorityFold;
 use crate::code_run::ReadWorldSnapshot;
 use crate::dreamer_runner::maintenance::code_fix::{
@@ -254,14 +254,28 @@ pub(super) fn blocked_source_failure_in(
         }
         RunWorlds::Unproved => return Ok(SubjectFailure::Unproved),
     };
+    // FIX 9445: a run that maps to an attempt keeps its complete recorded
+    // input set, with the code-run row whose capsule holds the kept request.
+    // No attempt or an unknown set stays unknown; the capsule id alone never
+    // stands in for completeness (L07-B 03:57).
+    let source_rows = match source.code_run {
+        Some(run) => AttemptQueue::new(vault)
+            .get_in_txn(txn, AttemptId::from_bytes(run.as_bytes())?)?
+            .and_then(|attempt| attempt.source_rows().map(<[EntityId]>::to_vec))
+            .map(|mut rows| {
+                rows.push(run);
+                rows.sort_unstable();
+                rows.dedup();
+                rows
+            }),
+        None => None,
+    };
     Ok(SubjectFailure::Read(
         FailureSource {
             instructions: request.instructions,
             briefing: request.briefing,
             task: request.task,
-            // A kept request is text only: no reader names the rows behind
-            // it (FIX 6997).
-            source_rows: None,
+            source_rows,
         },
         worlds,
     ))
