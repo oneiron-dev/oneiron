@@ -69,7 +69,7 @@ impl Vault {
                     declared_blake3: file.blake3,
                 });
             }
-            if body.read(&mut [0; 1])? != 0 {
+            if body.read(&mut [0u8; 1])? != 0 {
                 return Err(invalid("checkpoint body runs past its files"));
             }
             files.sort_by(|a, b| a.name.cmp(&b.name));
