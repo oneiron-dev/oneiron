@@ -13,6 +13,6 @@ pub use oneiron_contracts::error::{
 };
 #[cfg(feature = "sync")]
 pub use oneiron_contracts::error::{
-    SyncConfigField, SyncEngineContext, SyncProtocolPruneScope, SyncProtocolValidation,
-    SyncRollbackError, SyncSelectorValidation,
+    FederationReplayEnd, SyncConfigField, SyncEngineContext, SyncProtocolPruneScope,
+    SyncProtocolValidation, SyncRollbackError, SyncSelectorValidation,
 };
