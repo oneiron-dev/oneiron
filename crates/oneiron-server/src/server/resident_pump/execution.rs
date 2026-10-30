@@ -30,6 +30,15 @@ pub(super) fn run_bound(
 ) -> Result<BoundRun, EngineRunError> {
     let vault = server.vault();
     let status = &claimed.status;
+    // FIX 11918 (Engine 00:54): both births below narrow to the dispatch
+    // row's branch world; empty inherits, as every production row names none.
+    let worlds: Vec<EntityId> = status
+        .input
+        .scope
+        .as_ref()
+        .and_then(|s| s.world)
+        .into_iter()
+        .collect();
     // The run's writes are bound to its attempt, so the Gate meets its live
     // delegation chain at each (FIX 10537, L09 s50 10:4x).
     let actor = agent_dispatch_run_actor(&status.input, status.attempt.id).map_err(text)?;
@@ -107,9 +116,12 @@ pub(super) fn run_bound(
             &config,
             type_ref,
             definition.models.clone(),
+            worlds.clone(),
         )?
     } else {
-        // No read scope is threaded here: the birth inherits (FIX 11768).
+        // The birth's worlds are the dispatch row's branch world (FIX 11918,
+        // Engine 00:54); empty inherits, which is every production row today.
+        // The pump holds no federation slip to narrow by instead.
         task_engine_run_seat(
             vault,
             provider,
@@ -118,7 +130,7 @@ pub(super) fn run_bound(
             type_ref,
             status.input.plan.as_ref(),
             definition.models.clone(),
-            Vec::new(),
+            worlds,
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -422,15 +434,12 @@ fn continued_seat(
     config: &EngineExecutorConfig,
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
+    worlds: Vec<EntityId>,
 ) -> Result<Option<ModelSeat>, String> {
-    // No read scope is threaded here: the birth inherits (FIX 11768).
-    task_run_seat(
-        vault,
-        provider,
-        config.run_id,
-        type_ref,
-        Vec::new(),
-        |facet| SeatTask {
+    // The birth's worlds are the dispatch row's branch world, threaded by the
+    // caller (FIX 11918, Engine 00:54); empty inherits. No federation slip here.
+    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
+        SeatTask {
             kind: SeatKind::Attempt,
             warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
             task: config.task.clone(),
@@ -445,8 +454,8 @@ fn continued_seat(
             override_effort: config.seat_effort,
             listed,
             worlds: Vec::new(),
-        },
-    )
+        }
+    })
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured
