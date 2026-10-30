@@ -62,6 +62,8 @@ both bindings and their export-census tests in one change.
 - `vault.personas.export`
 - `vault.personas.edit`
 - `self.memory.diary.query`
+- `self.memory.pads.read`
+- `self.memory.pads.admin_reads`
 - `cancel`
 - `steer`
 - `describe`

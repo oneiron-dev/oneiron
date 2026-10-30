@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4461 declarations.
-// Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1267 code-mode rows (1227 host rows, 40 run rows), 4463 declarations.
+// Replies: 1080 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -282,6 +282,8 @@ declare namespace Sdk {
   type DiaryQueryRequest = { agent: string; reason: string };
   type DiaryQueryEntry = { id: EntityId; learned_at: number; markdown: string };
   type DiaryQueryOutcome = { state: "granted"; read?: EntityId | null; entries: DiaryQueryEntry[] } | { state: "pending_review"; request: EntityId } | { state: "declined"; request: EntityId } | { state: "not_covered" };
+  type AdminPadReadsRequest = { agent: string };
+  type AdminPadReadsView = { reads: DiaryReadRecord[] };
   type TaskRequest = { task_ref: string };
   type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected";
   type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean };
@@ -4904,6 +4906,12 @@ declare namespace self {
       reads(input: Sdk.DiaryReadsRequest): Promise<Sdk.DiaryReadsView | StoredResult>;
       /** This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers. */
       review(input: Sdk.DiaryReviewAnswer): Promise<Sdk.DiaryReadRequest | StoredResult>;
+    };
+    pads: {
+      /** The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication. */
+      admin_reads(input: Sdk.AdminPadReadsRequest): Promise<Sdk.AdminPadReadsView | StoredResult>;
+      /** Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log. */
+      read(input: Sdk.DiaryQueryRequest): Promise<Sdk.DiaryQueryOutcome | StoredResult>;
     };
   };
   /** Sends one message to a person in the Direct room the caller's person and theirs share, making the room on first use. */

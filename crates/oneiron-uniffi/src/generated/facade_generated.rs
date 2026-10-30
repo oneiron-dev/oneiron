@@ -280,6 +280,16 @@ export_facade! {
     let output = client.self_memory_diary_query(&input)?;
     crate::codec::lift_record("self.memory.diary.query", &output)
 };
+"self.memory.pads.read" => fn self_memory_pads_read(&self, input: DiaryQueryRequest) -> DiaryQueryOutcome = |client| {
+    let input: oneiron::task_verb::sdk::DiaryQueryRequest = crate::codec::lower_record("self.memory.pads.read", input)?;
+    let output = client.self_memory_pads_read(&input)?;
+    crate::codec::lift_record("self.memory.pads.read", &output)
+};
+"self.memory.pads.admin_reads" => fn self_memory_pads_admin_reads(&self, input: AdminPadReadsRequest) -> AdminPadReadsView = |client| {
+    let input: oneiron::task_verb::sdk::AdminPadReadsRequest = crate::codec::lower_record("self.memory.pads.admin_reads", input)?;
+    let output = client.self_memory_pads_admin_reads(&input)?;
+    crate::codec::lift_record("self.memory.pads.admin_reads", &output)
+};
 "cancel" => fn cancel(&self, task_ref: String) -> TaskCancelReceipt = |client| {
     let output = client.cancel(&task_ref)?;
     crate::codec::lift_record("cancel", &output)

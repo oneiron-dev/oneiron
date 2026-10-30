@@ -4157,6 +4157,8 @@ class Oneiron:
     class _SelfMemoryVerbs:
         @property
         def diary(self) -> "Oneiron._SelfMemoryDiaryVerbs": ...
+        @property
+        def pads(self) -> "Oneiron._SelfMemoryPadsVerbs": ...
     class _SelfMemoryDiaryVerbs:
         def __call__(self, spec: Facade.DiaryEntryRequest) -> Facade.DiaryEntryReceipt:
             """Writes one private entry in the bound actor's own diary, as an actor-private NOTE."""
@@ -4166,6 +4168,11 @@ class Oneiron:
             """This agent's yes or no to a reader's reason for reading its diary; only the diary's own agent answers."""
         def query(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
             """Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."""
+    class _SelfMemoryPadsVerbs:
+        def read(self, spec: Facade.DiaryQueryRequest) -> Facade.DiaryQueryOutcome:
+            """Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log."""
+        def admin_reads(self, spec: Facade.AdminPadReadsRequest) -> Facade.AdminPadReadsView:
+            """The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication."""
     class _SelfStandingVerbs:
         def get(self, spec: Facade.OwnStandingBlockRequest) -> Facade.StandingBlockView:
             """This agent's configured standing block in one world: its handle, name and token floor."""
