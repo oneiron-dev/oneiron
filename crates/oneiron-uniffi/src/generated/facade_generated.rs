@@ -2586,6 +2586,11 @@ export_facade! {
     let output = client.vault_consent_create_standing_grant(&input)?;
     crate::codec::lift_record("vault.consent.create_standing_grant", &output)
 };
+"vault.consent.create_auto_weave_grant" => fn vault_consent_create_auto_weave_grant(&self, input: AutoWeaveGrantRequest) -> ConsentActReceipt = |client| {
+    let input: oneiron::consent::lifecycle::AutoWeaveGrantRequest = crate::codec::lower_record("vault.consent.create_auto_weave_grant", input)?;
+    let output = client.vault_consent_create_auto_weave_grant(&input)?;
+    crate::codec::lift_record("vault.consent.create_auto_weave_grant", &output)
+};
 "vault.consent.registry" => fn vault_consent_registry(&self, input: ConsentRegistryQuery) -> ConsentRegistry = |client| {
     let input: oneiron::consent::ConsentRegistryQuery = crate::codec::lower_record("vault.consent.registry", input)?;
     let output = client.vault_consent_registry(&input)?;
