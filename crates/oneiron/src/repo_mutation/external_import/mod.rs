@@ -17,6 +17,7 @@
 //! enqueues, checks, merges or exports, and no owner door changes.
 
 mod host;
+mod lfs;
 mod receive;
 mod source;
 mod status;
@@ -396,6 +397,8 @@ impl Vault {
         let Some(fetched) = self.fetch_external_import(call, request, normalized)? else {
             return Ok(());
         };
+        // Its LFS objects first, so the door admits the pointers it sends.
+        self.install_external_import_lfs(call, request, normalized, &fetched)?;
         if plan == ExternalImportRefPlan::SeedBase
             && (!self.send_external_import(call, &fetched, &seed)?
                 || self

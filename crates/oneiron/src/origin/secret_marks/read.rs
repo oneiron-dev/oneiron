@@ -1,10 +1,14 @@
 //! The reader's half of a pushed key's mark (FIX 7608 slice 2a, CALL 8033
-//! option d): the readable `repo.secret_mark` facts, found by walking the
-//! claim type index itself (`Vault::for_each_readable_claim_with_predicate_in_txn`),
-//! never a local posting list, with no index, cache or count. One walk
-//! serves one request or one materialization: [`RepoMarkFacts`] holds the
-//! facts it found while that request runs, and nothing past it, so an erased
-//! fact is never read again.
+//! option d): the readable `repo.secret_mark` facts, found through the
+//! predicate's posting list (FIX 8236), each claim then read and judged as
+//! the type-index walk judged it, with no cache or count. The posting list
+//! is kept at the one put chokepoint every put door shares, a sync replay's
+//! replicated row included (`apply_put` stages `maintain_claim_projection_index`
+//! for it), and it restores with its claims, so it names every mark a walk
+//! of every claim would: a masked read costs O(marks), not O(claims), and
+//! nothing on an unmarked vault. One walk serves one request or one
+//! materialization: [`RepoMarkFacts`] holds the facts it found while that
+//! request runs, and nothing past it, so an erased fact is never read again.
 //!
 //! Each fact is decoded strictly at the one schema it is written at, and its
 //! id is derived again from what it says: a fact under another id, of
@@ -30,9 +34,8 @@ use crate::error::{Error, Result};
 use crate::git_wire::GitOid;
 use crate::secret_custody::{KeyPlaces, MemberStep};
 
-/// How a reader finds marks. The one way is the authoritative walk of every
-/// readable claim (CALL 8033 option d): O(claims) once per request, with no
-/// derived index to trust or rebuild.
+/// How a reader finds marks. The one way is every readable claim of the
+/// mark predicate's posting list (FIX 8236): O(marks) once per request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RepoSecretMarkLookup {
     ReadableClaims,
@@ -223,10 +226,10 @@ impl RepoMarkFacts {
         let mut marks: Vec<RepoSecretMark> = Vec::new();
         let mut undecodable: Vec<(EntityId, Option<NamedBlob>, Error)> = Vec::new();
         let mut undecoded: Vec<(EntityId, Option<NamedBlob>, Error)> = Vec::new();
-        let walked = vault.for_each_readable_claim_with_predicate_or_undecoded_in_txn(
+        let walked = for_each_readable_mark_claim_in_txn(
+            vault,
             txn,
-            REPO_SECRET_MARK_PREDICATE,
-            |id, body| {
+            &mut |id: EntityId, body: ClaimBody| {
                 match decode_mark(id, &body) {
                     Ok(Some(mark)) => marks.push(mark),
                     Ok(None) => {}
@@ -234,7 +237,7 @@ impl RepoMarkFacts {
                 }
                 Ok(())
             },
-            |id, body, error| {
+            &mut |id: EntityId, body: &[u8], error: Error| {
                 if let Undecoded::Mark(blob) = undecoded_mark(body) {
                     undecoded.push((id, blob, error));
                 }
@@ -361,16 +364,60 @@ pub(crate) fn for_each_repo_secret_mark_in_txn(
     visit: &mut dyn FnMut(RepoSecretMark) -> Result<()>,
 ) -> Result<()> {
     match lookup {
-        RepoSecretMarkLookup::ReadableClaims => vault
-            .for_each_readable_claim_with_predicate_in_txn(
-                txn,
-                REPO_SECRET_MARK_PREDICATE,
-                |id, body| match decode_mark(id, &body)? {
-                    Some(mark) => visit(mark),
-                    None => Ok(()),
-                },
-            ),
+        RepoSecretMarkLookup::ReadableClaims => for_each_readable_mark_claim_in_txn(
+            vault,
+            txn,
+            &mut |id: EntityId, body: ClaimBody| match decode_mark(id, &body)? {
+                Some(mark) => visit(mark),
+                None => Ok(()),
+            },
+            &mut |_: EntityId, _: &[u8], error: Error| Err(error),
+        ),
     }
+}
+
+/// Hands each readable claim of the mark predicate's posting list to
+/// `visit`, or its stored body and decode error to `undecoded`, in id order
+/// under `txn` (FIX 8236). Each claim is judged as the type-index walk
+/// judges one: an entity that is gone is skipped, one that is not readable
+/// is skipped, and a CLAIM that names another predicate is no mark.
+///
+/// # Errors
+/// A store failure, a posting that names no CLAIM, or `visit`'s or
+/// `undecoded`'s own.
+fn for_each_readable_mark_claim_in_txn(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    visit: &mut dyn FnMut(EntityId, ClaimBody) -> Result<()>,
+    undecoded: &mut dyn FnMut(EntityId, &[u8], Error) -> Result<()>,
+) -> Result<()> {
+    crate::claim::for_each_claim_id_for_predicate_in_txn(
+        &vault.store,
+        txn,
+        REPO_SECRET_MARK_PREDICATE,
+        |id| {
+            let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
+            else {
+                return Ok(());
+            };
+            let header = crate::batch::EntityMetadataHeader::parse(&raw)
+                .ok_or(Error::CorruptedIndex("entity header"))?;
+            if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+                return Err(Error::CorruptedIndex("claim predicate index"));
+            }
+            if !crate::ports::raw_readable_in_txn(&vault.store, txn, &id, &raw)? {
+                return Ok(());
+            }
+            let body = &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..];
+            match crate::claim::decode_claim_body(body, true) {
+                Ok(decoded) if decoded.predicate == REPO_SECRET_MARK_PREDICATE => {
+                    visit(id, decoded)
+                }
+                Ok(_) => Ok(()),
+                Err(error) => undecoded(id, body, error),
+            }
+        },
+    )
 }
 
 fn corrupt() -> Error {
