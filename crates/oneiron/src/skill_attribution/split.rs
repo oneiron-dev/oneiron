@@ -86,7 +86,11 @@ fn outcome_scope_in_txn(
 
 /// Asks about `request` and turns the answers into a split, beside the exact
 /// revision that gave them, or `None` when the outcome abstains. With no host
-/// decisions the rule tier answers; a host's decisions replace it.
+/// decisions the rule tier answers; a host's decisions replace it. Beside it
+/// stands the judge's trace: its raw answers before the floor held any, which
+/// the held-out audit keeps as its calibration batch (OF-542), and its
+/// decisions' receipts, which the attempt lane keeps beside its judgment
+/// (FIX 11512).
 ///
 /// `masses` is each hunk's edit mass, aligned with `request.hunks`; an outcome
 /// with no edit passes none and is one region.
@@ -96,20 +100,6 @@ fn outcome_scope_in_txn(
 /// Whatever the decision path returns, and [`Error::InvalidClaimBody`] when
 /// the answers cover a different number of hunks than were shown, or leave a
 /// hunk `unclear` without a note.
-pub(crate) fn classify_split(
-    decisions: Option<&AttributionDecisions<'_>>,
-    request: &JudgeRequest<'_>,
-    masses: &[f64],
-) -> Result<Option<(AttributionSplit, Option<String>)>> {
-    classify_split_traced(decisions, request, masses).map(|(split, _)| split)
-}
-
-/// [`classify_split`], beside the judge's raw answers before the floor held
-/// any: the held-out audit keeps them as its calibration batch (OF-542).
-///
-/// # Errors
-///
-/// As [`classify_split`].
 pub(crate) fn classify_split_traced(
     decisions: Option<&AttributionDecisions<'_>>,
     request: &JudgeRequest<'_>,

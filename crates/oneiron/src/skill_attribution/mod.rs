@@ -46,6 +46,9 @@ pub(crate) use self::codec::{ground_attempt_receipt, manifest_entry_names_skill}
 pub(crate) mod health_review;
 mod judge;
 pub(crate) use self::judge::JudgeTrace;
+mod decision_receipts;
+pub use self::decision_receipts::attribution_decision_receipts;
+pub(crate) use self::decision_receipts::erase_decision_receipts_entity_in_txn;
 mod judge_supersession;
 #[cfg(test)]
 pub(crate) use judge_supersession::set_pre_writer_hook;
