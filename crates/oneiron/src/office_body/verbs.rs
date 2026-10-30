@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::masked_view::{mask_crossing_runs, masked_body_view};
+use super::masked_view::{join_unmasked_runs, mask_crossing_runs, masked_body_view};
 use super::{
     BodyBlockKind, BodyCell, BodyFormat, BodyName, DeckBodyView, DocxBody, DocxBodyOp,
     OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
@@ -458,7 +458,9 @@ impl Memory<'_> {
         }
         let mut view = read.view;
         mask_crossing_runs(&read.keys, &mut view);
-        masked_body_view(&read.keys, view)
+        let mut view = masked_body_view(&read.keys, view)?;
+        join_unmasked_runs(&mut view);
+        Ok(view)
     }
 
     /// Whether this read of `artifact`'s body `view` reads it whole: a reader
