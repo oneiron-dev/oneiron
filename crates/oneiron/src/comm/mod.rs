@@ -19,6 +19,7 @@ mod claims;
 mod consent;
 mod descriptor;
 mod generic_put_routing;
+mod inbound_events;
 mod opt_out_slots;
 mod parties;
 mod projection_writes;
@@ -69,7 +70,7 @@ pub(crate) use self::parties::{
 };
 pub(crate) use self::projector::{
     record_comm_actor_send_receipt_in_txn, record_comm_inbound_reply_in_txn,
-    run_comm_projector_housekeeping_step,
+    record_comm_inbound_stop_in_txn, run_comm_projector_housekeeping_step,
 };
 pub use self::projector::{
     record_comm_inbound_reply, record_comm_inbound_stop, record_comm_send_receipt,

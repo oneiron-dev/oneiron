@@ -100,6 +100,9 @@ pub enum SurfaceInteractionKind {
     CardCompletion,
     Dwell,
     Tap,
+    /// The counterparty asked for no more messages on this channel (a STOP
+    /// reply, or the provider's own opt-out signal).
+    OptOut,
 }
 
 /// The provider facts of one reaction interaction. The generation is the
