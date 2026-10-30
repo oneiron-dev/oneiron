@@ -301,8 +301,13 @@ pub struct SeatTask {
     pub listed: Vec<AgentModel>,
     /// The run's worlds (FIX 11768): the worlds' own order narrows the
     /// birth's pick to the routes it names. Empty: the birth inherits the
-    /// vault's order, as before.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// vault's order, as before. Deliberately not task identity: the `All`
+    /// snapshot legitimately changes as worlds are edited, and a changed
+    /// world set must not brick durable re-entry by changing the pin hash.
+    /// Empty-worlds serialization is unchanged, so pre-existing pin hashes
+    /// stay stable. Re-derived per entry; the birth-time filter judges the
+    /// current routes.
+    #[serde(skip)]
     pub worlds: Vec<EntityId>,
 }
 
