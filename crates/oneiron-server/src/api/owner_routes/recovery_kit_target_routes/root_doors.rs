@@ -36,10 +36,9 @@ use zeroize::Zeroizing;
 
 use super::super::machine_routes::parse_revision;
 use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
-use super::root_work_answer_schema;
 use super::{
     Kit, OwnerDevice, RootWorkAnswer, issue_homes, kit_target, passphrase_of, request_code,
-    vault_id,
+    root_work_answer_schema, vault_id,
 };
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::pairing::MachineEnrolment;
