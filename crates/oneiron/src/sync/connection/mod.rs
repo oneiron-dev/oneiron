@@ -6,7 +6,9 @@
 //! 3. Drain offline queue: each queued update is imported into the LOCAL
 //!    window doc, then replayed to the server via WindowSync
 //! 4. Convergence protocol (ARCH-0023b Fig. 2) over the replayed windows
-//! 5. Steady state: read WS messages + write debounced local updates
+//! 5. Steady state: read WS messages + write debounced local updates, each
+//!    batch under the host's admission, paused with the socket open while
+//!    the host is frozen (FIX 12036, [`SyncBatchAdmission`])
 //! 6. On disconnect: queue updates, reconnect with exponential backoff
 //!
 //! Convergence protocol after queue replay (ONE-1128):
@@ -30,6 +32,7 @@
 //!   docs dropped + queue cleared between reconnect attempts, so the next
 //!   connection re-runs Phase 1-3 from scratch.
 
+mod batch_admission;
 mod converge;
 mod directives;
 mod handshake;
@@ -50,6 +53,9 @@ use crate::sync::manager::WindowManager;
 use crate::sync::queue::SyncQueue;
 pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
+pub use batch_admission::{
+    SyncBatchAdmission, SyncBatchAdmit, SyncBatchGuard, SyncBatchThaw, SyncBatchVerdict,
+};
 pub(crate) use home_search::HomeSearchSlot;
 pub use home_search::{DeviceResidence, HomeSearch};
 pub use topology::{HomeNodeTopology, HomeRoute};
@@ -91,6 +97,9 @@ pub struct SyncConnection {
     left: tokio::sync::watch::Sender<bool>,
     /// Whether the run loop is going; a leave waits for it to stop.
     running: tokio::sync::watch::Sender<bool>,
+    /// The host asked before each batch the loop applies or sends (FIX
+    /// 12036); `None` admits every batch at once.
+    batch_admission: Option<Arc<dyn SyncBatchAdmission>>,
     /// Held so this device's query doors reach the home while the
     /// connection lives (OF-534); a federation lane lends none.
     _home_search: Option<Arc<HomeSearch>>,
@@ -160,6 +169,7 @@ impl SyncConnection {
             home_handoff_wake: Arc::default(),
             left: tokio::sync::watch::channel(left).0,
             running: tokio::sync::watch::channel(false).0,
+            batch_admission: None,
             _home_search: home_search,
         })
     }

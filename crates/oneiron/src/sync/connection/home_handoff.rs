@@ -176,7 +176,8 @@ pub(super) fn feed_move_routes(
 impl SyncConnection {
     /// Runs a delivery round at start, then each time the upkeep wakes it or
     /// an election moves the home or this node's recorded move. A federation
-    /// lane runs none.
+    /// lane runs none. Each round holds the host's admission, a pause waited
+    /// out (FIX 12036).
     pub(super) async fn run_home_handoff(
         &self,
         events: mpsc::UnboundedSender<SyncEvent>,
@@ -188,6 +189,7 @@ impl SyncConnection {
         let mut elections = vault.subscribe_proactivity_changes();
         let mut mark = home_handoff::election_mark(&vault).ok();
         loop {
+            let round = self.admit_round().await;
             if let Err(error) = self.home_handoff_round(&vault).await {
                 let _ = events.send(SyncEvent::Error(format!(
                     "Home handoff delivery failed: {error}"
@@ -198,6 +200,7 @@ impl SyncConnection {
                     "Home handoff key retirement failed: {error}"
                 )));
             }
+            drop(round);
             loop {
                 tokio::select! {
                     () = self.home_handoff_wake.notified() => break,
