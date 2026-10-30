@@ -133,9 +133,9 @@ pub fn use_secret_as_caller(
 /// caller's own grant and gate, with the handle's secret as its credential
 /// in place of the route's own. The record's binding must name the route's
 /// effector, `connector:<connector>`. A call the gate holds keeps the record
-/// on its row, and the settler sends it with the same one once the hold
-/// clears. The tool's reply comes back as `result`, foreign data, cleared of
-/// the value.
+/// and the use on its row, and the settler sends it with the same record
+/// once the hold clears, writing that send's own use records (FIX 2822). The
+/// tool's reply comes back as `result`, foreign data, cleared of the value.
 pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
     memory: &Memory<'_>,
     input: SecretUseRequest,
@@ -175,12 +175,14 @@ pub fn use_secret_for_connector_call<H: ConnectorCallHost>(
                 let Some(request) = request.take() else {
                     return SecretUseConsumed::failed("the call was already made".to_owned());
                 };
+                // The call's row keeps the use, its intent committed, so a
+                // resume's send writes its own records (FIX 2822).
                 let (outcome, sent) = vault.call_connector_with_secret(
                     memory,
                     request,
                     invocation,
                     &mut *host,
-                    target.custody,
+                    target.context().clone(),
                 );
                 // Its host cleared the reply inside the send's door (FIX
                 // 7647); what the send presented is noted on an engine error
@@ -267,7 +269,7 @@ pub fn use_secret_grant_for_connector_call<H: ConnectorCallHost>(
                     request,
                     invocation,
                     &mut *host,
-                    used.custody,
+                    used.context().clone(),
                     *presented,
                 );
                 // Noted on an engine error after the send too (FIX 8053).
@@ -316,7 +318,9 @@ pub(super) fn grant_refusal(error: Error, operation: &str) -> MemoryError {
 }
 
 /// The caller as a secret's user: a verified actor of a session that keeps
-/// a record.
+/// a record, in the run of the leased try its host bound, read live
+/// (FIX 8334): a secret that run's browser or desktop found is the
+/// caller's to use. A lease that lapsed binds no run.
 fn secret_user(memory: &Memory<'_>) -> MemoryResult<SecretUser> {
     verify_actor_binding(memory.vault(), memory.actor(), memory.actor_class())?;
     if memory.keeps_no_record() {
@@ -326,7 +330,16 @@ fn secret_user(memory: &Memory<'_>) -> MemoryResult<SecretUser> {
             &["Use the secret outside the anonymous session."],
         ));
     }
-    Ok(SecretUser::new(memory.actor(), memory.actor_class()))
+    // The leased try is the run a run-bound record's name holds (FIX 8028).
+    let leased = memory
+        .task_host()
+        .map(|binding| binding.leased_record(memory.vault()));
+    let run = match leased {
+        Some(Ok(record)) => EntityId::from_bytes(*record.id.as_bytes()).ok(),
+        Some(Err(Error::InvalidClaimBody(_))) | None => None,
+        Some(Err(error)) => return Err(error.into()),
+    };
+    Ok(SecretUser::new(memory.actor(), memory.actor_class()).in_run(run))
 }
 
 /// A connector call's reply as the use's answer: delivered is answered; a
@@ -381,7 +394,11 @@ fn answer(outcome: SecretUseOutcome) -> SecretUseAnswer {
         status: match receipt.send {
             SecretUseSend::Answered => SecretUseStatus::Answered,
             SecretUseSend::Withheld => SecretUseStatus::Withheld,
-            SecretUseSend::Failed | SecretUseSend::NotSent => SecretUseStatus::Failed,
+            // A use answers from its outcome; an intent alone never comes
+            // back (FIX 2622).
+            SecretUseSend::Failed | SecretUseSend::NotSent | SecretUseSend::Pending => {
+                SecretUseStatus::Failed
+            }
         },
         result: outcome.result,
         failure: outcome.failure,
