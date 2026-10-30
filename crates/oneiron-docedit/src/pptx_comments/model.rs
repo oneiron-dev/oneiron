@@ -153,7 +153,10 @@ pub struct PptxCommentTarget {
     pub slide: u64,
     pub slide_creation_id: Option<u32>,
     pub shape_creation_id: Option<String>,
-    /// Optional inspection hash refuses a changed shape rather than guessing.
+    /// Optional inspection hash refuses a changed shape rather than guessing;
+    /// hex on a JSON wire, as inspection reads it (FIX 9342).
+    #[serde(default, with = "crate::hex_digest::option")]
+    #[schemars(with = "Option<String>")]
     pub shape_fingerprint: Option<[u8; 32]>,
 }
 
@@ -235,6 +238,9 @@ pub enum PptxAnchorOutcome {
 pub struct PptxShapeIdentity {
     pub shape_id: u32,
     pub creation_id: Option<String>,
+    /// Hex on a JSON wire (FIX 9342).
+    #[serde(with = "crate::hex_digest")]
+    #[schemars(with = "String")]
     pub fingerprint: [u8; 32],
     /// The verified slide-space top-left in EMU, through inherited placeholder
     /// geometry, enclosing groups, rotation and flips; None when unresolved.
@@ -248,7 +254,10 @@ pub struct PptxSlideIdentity {
     pub sld_id: u32,
     /// p14 creation IDs are unsigned 32-bit integers, not GUIDs.
     pub creation_id: Option<u32>,
-    /// Normalized slide content; ignores only declared review metadata extensions.
+    /// Normalized slide content; ignores only declared review metadata
+    /// extensions. Hex on a JSON wire (FIX 9342).
+    #[serde(with = "crate::hex_digest")]
+    #[schemars(with = "String")]
     pub fingerprint: [u8; 32],
     pub shapes: Vec<PptxShapeIdentity>,
 }

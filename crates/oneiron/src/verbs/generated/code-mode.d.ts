@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4454 declarations.
+// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4458 declarations.
 // Replies: 1075 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 117; unread shapes: none.
+// Opaque serde_json::Value leaves: 115; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -2355,7 +2355,7 @@ declare namespace Sdk {
   type ArtifactKind = "document" | "sheet" | "deck" | "code" | "canvas" | "image" | "file";
   type BornFromSource = { trigger: MadeByTrigger } | { agent_run: string };
   type ArtifactVersionView = { version: number; content_hash: string; parent_version?: number | null; fork_of_version?: number | null; provenance: string; run_ref?: string | null; created_at: number; export_name: string; export_media_type: string; made_by: MadeBy; born_from: BornFromSource[]; claim: RecordRef };
-  type ArtifactView = { artifact_id: EntityId; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
+  type ArtifactView = { artifact_id: EntityId; artifact: RecordRef; kind: ArtifactKind; name: string; media_type: string; head?: number | null; versions: ArtifactVersionView[] };
   type ArtifactUnitsRequest = { artifact_ref: string; version?: number | null };
   type AnnotationLocator = { format: "xlsx"; sheet: string; range: string } | { format: "docx"; para_path: string; char_start: number; char_end: number } | { format: "pptx"; slide: number; shape_id: string };
   type ArtifactUnitView = { locator: AnnotationLocator; quote?: string | null };
@@ -2845,20 +2845,22 @@ declare namespace Sdk {
   type BornFromArtifact = { artifact_id: EntityId; version: number; at: number; artifact: RecordRef; claim: RecordRef };
   type BornFromView = { born: EntityId[]; born_records: RecordRef[]; versions: BornFromArtifact[] };
   type PendingProposalKind = "edit" | "output";
-  type PendingProposalView = { artifact_id: EntityId; artifact: RecordRef; proposal_ref: string; kind: PendingProposalKind; base_version?: number | null; content_hash: string; byte_len: number; retained_by: EntityId; retained_at: number; made_by?: MadeBy | null; summary: unknown };
+  type PendingProposalView = { artifact_id: EntityId; artifact: RecordRef; proposal_ref: string; kind: PendingProposalKind; base_version?: number | null; content_hash: string; byte_len: number; retained_by: EntityId; retained_by_record?: RecordRef | null; retained_at: number; made_by?: MadeBy | null; summary: unknown };
   type OrganWaitView = { artifact_id: EntityId; run_ref: string; organ: string; verb: string; held_by: EntityId; held_at: number; reason: string; tries: number; last_try_at: number; failed?: string | null };
   type ProposalSettleRequest = { artifact_ref: string; proposal_ref: string; brief_ref?: string | null; reason?: string | null };
   type ReleasedWait = { released: boolean };
-  type PptxCommentTarget = { slide: number; slide_creation_id?: number | null; shape_creation_id?: string | null; shape_fingerprint?: number[] | null };
+  type PptxCommentTarget = { slide: number; slide_creation_id?: number | null; shape_creation_id?: string | null; shape_fingerprint?: string | null };
   type SlideReviewUnitInput = { target: PptxCommentTarget; review_image?: string | null; review_image_ref?: string | null; renderer: string };
   type DecisionClass = "retrieval" | "contradiction" | "triage" | "judgment" | "useful_upstream" | "preference" | "provenance";
   type AnswerContract = { kind: "noul" } | { kind: "choice"; options: string[] } | { kind: "score"; min: number; max: number } | { kind: "box" } | { kind: "point" };
   type DecisionQuestion = { id: string; version: number; text: string; class: DecisionClass; contract: AnswerContract; accept_type: boolean };
   type PptxAuthor = { guid: string; name: string };
   type SlideReviewLabels = { yes: string; no: string; low: string; middle: string; high: string };
-  type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: DecisionQuestion; author: PptxAuthor; labels: SlideReviewLabels; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null };
-  type ShapeReviewAnchor = { node_part: string; node_index: number; shape_id?: number | null; fingerprint: number[] };
-  type SlideReviewAnchor = { slide_part: string; sld_id: number; slide_fingerprint: number[]; render_fingerprint: number[]; shape?: ShapeReviewAnchor | null };
+  type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
+  type SlideReviewLimitsInput = { batch_size?: number | null; max_units?: number | null; max_text_bytes?: number | null; max_image_bytes?: number | null };
+  type SlideReviewSubmit = { artifact_ref: string; run_ref: string; units: SlideReviewUnitInput[]; question: DecisionQuestion; author: PptxAuthor; labels: SlideReviewLabels; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null; resident_dial?: DecisionDial | null; limits?: SlideReviewLimitsInput };
+  type ShapeReviewAnchor = { node_part: string; node_index: number; shape_id?: number | null; fingerprint: string };
+  type SlideReviewAnchor = { slide_part: string; sld_id: number; slide_fingerprint: string; render_fingerprint: string; shape?: ShapeReviewAnchor | null };
   type SlideLocation = { slide_width: number; slide_height: number; left: number; top: number; right: number; bottom: number };
   type BandMode = "shadow" | "enforce";
   type ImageRef = { evidence: EvidenceVersion; hash: number[]; media_type: string; width: number; height: number; frame?: PixelRegion | null };
@@ -2870,7 +2872,7 @@ declare namespace Sdk {
   type MediaServed = "full" | "no_image_reader" | "audio_unsupported" | "no_audio_reader";
   type DecisionMedia = { name: string; reference: DecisionMediaRef; served: MediaServed };
   type LivePin = { frontier: number[]; commits: number };
-  type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels };
+  type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: string; media?: DecisionMedia[]; render_hash: string; evidence_hash: string; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels };
   type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } };
   type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction };
   type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null };
@@ -2879,7 +2881,7 @@ declare namespace Sdk {
   type SlideReviewOutcome = { proposed?: PendingProposalView | null; judgments: SlideJudgment[]; comments: PptxCommentPatch[]; abstained: SlideAbstention[]; refused: SlideUnitRefused[] };
   type FolderItemInput = { artifact_ref: string; row: number };
   type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string; answer_column: number; header_row?: number | null; max_count?: number | null } | { kind: "paragraphs"; blocks: string[]; author: string; labels: unknown } | { kind: "folder_items"; sheet: string; answer_column: number; items: FolderItemInput[]; max_count?: number | null };
-  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null };
+  type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: Reversibility | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: MadeBy | null };
   type UnitAbstention = { unit: unknown; decision?: TypedDecision | null };
   type UnitRefusal = { unit: unknown; reason: string };
   type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] };
@@ -2963,8 +2965,8 @@ declare namespace Sdk {
   type DeckShapeInspection = { kind: DeckShapeKind; id?: number | null; creation_id?: string | null; name?: string | null; group_path: number[]; content_fingerprint: Digest };
   type DeckSlideInspection = { part: string; sld_id: number; creation_id?: number | null; content_fingerprint: Digest; render_fingerprint: Digest; shapes: DeckShapeInspection[] };
   type DeckIdentityAmbiguity = { kind: "duplicate_slide_creation_id"; creation_id: number; slides: number[] } | { kind: "duplicate_slide_id"; sld_id: number; slides: number[] } | { kind: "duplicate_shape_id"; slide: number; id: number; shapes: number[] } | { kind: "duplicate_shape_creation_id"; slide: number; id: string; shapes: number[] };
-  type PptxShapeIdentity = { shape_id: number; creation_id?: string | null; fingerprint: number[]; position?: [number, number] | null };
-  type PptxSlideIdentity = { slide: number; part: string; sld_id: number; creation_id?: number | null; fingerprint: number[]; shapes: PptxShapeIdentity[] };
+  type PptxShapeIdentity = { shape_id: number; creation_id?: string | null; fingerprint: string; position?: [number, number] | null };
+  type PptxSlideIdentity = { slide: number; part: string; sld_id: number; creation_id?: number | null; fingerprint: string; shapes: PptxShapeIdentity[] };
   type PptxInspection = { slides: PptxSlideIdentity[]; signature_parts: string[] };
   type DeckCommentInspection = { state: "inspected"; inspection: PptxInspection } | { state: "refused"; reason: string };
   type DeckInspectionView = { artifact_id: EntityId; version: number; base: Digest; marks: IdMarks; slides: DeckSlideInspection[]; ambiguities: DeckIdentityAmbiguity[]; comments: DeckCommentInspection };
@@ -2993,7 +2995,10 @@ declare namespace Sdk {
   type DeckProposeOutcome = { proposed?: PendingProposalView | null; rejected?: DeckProposeRejection | null };
   type NativeOutputRequest = { artifact_ref: string; run_ref: string; name: string; media_type: string; content_base64: string; report?: unknown; made_by?: MadeBy | null };
   type VersionReconciliation = { base_version: number; kept_head: ArtifactVersionView };
-  type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord; reconciliation?: VersionReconciliation | null };
+  type ParagraphJudgment = { block: string; text_hash: string; decision: TypedDecision; answer_contract: AnswerContract; comment: string; author: string; labels: SlideReviewLabels; frontier: string; judged_version?: number | null; judged_live?: LivePin | null };
+  type PptxReviewIdentity = { thread_id: EntityId; asked_by: EntityId; answered_by: EntityId; export_author_guid: string; export_author_name: string };
+  type SettledReview = { slide_judgments: SlideJudgment[]; paragraph_judgments: ParagraphJudgment[]; review_identities: PptxReviewIdentity[] };
+  type KeptProposal = { version: ArtifactVersionView; stranded: boolean; remapped: number; drifted: number; receipt: ReceiptRecord; reconciliation?: VersionReconciliation | null; review?: SettledReview };
   type DiscardedProposal = { receipt: ReceiptRecord };
   type KeepUndo = { proposal_ref: string; kept_version: number; restored_version: number; version: number; actor: EntityId; at: number };
   type UndoneKeep = { undo: KeepUndo; version: ArtifactVersionView; reattached: number };
@@ -3403,7 +3408,6 @@ declare namespace Sdk {
   type GraphAskDeclined = { unit: EntityId; decision: TypedDecision };
   type GraphAskOutcome = { state: "done"; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] } | { state: "failed"; failed_unit?: EntityId | null; code: string; message: string; answers: AnswerRecord[]; abstained: EntityId[]; declined: GraphAskDeclined[] };
   type GraphAdmitRequest = { question: DecisionQuestion; unit: EntityId; decision: TypedDecision };
-  type DecisionDial = { first: DecisionRung; ceiling: DecisionRung; band: DecisionBand };
   type QuestionActivation = "one_off" | "standing";
   type RefreshPolicy = { on_arrival: boolean; every_seconds?: number | null };
   type QuestionAudience = "asker";

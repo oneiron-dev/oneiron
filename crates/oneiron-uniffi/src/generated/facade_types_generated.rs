@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4398 generated types.
+// UniFFI census: 1211 facade rows, 4402 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -36520,6 +36520,8 @@ pub struct ArtifactVersionView {
 pub struct ArtifactView {
     #[serde(rename = "artifact_id")]
     pub artifact_id: String,
+    #[serde(rename = "artifact")]
+    pub artifact: RecordRef,
     #[serde(rename = "kind")]
     pub kind: ArtifactKind,
     #[serde(rename = "name")]
@@ -44686,7 +44688,7 @@ pub struct BornFromView {
     pub versions: Vec<BornFromArtifact>,
 }
 
-/// `oneiron::edit_settle::pending::PendingProposalKind`.
+/// `oneiron::edit_settle::pending::view::PendingProposalKind`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum PendingProposalKind {
     #[serde(rename = "edit")]
@@ -44695,7 +44697,7 @@ pub enum PendingProposalKind {
     Output,
 }
 
-/// `oneiron::edit_settle::pending::PendingProposalView`.
+/// `oneiron::edit_settle::pending::view::PendingProposalView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct PendingProposalView {
     #[serde(rename = "artifact_id")]
@@ -44718,6 +44720,12 @@ pub struct PendingProposalView {
     pub byte_len: u64,
     #[serde(rename = "retained_by")]
     pub retained_by: String,
+    #[serde(
+        rename = "retained_by_record",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub retained_by_record: Option<RecordRef>,
     #[serde(rename = "retained_at")]
     pub retained_at: u64,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
@@ -44794,7 +44802,7 @@ pub struct PptxCommentTarget {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub shape_fingerprint: Option<Vec<u8>>,
+    pub shape_fingerprint: Option<String>,
 }
 
 /// `oneiron::blob_artifact::verbs::SlideReviewUnitInput`.
@@ -44905,6 +44913,44 @@ pub struct SlideReviewLabels {
     pub high: String,
 }
 
+/// `oneiron::llm::decision::types::DecisionDial`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionDial {
+    #[serde(rename = "first")]
+    pub first: DecisionRung,
+    #[serde(rename = "ceiling")]
+    pub ceiling: DecisionRung,
+    #[serde(rename = "band")]
+    pub band: DecisionBand,
+}
+
+/// `oneiron::blob_artifact::review_request::SlideReviewLimitsInput`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SlideReviewLimitsInput {
+    #[serde(
+        rename = "batch_size",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub batch_size: Option<u64>,
+    #[serde(rename = "max_units", default, skip_serializing_if = "Option::is_none")]
+    pub max_units: Option<u64>,
+    #[serde(
+        rename = "max_text_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_text_bytes: Option<u64>,
+    #[serde(
+        rename = "max_image_bytes",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_image_bytes: Option<u64>,
+}
+
 /// `oneiron::blob_artifact::verbs::SlideReviewSubmit`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -44947,6 +44993,14 @@ pub struct SlideReviewSubmit {
     pub deadline_ms: Option<u64>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<MadeBy>,
+    #[serde(
+        rename = "resident_dial",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub resident_dial: Option<DecisionDial>,
+    #[serde(rename = "limits", default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<SlideReviewLimitsInput>,
 }
 
 /// `oneiron::edit_roundtrip::slides_review::ShapeReviewAnchor`.
@@ -44959,7 +45013,7 @@ pub struct ShapeReviewAnchor {
     #[serde(rename = "shape_id", default, skip_serializing_if = "Option::is_none")]
     pub shape_id: Option<u32>,
     #[serde(rename = "fingerprint")]
-    pub fingerprint: Vec<u8>,
+    pub fingerprint: String,
 }
 
 /// `oneiron::edit_roundtrip::slides_review::SlideReviewAnchor`.
@@ -44970,9 +45024,9 @@ pub struct SlideReviewAnchor {
     #[serde(rename = "sld_id")]
     pub sld_id: u32,
     #[serde(rename = "slide_fingerprint")]
-    pub slide_fingerprint: Vec<u8>,
+    pub slide_fingerprint: String,
     #[serde(rename = "render_fingerprint")]
-    pub render_fingerprint: Vec<u8>,
+    pub render_fingerprint: String,
     #[serde(rename = "shape", default, skip_serializing_if = "Option::is_none")]
     pub shape: Option<ShapeReviewAnchor>,
 }
@@ -45142,13 +45196,13 @@ pub struct SlideJudgment {
     #[serde(rename = "renderer")]
     pub renderer: String,
     #[serde(rename = "frontier")]
-    pub frontier: Vec<u8>,
+    pub frontier: String,
     #[serde(rename = "media", default, skip_serializing_if = "Option::is_none")]
     pub media: Option<Vec<DecisionMedia>>,
     #[serde(rename = "render_hash")]
-    pub render_hash: Vec<u8>,
+    pub render_hash: String,
     #[serde(rename = "evidence_hash")]
-    pub evidence_hash: Vec<u8>,
+    pub evidence_hash: String,
     #[serde(
         rename = "judged_version",
         default,
@@ -45341,7 +45395,7 @@ pub struct ArtifactAskSubmit {
         default,
         skip_serializing_if = "Option::is_none"
     )]
-    pub reversibility: Option<crate::WireJson>,
+    pub reversibility: Option<Reversibility>,
     #[serde(
         rename = "evidence_refs",
         default,
@@ -45361,7 +45415,7 @@ pub struct ArtifactAskSubmit {
     )]
     pub deadline_ms: Option<u64>,
     #[serde(rename = "made_by", default, skip_serializing_if = "Option::is_none")]
-    pub made_by: Option<crate::WireJson>,
+    pub made_by: Option<MadeBy>,
 }
 
 /// `oneiron::edit_roundtrip::artifact_question::UnitAbstention`.
@@ -46723,7 +46777,7 @@ pub struct PptxShapeIdentity {
     )]
     pub creation_id: Option<String>,
     #[serde(rename = "fingerprint")]
-    pub fingerprint: Vec<u8>,
+    pub fingerprint: String,
     #[serde(rename = "position", default, skip_serializing_if = "Option::is_none")]
     pub position: Option<TupleI64I64>,
 }
@@ -46744,7 +46798,7 @@ pub struct PptxSlideIdentity {
     )]
     pub creation_id: Option<u32>,
     #[serde(rename = "fingerprint")]
-    pub fingerprint: Vec<u8>,
+    pub fingerprint: String,
     #[serde(rename = "shapes")]
     pub shapes: Vec<PptxShapeIdentity>,
 }
@@ -47425,6 +47479,65 @@ pub struct VersionReconciliation {
     pub kept_head: ArtifactVersionView,
 }
 
+/// `oneiron::edit_roundtrip::paragraph_review::ParagraphJudgment`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ParagraphJudgment {
+    #[serde(rename = "block")]
+    pub block: String,
+    #[serde(rename = "text_hash")]
+    pub text_hash: String,
+    #[serde(rename = "decision")]
+    pub decision: TypedDecision,
+    #[serde(rename = "answer_contract")]
+    pub answer_contract: AnswerContract,
+    #[serde(rename = "comment")]
+    pub comment: String,
+    #[serde(rename = "author")]
+    pub author: String,
+    #[serde(rename = "labels")]
+    pub labels: SlideReviewLabels,
+    #[serde(rename = "frontier")]
+    pub frontier: String,
+    #[serde(
+        rename = "judged_version",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_version: Option<u64>,
+    #[serde(
+        rename = "judged_live",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_live: Option<LivePin>,
+}
+
+/// `oneiron::edit_settle::records::PptxReviewIdentity`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct PptxReviewIdentity {
+    #[serde(rename = "thread_id")]
+    pub thread_id: String,
+    #[serde(rename = "asked_by")]
+    pub asked_by: String,
+    #[serde(rename = "answered_by")]
+    pub answered_by: String,
+    #[serde(rename = "export_author_guid")]
+    pub export_author_guid: String,
+    #[serde(rename = "export_author_name")]
+    pub export_author_name: String,
+}
+
+/// `oneiron::edit_settle::records::SettledReview`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct SettledReview {
+    #[serde(rename = "slide_judgments")]
+    pub slide_judgments: Vec<SlideJudgment>,
+    #[serde(rename = "paragraph_judgments")]
+    pub paragraph_judgments: Vec<ParagraphJudgment>,
+    #[serde(rename = "review_identities")]
+    pub review_identities: Vec<PptxReviewIdentity>,
+}
+
 /// `oneiron::blob_artifact::verbs::KeptProposal`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct KeptProposal {
@@ -47444,6 +47557,8 @@ pub struct KeptProposal {
         skip_serializing_if = "Option::is_none"
     )]
     pub reconciliation: Option<VersionReconciliation>,
+    #[serde(rename = "review", default, skip_serializing_if = "Option::is_none")]
+    pub review: Option<SettledReview>,
 }
 
 /// `oneiron::blob_artifact::verbs::DiscardedProposal`.
@@ -54309,18 +54424,6 @@ pub struct DecisionQuestionInput {
     pub contract: AnswerContract,
     #[serde(rename = "accept_type")]
     pub accept_type: bool,
-}
-
-/// `oneiron::llm::decision::types::DecisionDial`.
-#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
-#[serde(deny_unknown_fields)]
-pub struct DecisionDial {
-    #[serde(rename = "first")]
-    pub first: DecisionRung,
-    #[serde(rename = "ceiling")]
-    pub ceiling: DecisionRung,
-    #[serde(rename = "band")]
-    pub band: DecisionBand,
 }
 
 /// `oneiron::llm::decision::questions::records::QuestionActivation`.

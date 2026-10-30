@@ -6,7 +6,7 @@ use super::receipts::{
 };
 use super::records::{
     SettleConsent, SettleDiscardOutcome, SettleOutcomeKind, SettleReceiptDoor, SettleSelectOutcome,
-    SettlementRecord, SheetAnswerReceipt,
+    SettledReview, SettlementRecord, SheetAnswerReceipt,
 };
 use crate::Vault;
 use crate::anchored_annotation::{ReanchorOp, ReanchorSummary};
@@ -437,6 +437,7 @@ impl Vault {
             reanchor,
             receipt,
             reconciliation: None,
+            review: SettledReview::of(record),
         })
     }
 
