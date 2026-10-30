@@ -10,6 +10,7 @@ mod birth_watch;
 mod delivery;
 mod entity;
 mod order;
+mod own_device;
 mod peer_import;
 mod promotion;
 mod task_pairs;
@@ -26,6 +27,8 @@ pub(in crate::sync) use self::entity::{
     EntityStep, IngestCtx, RefusalRetry, Residence, ingest_entity_in_txn, waits_for_sibling_row,
 };
 pub(in crate::sync) use self::order::{authority_parent_order, is_authority_row};
+pub(crate) use self::own_device::VerifiedOwnDeviceLane;
+pub(in crate::sync) use self::own_device::with_own_device_import;
 pub(crate) use self::peer_import::forget_stale_peer_origins;
 pub(in crate::sync) use self::peer_import::{
     PEER_ORIGIN_MAP, admit_peer_origin_carrier, admit_peer_origin_map, carried_origin_in_txn,

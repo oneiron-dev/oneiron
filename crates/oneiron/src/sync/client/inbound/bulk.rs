@@ -72,6 +72,9 @@ impl SyncClient {
             // The state comes in its envelope, its pads installed here first (FIX 7107).
             let state = self.bulk_window_state(&WindowKey::new(window_key), doc_state)?;
             let doc_state = state.as_slice();
+            // FIX 11709: the home this connection proved, if it proved one, sent
+            // the state: its MESSAGE rows take the own-device lane as it lands.
+            let own_device = self.own_device_import(self.home_peer);
             if let Some(window) = self.window(window_key) {
                 // Window is live: import through the observed doc so
                 // Observer B materializes, then persist the merged state.
@@ -82,10 +85,14 @@ impl SyncClient {
                     &window.key,
                 )
                 .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
-                window
-                    .doc
-                    .import(doc_state)
-                    .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
+                crate::sync::ingest::with_own_device_import(
+                    &self.vault,
+                    own_device.as_ref(),
+                    (&window.key, &window.doc),
+                    doc_state,
+                    || window.doc.import(doc_state),
+                )
+                .map_err(|_| TransportError::InvalidPayload("bulk doc state import failed"))?;
                 if let Err(e) = window.persist_state(&self.vault) {
                     // Never leave RAM ahead of durable state on a FAILED
                     // persist (same discipline as the WindowSync UPDATE
@@ -163,7 +170,14 @@ impl SyncClient {
                     &key,
                 )
                 .map_err(|_| TransportError::InvalidPayload("bulk window residence denied"))?;
-                if window.doc.import(doc_state).is_err() {
+                let imported = crate::sync::ingest::with_own_device_import(
+                    &self.vault,
+                    own_device.as_ref(),
+                    (&key, &window.doc),
+                    doc_state,
+                    || window.doc.import(doc_state),
+                );
+                if imported.is_err() {
                     self.manager.discard_window(&WindowKey::new(window_key));
                     return Err(TransportError::InvalidPayload(
                         "bulk doc state import failed",

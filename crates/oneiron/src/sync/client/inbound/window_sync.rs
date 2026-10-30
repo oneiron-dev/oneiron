@@ -6,6 +6,7 @@ use std::cmp::Ordering::{Equal, Less};
 
 use loro::VersionVector;
 
+use super::super::OwnDeviceImport;
 use super::super::base::SyncClient;
 use super::super::types::SyncResidenceMode;
 use crate::error::{Error, SyncError, SyncProtocolValidation};
@@ -220,13 +221,14 @@ impl SyncClient {
                     )?;
                     return Ok(Vec::new());
                 }
-                match self.import_window_update(window_key, payload, super::super::ImportTier::OwnDevice) {
+                // The home this connection proved, if it proved one, sent these bytes.
+                match self.import_own_device_window_update(window_key, payload, self.home_peer) {
                     Ok(()) => Ok(Vec::new()),
                     // The update builds on history this window's own shallow root cut away: no
                     // update can bring it level, the server's replacement can.
                     Err(_) if self.update_reaches_below_root(&key, payload) => {
                         self.staged_world_updates
-                            .retain(|(staged, bytes)| staged != &key || bytes != payload);
+                            .retain(|(staged, bytes, _)| staged != &key || bytes != payload);
                         Ok(vec![replacement_request(window_key)?])
                     }
                     Err(error) => Err(error),
@@ -307,7 +309,7 @@ impl SyncClient {
         TransportError,
     > {
         let mut evidence = std::collections::HashMap::new();
-        for (key, bytes) in &self.staged_world_updates {
+        for (key, bytes, _) in &self.staged_world_updates {
             let live = self.ensure_window(key.as_str())?;
             let candidate = live.doc.fork();
             let imported = candidate
@@ -409,12 +411,15 @@ impl SyncClient {
                         ));
                     }
                 }
-                let (key, bytes) = self.staged_world_updates[index].clone();
+                let (key, bytes, from) = self.staged_world_updates[index].clone();
+                // A staged update keeps the machine that sent it (FIX 11709).
+                let own_device = self.own_device_import(from);
                 self.import_accepted_window_update_with_evidence(
                     key.as_str(),
                     &live,
                     &bytes,
                     &evidence,
+                    own_device.as_ref(),
                 )?;
                 self.staged_world_updates.remove(index);
                 healed.push(key);
@@ -449,15 +454,20 @@ impl SyncClient {
             window,
             payload,
             &std::collections::HashMap::new(),
+            None,
         )
     }
 
-    fn import_accepted_window_update_with_evidence(
+    /// [`Self::import_accepted_window_update`] with `evidence`, staged world
+    /// rows, and under `own_device`, the proof an own machine sent `payload`
+    /// (FIX 11709).
+    pub(in crate::sync::client) fn import_accepted_window_update_with_evidence(
         &mut self,
         window_key: &str,
         window: &LoadedWindow,
         payload: &[u8],
         evidence: &std::collections::HashMap<crate::EntityId, (WindowKey, Vec<u8>)>,
+        own_device: Option<&OwnDeviceImport>,
     ) -> std::result::Result<(), TransportError> {
         // Server sending Loro update bytes — import into the manager-owned
         // live doc. Observer B materializes the change to LMDB synchronously
@@ -519,29 +529,17 @@ impl SyncClient {
                 .map_err(|error| TransportError::Storage(error.to_string()))?;
         }
         let vv_before = window.doc.oplog_vv();
-        window
-            .doc
-            .import(payload)
-            .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
         let key = WindowKey::new(window_key);
-        if key.world().is_some() && !window.doc.get_map("retained_claim_worlds").is_empty() {
-            // Observer B cannot materialize a bodyless CLAIM on an entity-map
-            // callback: its paired witness/tombstone may arrive later in the
-            // same Loro import. The complete, validated document is now live;
-            // replay it through the ordinary forward recovery door before
-            // persisting or acknowledging the version vector.
-            if let Err(error) = crate::sync::window::forward_rematerialize(
-                &self.vault,
-                &window.doc,
-                self.manager.materializer(),
-                &key,
-            ) {
-                self.manager.discard_window(&key);
-                return Err(TransportError::Storage(format!(
-                    "restore retained world shell: {error}"
-                )));
-            }
-        }
+        // FIX 11709: the MESSAGE rows an own machine's proven connection sent
+        // take the own-device lane in the doors this import and its retained
+        // world pass run, and no others.
+        crate::sync::ingest::with_own_device_import(
+            &self.vault,
+            own_device,
+            (&key, &window.doc),
+            payload,
+            || self.land_window_update(window, &key, payload),
+        )?;
         // A no-op import can still reveal a same-process durability gap:
         // compare the live doc with exactly what restart would load from
         // `d:w:` + surviving `u:w:` rows, then heal only the missing live-doc
@@ -631,6 +629,39 @@ impl SyncClient {
         let _ = self.event_tx.send(SyncEvent::WindowUpdated {
             window_key: window_key.to_string(),
         });
+        Ok(())
+    }
+
+    /// Imports `payload` into `window`'s live document, `key`'s, where Observer
+    /// B materializes it, then lands a retained world shell it holds.
+    fn land_window_update(
+        &self,
+        window: &LoadedWindow,
+        key: &WindowKey,
+        payload: &[u8],
+    ) -> std::result::Result<(), TransportError> {
+        window
+            .doc
+            .import(payload)
+            .map_err(|_| TransportError::InvalidPayload("window import failed"))?;
+        if key.world().is_some() && !window.doc.get_map("retained_claim_worlds").is_empty() {
+            // Observer B cannot materialize a bodyless CLAIM on an entity-map
+            // callback: its paired witness/tombstone may arrive later in the
+            // same Loro import. The complete, validated document is now live;
+            // replay it through the ordinary forward recovery door before
+            // persisting or acknowledging the version vector.
+            if let Err(error) = crate::sync::window::forward_rematerialize(
+                &self.vault,
+                &window.doc,
+                self.manager.materializer(),
+                key,
+            ) {
+                self.manager.discard_window(key);
+                return Err(TransportError::Storage(format!(
+                    "restore retained world shell: {error}"
+                )));
+            }
+        }
         Ok(())
     }
 

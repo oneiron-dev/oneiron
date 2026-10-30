@@ -90,6 +90,11 @@ pub use connection::{
     ConnectionConfig, DeviceResidence, HomeNodeTopology, HomeRoute, HomeSearch, LocalUpdate,
     ResidenceModeChange, SyncConnection,
 };
+#[allow(
+    unused_imports,
+    reason = "FIX 9600: the batch put threads the lane to the witness gate"
+)]
+pub(crate) use ingest::VerifiedOwnDeviceLane;
 pub(crate) use ingest::forget_stale_peer_origins;
 pub use lease::{
     LEASE_DURATION_SECS, LEASE_KEY_PREFIX, LEASE_POP_DOMAIN, LEASE_RECORD_LEN,
