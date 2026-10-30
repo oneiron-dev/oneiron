@@ -272,6 +272,7 @@ fn attach_evidence(
     // (FIX 11439).
     let mut carried: Option<String> = None;
     let outcome = vault.with_write_txn_grouped(|txn| {
+        let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion attach");
         // Source grants are judged at this writer's own clock.
         crate::ports::recorded_at_in_txn(&vault.store, txn)?;
         fence.validate_in_txn(vault, txn)?;

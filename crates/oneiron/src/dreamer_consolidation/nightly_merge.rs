@@ -455,6 +455,7 @@ impl ConsolidationExecutor<'_> {
         };
         let read_back: Vec<&Proposal> = proposals.iter().collect();
         let commit = ctx.vault.with_write_txn_grouped(|txn| {
+            let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("nightly merge");
             recheck_in_txn(&read, txn, &read_back)?;
             let outputs = writer.claims_in_txn(txn, drafts)?;
             writer.result_in_txn(
