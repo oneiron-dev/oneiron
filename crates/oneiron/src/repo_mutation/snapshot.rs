@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::error::{Error, Result};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::secret_snapshot::{SnapshotExclusionSet, SnapshotWithhold};
 
 use super::git::{git_output_optional, run_git, validate_relative_repo_path};
@@ -24,8 +25,10 @@ use crate::error::CodeError;
 mod pinned;
 pub(super) use pinned::RepoPinnedBase;
 
-const MAX_REPO_MUTATION_SNAPSHOT_FILES: usize = 100_000;
+/// The bytes one snapshot holds in memory: a machine floor, not a count.
 const MAX_REPO_MUTATION_SNAPSHOT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
+/// Paths one restore's `git reset` names, under GitWire's argv bound.
+const RESTORE_INDEX_PATHS_PER_CALL: usize = 56;
 const MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,11 +104,28 @@ impl SnapshotCustody {
             symlink_target: None,
         }
     }
+
+    /// A symlink's entry as the policy keeps it: a target the policy
+    /// withholds is kept out as a file's bytes are (FIX 8840).
+    pub(super) fn symlink(&self, path: String, target: String) -> StoredRepoSnapshotEntry {
+        let (kind, symlink_target) = match self.withholds(&path, target.as_bytes()) {
+            None => (StoredRepoSnapshotEntryKind::Symlink, Some(target)),
+            Some(_) => (StoredRepoSnapshotEntryKind::Withheld, None),
+        };
+        StoredRepoSnapshotEntry {
+            path,
+            kind,
+            executable: false,
+            content: Vec::new(),
+            symlink_target,
+        }
+    }
 }
 
-#[derive(Debug, Default)]
+/// One capture's walk: its entries counted against their threshold row
+/// (rule 5, FIX 8835) and the bytes it holds.
 struct SnapshotStats {
-    files: usize,
+    files: ScanCount,
     total_bytes: u64,
 }
 
@@ -125,8 +145,18 @@ pub(super) fn capture_repo_snapshot(
     .transpose()?;
     let custody = SnapshotCustody::of(vault, repo_root)?;
     let mut entries = Vec::new();
-    let mut stats = SnapshotStats::default();
+    // Scoped by the checkout's path, hashed to a fixed width.
+    let scope = blake3::hash(repo_root.as_os_str().as_encoded_bytes());
+    let mut stats = SnapshotStats {
+        files: ScanCount::start_at(
+            EngineScan::RepoSnapshotFiles,
+            &scope.as_bytes()[..16],
+            vault.scan_threshold(EngineScan::RepoSnapshotFiles)?,
+        ),
+        total_bytes: 0,
+    };
     collect_snapshot_entries(repo_root, repo_root, &custody, &mut entries, &mut stats)?;
+    stats.files.finish(vault);
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     let snapshot = StoredRepoSnapshot {
         schema_version: REPO_MUTATION_OPLOG_SCHEMA_VERSION,
@@ -162,13 +192,7 @@ fn collect_snapshot_entries(
             let target = fs::read_link(&path)?;
             let target = path_arg(&target)?;
             record_snapshot_entry_size(stats, target.len() as u64)?;
-            entries.push(StoredRepoSnapshotEntry {
-                path: relative,
-                kind: StoredRepoSnapshotEntryKind::Symlink,
-                executable: false,
-                content: Vec::new(),
-                symlink_target: Some(target),
-            });
+            entries.push(custody.symlink(relative, target));
         } else if metadata.file_type().is_file() {
             if metadata.len() > MAX_REPO_MUTATION_SNAPSHOT_FILE_BYTES {
                 return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
@@ -222,7 +246,9 @@ pub(super) fn restore_repo_snapshot(
     let mut dirs = Vec::new();
     collect_restore_inventory(repo_root, repo_root, &mut current, &mut dirs)?;
 
-    for path in current.difference(&desired) {
+    // The paths this restore changes: only their index entries are reset.
+    let mut changed: BTreeSet<String> = current.difference(&desired).cloned().collect();
+    for path in &changed {
         remove_existing_path(&repo_root.join(path))?;
     }
     remove_empty_dirs(dirs)?;
@@ -233,6 +259,10 @@ pub(super) fn restore_repo_snapshot(
             continue;
         }
         let target = repo_root.join(&entry.path);
+        if checkout_holds_entry(&target, &entry)? {
+            continue;
+        }
+        changed.insert(entry.path.clone());
         if fs::symlink_metadata(&target).is_ok() {
             remove_existing_path(&target)?;
         }
@@ -252,10 +282,58 @@ pub(super) fn restore_repo_snapshot(
         }
     }
     if let Some(head) = snapshot_head {
+        let moved_from = git_output_optional(
+            repo_root,
+            &[
+                "rev-parse".to_owned(),
+                "--verify".to_owned(),
+                "HEAD".to_owned(),
+            ],
+        )?
+        .map(|bytes| utf8_trimmed(bytes, "git HEAD must be UTF-8"))
+        .transpose()?;
         run_git(
             repo_root,
             &["update-ref".to_owned(), "HEAD".to_owned(), head],
         )?;
+        reset_restored_index(repo_root, moved_from.as_deref(), changed)?;
+    }
+    Ok(())
+}
+
+/// Whether the checkout already holds `entry` at `target`, so the restore
+/// leaves it, and its staged entry, as they are.
+fn checkout_holds_entry(target: &Path, entry: &StoredRepoSnapshotEntry) -> Result<bool> {
+    let Ok(metadata) = fs::symlink_metadata(target) else {
+        return Ok(false);
+    };
+    Ok(match entry.kind {
+        StoredRepoSnapshotEntryKind::File => {
+            metadata.file_type().is_file()
+                && is_executable(&metadata) == entry.executable
+                && metadata.len() == entry.content.len() as u64
+                && fs::read(target)? == entry.content
+        }
+        StoredRepoSnapshotEntryKind::Symlink => {
+            metadata.file_type().is_symlink()
+                && entry.symlink_target.as_deref().map(Path::new)
+                    == Some(fs::read_link(target)?.as_path())
+        }
+        StoredRepoSnapshotEntryKind::Withheld => true,
+    })
+}
+
+/// Brings the index to the restored HEAD only where the restore moved the
+/// checkout: a path whose bytes it rewrote or whose HEAD entry the move
+/// changed takes HEAD's entry, and every other staged entry is kept as it
+/// was, so a staged version the restore never touched survives it (FIX
+/// 8836). A checkout that had no HEAD resets the whole index, as before.
+fn reset_restored_index(
+    repo_root: &Path,
+    moved_from: Option<&str>,
+    mut paths: BTreeSet<String>,
+) -> Result<()> {
+    let Some(from) = moved_from else {
         run_git(
             repo_root,
             &[
@@ -264,20 +342,46 @@ pub(super) fn restore_repo_snapshot(
                 "HEAD".to_owned(),
             ],
         )?;
+        return Ok(());
+    };
+    let moved = run_git(
+        repo_root,
+        &[
+            "diff".to_owned(),
+            "--name-only".to_owned(),
+            "-z".to_owned(),
+            "--no-renames".to_owned(),
+            "--no-ext-diff".to_owned(),
+            from.to_owned(),
+            "HEAD".to_owned(),
+        ],
+    )?;
+    for path in moved
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        paths.insert(String::from_utf8(path.to_vec()).map_err(|_| {
+            Error::Code(CodeError::InvalidRepoMutationRecord(
+                "repo restore path must be UTF-8",
+            ))
+        })?);
+    }
+    let paths: Vec<String> = paths.into_iter().collect();
+    for chunk in paths.chunks(RESTORE_INDEX_PATHS_PER_CALL) {
+        let mut args = vec![
+            "reset".to_owned(),
+            "-q".to_owned(),
+            "HEAD".to_owned(),
+            "--".to_owned(),
+        ];
+        args.extend(chunk.iter().map(|path| format!(":(literal){path}")));
+        run_git(repo_root, &args)?;
     }
     Ok(())
 }
 
 fn record_snapshot_entry_size(stats: &mut SnapshotStats, bytes: u64) -> Result<()> {
-    stats.files = stats
-        .files
-        .checked_add(1)
-        .ok_or(Error::ArithmeticOverflow("repo_mutation_snapshot_files"))?;
-    if stats.files > MAX_REPO_MUTATION_SNAPSHOT_FILES {
-        return Err(Error::Code(CodeError::InvalidRepoMutationRecord(
-            "repo mutation snapshot exceeds max file count",
-        )));
-    }
+    stats.files.row();
     stats.total_bytes = stats
         .total_bytes
         .checked_add(bytes)

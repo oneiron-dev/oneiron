@@ -36,10 +36,13 @@ impl DreamerWakeDriver<'_> {
     ) -> Result<std::result::Result<WakeHooks, WakePassReport>> {
         self.hook_material.clear();
         let kind = input.scope.attempt_kind();
-        let queued: Vec<Value> = AttemptQueue::new(self.vault)
-            .list()?
+        let rows = {
+            let txn = self.vault.store.env.read_txn()?;
+            AttemptQueue::new(self.vault).kind_working_rows_in_txn(&txn, kind)?
+        };
+        let queued: Vec<Value> = rows
             .into_iter()
-            .filter(|attempt| attempt.kind == kind && !attempt.state.is_terminal())
+            .filter(|attempt| !attempt.state.is_terminal())
             .map(|attempt| {
                 json!({
                     "attempt": bytes_to_hex_lower(attempt.id.as_bytes()),
