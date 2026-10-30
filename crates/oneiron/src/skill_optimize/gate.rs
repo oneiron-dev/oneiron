@@ -150,6 +150,7 @@ mod live;
 mod measurement;
 mod preflight;
 mod project_goal;
+mod rule_policy;
 mod tradeoff;
 mod tradeoff_capacity;
 mod verdict;
