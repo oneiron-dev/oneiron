@@ -250,10 +250,7 @@ pub(super) fn split_views(
     let mut next = u32::try_from(of_pies.len()).unwrap_or(u32::MAX);
     for (nth, &at) in of_pies.iter().enumerate() {
         let nth = u32::try_from(nth).unwrap_or(u32::MAX);
-        let Some(plot) = settings
-            .iter()
-            .find(|plot| plot.is(ChartKind::OfPie, nth))
-        else {
+        let Some(plot) = settings.iter().find(|plot| plot.is(ChartKind::OfPie, nth)) else {
             continue;
         };
         let Some(split) = &plot.custom_split else {

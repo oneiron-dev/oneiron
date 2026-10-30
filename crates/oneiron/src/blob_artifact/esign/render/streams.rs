@@ -81,7 +81,10 @@ fn decode_admitted(stream: &Stream, limit: usize, stage: &Stage) -> Result<Vec<u
         }
         let needed = output.len() + count;
         if needed > output.capacity() {
-            let grown = output.capacity().saturating_mul(2).clamp(needed, limit.max(needed));
+            let grown = output
+                .capacity()
+                .saturating_mul(2)
+                .clamp(needed, limit.max(needed));
             stage.admit(grown)?;
             output.reserve_exact(grown - output.len());
         }
