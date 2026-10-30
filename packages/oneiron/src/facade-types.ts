@@ -3687,7 +3687,7 @@ export type CustodyUncheckedReason = "none_named" | "none_published" | "unread" 
 /** `oneiron_authority::authority::owner_work::result::CustodyRegisterCheck` */
 export type CustodyRegisterCheck = { kind: "checked"; manifest_ref: string } | { kind: "unchecked"; reason: CustodyUncheckedReason; refs: string[] }
 /** `oneiron::world_keys::owner_work::diagnostics::BundleHomeWarning` */
-export type BundleHomeWarning = "home_does_not_keep_sealed_bundles" | "home_profile_unknown"
+export type BundleHomeWarning = "home_does_not_keep_sealed_bundles" | "home_profile_unknown" | { awaiting_reader: { worlds: EntityId[] } }
 /** `oneiron::world_keys::owner_work::OwnerWorkCancelState` */
 export type OwnerWorkCancelState = "cancelled" | "already_enacted" | "already_refused"
 /** `oneiron::world_keys::owner_work::OwnerWorkCancelNote` */

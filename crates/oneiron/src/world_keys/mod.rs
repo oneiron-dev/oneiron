@@ -53,7 +53,7 @@ pub(crate) use self::bundle::PadEraseSubject;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
-    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport,
     retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
@@ -118,7 +118,8 @@ pub(crate) use self::page_seal::{
 };
 pub use self::page_seal::{
     PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
-    page_seal_custody_path, page_seal_vault_id, reopen_delivered_page_seal, unlock_page_seal,
+    page_seal_custody_path, page_seal_vault_id, refuse_unfinished_sealed_creation,
+    remove_unfinished_sealed_creation, reopen_delivered_page_seal, unlock_page_seal,
     vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};
