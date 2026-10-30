@@ -131,6 +131,28 @@ impl From<Refusal> for DocxError {
     }
 }
 
+/// The most bytes one read of an inflating entry takes before they are
+/// appended to its data.
+const INFLATE_CHUNK: usize = 32 * 1024;
+
+/// Inflate `source` to its end in chunks of [`INFLATE_CHUNK`], each chunk's
+/// room taken from `hold` before it is appended (FIX 10656): measured, the
+/// bytes inflated so far and the capacity the data allocates for them.
+fn inflate_held(source: &mut impl Read, hold: &mut Hold) -> Result<Vec<u8>, DocxError> {
+    let mut data = Vec::new();
+    let mut chunk = [0u8; INFLATE_CHUNK];
+    loop {
+        let read = match source.read(&mut chunk) {
+            Ok(0) => return Ok(data),
+            Ok(read) => read,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(DocxError::Io(error)),
+        };
+        hold.grow(&mut data, read)?;
+        data.extend_from_slice(&chunk[..read]);
+    }
+}
+
 /// A ZIP writer's error, the refusal of its output's memory typed as such.
 fn zip_write_error(error: ZipError) -> DocxError {
     match error {
@@ -243,15 +265,11 @@ impl DocxArchive {
                     limit: limits.max_total_bytes,
                 });
             }
-            // The declared size is the header's word, an estimate: nothing of
-            // it is measured until it is inflated.
-            hold.take_estimate(declared, 0)?;
-            let mut data = Vec::new();
+            // The declared size is the header's word and reserves nothing:
+            // the entry inflates in chunks, each taken from the hold as the
+            // bytes grow to hold it, measured (FIX 10656).
             let cap = limits.max_part_bytes.min(remaining);
-            (&mut file)
-                .take(cap.saturating_add(1))
-                .read_to_end(&mut data)
-                .map_err(DocxError::Io)?;
+            let data = inflate_held(&mut (&mut file).take(cap.saturating_add(1)), &mut hold)?;
             let actual = wide(data.len());
             if actual > cap {
                 return Err(if actual > limits.max_part_bytes {
@@ -268,8 +286,6 @@ impl DocxArchive {
                     }
                 });
             }
-            // What inflated past the header's word, measured now.
-            hold.take(actual.saturating_sub(declared))?;
             total_bytes = total_bytes.saturating_add(actual);
 
             files.push(DocxFile { name, data });
