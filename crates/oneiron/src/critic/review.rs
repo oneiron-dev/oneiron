@@ -142,6 +142,9 @@ pub fn review_artifact(
     {
         return Err(invalid_critic_config("claim review target is not a claim"));
     }
+    // Fair admission for complete catalogs: past the bound, work waits its
+    // turn; it is never refused for count (FIX 8173).
+    let _turn = vault.admit_task_work_blocking(request.actor.entity_ref());
     {
         let txn = vault.store.env.read_txn()?;
         if let Some(result) = cached_review(vault, &txn, request)? {

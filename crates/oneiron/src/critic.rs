@@ -66,7 +66,6 @@ impl SideKey for CritiqueArtifactKey {
     }
 }
 
-const MAX_CATALOG_LENSES: usize = 64;
 const MAX_ID_BYTES: usize = 64;
 const MAX_DOMAIN_BYTES: usize = 64;
 const MAX_CONTRACT_BYTES: usize = 4096;

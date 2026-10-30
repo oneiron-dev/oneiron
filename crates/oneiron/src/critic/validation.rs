@@ -7,9 +7,9 @@ pub(super) fn validate_catalog(catalog: &LensCatalog) -> Result<()> {
             "unsupported critic lens catalog schema_version",
         ));
     }
-    if catalog.lenses.is_empty() || catalog.lenses.len() > MAX_CATALOG_LENSES {
+    if catalog.lenses.is_empty() {
         return Err(invalid_critic_config(
-            "critic lens catalog must contain 1..=64 lenses",
+            "critic lens catalog must contain at least one lens",
         ));
     }
     let mut seen = BTreeSet::new();
