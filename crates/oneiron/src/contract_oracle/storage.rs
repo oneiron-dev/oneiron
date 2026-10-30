@@ -50,9 +50,9 @@ impl<'a> ContractOracle<'a> {
             ..ContractSnapshot::default()
         };
         for (name, path) in &spec.rust_crates {
-            snapshot
-                .public_names
-                .extend(rust_public_names(root, name, path)?);
+            let surface = rust_public_names(root, name, path)?;
+            snapshot.public_names.extend(surface.names);
+            snapshot.unresolved_exports.extend(surface.unresolved);
         }
         for (name, path) in &spec.schemas {
             let bytes = std::fs::read(safe_path(root, path)?)?;
@@ -62,6 +62,7 @@ impl<'a> ContractOracle<'a> {
             let schema = serde_json::from_slice(&bytes)
                 .map_err(|_| invalid("contract schema is invalid JSON"))?;
             snapshot.schemas.insert(name.clone(), schema);
+            snapshot.schema_bytes.insert(name.clone(), bytes);
         }
         Ok(snapshot)
     }
@@ -123,6 +124,12 @@ impl<'a> ContractOracle<'a> {
                 "",
                 baseline.snapshot.schemas.get(name),
                 snapshot.schemas.get(name),
+                &mut diffs,
+            );
+            schema_bytes_diff(
+                name,
+                baseline.snapshot.schema_bytes.get(name).map(Vec::as_slice),
+                snapshot.schema_bytes.get(name).map(Vec::as_slice),
                 &mut diffs,
             );
         }
@@ -223,6 +230,32 @@ fn verdict_digest(row: &ContractVerdict) -> Result<String> {
         row.tests_passed,
         &row.diffs,
     ))
+}
+/// The byte-equality check (FIX 9766): any change to a schema file's bytes is
+/// a diff, beside the structural ones `schema_diff` explains.
+fn schema_bytes_diff(
+    name: &str,
+    before: Option<&[u8]>,
+    after: Option<&[u8]>,
+    diffs: &mut Vec<ContractDiff>,
+) {
+    if before == after {
+        return;
+    }
+    let (left, right) = (before.unwrap_or_default(), after.unwrap_or_default());
+    let shorter = left.len().min(right.len());
+    let offset = left
+        .iter()
+        .zip(right)
+        .position(|(l, r)| l != r)
+        .unwrap_or(shorter);
+    let hex = |bytes: Option<&[u8]>| bytes.map(|bytes| blake3::hash(bytes).to_hex().to_string());
+    diffs.push(ContractDiff::SchemaBytesDrift {
+        contract: name.to_owned(),
+        offset: u64::try_from(offset).unwrap_or(u64::MAX),
+        before: hex(before),
+        after: hex(after),
+    });
 }
 fn schema_diff(
     name: &str,

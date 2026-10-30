@@ -11896,7 +11896,8 @@ class CodeConflictView(TypedDict):
     right_tree: str
     paths: list[str]
     proposals: list[EntityId]
-    task: EntityId
+    task: NotRequired[EntityId | None]
+    held: NotRequired[str | None]
 class CodeConflictViewRequest(TypedDict):
     branch_subject: EntityId
 class CodeConflictResolutionView(TypedDict):
@@ -12672,6 +12673,7 @@ class OriginPublishReview(TypedDict):
     paths: int
     pages: int
     lfs_bytes: OriginPublishLfsBytes
+    lossy_paths: bool
 MirrorRefOutcome = Literal["pending", "dispatched", "applied", "observed_applied", "rejected", "unknown", "refused", "remote_moved", "paused", "covered", "held"]
 class OriginMirrorPlanRefView(TypedDict):
     ref_name: str
@@ -12942,8 +12944,9 @@ class CodeViewMaterializeRequest(TypedDict):
 class CodeViewFile(TypedDict):
     path: str
     content_hash_blake3: str
-    frontier: CodeDocumentFrontier
-    text_sha256: str
+    frontier: NotRequired[CodeDocumentFrontier | None]
+    text_sha256: NotRequired[str | None]
+    git_oid: NotRequired[str | None]
 class CodeWorkingView(TypedDict):
     view: EntityId
     repo: EntityId
@@ -13103,7 +13106,14 @@ class ContractDiffOutputDriftBody(TypedDict):
     after: NotRequired[CommandOutput | None]
 class ContractDiffOutputDrift(TypedDict):
     OutputDrift: ContractDiffOutputDriftBody
-ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift
+class ContractDiffSchemaBytesDriftBody(TypedDict):
+    contract: str
+    offset: int
+    before: NotRequired[str | None]
+    after: NotRequired[str | None]
+class ContractDiffSchemaBytesDrift(TypedDict):
+    SchemaBytesDrift: ContractDiffSchemaBytesDriftBody
+ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift | ContractDiffSchemaBytesDrift
 class ContractVerdict(TypedDict):
     schema_version: int
     id: str
@@ -14879,7 +14889,12 @@ class DeckStepSetSeriesValuesBody(TypedDict):
     values: list[StepCell]
 class DeckStepSetSeriesValues(TypedDict):
     set_series_values: DeckStepSetSeriesValuesBody
-DeckStep = DeckStepSetText | DeckStepReplaceRunText | DeckStepSetXfrm | DeckStepMoveInSlideSpace | DeckStepSetPicture | DeckStepSetNotes | DeckStepAddShape | DeckStepDeleteShape | DeckStepReparent | DeckStepDuplicateSlide | DeckStepReorderSlides | DeckStepSetTableCell | DeckStepSetSeriesValues
+class DeckStepReleaseMediaBody(TypedDict):
+    slide: str
+    relationships: list[str]
+class DeckStepReleaseMedia(TypedDict):
+    release_media: DeckStepReleaseMediaBody
+DeckStep = DeckStepSetText | DeckStepReplaceRunText | DeckStepSetXfrm | DeckStepMoveInSlideSpace | DeckStepSetPicture | DeckStepSetNotes | DeckStepAddShape | DeckStepDeleteShape | DeckStepReparent | DeckStepDuplicateSlide | DeckStepReorderSlides | DeckStepSetTableCell | DeckStepSetSeriesValues | DeckStepReleaseMedia
 class DeckTransaction(TypedDict):
     schema: int
     base: Digest
@@ -19352,6 +19367,8 @@ class ChartEditInsertSeriesBody(TypedDict):
     values: NotRequired[list[float | None]]
     family: NotRequired[ChartKind | None]
     x: NotRequired[list[float | None] | None]
+    x_labels: NotRequired[list[str | None] | None]
+    plot: NotRequired[int | None]
     categories: NotRequired[ChartCategories | None]
     bubble_size: NotRequired[list[float | None] | None]
     bubble_3d: NotRequired[bool | None]
@@ -19384,8 +19401,14 @@ class ChartEditSetSeriesFamily(TypedDict):
 class ChartEditSetSeriesXBody(TypedDict):
     series: NodeId
     x: NotRequired[list[float | None] | None]
+    x_labels: NotRequired[list[str | None] | None]
 class ChartEditSetSeriesX(TypedDict):
     set_series_x: ChartEditSetSeriesXBody
+class ChartEditSetSeriesPlotBody(TypedDict):
+    series: NodeId
+    plot: int
+class ChartEditSetSeriesPlot(TypedDict):
+    set_series_plot: ChartEditSetSeriesPlotBody
 class ChartEditSetSeriesBubbleSizeBody(TypedDict):
     series: NodeId
     bubble_size: NotRequired[list[float | None] | None]
@@ -19449,7 +19472,7 @@ class ChartEditSetSourceBody(TypedDict):
     source: ChartSource
 class ChartEditSetSource(TypedDict):
     set_source: ChartEditSetSourceBody
-ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetSeriesBubbleSize | ChartEditSetSeriesBubble3D | ChartEditSetPlot | ChartEditSetView | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
+ChartEdit = ChartEditInsertSeries | ChartEditDeleteSeries | ChartEditMoveSeries | ChartEditSetSeriesName | ChartEditSetSeriesValues | ChartEditSetSeriesFamily | ChartEditSetSeriesX | ChartEditSetSeriesPlot | ChartEditSetSeriesBubbleSize | ChartEditSetSeriesBubble3D | ChartEditSetPlot | ChartEditSetView | ChartEditSetFamily | ChartEditSetCategories | ChartEditSetSeriesCategories | ChartEditInsertCategory | ChartEditDeleteCategory | ChartEditMoveCategory | ChartEditSetCategoryLevels | ChartEditReserveCategories | ChartEditSetSource
 class DeckOpAddSlideBody(TypedDict):
     id: NotRequired[NodeId | None]
 class DeckOpAddSlide(TypedDict):
