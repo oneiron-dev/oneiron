@@ -86,17 +86,11 @@ fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
         ));
     }
     if let Some(wall) = p.wall_time {
-        values.push((
-            PREDICATE_CALENDAR_WALL_TIME,
-            Value::Map(vec![
-                ("y".into(), wall.y.into()),
-                ("mo".into(), wall.mo.into()),
-                ("d".into(), wall.d.into()),
-                ("h".into(), wall.h.into()),
-                ("mi".into(), wall.mi.into()),
-                ("s".into(), wall.s.into()),
-            ]),
-        ));
+        let mut fields = wall_fields(wall);
+        if let Some(end) = p.wall_end {
+            fields.push(("end".into(), Value::Map(wall_fields(end))));
+        }
+        values.push((PREDICATE_CALENDAR_WALL_TIME, Value::Map(fields)));
     }
     if let Some(zone) = &p.timezone {
         values.push((PREDICATE_CALENDAR_TZ, Value::from(zone.as_str())));
@@ -128,6 +122,18 @@ fn values(event: &ParsedVEvent) -> Vec<(&'static str, Value)> {
         values.push((PREDICATE_CALENDAR_MEETING_LINK, Value::from(link.as_str())));
     }
     values
+}
+
+/// The six civil fields of one wall time, in `calendar.wall_time` key order.
+fn wall_fields(wall: CalendarWallTimeValue) -> Vec<(Value, Value)> {
+    vec![
+        ("y".into(), wall.y.into()),
+        ("mo".into(), wall.mo.into()),
+        ("d".into(), wall.d.into()),
+        ("h".into(), wall.h.into()),
+        ("mi".into(), wall.mi.into()),
+        ("s".into(), wall.s.into()),
+    ]
 }
 
 pub(super) fn source_prefix(system: &str) -> String {

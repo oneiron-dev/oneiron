@@ -48,9 +48,6 @@ pub const ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN: &[u8] = b"oneiron:origin-publicat
 /// Longest bounded failure text a record may carry.
 pub const ORIGIN_PUBLICATION_MAX_FAILURE_BYTES: usize = 512;
 
-/// Largest required-object set one publication may name.
-pub const ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS: usize = 4096;
-
 // ---------------------------------------------------------------------------
 // Protocol types
 // ---------------------------------------------------------------------------

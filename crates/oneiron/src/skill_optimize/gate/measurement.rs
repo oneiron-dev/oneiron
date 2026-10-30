@@ -346,9 +346,13 @@ pub(super) fn validate_measurements(
     {
         return Err(invalid("judge anchor score is malformed"));
     }
-    if measurements.judge_rubric_digest.as_ref().is_some_and(|digest| {
-        digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
-    }) {
+    if measurements
+        .judge_rubric_digest
+        .as_ref()
+        .is_some_and(|digest| {
+            digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+        })
+    {
         return Err(invalid("judge rubric digest is malformed"));
     }
     for pair in [&measurements.structural, &measurements.contrastive] {

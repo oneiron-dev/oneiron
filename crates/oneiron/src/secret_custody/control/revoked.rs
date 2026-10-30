@@ -2,6 +2,8 @@
 //! records it with no byte, and every replica that folds it holds the id as
 //! terminal and settles it here, as the parent module's docs say.
 
+use std::cell::Cell;
+
 use super::super::doors::{read_secret_custody_admission_in_txn, resolve_secret_ref_in_txn};
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{
@@ -13,6 +15,7 @@ use super::input::drop_inputs_for_in_txn;
 use super::pending_revoke::{can_carry_in_txn, defer_revoke_in_txn};
 use super::{CustodyKeptHere, SecretCustodyWork, enacted};
 use crate::authority::{ActSurface, CustodyChange, OwnerWorkBody};
+use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
 use crate::store::Store;
@@ -142,6 +145,74 @@ impl Vault {
             }
             Ok(settled)
         })
+    }
+}
+
+/// The owner act an erase carries out, as the door that admitted the erase
+/// holds it (FIX 11883): his proof, and where his request reached this
+/// install (audit only). Each custody record the erase's side-row scrub
+/// revokes is carried under it, as the revoke door carries his own revoke,
+/// so the revoke goes everywhere his custody records live.
+pub(crate) struct EraseOwnerAct<'a> {
+    owner: &'a AuthenticatedOwner,
+    surface: ActSurface,
+    /// Whether a carry under it recorded custody work in the erase's
+    /// writer, for the door to mirror once that commits.
+    recorded: Cell<bool>,
+}
+
+impl<'a> EraseOwnerAct<'a> {
+    /// The act of `owner`, whose request reached this install on `surface`.
+    pub(crate) const fn new(owner: &'a AuthenticatedOwner, surface: ActSurface) -> Self {
+        Self {
+            owner,
+            surface,
+            recorded: Cell::new(false),
+        }
+    }
+}
+
+impl EraseOwnerAct<'_> {
+    /// Carries the revoke of the record `secret_ref` names, made here in
+    /// `txn` at `at`, to the owner's other machines under this act, as the
+    /// revoke door carries his: at once when this install can sign, else
+    /// kept pending (CALLS CUSTODY_REVOKE_PENDING_CARRY). A record that stays
+    /// on its device is not carried. A proof that no longer holds the owner
+    /// tier in `txn` carries nothing: the revoke stands here and the erase
+    /// goes on.
+    ///
+    /// # Errors
+    /// The store's errors.
+    pub(crate) fn carry_revoke_in_txn(
+        &self,
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        secret_ref: &str,
+        at: u64,
+    ) -> Result<()> {
+        let actor = match self.owner.revalidate_in_txn(vault, txn) {
+            Ok(actor) => actor,
+            Err(Error::Gate(_)) => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let custody =
+            vault.carry_custody_revoke_in_txn(txn, actor, self.surface, secret_ref, at)?;
+        if custody.work.is_some() {
+            self.recorded.set(true);
+        }
+        Ok(())
+    }
+
+    /// Mirrors into the live windows the custody work the carries under this
+    /// act recorded, once the erase committed, as the revoke door mirrors its
+    /// own; with none recorded, nothing.
+    pub(crate) fn mirror_after_commit(&self, vault: &Vault) {
+        #[cfg(feature = "sync")]
+        if self.recorded.get() {
+            vault.refresh_custody_in_live_windows();
+        }
+        #[cfg(not(feature = "sync"))]
+        let _ = vault;
     }
 }
 

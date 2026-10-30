@@ -10,8 +10,8 @@ mod types;
 
 pub use self::calendar::{CalendarFreebusyDto, CalendarFreebusyIntervalDto};
 pub use self::invite::{
-    CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod,
+    CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB, CalendarInviteOrigin,
+    CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod,
 };
 pub use self::schedule::BRIDGE_OUTBOUND_ATTEMPT_KIND;
 pub use self::types::{OutboundDraftInput, OutboundIntentReceipt, OutboundScheduleContext};

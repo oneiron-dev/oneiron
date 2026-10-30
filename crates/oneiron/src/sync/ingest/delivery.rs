@@ -117,6 +117,22 @@ pub(in crate::sync) fn delivered_rows(entities: &LoroMap) -> BTreeMap<EntityId, 
     rows
 }
 
+/// Every row a peer's raw window update brings in its entities map, those
+/// its admission keeps out included: a retained batch holds every byte the
+/// peer sent (FIX 11184). An update that does not import names none.
+pub(in crate::sync) fn payload_rows(
+    key: &crate::sync::types::WindowKey,
+    update: &[u8],
+) -> BTreeSet<EntityId> {
+    let raw = crate::sync::schema::create_window_doc("federation-remote", key);
+    if raw.import(update).is_err() {
+        return BTreeSet::new();
+    }
+    delivered_rows(&raw.get_map("entities"))
+        .into_keys()
+        .collect()
+}
+
 /// Puts back the delivery an outer import installed, on every exit.
 struct Restore(Option<Delivery>);
 

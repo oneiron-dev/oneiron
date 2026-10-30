@@ -78,6 +78,9 @@ impl Vault {
         // A purge nothing published or scrubbed before ends a Connect
         // guest's pacts itself (FIX 3875); otherwise they are gone already.
         revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
+        // The custody revokes the actor sweeps make reach the owner's other
+        // machines under the act the delete carries out (FIX 11883).
+        let owner_act = gate.as_ref().and_then(GatedDeletion::owner_act);
         reserve_topology_delete_in_txn(
             &self.store,
             &mut wtxn,
@@ -122,7 +125,9 @@ impl Vault {
                 crate::store::erase_sync_response_owner_in_txn(&self.store, &mut wtxn, id)?;
                 crate::store::erase_response_owner_in_txn(&self.store, &mut wtxn, id)?;
             }
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, &mut wtxn, id)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(
+                self, &mut wtxn, id, owner_act,
+            )?;
             if crdt_persisted
                 && let Some(decision) = gate_decision.as_ref()
                 && !self.store.discard_pending_deletion_gate_decision_in_txn(
@@ -175,7 +180,7 @@ impl Vault {
         // never be erased while a shell of it stays readable.
         let mut affected = self.hard_delete_affected_ids_in_txn(&wtxn, id)?;
         let (cascaded_shells, changed_documents) =
-            self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id)?;
+            self.cascade_hard_erase_to_redirect_shells_in_txn(&mut wtxn, id, owner_act)?;
         affected.extend(changed_documents);
         // The shells' historical carriers ride THIS erasure's sweep row:
         // clearing the active store while history keeps the bytes would
@@ -194,11 +199,15 @@ impl Vault {
             window_label,
             &tombstone,
         )?);
+        // A FEDERATION_GRANT row erased here is marked withdrawn; this door's
+        // own `dt:` marker and tombstone carry its erasure (FIX 11779).
+        crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, &mut wtxn, *id)?;
         let (existed, citing) = self.purge_entity_active_store_in_txn(
             &mut wtxn,
             id,
             Some(&tombstone.request_id),
             true,
+            owner_act,
         )?;
         affected.extend(citing);
 
