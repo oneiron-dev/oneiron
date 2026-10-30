@@ -29,6 +29,7 @@ use crate::sync::custody::CUSTODY_MAP;
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
 use crate::sync::ingest::{PEER_ORIGIN_MAP, admit_peer_origin_carrier};
 use crate::sync::message_docs::MESSAGE_DOCS_MAP;
+use crate::sync::office_proposals::OFFICE_PROPOSALS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_turns::ROOM_TURNS_MAP;
 use crate::sync::row_birth::ROW_BIRTHS_MAP;
@@ -38,7 +39,7 @@ use crate::sync::withdrawn_cutoffs::{
 };
 
 /// Every window root map an adapter here reads: the roots a capture admits.
-pub(super) const WINDOW_ROOTS: [&str; 19] = [
+pub(super) const WINDOW_ROOTS: [&str; 20] = [
     "entities",
     "edges",
     "tombstones",
@@ -57,6 +58,7 @@ pub(super) const WINDOW_ROOTS: [&str; 19] = [
     ROOM_FACTS_MAP,
     DOCUMENT_PINS_MAP,
     MESSAGE_DOCS_MAP,
+    OFFICE_PROPOSALS_MAP,
     ASSET_BODY_REFS_MAP,
 ];
 
@@ -136,6 +138,7 @@ pub(crate) fn root_entry(
         ROOM_FACTS_MAP => crate::sync::room_facts::checkpoint::entry(key, value),
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::entry(key, value),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::entry(key, value),
+        OFFICE_PROPOSALS_MAP => crate::sync::office_proposals::checkpoint::entry(key, value),
         // KS-2 carries every ASSET byte, a by-reference body's too.
         ASSET_BODY_REFS_MAP => Placement::Dispatched(OtherClient::Body),
         _ => Placement::unclassified(None, SyncUnclassified::UnknownRoot),
@@ -191,6 +194,7 @@ pub(super) fn key_refusal(root: &str, key: &str) -> Option<SyncUnclassified> {
         CUSTODY_MAP => crate::sync::custody::checkpoint::key_class(key),
         DOCUMENT_PINS_MAP => crate::sync::document_pins::checkpoint::key_class(key),
         MESSAGE_DOCS_MAP => crate::sync::message_docs::checkpoint::key_class(key),
+        OFFICE_PROPOSALS_MAP => crate::sync::office_proposals::checkpoint::key_class(key),
         // A side row's key may spell a platform handle.
         ROOM_FACTS_MAP => KeyClass::Payload,
         _ => return Some(SyncUnclassified::UnknownRoot),
