@@ -248,7 +248,7 @@ pub(super) fn write_artifact<T>(
     write: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<T>,
 ) -> MemoryResult<T> {
     memory.with_actor_content_write_txn_as(
-        crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        memory.write_actor(),
         |content| {
             content.update_artifact(document, |txn| {
                 reaches_in(lane, txn, document)?;

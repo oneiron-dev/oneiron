@@ -55,7 +55,7 @@ pub fn skill_library_fork_by_caller(
         ));
     }
     let vault = memory.vault();
-    let writer = WriteActor::new(memory.actor(), memory.actor_class());
+    let writer = memory.write_actor();
     let entity = input.entity.unwrap_or_else(EntityId::now);
     let at = vault.now_recorded_at();
     // OF-063 (FIX 1230): the forked text's links are read for the caller

@@ -43,7 +43,7 @@ pub(crate) fn settle_run_note_in_txn(
 ) -> MemoryResult<Option<(String, RunNoteUndo)>> {
     let vault = memory.vault();
     let (mut record, _) = run_note_review_in_txn(vault, txn, note, fork)?;
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     if record.actor.is(actor.entity_ref()) {
         return Err(MemoryError::bad_request(
             "a proposal's opener never settles it",

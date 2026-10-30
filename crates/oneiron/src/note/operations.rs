@@ -403,7 +403,7 @@ fn propose_claim(
     } else {
         ClaimSource::Generated
     };
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     let envelope = WriteEnvelope::new(
         actor,
         source,

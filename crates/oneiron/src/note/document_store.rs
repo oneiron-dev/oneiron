@@ -646,7 +646,7 @@ pub(super) fn require_note_writer(
             memory.vault(),
             txn,
             id,
-            crate::WriteActor::new(memory.actor(), memory.actor_class()),
+            memory.write_actor(),
         )?
     {
         if memory.actor_class() != EdgeActorClass::Human {
