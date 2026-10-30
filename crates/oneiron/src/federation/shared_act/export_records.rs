@@ -28,10 +28,7 @@ impl Vault {
     /// The ids the removal receipt `receipt_id`'s export counted, as kept
     /// beside it; `None` for one executed before they were kept. The
     /// receipt's own read decides who reads them.
-    pub fn shared_act_export_records(
-        &self,
-        receipt_id: &str,
-    ) -> Result<Option<Vec<EntityId>>> {
+    pub fn shared_act_export_records(&self, receipt_id: &str) -> Result<Option<Vec<EntityId>>> {
         let txn = self.store.env.read_txn()?;
         let receipt = HexId(EntityId::from_hex(receipt_id)?);
         EXPORT_RECORDS.get(&self.store, &txn, &receipt)

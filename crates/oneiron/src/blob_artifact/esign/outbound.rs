@@ -352,11 +352,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         txn,
                         id,
                         EsignEvent::Voided {
-                            reason: self
-                                .command
-                                .reason
-                                .clone()
-                                .ok_or(NotApplied::Refused)?,
+                            reason: self.command.reason.clone().ok_or(NotApplied::Refused)?,
                         },
                         self.actor.clone(),
                         self.now,
