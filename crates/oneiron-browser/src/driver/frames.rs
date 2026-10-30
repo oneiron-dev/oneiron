@@ -49,12 +49,12 @@ impl CdpDriver {
         // Each OOPIF session's own same-process children, grafted under it
         // (FIX 11577): its frame tree names them, and its session reads
         // them. A nested OOPIF already listed above is never grafted twice.
-        for (oopif, session, _) in &oopifs {
-            for child in self.child_frames_in(session) {
+        for (_, session, _) in &oopifs {
+            for (child, parent) in self.child_frames_in(session) {
                 let listed = oopifs.iter().any(|(frame, _, _)| frame == &child)
                     || frames.iter().any(|(frame, _)| frame == &child);
                 if !listed {
-                    frames.push((child, Some((oopif.clone(), session.clone()))));
+                    frames.push((child, Some((parent, session.clone()))));
                 }
             }
         }
@@ -63,10 +63,18 @@ impl CdpDriver {
             // under one (FIX 11577); a same-process frame's are the page's.
             let apart = self.frame_session(Some(&frame)) != self.session || within.is_some();
             let session = within.as_ref().map(|(_, session)| session.as_str());
-            if let Some(tree) = self.frame_tree(&frame, session) {
+            if let Some((tree, read_on)) = self.frame_tree(&frame, session) {
                 let (outer, session) = within.unzip();
                 let owner = self.frame_owner(&frame, session.as_deref());
-                graft(nodes, &frame, tree, owner, apart, outer.as_deref());
+                graft(
+                    nodes,
+                    &frame,
+                    tree,
+                    owner,
+                    apart,
+                    outer.as_deref(),
+                    &read_on,
+                );
             }
         }
     }
@@ -75,12 +83,17 @@ impl CdpDriver {
     /// names them, read with an explicit stack.
     fn child_frames(&self) -> Vec<String> {
         self.child_frames_in(&self.session)
+            .into_iter()
+            .map(|(frame, _)| frame)
+            .collect()
     }
 
-    /// Every frame under `session`'s main frame, as its frame tree names
-    /// them (FIX 11577): an OOPIF session names its own same-process
-    /// children. Read with an explicit stack; none where it does not read.
-    fn child_frames_in(&self, session: &str) -> Vec<String> {
+    /// Every frame under `session`'s main frame, with the frame it is in,
+    /// as its frame tree names them (FIX 11577): an OOPIF session names
+    /// its own same-process children, each under its own parent frame.
+    /// Read with an explicit stack, a parent always before its children;
+    /// none where it does not read.
+    fn child_frames_in(&self, session: &str) -> Vec<(String, String)> {
         let deadline = Instant::now() + CALL;
         let Ok(tree) = self
             .pipe
@@ -88,18 +101,30 @@ impl CdpDriver {
         else {
             return Vec::new();
         };
+        let Some(root) = tree.pointer("/frameTree/frame/id").and_then(Value::as_str) else {
+            return Vec::new();
+        };
         let mut frames = Vec::new();
-        let mut stack: Vec<&Value> = tree
+        let mut stack: Vec<(&Value, String)> = tree
             .pointer("/frameTree/childFrames")
             .and_then(Value::as_array)
             .into_iter()
             .flatten()
+            .map(|child| (child, root.to_owned()))
             .collect();
-        while let Some(child) = stack.pop() {
-            if let Some(id) = child.pointer("/frame/id").and_then(Value::as_str) {
-                frames.push(id.to_owned());
-            }
-            stack.extend(child["childFrames"].as_array().into_iter().flatten());
+        while let Some((child, parent)) = stack.pop() {
+            let Some(id) = child.pointer("/frame/id").and_then(Value::as_str) else {
+                continue;
+            };
+            let id = id.to_owned();
+            frames.push((id.clone(), parent));
+            stack.extend(
+                child["childFrames"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|grandchild| (grandchild, id.clone())),
+            );
         }
         frames
     }
@@ -127,10 +152,11 @@ impl CdpDriver {
             .collect()
     }
 
-    /// `frame`'s accessibility nodes: on its own session where it is an
-    /// OOPIF, else by its frame on `within`, an OOPIF's own same-process
-    /// child (FIX 11577), or on the front tab's.
-    fn frame_tree(&self, frame: &str, within: Option<&str>) -> Option<Vec<Value>> {
+    /// `frame`'s accessibility nodes, with the session they were read
+    /// on: its own session where it is an OOPIF, else by its frame on
+    /// `within`, an OOPIF's own same-process child (FIX 11577), or on
+    /// the front tab's.
+    fn frame_tree(&self, frame: &str, within: Option<&str>) -> Option<(Vec<Value>, String)> {
         let own = self.frame_session(Some(frame));
         let (session, params) = if own != self.session {
             (own, json!({}))
@@ -150,9 +176,92 @@ impl CdpDriver {
             )
             .ok()?;
         match tree.get_mut("nodes").map(Value::take) {
-            Some(Value::Array(nodes)) if !nodes.is_empty() => Some(nodes),
+            Some(Value::Array(nodes)) if !nodes.is_empty() => Some((nodes, session)),
             _ => None,
         }
+    }
+
+    /// The offset of `session`'s viewport in the main frame's, in CSS
+    /// pixels (FIX 11576): a box read on an out-of-process frame's session
+    /// is in that frame's viewport, while a mouse press is routed by the
+    /// main frame's. The offset is the frame element's content box, read
+    /// on the session holding that element, plus that session's own
+    /// offset, out to the front tab's session, whose offset is zero.
+    /// None where a step of the chain does not read.
+    pub(super) fn frame_page_offset(&self, session: &str) -> Option<(f64, f64)> {
+        let mut sessions = vec![self.session.clone()];
+        sessions.extend(self.oopif_sessions());
+        let (mut x, mut y) = (0.0, 0.0);
+        let mut held = session.to_owned();
+        let mut steps = 0;
+        while held != self.session {
+            steps += 1;
+            if steps > sessions.len() {
+                return None;
+            }
+            let root = self.frame_root(&held)?;
+            let outer = sessions
+                .iter()
+                .find(|candidate| **candidate != held && self.session_holds(candidate, &root))?;
+            let owner = self.frame_owner(&root, Some(outer.as_str()))?;
+            let model = self
+                .call_in(outer, "DOM.getBoxModel", json!({"backendNodeId": owner}))
+                .ok()?;
+            let quad: Vec<f64> = model
+                .pointer("/model/content")
+                .and_then(Value::as_array)
+                .map(|q| q.iter().filter_map(Value::as_f64).collect())
+                .unwrap_or_default();
+            if quad.len() != 8 {
+                return None;
+            }
+            x += quad[0].min(quad[2]).min(quad[4]).min(quad[6]);
+            y += quad[1].min(quad[3]).min(quad[5]).min(quad[7]);
+            held = outer.clone();
+        }
+        Some((x, y))
+    }
+
+    /// The main frame of `session`'s frame tree, where it reads.
+    fn frame_root(&self, session: &str) -> Option<String> {
+        let tree = self
+            .pipe
+            .call(
+                Some(session),
+                "Page.getFrameTree",
+                json!({}),
+                Instant::now() + CALL,
+            )
+            .ok()?;
+        tree.pointer("/frameTree/frame/id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
+
+    /// Whether `frame` is a child frame somewhere in `session`'s frame
+    /// tree: the element holding it is in that session's document.
+    fn session_holds(&self, session: &str, frame: &str) -> bool {
+        let Ok(tree) = self.pipe.call(
+            Some(session),
+            "Page.getFrameTree",
+            json!({}),
+            Instant::now() + CALL,
+        ) else {
+            return false;
+        };
+        let mut stack: Vec<&Value> = tree
+            .pointer("/frameTree/childFrames")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .collect();
+        while let Some(child) = stack.pop() {
+            if child.pointer("/frame/id").and_then(Value::as_str) == Some(frame) {
+                return true;
+            }
+            stack.extend(child["childFrames"].as_array().into_iter().flatten());
+        }
+        false
     }
 
     /// The backend node of the element that holds `frame`: in its page, or,
@@ -186,6 +295,7 @@ fn graft(
     owner: Option<u64>,
     apart: bool,
     within: Option<&str>,
+    read_on: &str,
 ) {
     if !apart {
         let held: HashSet<u64> = nodes
@@ -241,6 +351,11 @@ fn graft(
         if node.get("frameId").is_none() {
             node["frameId"] = Value::from(frame);
         }
+        // The session this tree was read on is the one its backend nodes
+        // resolve on (FIX 11576): a same-process frame under an OOPIF has
+        // no session of its own, and its frame id alone would name the
+        // page's.
+        node["sessionId"] = Value::from(read_on);
         nodes.push(node);
     }
     if let Some(root) = root {

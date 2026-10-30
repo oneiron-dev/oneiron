@@ -185,6 +185,8 @@ struct Held {
     png: Vec<u8>,
     frame: Frame,
     capture: Option<Capture>,
+    // Dropped for the charge it gives back; never read (FIX 11578).
+    #[allow(dead_code)]
     held: Option<crate::cdp::Held>,
 }
 

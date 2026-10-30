@@ -153,21 +153,30 @@ impl RunGuests {
         }
         // The filled postcondition on the reconstructed page (FIX 10721),
         // read as propose's own Solved check reads its expects: a Done batch
-        // whose page misses checks ends here, proposing nothing.
+        // whose page misses checks ends here, proposing nothing. Only the
+        // fills this side reproduces are read here: propose slots secret
+        // operands against the proposing session's driver, which this job
+        // has none of, so a proposal carrying typed secret arguments, or
+        // naming a seed candidate whose own program stands in for the
+        // proposal's, is read by propose itself as before, and nothing it
+        // would have admitted ends here.
+        let own_read = proposal.secret_args.is_empty() && proposal.candidate.is_none();
         let mut unmet = Vec::new();
-        for (index, check) in checks.iter().enumerate() {
-            let Ok(input) = serde_json::to_value(check) else {
-                return refused("admission_expect_encode");
-            };
-            let verb = AgentVerb::SelfBrowserExpect;
-            let output = match self.job_call(server, runtime, leased, caller, verb, input) {
-                Ok(output) => output,
-                Err(outcome) => return outcome,
-            };
-            match output.get("met").and_then(|met| met.as_bool()) {
-                Some(true) => {}
-                Some(false) => unmet.push(index),
-                None => return refused("admission_expect_unread"),
+        if own_read {
+            for (index, check) in checks.iter().enumerate() {
+                let Ok(input) = serde_json::to_value(check) else {
+                    return refused("admission_expect_encode");
+                };
+                let verb = AgentVerb::SelfBrowserExpect;
+                let output = match self.job_call(server, runtime, leased, caller, verb, input) {
+                    Ok(output) => output,
+                    Err(outcome) => return outcome,
+                };
+                match output.get("met").and_then(|met| met.as_bool()) {
+                    Some(true) => {}
+                    Some(false) => unmet.push(index),
+                    None => return refused("admission_expect_unread"),
+                }
             }
         }
         if !unmet.is_empty() {

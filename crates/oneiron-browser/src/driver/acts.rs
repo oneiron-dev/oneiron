@@ -62,18 +62,23 @@ impl CdpDriver {
     }
 
     /// The session the row whose backend node is `node` resolves and reads
-    /// on (FIX 11576): its frame's own where the read names it there, else
-    /// the front tab's. None where no node of the read carries it, or
-    /// nodes on two sessions do: a foreign id is never resolved on the
-    /// page's session.
+    /// on (FIX 11576): the session the read was made on, which the graft
+    /// stamps on each node, else its frame's own where the read names it
+    /// there, else the front tab's. The stamp is what a same-process
+    /// frame under an OOPIF resolves by: its frame id alone names no
+    /// session. None where no node of the read carries it, or nodes on
+    /// two sessions do: a foreign id is never resolved on the page's
+    /// session.
     fn row_session(&self, ax: &[Value], node: u64) -> Option<String> {
         let mut session = None;
-        let frames = ax
+        let reads = ax
             .iter()
-            .filter(|read| read.get("backendDOMNodeId").and_then(Value::as_u64) == Some(node))
-            .map(|read| read.get("frameId").and_then(Value::as_str));
-        for frame in frames {
-            let found = self.frame_session(frame);
+            .filter(|read| read.get("backendDOMNodeId").and_then(Value::as_u64) == Some(node));
+        for read in reads {
+            let found = match read.get("sessionId").and_then(Value::as_str) {
+                Some(stamped) => stamped.to_owned(),
+                None => self.frame_session(read.get("frameId").and_then(Value::as_str)),
+            };
             if session.as_ref().is_some_and(|held| *held != found) {
                 return None;
             }
@@ -220,16 +225,23 @@ impl CdpDriver {
         if hit != Value::Bool(true) {
             return Err(covered());
         }
+        // A mouse press is routed by the main frame's viewport, and the
+        // box was read in the frame's (FIX 11576): the press goes on the
+        // front tab's session at the point carried out by the frame's
+        // own offset. One that does not read is a cover: the press is not
+        // shown to land on the target. Keyboard input goes the other
+        // way, to the renderer of the session it is sent on, which is
+        // why `type_target` sends it on the row's own session.
+        let Some((across, down)) = self.frame_page_offset(session) else {
+            return Err(covered());
+        };
+        let (x, y) = (x + across, y + down);
         let watch = Watch::Click(
             change::row_target(&target.row),
             Some((node, session.as_str())),
         );
-        let mut observation = self.act(
-            base,
-            &watch,
-            |_| Ok(()),
-            |driver| driver.mouse_click_in(session, x, y),
-        )?;
+        let mut observation =
+            self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))?;
         observation.rebound.clone_from(&target.rebound);
         Ok(observation)
     }
@@ -254,7 +266,7 @@ impl CdpDriver {
             self.typed
                 .insert(backend, kind.unwrap_or(SecretKind::Password));
         }
-        let watch = Watch::Entry(change::row_target(&target.row), node, session);
+        let watch = Watch::Entry(change::row_target(&target.row), node, session.as_str());
         let mut observation = self.act(
             base,
             &watch,
@@ -302,7 +314,7 @@ impl CdpDriver {
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
         let session = &target.session;
-        let watch = Watch::Entry(change::row_target(&target.row), node, session);
+        let watch = Watch::Entry(change::row_target(&target.row), node, session.as_str());
         let mut observation = self.act(base, &watch, |_| Ok(()), |driver| {
             let picked = driver.call_on_in(
                 session,
@@ -344,7 +356,13 @@ impl CdpDriver {
         let start = Instant::now();
         // An act that closed its own tab can fail or stop settling as the
         // tab goes; the tab it gave way to is then the act's result.
+        // The input's calls are its setup's and its act's both (FIX
+        // 11582): a type's focus, and its clear, are input calls before
+        // the text, and an error the browser answers to them comes from
+        // the input itself. The mark's reads between them are not.
+        let before_setup = crate::cdp::written_here();
         let set = setup(self);
+        let setup_calls = crate::cdp::written_here().saturating_sub(before_setup);
         let mark = if set.is_ok() { self.mark(watch) } else { None };
         let written = crate::cdp::written_here();
         let acted = set.and_then(|()| act(self));
@@ -352,7 +370,7 @@ impl CdpDriver {
         self.sent = acted.is_ok();
         // A call of the input failed once the browser was sent part of it:
         // the effect may stand, its outcome unknown (FIX 10426).
-        let calls = crate::cdp::written_here().saturating_sub(written);
+        let calls = setup_calls + crate::cdp::written_here().saturating_sub(written);
         self.unknown = acted
             .as_ref()
             .is_err_and(|error| unknown_outcome_policy(error, calls));

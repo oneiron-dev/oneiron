@@ -42,7 +42,7 @@ const AX_TEXT_CUT: usize = 10_000;
 /// of a past-threshold reply it keeps, given back as it drops (FIX
 /// 11578); or a read that failed, which keeps nothing.
 pub(super) enum DomRead {
-    Read(Dom, Option<Held>),
+    Read(Dom, #[allow(dead_code)] Option<Held>),
     Failed,
 }
 
@@ -122,10 +122,6 @@ impl CdpDriver {
             crate::cdp::deep::dismantle(read);
             dom
         };
-        // The read's charge rides it until it drops (FIX 11578): its
-        // reply's went back as its call took it. The OOPIF frames and the
-        // base read after keep no charge of their own.
-        let held = self.pipe.charge_retained(dom.footprint());
         dom.shadows_read = self.engine == BrowserEngine::Chromium;
         dom.oopifs = self
             .pipe
@@ -136,6 +132,10 @@ impl CdpDriver {
         if dom.needs_main_base(lines) {
             dom.bases[0] = self.main_base();
         }
+        // The read's charge rides it until it drops (FIX 11578): its
+        // reply's went back as its call took it, and the charge is taken
+        // on the read as it is kept, its base settled.
+        let held = self.pipe.charge_retained(dom.footprint());
         DomRead::Read(dom, held)
     }
 

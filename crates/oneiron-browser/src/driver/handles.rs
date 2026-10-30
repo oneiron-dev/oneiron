@@ -82,6 +82,8 @@ pub(super) struct Capture {
     pub(super) ax: Vec<Value>,
     pub(super) scope: String,
     pub(super) originals: Vec<Option<String>>,
+    // Dropped for the charge it gives back; never read (FIX 11578).
+    #[allow(dead_code)]
     held: Vec<Held>,
 }
 
