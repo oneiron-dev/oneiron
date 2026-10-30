@@ -27,16 +27,22 @@
 //!
 //! Both read the input where it lies (FIX 11140, `stream`). The door seals
 //! a body it holds whole, then keeps the sealed input row by row. A
-//! surface's input is joined to be sealed on top, so only one that fits one
-//! row is; one past it is kept as it lies, under the holder's key alone, as
-//! with the wire off. The holder reads the head, then the rest in order:
-//! the holder's envelopes as each completes, or the key's one seal, within
-//! one row.
+//! surface's input that fits one row is joined and sealed on top whole;
+//! one past it is never joined, and is sealed on top in numbered parts as
+//! it is read instead, each part within one row, under the same key (FIX
+//! 12148, `parts`). The holder reads the head, then the rest in order: the
+//! holder's envelopes as each completes, the key's one seal within one row,
+//! or its numbered parts one at a time.
+
+mod parts;
 
 use std::io::Read;
 
 use oneiron_crypto::HybridPublicKey;
 use zeroize::Zeroizing;
+
+pub(super) use self::parts::LeafParts;
+use self::parts::{open_parts, part_count};
 
 use super::super::super::carrier_custody::{
     CARRIER_REF_BYTES, CARRIER_SEAL_BYTES, CUSTODY_CARRIER_LEAF_WIRE, CUSTODY_INPUT_WIRE_VERSION,
@@ -65,8 +71,11 @@ enum LeafLayer {
     /// The recorder held the body: sealed under the key, then to the holder.
     UnderHolder,
     /// The owner's surface sealed to the holder: that, with what the
-    /// recorder attached, sealed under the key.
+    /// recorder attached, sealed under the key, whole, within one row.
     OverHolder,
+    /// The same past one row: sealed under the key in numbered parts
+    /// (FIX 12148, `parts`).
+    OverHolderParts,
 }
 
 impl LeafLayer {
@@ -74,6 +83,7 @@ impl LeafLayer {
         match self {
             Self::UnderHolder => 0,
             Self::OverHolder => 1,
+            Self::OverHolderParts => 2,
         }
     }
 
@@ -81,6 +91,7 @@ impl LeafLayer {
         match byte {
             0 => Some(Self::UnderHolder),
             1 => Some(Self::OverHolder),
+            2 => Some(Self::OverHolderParts),
             _ => None,
         }
     }
@@ -92,8 +103,31 @@ pub(crate) enum LeafSource<'a> {
     /// bind's bindings.
     Body(&'a [u8]),
     /// The input the owner's surface sealed to the holder, with what the
-    /// recorder attached beside it, joined ([`surface_leaf_input`]).
+    /// recorder attached beside it, joined within one row
+    /// ([`SurfaceLeaf::Joined`]).
     Sealed(&'a [u8]),
+}
+
+/// How the input the owner's surface sealed is sealed under its carrier key
+/// on top, while the carrier wire is on ([`surface_leaf_input`]).
+pub(crate) enum SurfaceLeaf {
+    /// One that fits one row, joined: sealed whole
+    /// ([`seal_leaf_input_in_txn`]).
+    Joined(Vec<u8>),
+    /// One past it, read where it lies, by its own digest: sealed in
+    /// numbered parts as it is read ([`seal_leaf_parts_in_txn`]).
+    Parts([u8; 32]),
+}
+
+impl SurfaceLeaf {
+    /// The digest the same input sent again is found by (CALLS
+    /// CUSTODY_RETRY): the surface's input's own, before its carrier seal.
+    pub(crate) fn retry(&self) -> [u8; 32] {
+        match self {
+            Self::Joined(joined) => input_digest(joined),
+            Self::Parts(digest) => *digest,
+        }
+    }
 }
 
 /// A leaf-sealed input's head as read: its key's reference, its layer and
@@ -104,17 +138,21 @@ struct LeafHead {
     retry: [u8; 32],
 }
 
-/// The input the owner's surface sealed, `frame`, joined for its carrier
-/// seal on top, while the carrier wire is on and it fits one row; `None`
-/// past one row (FIX 11140 joins none), which is kept as it lies.
+/// The input the owner's surface sealed, `frame`, as it is sealed under
+/// its carrier key on top while the carrier wire is on: joined when it fits
+/// one row; past it read where it lies once, for its digest (FIX 11140
+/// joins none past one row). `None` while the wire is off.
 ///
 /// # Errors
-/// A fault reading the input from its file.
-pub(crate) fn surface_leaf_input(frame: &SealedFrame<'_>) -> Result<Option<Vec<u8>>> {
+/// A fault reading the input from its file; one past the part list's bound.
+pub(crate) fn surface_leaf_input(frame: &SealedFrame<'_>) -> Result<Option<SurfaceLeaf>> {
     if !CUSTODY_CARRIER_LEAF_WIRE {
         return Ok(None);
     }
-    frame.joined_within(PART_BYTES)
+    Ok(Some(match frame.joined_within(PART_BYTES)? {
+        Some(joined) => SurfaceLeaf::Joined(joined),
+        None => SurfaceLeaf::Parts(frame.digests()?.digest),
+    }))
 }
 
 /// Seals the input of the request `binding` binds, while the carrier wire
@@ -154,16 +192,51 @@ pub(crate) fn seal_leaf_input_in_txn(
             carrier.seal(&leaf, None, input)?,
         ),
     };
-    let mut out = Vec::with_capacity(
-        LEAF_INPUT_LABEL.len() + 2 + CARRIER_REF_BYTES + retry.len() + sealed.len(),
-    );
-    out.extend_from_slice(LEAF_INPUT_LABEL);
-    out.push(CUSTODY_INPUT_WIRE_VERSION);
-    out.push(layer.byte());
-    out.extend_from_slice(&carrier.encode());
-    out.extend_from_slice(&retry);
+    let mut out = head_bytes(layer, &carrier, &retry);
     out.extend_from_slice(&sealed);
     Ok(out)
+}
+
+/// Seals the input the owner's surface sealed, `frame`, past one row, for
+/// the request `binding` binds, while the carrier wire is on, under a
+/// carrier key minted in `wtxn` before any byte is sealed: in numbered
+/// parts, each sealed as the frame is read (FIX 12148, `parts`). `retry` is
+/// the frame's own digest ([`SurfaceLeaf::retry`]). Returns what the door
+/// keeps the frame under ([`SealedFrame::under_leaf_parts`]).
+///
+/// # Errors
+/// The mint's refusals (an archived vault, an erased credential, custody
+/// faults); a frame past the part count's codec.
+pub(crate) fn seal_leaf_parts_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    binding: &InputBinding<'_>,
+    frame: &SealedFrame<'_>,
+    retry: &[u8; 32],
+) -> Result<LeafParts> {
+    let plain = frame.input_len();
+    let count = part_count(plain)?;
+    let (instance, leaf) = vault.store.mint_carrier_leaf_in_txn(
+        wtxn,
+        CustodyKind::CustodyRequestInput,
+        &binding.id,
+    )?;
+    let carrier = CarrierRef::input(binding.id, instance, binding.generation);
+    let head = head_bytes(LeafLayer::OverHolderParts, &carrier, retry);
+    Ok(LeafParts::new(head, carrier, leaf, count, plain))
+}
+
+/// A leaf-sealed input's head, [`LEAF_HEAD_BYTES`] of it: its label, the
+/// input wire version, `layer`, `carrier`'s reference and the digest
+/// `retry`.
+fn head_bytes(layer: LeafLayer, carrier: &CarrierRef, retry: &[u8; 32]) -> Vec<u8> {
+    let mut head = Vec::with_capacity(LEAF_HEAD_BYTES);
+    head.extend_from_slice(LEAF_INPUT_LABEL);
+    head.push(CUSTODY_INPUT_WIRE_VERSION);
+    head.push(layer.byte());
+    head.extend_from_slice(&carrier.encode());
+    head.extend_from_slice(retry);
+    head
 }
 
 /// The head of the leaf-sealed input `input` opens with, while the carrier
@@ -201,8 +274,8 @@ pub(crate) fn input_carrier_binds(carrier: &CarrierRef, binding: &InputBinding<'
 /// `carrier`'s key `leaf` and with the holder's `secret` under `binding`,
 /// with what its recorder attached beside a surface's envelope: its rows
 /// read in order, its head first (FIX 11140). `None` when its head is not
-/// `carrier`'s, a surface's seal outgrows one row, or any layer does not
-/// open.
+/// `carrier`'s, a surface's whole seal outgrows one row, a numbered part is
+/// missing, out of place or left over, or any layer does not open.
 ///
 /// # Errors
 /// Storage errors reading a row.
@@ -233,6 +306,7 @@ pub(crate) fn open_leaf_input(
                 let over = carrier.open(leaf, None, &sealed).ok()?;
                 open_framed(binding, over.as_slice(), over.len() as u64, secret)
             }
+            LeafLayer::OverHolderParts => open_parts(rows, len, carrier, leaf, binding, secret),
         }
     })
 }
@@ -290,8 +364,12 @@ pub(crate) fn leaf_input_retries_in_txn(
     retry: &[u8; 32],
 ) -> Result<bool> {
     Ok(head_row_in_txn(store, txn, named)?.is_some_and(|row| {
-        leaf_head(&row.envelope)
-            .is_some_and(|head| head.layer == LeafLayer::OverHolder && head.retry == *retry)
+        leaf_head(&row.envelope).is_some_and(|head| {
+            matches!(
+                head.layer,
+                LeafLayer::OverHolder | LeafLayer::OverHolderParts
+            ) && head.retry == *retry
+        })
     }))
 }
 

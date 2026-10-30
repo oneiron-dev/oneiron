@@ -6,7 +6,9 @@
 //! turn. The holder reads the kept rows the same way, in order and one at a
 //! time, opening each envelope as it completes, so only the opened body is
 //! ever whole. Every bound stays: a row's [`PART_BYTES`], the part list's
-//! [`MAX_PARTS`], the frame and envelope codecs.
+//! [`MAX_PARTS`], the frame and envelope codecs. A surface's input past one
+//! row that the door keeps under its carrier key is read the same way, each
+//! numbered part sealed as it is read (FIX 12148, `carrier_seal`).
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -14,6 +16,7 @@ use std::io::{self, Read, Seek, SeekFrom};
 use zeroize::Zeroizing;
 
 use super::attached::{ATTACHED_HEAD_MAX, Attached, Attachment, attached_head, attached_tail};
+use super::carrier_seal::LeafParts;
 use super::{
     InputBinding, InputPart, MAX_PARTS, PART_BYTES, PART_LABEL, RelayedInput, held_input_in_txn,
     input_digest, part_digest, part_key, parts_digest, refused,
@@ -80,6 +83,10 @@ pub(crate) struct SealedFrame<'a> {
     head: &'a [u8],
     envelope: SealedInput<'a>,
     tail: &'a [u8],
+    /// The numbered carrier parts the door keeps it under, if any: a
+    /// surface's input past one row while the carrier wire is on (FIX
+    /// 12148), its parts sealed as it is read.
+    parts: Option<&'a LeafParts>,
 }
 
 /// The digest a request names of an input, and every part's digest, in
@@ -97,12 +104,23 @@ impl<'a> SealedFrame<'a> {
                 head: &attached.head,
                 envelope,
                 tail: &attached.tail,
+                parts: None,
             },
             None => Self {
                 head: &[],
                 envelope,
                 tail: &[],
+                parts: None,
             },
+        }
+    }
+
+    /// This input as the door keeps it under `parts`, its numbered carrier
+    /// parts (FIX 12148): read, digested and kept as those parts.
+    pub(crate) fn under_leaf_parts(self, parts: &'a LeafParts) -> Self {
+        Self {
+            parts: Some(parts),
+            ..self
         }
     }
 
@@ -111,14 +129,26 @@ impl<'a> SealedFrame<'a> {
         Self::new(None, SealedInput::Slice(input))
     }
 
-    /// The input's length: its head, envelope and tail.
-    fn len(self) -> u64 {
+    /// The input's own length: its head, envelope and tail.
+    pub(super) fn input_len(self) -> u64 {
         self.head.len() as u64 + self.envelope.len() + self.tail.len() as u64
     }
 
-    /// The input's bytes from its start: its head, envelope and tail.
-    fn reader(self) -> io::Result<impl Read + 'a> {
-        Ok(self.head.chain(self.envelope.reader()?).chain(self.tail))
+    /// The input's length as kept: its own, or its numbered carrier parts'.
+    fn len(self) -> u64 {
+        self.parts
+            .map_or_else(|| self.input_len(), LeafParts::sealed_len)
+    }
+
+    /// The input's bytes from its start as kept: its head, envelope and
+    /// tail, or those sealed in its numbered carrier parts as they are read.
+    fn reader(self) -> io::Result<Box<dyn Read + 'a>> {
+        let input = self.head.chain(self.envelope.reader()?).chain(self.tail);
+        let reader: Box<dyn Read + 'a> = match self.parts {
+            Some(parts) => Box::new(parts.reader(input)),
+            None => Box::new(input),
+        };
+        Ok(reader)
     }
 
     /// The input's bytes joined, its head, envelope and tail, when they
