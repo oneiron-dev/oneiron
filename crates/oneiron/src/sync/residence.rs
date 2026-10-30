@@ -130,22 +130,21 @@ use super::window::Withhold;
 /// grant does not exhaust a smaller top-k before intersection. The page is
 /// short when the window holds fewer resident rows.
 ///
+/// `actor` is the read key the search reads under: the connection's own
+/// credential's, or a forwarded caller's at the locality its device signed
+/// (FIX 3550).
+///
 /// A recall's `scope` (FIX 2905) narrows the search before that window is
 /// cut, by the same worlds, projects, facet and kinds the device's own
 /// recall read, and returns the unit recall returns. A scope the home cannot
 /// evaluate is refused, never answered unscoped.
 pub fn home_search_candidates(
     vault: &Vault,
-    proof: &crate::authority::VerifiedSlip,
+    actor: crate::claim::ScopedReadActorKey,
     query: &str,
     limit: usize,
     scope: Option<&ResolvedRecallSelection>,
 ) -> Result<Vec<(EntityId, f32, WindowKey)>> {
-    let actor = vault
-        .credential_read_key(proof)?
-        .ok_or(Error::sync_protocol(
-            SyncProtocolValidation::DocumentAdmissionDenied,
-        ))?;
     let candidates = crate::memory::caps::narrowed_candidate_window(limit);
     let read = vault.scoped_read(actor);
     let found = match scope {
@@ -164,20 +163,23 @@ pub fn home_search_candidates(
 
 /// The forwarded `residence.search` a device signs and its home verifies
 /// (FIX 2907): the query, the limit as a big-endian `u64`, the device
-/// selector's wire bytes and the recall scope's transcript
-/// ([`recall_scope_transcript`], FIX 2905), in that order. Both ends build
-/// it here, from the values the request carries, so the two never sign
-/// different bytes.
+/// selector's wire bytes, the recall scope's transcript
+/// ([`recall_scope_transcript`], FIX 2905) and the caller's locality on the
+/// device, one byte, 0 on it and 1 off it (FIX 3550), in that order. Both
+/// ends build it here, from the values the request carries, so the two never
+/// sign different bytes.
 pub fn with_forwarded_search<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    locality: crate::claim::CallerLocality,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
-    let fields: [&[u8]; 4] = [query.as_bytes(), &limit, selector_wire, &scope];
+    let locality = search::caller_locality_field(locality);
+    let fields: [&[u8]; 5] = [query.as_bytes(), &limit, selector_wire, &scope, &locality];
     with(&crate::authority::ForwardedRequest {
         method: "residence.search",
         fields: &fields,

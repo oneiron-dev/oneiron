@@ -429,6 +429,10 @@ pub struct ExportArgs {
     #[arg(long)]
     pub out: Option<PathBuf>,
 
+    /// The linked machine, 32 hex digits, that receives each unopened secret sealed (FIX 11842).
+    #[arg(long, value_name = "ID")]
+    pub secrets_recipient: Option<String>,
+
     #[command(flatten)]
     pub serve: ServeArgs,
 }

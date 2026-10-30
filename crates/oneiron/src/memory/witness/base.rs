@@ -20,7 +20,6 @@ use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
 use crate::session_overlay::SessionWriteRoute;
 use crate::workspace_roster::RoomRegenerationPermit;
-use crate::write_envelope::WriteActor;
 
 /// Tags an importer holds for the turn it lands, and the cell the program
 /// leaves what they did to the turn's tagging marker in. They are settled in
@@ -548,7 +547,7 @@ impl Memory<'_> {
             // Rule A: the message is born in its writer's class from nothing
             // the door read, so only a person's message has a birth to name.
             let birth = RowBirth::written(
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 MadeByClass::of_writer(self.actor_class),
                 "witness.message",
                 &[],

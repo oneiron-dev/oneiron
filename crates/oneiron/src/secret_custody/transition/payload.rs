@@ -23,6 +23,14 @@
 //! so none opens at another place, among another count or as a one-envelope
 //! value. The value opens only from the whole transition, every envelope at
 //! its place; a missing piece leaves the change pending.
+//!
+//! While the carrier wire is on, a transition whose value is sealed under
+//! its own carrier key first (transition v3, FIX 7402) opens with its own
+//! magic and signs that key's reference beside its piece fields; the
+//! envelopes each permit opens then hold the value sealed under that key,
+//! whole before it is split, never the value itself (`super::carrier_leaf`).
+//! With the wire off a carrier is exactly as before, and one that names a
+//! key does not decode.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use getrandom::SysRng;
@@ -32,14 +40,22 @@ use oneiron_crypto::{
 };
 use zeroize::Zeroizing;
 
+use super::super::carrier_custody::{
+    CARRIER_REF_BYTES, CUSTODY_CARRIER_LEAF_WIRE, CUSTODY_TRANSITION_WIRE_VERSION, CarrierRef,
+};
 use super::super::codec::{decode_secret_custody_body, invalid_body};
 use super::super::types::{SecretCustodyRecord, SecretCustodyStatus};
 use super::{CustodyTransition, custody_portable};
 use crate::authority::{AuthorityEntryHash, CustodyRecipientPermit, WrapRecipient};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::CustodyKind;
 
 const MAGIC: &[u8; 4] = b"OCT2";
+/// The magic of a transition whose value is sealed under its own carrier
+/// key (transition v3, FIX 7402): its piece fields are followed by the
+/// transition wire version and the key's reference.
+const MAGIC_LEAF: &[u8; 4] = b"OCT3";
 const SIGNATURE_DOMAIN: &[u8] = b"oneiron/custody-transition/v3";
 const VALUE_LABEL: &[u8] = b"oneiron/custody-value/v1";
 const KEY_ID_LABEL: &[u8] = b"custody/v2";
@@ -77,7 +93,11 @@ impl CustodyTransition {
     }
 
     fn encode_unsigned(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(MAGIC);
+        out.extend_from_slice(if self.carrier.is_some() {
+            MAGIC_LEAF
+        } else {
+            MAGIC
+        });
         out.extend_from_slice(self.id.as_bytes());
         out.extend_from_slice(&self.generation.to_be_bytes());
         out.push(status_byte(self.status));
@@ -88,6 +108,10 @@ impl CustodyTransition {
         out.extend_from_slice(&self.piece.to_be_bytes());
         out.extend_from_slice(&self.pieces.to_be_bytes());
         out.extend_from_slice(&self.first.to_be_bytes());
+        if let Some(carrier) = &self.carrier {
+            out.push(CUSTODY_TRANSITION_WIRE_VERSION);
+            out.extend_from_slice(&carrier.encode());
+        }
         put_bytes(out, &self.body);
         // Pieces are packed to at most `MAX_PIECE_VALUES` values.
         out.extend_from_slice(&(self.sealed.len() as u16).to_be_bytes());
@@ -127,15 +151,21 @@ impl CustodyTransition {
     }
 
     /// Decodes carrier bytes strictly: every length exact, nothing after the
-    /// signature. Decoding proves nothing; [`Self::verify`] does.
+    /// signature; a carrier key's reference only while the carrier wire is
+    /// on. Decoding proves nothing; [`Self::verify`] does.
     pub(crate) fn decode(bytes: &[u8]) -> Result<Self> {
         if bytes.len() > MAX_CARRIER_BYTES {
             return Err(malformed());
         }
         let mut read = Reader(bytes);
-        if read.take(MAGIC.len())? != MAGIC {
+        let magic = read.take(MAGIC.len())?;
+        let leafed = if magic == MAGIC {
+            false
+        } else if CUSTODY_CARRIER_LEAF_WIRE && magic == MAGIC_LEAF {
+            true
+        } else {
             return Err(malformed());
-        }
+        };
         let id = EntityId::from_bytes(read.array::<16>()?)?;
         let generation = u32::from_be_bytes(read.array()?);
         let status = status_from_byte(read.array::<1>()?[0])?;
@@ -146,6 +176,14 @@ impl CustodyTransition {
         let piece = u32::from_be_bytes(read.array()?);
         let pieces = u32::from_be_bytes(read.array()?);
         let first = u32::from_be_bytes(read.array()?);
+        let carrier = if leafed {
+            if read.array::<1>()?[0] != CUSTODY_TRANSITION_WIRE_VERSION {
+                return Err(malformed());
+            }
+            Some(CarrierRef::decode(&read.array::<CARRIER_REF_BYTES>()?).ok_or_else(malformed)?)
+        } else {
+            None
+        };
         let body = read.bytes()?.to_vec();
         let count = usize::from(u16::from_be_bytes(read.array()?));
         // Grown as values decode: a count is not taken on trust.
@@ -174,6 +212,7 @@ impl CustodyTransition {
             piece,
             pieces,
             first,
+            carrier,
             body,
             sealed,
             signer,
@@ -184,10 +223,11 @@ impl CustodyTransition {
     /// Whether this transition is whole: signed for `vault_id` by the key it
     /// names, over a portable record that agrees with it, its value sealed
     /// exactly when it is not revoked, under permits ascending by machine,
-    /// one each, each permit's envelopes together, with no zero digest. Who
-    /// signed, and for which request, is [`Self::verify`]'s question, asked
-    /// where the record is written: a window keeps relaying a transition
-    /// whose request this vault has not folded yet.
+    /// one each, each permit's envelopes together, with no zero digest, and
+    /// a carrier key, when it names one, of its own record at its
+    /// generation. Who signed, and for which request, is [`Self::verify`]'s
+    /// question, asked where the record is written: a window keeps relaying
+    /// a transition whose request this vault has not folded yet.
     pub(crate) fn verify_signed(&self, vault_id: &[u8; 32]) -> Result<()> {
         let key = VerifyingKey::from_bytes(&self.signer).map_err(|_| unsigned())?;
         key.verify_strict(
@@ -214,7 +254,12 @@ impl CustodyTransition {
         let zero = self
             .permits()
             .any(|permit| permit.profile == [0; 32] || permit.encryption_key == [0; 32]);
-        if !ascending || zero {
+        let foreign_key = self.carrier.is_some_and(|carrier| {
+            carrier.kind != CustodyKind::CustodyTransition
+                || carrier.credential != self.id
+                || carrier.generation != self.generation
+        });
+        if !ascending || zero || foreign_key {
             return Err(malformed());
         }
         Ok(())

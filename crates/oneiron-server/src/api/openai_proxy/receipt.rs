@@ -152,6 +152,7 @@ impl ProxyCaller {
                 actor_ref: self.actor_ref,
                 actor_class: self.actor_class,
                 credential_ref: self.credential_ref,
+                carrier_machine: None,
                 outcome,
                 request_digest: request.digest,
                 result_digest,
