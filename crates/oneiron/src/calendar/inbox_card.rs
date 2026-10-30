@@ -3,7 +3,8 @@
 //! morning re-ask.
 //!
 //! The engine owns no clock. The host runs [`run_calendar_card_pass`] on the
-//! elected home node, the proof [`run_due_home_node_prep`] asks of it, and the
+//! elected home node, the proof [`run_due_home_node_prep_with_sources`] asks
+//! of it, and the
 //! pass is the cards' only writer. Each card is one row keyed by its EVENT and
 //! kind: a re-run for the same EVENT and start finds its row and adds nothing,
 //! and a moved meeting's new card replaces the old one.
@@ -20,6 +21,8 @@
 //! ([`plan_check_in_re_ask`](super::plan_check_in_re_ask)), then rests. An
 //! answer or a dismissal before then cancels the re-ask.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::claims::CalendarStatus;
@@ -30,7 +33,7 @@ use super::outcome::{
 };
 use super::prep::{
     PrepEvent, PrepHomeNodeJob, PrepLensCopy, PrepPolicy, live_prep_event, plan_check_in_re_ask,
-    prep_wake_id, run_due_home_node_prep,
+    prep_wake_id, run_due_home_node_prep_with_sources,
 };
 use crate::agent_inbox_lens::{
     AgentInboxItemKind, AgentInboxLensItem, AgentInboxParticipant, InboxImpact,
@@ -41,6 +44,7 @@ use crate::error::Result;
 use crate::lens::GeneratedLens;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 use crate::task_verb::sdk::AgentVerb;
 use crate::vault::Vault;
 
@@ -132,6 +136,10 @@ pub struct CalendarInboxCard {
     /// nothing to say, or whose meeting was cancelled since: the wake ran,
     /// and the owners are shown nothing.
     pub lens: Option<GeneratedLens>,
+    /// Every vault row the delivered lens copied, the EVENT itself excluded:
+    /// the prep pack's cited rows. Empty on a check-in, which copies none,
+    /// and on a card with no lens.
+    pub source_refs: BTreeSet<EntityId>,
     /// A check-in's one morning re-ask; `None` on a prep card.
     pub re_ask: Option<CheckInReAsk>,
 }
@@ -369,6 +377,7 @@ impl CardRun<'_> {
             return self.withdraw(key, shown);
         }
         if cancelled && card.lens.take().is_some() {
+            card.source_refs.clear();
             self.report.withdrawn += 1;
             return write_card(self.vault, key, &card);
         }
@@ -438,13 +447,15 @@ impl CardRun<'_> {
             scheduled_for: fire_at,
             wake_id: prep_wake_id(&event_ref),
         };
-        let lens = run_due_home_node_prep(
+        let delivered = run_due_home_node_prep_with_sources(
             self.vault,
             &job,
             self.now,
             PrepPolicy::default(),
             &self.copy.prep,
         )?;
+        let (lens, source_refs) =
+            delivered.map_or((None, BTreeSet::new()), |(lens, refs)| (Some(lens), refs));
         let prepped = lens.is_some();
         write_card(
             self.vault,
@@ -457,6 +468,7 @@ impl CardRun<'_> {
                 delivered_at: self.now,
                 asked_at: self.now,
                 lens,
+                source_refs,
                 re_ask: None,
             },
         )?;
@@ -492,6 +504,7 @@ impl CardRun<'_> {
                 delivered_at: self.now,
                 asked_at: self.now,
                 lens: Some(lens),
+                source_refs: BTreeSet::new(),
                 re_ask: Some(CheckInReAsk::Planned { at: re_ask_at }),
             },
         )?;
@@ -636,4 +649,25 @@ fn read_card(vault: &Vault, key: &(EntityId, String)) -> Result<Option<CalendarI
 
 fn write_card(vault: &Vault, key: &(EntityId, String), card: &CalendarInboxCard) -> Result<()> {
     vault.with_write_txn(|wtxn| CARDS.put(&vault.store, wtxn, key, card))
+}
+
+/// Drops the meeting cards an erased row reached: every card keyed by it as
+/// the EVENT, and every card whose delivered lens copied it. Cards are few,
+/// so the source scan reads the whole table.
+pub(crate) fn erase_inbox_cards_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    CARDS.delete_from(store, txn, id.as_bytes())?;
+    let doomed = CARDS
+        .scan(store, &*txn)?
+        .into_iter()
+        .filter(|(_, card)| card.source_refs.contains(id))
+        .map(|(key, _)| key)
+        .collect::<Vec<_>>();
+    for key in doomed {
+        CARDS.delete(store, txn, &key)?;
+    }
+    Ok(())
 }
