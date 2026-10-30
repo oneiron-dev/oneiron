@@ -146,16 +146,34 @@ pub enum DeckRejectionInspection {
 
 impl DeckRejectionInspection {
     /// `base` read as a deck under the transaction's own package `limits`.
-    fn of_base(base: &[u8], limits: Limits) -> Self {
-        let read = Package::open(base, limits, &crate::office_body::document_resources())
-            .map_err(|error| format!("the deck package cannot be opened: {error}"))
-            .and_then(|package| {
-                let deck = inspect_deck(&package)
-                    .map_err(|error| format!("the deck cannot be read: {error}"))?;
+    /// A resource refusal is the engine's error (FIX 10587), never unreadable.
+    fn of_base(base: &[u8], limits: Limits) -> Result<Self> {
+        let package =
+            match Package::open(base, limits, &crate::office_body::document_resources()) {
+                Ok(package) => package,
+                Err(error) => {
+                    if let Some(refusal) = error.resource() {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    return Ok(Self::Unreadable {
+                        reason: format!("the deck package cannot be opened: {error}"),
+                    });
+                }
+            };
+        match inspect_deck(&package) {
+            Ok(deck) => {
                 let parts = package.names().map(str::to_owned).collect();
                 Ok(Self::Inspected { deck, parts })
-            });
-        read.unwrap_or_else(|reason| Self::Unreadable { reason })
+            }
+            Err(error) => {
+                if let Some(refusal) = error.resource() {
+                    return Err(crate::office_body::document_refused(refusal));
+                }
+                Ok(Self::Unreadable {
+                    reason: format!("the deck cannot be read: {error}"),
+                })
+            }
+        }
     }
 }
 
@@ -190,8 +208,12 @@ pub fn run_deck_transaction(
     ) {
         Ok(run) => run,
         Err(refusal) => {
+            // A resource refusal is the engine's error (FIX 10587), never a rejection.
+            if let Some(resource) = refusal.resource() {
+                return Err(crate::office_body::document_refused(resource));
+            }
             return Ok(DeckEditOutcome::Rejected(Box::new(DeckEditRejection {
-                inspection: DeckRejectionInspection::of_base(input, limits),
+                inspection: DeckRejectionInspection::of_base(input, limits)?,
                 report: ValidationReport::single_failure("deck_transaction", refusal.to_string()),
                 refusal,
             })));
@@ -356,7 +378,13 @@ pub(crate) fn verify_deck_proposal(
         assets,
         &crate::office_body::document_resources(),
     )
-    .map_err(|_| invalid("deck transaction cannot replay against its pinned base"))?;
+    .map_err(|error| {
+        // A resource refusal is the engine's error (FIX 10587), never an invalid base.
+        error.resource().map_or_else(
+            || invalid("deck transaction cannot replay against its pinned base"),
+            crate::office_body::document_refused,
+        )
+    })?;
     let touched: std::collections::BTreeSet<_> = expected
         .parts
         .iter()

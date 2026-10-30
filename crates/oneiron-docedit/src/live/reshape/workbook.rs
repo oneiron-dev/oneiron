@@ -32,8 +32,8 @@ use crate::native_patch::{NativeRefusal, chart_data, number};
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
 use crate::xlsx_body::{
-    XlsxArea, XlsxBook, XlsxCell, XlsxChange, XlsxSheet, XlsxValue, header_rename, mark_full_calc,
-    project_xlsx, read_xlsx_cells,
+    XlsxArea, XlsxBodyError, XlsxBook, XlsxCell, XlsxChange, XlsxSheet, XlsxValue, header_rename,
+    mark_full_calc, project_xlsx, read_xlsx_cells,
 };
 use range::Line;
 use std::collections::{BTreeMap, BTreeSet};
@@ -100,6 +100,12 @@ pub(super) struct InPlace {
     pub(super) notes: Vec<Conversion>,
 }
 
+/// A workbook read or write failure as the rebuild's reason: a resource
+/// refusal as itself (FIX 10587), any other one the editor's refusal.
+fn projection(error: XlsxBodyError) -> RebuildReason {
+    error.resource().map_or(RebuildReason::Projection, RebuildReason::Resource)
+}
+
 /// Plan the edit of a chart's own workbook `part`, reading the chart's
 /// series as the one resolution seats them, each on its own series' cells
 /// by identity ([`Resolved`]).
@@ -121,8 +127,7 @@ pub(super) fn in_place(
         .ok_or(RebuildReason::Unreadable)?;
     let limits = package.limits();
     let resources = package.resources().clone();
-    let book =
-        read_xlsx_cells(&source, limits, &resources).map_err(|_| RebuildReason::Projection)?;
+    let book = read_xlsx_cells(&source, limits, &resources).map_err(projection)?;
     let mut plan = Plan::new(&book, tree)?;
     let wants: Vec<Want<'_>> = wanted
         .data
@@ -196,7 +201,7 @@ pub(super) fn in_place(
         None
     } else {
         let projected = project_xlsx(&source, &changes, limits, &resources)
-            .map_err(|_| RebuildReason::Projection)?
+            .map_err(projection)?
             .bytes;
         let formulas = book
             .sheets
@@ -207,7 +212,7 @@ pub(super) fn in_place(
             notes.push(Conversion::WorkbookRecalcDeferred {
                 part: part.to_owned(),
             });
-            mark_full_calc(&projected, limits, &resources).map_err(|_| RebuildReason::Projection)?
+            mark_full_calc(&projected, limits, &resources).map_err(projection)?
         } else {
             projected
         })

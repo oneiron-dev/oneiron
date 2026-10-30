@@ -4,7 +4,7 @@ use super::archive::Archive;
 use super::model::*;
 use super::xml::Xml;
 use crate::deck::DeckView;
-use crate::resource::Resources;
+use crate::resource::{ResourceRefusal, Resources};
 use crate::retained_opc::{Limits, Package, XmlLimits};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -20,7 +20,7 @@ pub fn inspect_pptx(
     let limits = &Codec { limits, resources };
     let archive = Archive::read(bytes, limits)?;
     let mut inspection = inspect_parts(&archive.parts, limits)?;
-    resolve_positions(bytes, &archive.parts, &mut inspection, limits);
+    resolve_positions(bytes, &archive.parts, &mut inspection, limits).map_err(PptxError::Resource)?;
     Ok(inspection)
 }
 
@@ -29,13 +29,14 @@ pub fn inspect_pptx(
 /// the verified slide-space top-left of the shape (ARCH-0077). A shape whose
 /// geometry stays unresolved, or whose id is not unique on its slide, gets
 /// none, so its unit refuses and offers the slide. A package the resolver
-/// cannot read keeps the own-transform positions the inspector found.
+/// cannot read keeps the own-transform positions the inspector found; a
+/// resource refusal is `Err` (FIX 10587), never kept positions.
 pub(super) fn resolve_positions(
     bytes: &[u8],
     parts: &BTreeMap<String, Vec<u8>>,
     inspection: &mut PptxInspection,
     limits: &Codec<'_>,
-) {
+) -> Result<(), ResourceRefusal> {
     // The archive already expanded these parts; its own size is the budget.
     let package_limits = Limits {
         archive_bytes: bytes.len().max(1),
@@ -47,11 +48,23 @@ pub(super) fn resolve_positions(
             max_nodes: limits.max_xml_nodes,
         },
     };
-    let Ok(package) = Package::open(bytes, package_limits, limits.resources) else {
-        return;
+    let package = match Package::open(bytes, package_limits, limits.resources) {
+        Ok(package) => package,
+        Err(error) => {
+            if let Some(refusal) = error.resource() {
+                return Err(refusal);
+            }
+            return Ok(());
+        }
     };
-    let Ok(view) = DeckView::read(&package) else {
-        return;
+    let view = match DeckView::read(&package) {
+        Ok(view) => view,
+        Err(error) => {
+            if let Some(refusal) = error.resource() {
+                return Err(refusal);
+            }
+            return Ok(());
+        }
     };
     for slide in &mut inspection.slides {
         let deck = view.slides.iter().find(|deck| deck.sld_id == slide.sld_id);
@@ -66,6 +79,7 @@ pub(super) fn resolve_positions(
             };
         }
     }
+    Ok(())
 }
 pub(super) fn text<'a>(parts: &'a BTreeMap<String, Vec<u8>>, name: &str) -> PatchResult<&'a str> {
     std::str::from_utf8(parts.get(name).ok_or(PptxError::InvalidReference)?)
