@@ -17,9 +17,10 @@
 //! against the source's text and lands as a source text edit, in the one
 //! writer that admits it and keeps the peer's operations, before any
 //! acknowledgement (C2, C5). A ruled hold (`sealed_file_edited`,
-//! `projection_edit_conflict`) lands and keeps nothing, so the peer's
-//! acknowledgement covers none of its operations and it keeps the edit
-//! queued. An update sent under the source id takes today's path.
+//! `projection_edit_conflict`) lands and applies nothing: its held record is
+//! kept and its acknowledgement covers its operations, so the peer stops
+//! sending it (FIX 10598). An update sent under the source id takes today's
+//! path.
 //!
 //! **Residence.** A peer is shown a marked source by its copy id; a copy id
 //! it names is judged as its source.
@@ -29,6 +30,7 @@ use std::collections::BTreeMap;
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, ID, LoroDoc, UpdateOptions, VersionVector};
 
+use super::rows::HeldEdit;
 use super::{GENERATION_CONTEXT, SyncSecretProjection, copy_id};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
@@ -370,22 +372,25 @@ pub(crate) fn document_copy_in_txn(
 /// landed in one writer: `admit` judges it first, the lineage takes the
 /// peer's operations, and its changed text lands on the source's durable
 /// text through the visible diff and the canonical writer, carrying the
-/// copy's mark (FIX 10732). A ruled hold persists nothing.
+/// copy's mark (FIX 10732). A ruled hold lands and applies nothing: its held
+/// record is kept, and it answers the vector to acknowledge the edit with,
+/// the stored lineage's and the held operations', so the peer stops sending
+/// it (FIX 10598). `None` for an edit that landed.
 ///
 /// # Errors
 /// `admit`'s refusal, an update that does not import whole on the lineage,
-/// a store failure, the visible diff's own failure, or the canonical
-/// writer's.
+/// a store failure (the hold's record included), the visible diff's own
+/// failure, or the canonical writer's.
 pub(crate) fn import_document_copy<F>(
     vault: &Vault,
     source: EntityId,
     bytes: &[u8],
     admit: F,
-) -> Result<()>
+) -> Result<Option<Vec<u8>>>
 where
     F: FnOnce(&mut RwTxn<'_>) -> Result<()>,
 {
-    vault.with_write_txn_grouped(|txn| {
+    let held = vault.with_write_txn_grouped(|txn| {
         admit(txn)?;
         let marks = RepoIndexMarks::read_scoped_in_txn(vault, txn)?;
         // The source's text as this writer reads it, never an older copy
@@ -405,6 +410,7 @@ where
         }
         let id = copy_id(&source)?;
         let lineage = load_lineage(vault, txn, id)?;
+        let stored = lineage.oplog_vv();
         bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
@@ -427,10 +433,15 @@ where
             RepoProjectionDiffResult::Unchanged => None,
             RepoProjectionDiffResult::Applied(bytes) => match String::from_utf8(bytes) {
                 Ok(text) => Some(text),
-                Err(_) => return held(source, &RepoProjectionDiffResult::ProjectionEditConflict),
+                Err(_) => {
+                    let cause = RepoProjectionDiffResult::ProjectionEditConflict;
+                    return Ok(Some(held(source, cause, bytes, stored)));
+                }
             },
             cause @ (RepoProjectionDiffResult::SealedFileEdited
-            | RepoProjectionDiffResult::ProjectionEditConflict) => return held(source, &cause),
+            | RepoProjectionDiffResult::ProjectionEditConflict) => {
+                return Ok(Some(held(source, cause, bytes, stored)));
+            }
         };
         if let Some(text) = landed {
             // A fresh peer: the landing's operations are no one's but the
@@ -467,17 +478,40 @@ where
             )?;
         }
         save_lineage(vault, txn, id, &lineage)?;
-        Ok(())
-    })
+        Ok(None)
+    })?;
+    let Some((edit, vector)) = held else {
+        return Ok(None);
+    };
+    let place = format!("e:{}", copy_id(&source)?.to_hex());
+    super::held::record_held_edits(vault, &place, std::slice::from_ref(&edit))?;
+    Ok(Some(vector))
 }
 
-fn held(source: EntityId, cause: &RepoProjectionDiffResult) -> Result<()> {
+/// The ruled hold of `bytes`, a peer's update of `source`'s copy lineage:
+/// its held edit, and the vector it is acknowledged with, `stored` (the
+/// lineage as stored) with the update's own operations, which nothing here
+/// keeps.
+fn held(
+    source: EntityId,
+    cause: RepoProjectionDiffResult,
+    bytes: &[u8],
+    mut stored: VersionVector,
+) -> (HeldEdit, Vec<u8>) {
     tracing::warn!(
         source = %source.to_hex(),
         ?cause,
-        "sync: a document copy edit is held on its ruled cause; the peer keeps it queued"
+        "sync: a document copy edit is held on its ruled cause; its held record is kept"
     );
-    Ok(())
+    if let Ok(meta) = LoroDoc::decode_import_blob_meta(bytes, true) {
+        stored.merge(&meta.partial_end_vv);
+    }
+    let edit = HeldEdit {
+        source,
+        cause,
+        edit: crate::sync::quarantine::payload_hash(bytes),
+    };
+    (edit, stored.encode())
 }
 
 /// The copy id a peer knows the marked snapshot ASSET `source`'s document

@@ -177,7 +177,7 @@ pub(super) fn handle_document(
             // FIX 10829: one under a whole-text copy's or a re-released copy
             // id's own row id that builds on its copy lineage edits it too.
             let source = source.or_else(|| lineage_edit(server, &document, entity, payload));
-            match source {
+            let held = match source {
                 Some(_) => document.import_copy_from_peer(
                     payload,
                     selector_grant_scope(),
@@ -185,22 +185,33 @@ pub(super) fn handle_document(
                     peer,
                     |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
                 ),
-                None => document.import_from_peer(
-                    kind,
-                    payload,
-                    selector_grant_scope(),
-                    &request.selector,
-                    peer,
-                    |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
-                ),
+                None => document
+                    .import_from_peer(
+                        kind,
+                        payload,
+                        selector_grant_scope(),
+                        &request.selector,
+                        peer,
+                        |txn| auth.credential_is_live_in_write_txn(&server.vault, txn),
+                    )
+                    .map(|()| None),
             }
             .map_err(storage_error)?;
-            let vv = ack_vector(server, &document, source)?;
+            // FIX 10598: a held copy edit is acknowledged with the vector its
+            // held operations are in, so the device stops sending it, and is
+            // never relayed: nothing of it landed.
+            let vv = match &held {
+                Some(vector) => vector.clone(),
+                None => ack_vector(server, &document, source)?,
+            };
             drop(document);
             let ack = transport::encode_document(entity, document_sub_tags::ACK, &vv)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document ack"))?;
             let _ = direct.send(ack);
+            if held.is_some() {
+                return Ok(());
+            }
             let frame = transport::encode_document(entity, kind, payload)
                 .into_result()
                 .map_err(|_| ProtocolError::InvalidPayload("invalid document frame"))?;
