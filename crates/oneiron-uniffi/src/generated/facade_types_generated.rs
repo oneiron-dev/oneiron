@@ -28529,7 +28529,7 @@ pub struct EvidenceVersion {
     #[serde(rename = "id")]
     pub id: String,
     #[serde(rename = "body_hash")]
-    pub body_hash: Vec<u8>,
+    pub body_hash: String,
 }
 
 /// `oneiron::llm::decision::types::PairedReading`.
@@ -45159,7 +45159,7 @@ pub struct ImageRef {
     #[serde(rename = "evidence")]
     pub evidence: EvidenceVersion,
     #[serde(rename = "hash")]
-    pub hash: Vec<u8>,
+    pub hash: String,
     #[serde(rename = "media_type")]
     pub media_type: String,
     #[serde(rename = "width")]

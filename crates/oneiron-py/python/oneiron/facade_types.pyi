@@ -9199,7 +9199,7 @@ class Of360Ar3MetricTier(TypedDict):
     report: Of360EvalReport
 class EvidenceVersion(TypedDict):
     id: str
-    body_hash: list[int]
+    body_hash: str
 class PairedReading(TypedDict):
     provider: ProviderPin
     question: str
@@ -14230,7 +14230,7 @@ class SlideLocation(TypedDict):
 BandMode = Literal["shadow", "enforce"]
 class ImageRef(TypedDict):
     evidence: EvidenceVersion
-    hash: list[int]
+    hash: str
     media_type: str
     width: int
     height: int
