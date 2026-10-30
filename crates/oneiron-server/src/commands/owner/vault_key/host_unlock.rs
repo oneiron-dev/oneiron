@@ -3,9 +3,11 @@
 //! `vault_key` whole).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::CheckpointKey;
 use oneiron::world_keys::{HybridSecretKey, VaultKeyUnlock};
+use oneiron_keystore::DeviceKeystore;
 use zeroize::Zeroizing;
 
 use super::{
@@ -13,6 +15,7 @@ use super::{
     secret32,
 };
 use crate::cli::{RestoreArgs, SecretSourceArgs, UnlockMethod};
+use crate::config::ServeConfig;
 
 /// What unlocks a backup's vault key, or a sealed vault's pages, on this
 /// host, its secret read once and wiped on drop.
@@ -253,7 +256,33 @@ impl HostUnlock {
                 vault_id: *vault_id,
                 pieces,
                 passphrase: passphrase.as_ref(),
+                keystore: None,
             }),
+        }
+    }
+
+    /// This install's keystore when this secret is a data-key kit, so a
+    /// sealed vault's pages unlock with the piece of the kit it keeps beside
+    /// the pieces given (FIX 11976). `None` for every other secret, and for a
+    /// keystore that is off or does not open: the kit then unlocks with the
+    /// pieces given alone.
+    pub(super) fn kit_keystore(
+        &self,
+        config: &ServeConfig,
+        vault_path: &Path,
+    ) -> Option<Arc<dyn DeviceKeystore>> {
+        if !matches!(self, Self::VaultKeyKit { .. }) {
+            return None;
+        }
+        match config.keystore.open(vault_path) {
+            Ok(keystore) => keystore,
+            Err(error) => {
+                tracing::warn!(
+                    reason = ?error.downcast_ref::<oneiron_keystore::KeystoreError>(),
+                    "the keystore did not open; the kit unlocks with the pieces given"
+                );
+                None
+            }
         }
     }
 

@@ -234,7 +234,10 @@ pub(crate) fn prepare_page_seal(
     refuse_orphaned_page_seal(path)?;
     if world_keys::vault_is_sealed(path)? {
         let unlocked = match unlock.and_then(|unlock| unlock.engine()) {
-            Some(engine) => world_keys::unlock_page_seal(path, &engine),
+            Some(engine) => {
+                let keystore = unlock.and_then(|unlock| unlock.kit_keystore(config, path));
+                world_keys::unlock_page_seal(path, &engine.with_kept_piece(keystore.as_ref()))
+            }
             None => {
                 let keystore = config.keystore.open(path)?.ok_or_else(|| {
                     anyhow::anyhow!(
@@ -286,7 +289,8 @@ pub(crate) fn page_seal_at(
         return Ok(None);
     }
     let mut device = None;
-    if let Some(keystore) = config.keystore.open(path)? {
+    let keystore = config.keystore.open(path)?;
+    if let Some(keystore) = &keystore {
         match world_keys::unlock_page_seal(path, &VaultKeyUnlock::Device(keystore.as_ref())) {
             Ok(seal) => return Ok(Some(seal)),
             Err(error) => device = Some(error),
@@ -295,7 +299,7 @@ pub(crate) fn page_seal_at(
     if let Some(unlock) = unlock
         && let Some(engine) = unlock.engine()
     {
-        return world_keys::unlock_page_seal(path, &engine)
+        return world_keys::unlock_page_seal(path, &engine.with_kept_piece(keystore.as_ref()))
             .map(Some)
             .map_err(|error| {
                 anyhow::anyhow!(
