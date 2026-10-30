@@ -343,6 +343,8 @@ pub(super) struct CuratorInverse {
     rung: Rung,
     prior_revision: [u8; 32],
     prior_confidence: f32,
+    /// The prior band and basis, restored with the number (FIX 11036).
+    prior_confidence_details: crate::claim::ConfidenceDetails,
     prior_stale: bool,
     prior_valid_to: Option<u64>,
     prior_claim_of_weight: Option<f32>,
@@ -444,6 +446,7 @@ fn apply_in_txn(
         rung,
         prior_revision: *hash.as_bytes(),
         prior_confidence: body.confidence,
+        prior_confidence_details: body.confidence_details(),
         prior_stale: body.stale,
         prior_valid_to: body.valid_to,
         prior_claim_of_weight: weight,
@@ -600,6 +603,7 @@ fn stand_copy_in_txn(
             body.value.clone(),
             inverse.prior_confidence,
         )
+        .with_confidence_details(inverse.prior_confidence_details)
         .with_validity(body.valid_from, inverse.prior_valid_to),
         &body,
     )
