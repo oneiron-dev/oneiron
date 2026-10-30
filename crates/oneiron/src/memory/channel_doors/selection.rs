@@ -66,6 +66,31 @@ pub struct ChannelSelectionRequest {
     pub thread_ref: Option<String>,
 }
 
+impl ChannelSelectionRequest {
+    /// The send context this selection question hands to the send it
+    /// answers ([`crate::outbound::OutboundDispatchRequest::send_autonomy_context`]):
+    /// its relationship and scope keys, each candidate's face, and the
+    /// counterparty class the host passed explicitly. The send's dispatch
+    /// then selects its sender by the same rules this question asked.
+    #[must_use]
+    pub fn send_autonomy(
+        &self,
+        explicit_class: Option<&str>,
+    ) -> crate::channel_identity_autonomy::SendAutonomyContext {
+        crate::channel_identity_autonomy::SendAutonomyContext::from_host(
+            self.relationship,
+            explicit_class,
+        )
+        .with_selection(
+            self.applicable_scopes.clone(),
+            self.candidates
+                .iter()
+                .map(|candidate| (candidate.identity_ref, candidate.face))
+                .collect(),
+        )
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ChannelSelectionView {
     pub revision: u64,
