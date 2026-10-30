@@ -1297,6 +1297,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<SkillOptimizeTradeoffPickRequest>(),
             ),
             (
+                "vault.skills.optimize.tradeoff_asks.resolve",
+                crate::code_run::vault_read::request_schema::<SkillOptimizeTradeoffResolveRequest>(
+                ),
+            ),
+            (
                 "vault.skills.governance.get",
                 crate::code_run::vault_read::request_schema::<HubSkillRequest>(),
             ),
@@ -5977,6 +5982,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consolidation.candidate_decisions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::DreamerCandidateDecisionsRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.promote",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationPromoteRequest,
@@ -7155,6 +7166,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.optimize.preferences.set",
     "vault.skills.optimize.tradeoff_asks",
     "vault.skills.optimize.tradeoff_asks.pick",
+    "vault.skills.optimize.tradeoff_asks.resolve",
     "vault.skills.governance.get",
     "vault.skills.governance.set",
     "vault.packs.hooks.bind",
@@ -7691,6 +7703,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.home.get",
     "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
+    "vault.consolidation.candidate_decisions",
     "vault.consolidation.promote",
     "vault.consolidation.pin",
     "vault.consolidation.frontier",
@@ -8365,6 +8378,11 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>,
         >(),
         "vault.skills.optimize.tradeoff_asks.pick" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::SkillOptimizeResultView,
+            >()
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
             crate::code_run::vault_read::request_schema::<
                 crate::task_verb::sdk::SkillOptimizeResultView,
             >()
@@ -10002,6 +10020,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.consolidation.lineage" => crate::code_run::vault_read::request_schema::<
             Option<crate::dreamer_runner::ConsolidationLineageView>,
+        >(),
+        "vault.consolidation.candidate_decisions" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::DreamerDecidedCandidateView>,
         >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
@@ -12257,6 +12278,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17914,6 +17942,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.candidate_decisions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.promote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19773,6 +19808,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
             let _input: SkillOptimizeTradeoffPickRequest = decode(value.clone())?;
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
+            let _input: SkillOptimizeTradeoffResolveRequest = decode(value.clone())?;
         }
         "vault.skills.governance.get" => {
             let _input: HubSkillRequest = decode(value.clone())?;
@@ -22532,6 +22570,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.lineage" => {
             let _input: crate::dreamer_runner::ConsolidationLineageRequest = decode(value.clone())?;
         }
+        "vault.consolidation.candidate_decisions" => {
+            let _input: crate::memory::DreamerCandidateDecisionsRequest = decode(value.clone())?;
+        }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
@@ -23607,6 +23648,9 @@ pub fn invoke(
         }
         "vault.skills.optimize.tradeoff_asks.pick" => encode(
             vault_skills_optimize_tradeoff_asks_pick(memory, decode(value)?)?,
+        ),
+        "vault.skills.optimize.tradeoff_asks.resolve" => encode(
+            vault_skills_optimize_tradeoff_asks_resolve(memory, decode(value)?)?,
         ),
         "vault.skills.governance.get" => {
             encode(vault_skills_governance_get(memory, decode(value)?)?)
@@ -25161,6 +25205,9 @@ pub fn invoke(
         "vault.consolidation.lineage" => {
             encode(vault_consolidation_lineage(memory, decode(value)?)?)
         }
+        "vault.consolidation.candidate_decisions" => encode(
+            vault_consolidation_candidate_decisions(memory, decode(value)?)?,
+        ),
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -27843,18 +27890,25 @@ pub fn vault_skills_optimize_tradeoff_asks(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>> {
-    crate::task_verb::sdk::skill_optimize_tradeoff_asks_as_owner(
-        memory.vault(),
-        &memory.embedded_owner("vault.skills.optimize.tradeoff_asks")?,
-    )
+    crate::task_verb::sdk::skill_optimize_tradeoff_asks_for(memory.vault(), &memory.actor())
 }
 pub fn vault_skills_optimize_tradeoff_asks_pick(
     memory: &Memory<'_>,
     input: SkillOptimizeTradeoffPickRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillOptimizeResultView> {
-    crate::task_verb::sdk::skill_optimize_tradeoff_pick_as_owner(
+    crate::task_verb::sdk::skill_optimize_tradeoff_pick_by(
         memory.vault(),
-        &memory.embedded_owner("vault.skills.optimize.tradeoff_asks.pick")?,
+        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        &input,
+    )
+}
+pub fn vault_skills_optimize_tradeoff_asks_resolve(
+    memory: &Memory<'_>,
+    input: SkillOptimizeTradeoffResolveRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillOptimizeResultView> {
+    crate::task_verb::sdk::skill_optimize_tradeoff_resolve_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.optimize.tradeoff_asks.resolve")?,
         &input,
     )
 }
@@ -34679,6 +34733,16 @@ pub fn vault_consolidation_lineage(
     crate::dreamer_runner::consolidation_lineage_as(
         memory.vault(),
         &memory.embedded_owner("vault.consolidation.lineage")?,
+        input,
+    )
+}
+pub fn vault_consolidation_candidate_decisions(
+    memory: &Memory<'_>,
+    input: crate::memory::DreamerCandidateDecisionsRequest,
+) -> MemoryResult<Vec<crate::memory::DreamerDecidedCandidateView>> {
+    crate::memory::read_dreamer_candidate_decisions_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.candidate_decisions")?,
         input,
     )
 }
