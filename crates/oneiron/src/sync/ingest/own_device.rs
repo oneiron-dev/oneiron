@@ -4,13 +4,15 @@
 //! A MESSAGE body names no signer, so its door cannot tell an own machine's
 //! row from a federation peer's by the bytes alone. The import that brings
 //! them can: an own-device import ([`OwnDeviceImport`]) comes from a client
-//! with no federation peer bound, over a connection whose machine proved
-//! itself and still stands here on the key it proved. While such an import
-//! runs, the doors on its thread mint a [`VerifiedOwnDeviceLane`] for a
-//! MESSAGE row of the window it lands in only when the import's own bytes
-//! insert that row with those exact bytes: the proof covers the connection,
-//! the digest binds the row to it. A row of the window the import did not
-//! bring, such as one a forward pass replays from the document, takes none.
+//! with no federation peer bound, or into the home from an own-device
+//! socket's push ([`with_own_device_push`], FIX 12112), over a connection
+//! whose machine proved itself and still stands here on the key it proved.
+//! While such an import runs, the doors on its thread mint a
+//! [`VerifiedOwnDeviceLane`] for a MESSAGE row of the window it lands in
+//! only when the import's own bytes insert that row with those exact bytes:
+//! the proof covers the connection, the digest binds the row to it. A row of
+//! the window the import did not bring, such as one a forward pass replays
+//! from the document, takes none.
 //!
 //! A federation peer's row stays the peer's on whichever own machine relays
 //! it: federation admission files its digest in the window's peer origin map
@@ -27,6 +29,7 @@ use loro::json::{JsonOpContent, MapOp};
 use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 
 use super::entity::{IngestCtx, Residence};
+use crate::authority::PeerMachine;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_MESSAGE;
@@ -115,6 +118,24 @@ pub(in crate::sync) fn with_own_device_import<T>(
     let _restore =
         Restore(OWN_DEVICE_SPAN.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
     land()
+}
+
+/// The home's landing of `update`, a window push the machine `from` sent
+/// over a socket whose upgrade proved it, into the window `key` whose live
+/// document is `doc` (FIX 12112): `land` runs under that socket's own-device
+/// import, rechecked now, as a client's import of its home's bytes does. A
+/// machine that does not stand here on the key it proved lands it with no
+/// lane. Call it only on an own-device lane: a federation socket's pushes
+/// take federated admission, never this.
+pub fn with_own_device_push<T>(
+    vault: &Vault,
+    from: PeerMachine,
+    (key, doc): (&WindowKey, &LoroDoc),
+    update: &[u8],
+    land: impl FnOnce() -> T,
+) -> T {
+    let import = OwnDeviceImport::proven(vault, from);
+    with_own_device_import(vault, import.as_ref(), (key, doc), update, land)
 }
 
 /// Each MESSAGE row `update` itself inserts into the window whose live
