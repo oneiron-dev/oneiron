@@ -10,7 +10,8 @@ use super::codec::{
     next_evidence_sequence_in_txn, validate_evidence,
 };
 use super::judge::{AttributionDecisions, verdict_subject};
-use super::split::{classify_split, unclear_floor_sourced};
+use super::decision_receipts::keep_decision_receipts_in_txn;
+use super::split::{classify_split_traced, measure_split_notes, unclear_floor_sourced};
 use super::types::{
     AttributionJudgment, AttributionLane, AttributionVerdict, JudgeRequest, OutcomeEvidence,
     SkillEditProposal,
@@ -72,7 +73,9 @@ pub fn run_attribution_projector(
 
 /// [`run_attribution_projector`] through the host's decisions — the seam the
 /// model tier uses; `None` is the rule tier. Each judgment is stamped with the
-/// exact revision that answered it, when one provider answered all of it.
+/// exact revision that answered it, when one provider answered all of it, and
+/// the receipts of the decisions that gave it are kept beside it, once
+/// ([`super::attribution_decision_receipts`], FIX 11512).
 ///
 /// Abstained evidence is left unjudged but still ADVANCES the cursor: an
 /// abstention is a completed routing decision ("this evidence attributes to
@@ -93,7 +96,8 @@ pub fn run_attribution_projector_with_decisions(
 ) -> Result<Vec<AttributionJudgment>> {
     let pending = evidence_after(vault, since_cursor)?;
     let mut judgments = Vec::new();
-    let mut revisions = Vec::new();
+    // Each judgment's judge revision and decision receipts, in step.
+    let mut stamps = Vec::new();
     let mut unclear = Vec::new();
     let mut causes = Vec::new();
     let mut highest = since_cursor;
@@ -116,9 +120,11 @@ pub fn run_attribution_projector_with_decisions(
             floor,
             sources: sources.as_deref(),
         };
-        let Some((split, revision)) = classify_split(decisions, &request, &[])? else {
+        let (classified, trace) = classify_split_traced(decisions, &request, &[])?;
+        let Some((split, revision)) = classified else {
             continue;
         };
+        measure_split_notes(vault, &split);
         // One region, so one label holds the whole outcome.
         let Some(verdict) = split.sole() else {
             continue;
@@ -156,7 +162,7 @@ pub fn run_attribution_projector_with_decisions(
             evidence_receipts: vec![evidence.receipt_ref.clone()],
             at: evidence.at,
         });
-        revisions.push(revision);
+        stamps.push((revision, trace.receipts));
     }
 
     vault.with_write_txn(|wtxn| {
@@ -167,7 +173,7 @@ pub fn run_attribution_projector_with_decisions(
                 put_unclear_in_txn(vault, wtxn, row)?;
             }
         }
-        for (judgment, revision) in judgments.iter().zip(&revisions) {
+        for (judgment, (revision, receipts)) in judgments.iter().zip(&stamps) {
             // An erase since this pass read the evidence left it naming no
             // one: its judgment is not made (FIX 8988).
             if !still_names_in_txn(vault, wtxn, judgment)? {
@@ -197,6 +203,9 @@ pub fn run_attribution_projector_with_decisions(
                 )?;
             }
             JUDGMENT.put(&vault.store, wtxn, &judgment.sequence, judgment)?;
+            // The row is immutable, so its decisions' receipts are kept
+            // beside it (FIX 11512).
+            keep_decision_receipts_in_txn(vault, wtxn, judgment.sequence, receipts)?;
             // A replay that now settles what an earlier pass held: the outcome
             // is judged, so it no longer waits in the unclear ledger.
             delete_unclear_in_txn(

@@ -88,13 +88,16 @@ pub(crate) struct Bm25RecencyConfig {
     pub(crate) now_secs: u64,
 }
 
+/// Direct keyword search keeps its pre-learned-blend recency boost (FIX 12009).
+const DIRECT_SEARCH_RECENCY_BOOST: f64 = 0.35;
+
 impl Bm25RecencyConfig {
     /// The blend a direct keyword search runs by default (ARCH-0031
-    /// `recencyBlend: "enabled-by-default"`): the bootstrap recency weight
-    /// as its boost, aged from `now_secs`.
+    /// `recencyBlend: "enabled-by-default"`): the fixed 0.35 boost, aged from
+    /// `now_secs`, independent of the learned blend's recency share.
     pub(super) fn table_default(now_secs: u64) -> Self {
         Self {
-            boost: f64::from(crate::store::RetrievalBlendWeights::bootstrap().recency),
+            boost: DIRECT_SEARCH_RECENCY_BOOST,
             now_secs,
         }
     }

@@ -98,10 +98,12 @@ pub struct OfferPilot {
     /// of them is unknown.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_source_rows: Option<Vec<EntityId>>,
-    /// The rows the measurement was read from: the release's, with the
-    /// evaluator's own trace of its receipts, scores, costs and sufficiency
-    /// (FIX 5761). `None` until measured, and when either is unknown; an
-    /// evaluator's receipt keys are never read as rows.
+    /// The rows the measurement was read from: the release rows it was
+    /// scored from, plus the evaluator's own trace of its receipts, scores,
+    /// costs and sufficiency when one was recorded (FIX 5761, FIX 11885).
+    /// `None` until measured; after completion `None` only when the
+    /// release's own rows are unknown. An evaluator's receipt keys are
+    /// never read as rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub measurement_source_rows: Option<Vec<EntityId>>,
 }
@@ -380,7 +382,9 @@ pub fn complete_pilot(
 
 /// [`complete_pilot`] for an evaluator whose host holds the complete trace
 /// of the rows its measurement was read from (FIX 5761). The pilot keeps it
-/// beside its release's; `None` is unknown.
+/// beside its release's, or the release rows alone when no trace was
+/// recorded (FIX 11885); `None` after completion only when the release's
+/// own rows are unknown.
 /// # Errors
 /// As [`complete_pilot`].
 pub fn complete_pilot_traced(
@@ -420,8 +424,16 @@ pub fn complete_pilot_traced(
         pilot.measurement = Some(measurement);
         pilot.completed_at = Some(now);
         // A source an erase reached since the release, or one the trace names, does not come
-        // back (FIX 6933).
-        let measured = super::union_source_rows([pilot.release_source_rows.clone(), trace]);
+        // back (FIX 6933). An untraced completion measured the release alone:
+        // its evaluator named receipts by key only, and keys are never rows
+        // (FIX 11885).
+        let measured = match trace {
+            Some(trace) => super::union_source_rows([
+                pilot.release_source_rows.clone(),
+                Some(trace),
+            ]),
+            None => pilot.release_source_rows.clone(),
+        };
         pilot.measurement_source_rows = super::live_source_rows_in(vault, txn, measured)?;
         PILOTS.put(&vault.store, txn, &pilot.id, &pilot)?;
         Ok(pilot)

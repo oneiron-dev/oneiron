@@ -72,12 +72,15 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
+/// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
 pub(super) fn persist_replica(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
+    super::replica::seal::refuse_frozen_motion(vault, txn, doc)?;
     super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
     persist_structural(vault, txn, doc, false)
 }
@@ -642,12 +645,7 @@ pub(super) fn require_note_writer(
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
     if !body.author_ref.is(memory.actor())
-        && !super::proposals::automatic_edit_grant(
-            memory.vault(),
-            txn,
-            id,
-            memory.write_actor(),
-        )?
+        && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(

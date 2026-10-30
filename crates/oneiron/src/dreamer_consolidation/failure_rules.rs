@@ -246,7 +246,8 @@ pub(super) fn load(vault: &Vault) -> Result<Option<FailureRules>> {
 /// The rules in force: host configuration, or a resident's rules whose
 /// authoring claim is still admitted in this snapshot. Rules whose claim was
 /// retracted, superseded or rejected load as absent, so the manifest's own
-/// failure policy decides (H398).
+/// failure policy decides (H398); so do rules whose claim awaits its owner's
+/// critical confirm, until the owner answers (ARCH-0026 §G3).
 fn load_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FailureRules>> {
     let Some(bytes) = DREAMER_FAILURE_RULES.get(&vault.store, txn, &())? else {
         return Ok(None);
@@ -256,7 +257,9 @@ fn load_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<FailureRul
     stored.rules.validate()?;
     if let Some(claim) = &stored.claim {
         let claim = EntityId::from_hex(claim).map_err(|_| invalid())?;
-        if !claim_still_admitted_in_txn(vault, txn, &claim, author)? {
+        if !claim_still_admitted_in_txn(vault, txn, &claim, author)?
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &claim)?
+        {
             return Ok(None);
         }
     }
