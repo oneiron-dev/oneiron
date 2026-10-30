@@ -43,18 +43,30 @@ pub(super) fn read(mut pipe: std::fs::File) -> Result<ManagedRestoreInput, &'sta
     Ok(input)
 }
 
+/// The argv escrow recipient bytes a cold restore's begin-check read and
+/// verified against the plan (FIX 11988): the start seals these, never the
+/// files again, so a file swapped in between is not sealed unchecked. A
+/// role argv names no file for holds none; a vault VM's carrier bytes are
+/// not carried, since the carrier watch re-runs the plan check at its
+/// first look before it seals (FIX 11851).
+pub(in crate::managed) struct CheckedRecipients {
+    pub(in crate::managed) managed: Option<Vec<u8>>,
+    pub(in crate::managed) break_glass: Option<Vec<u8>>,
+}
+
 /// Checks each binding the plan names against this start: its vault and
 /// owners, its tier, the artifact's path, its signer pins, that its
 /// identity rides a result frame, and that each escrow recipient argv names
 /// is one of the plan's fresh recipients of that role, never a released
 /// one or one the plan did not authorize. In a vault VM a role argv names
 /// no file for is checked the same way against the carrier's file for it,
-/// as it stands now ([`vm_carrier_recipient`]).
+/// as it stands now ([`vm_carrier_recipient`]). Returns the argv bytes it
+/// read and verified, for the start to seal (FIX 11988).
 pub(super) fn check(
     plan: &ManagedRestorePlan,
     managed: &ManagedArgs,
     maximum_tier: bool,
-) -> Result<(), &'static str> {
+) -> Result<CheckedRecipients, &'static str> {
     let checks = [
         (
             plan.vault_name == managed.vault_name,
@@ -99,6 +111,10 @@ pub(super) fn check(
     if let Some((_, refusal)) = checks.into_iter().find(|(holds, _)| !holds) {
         return Err(refusal);
     }
+    let mut checked = CheckedRecipients {
+        managed: None,
+        break_glass: None,
+    };
     for (role, file) in [
         (EscrowRole::Managed, &managed.escrow_recipient),
         (EscrowRole::BreakGlass, &managed.break_glass_recipient),
@@ -125,8 +141,15 @@ pub(super) fn check(
                 "an escrow recipient argv names is not one of the plan's fresh recipients"
             });
         }
+        if !from_carrier {
+            let slot = match role {
+                EscrowRole::Managed => &mut checked.managed,
+                EscrowRole::BreakGlass => &mut checked.break_glass,
+            };
+            *slot = Some(public_key);
+        }
     }
-    Ok(())
+    Ok(checked)
 }
 
 /// Whether the plan authorizes `public_key` as a fresh escrow recipient of
