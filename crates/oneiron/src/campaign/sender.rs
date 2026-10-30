@@ -9,7 +9,8 @@
 //! fails as [`OutboundFailureKind::InvalidRequest`], never as a literal
 //! fallback or a second send. The leg's `SenderTransport` drops this
 //! sender's raw result (it forwards only the outcome, the remote task,
-//! and the provider wait), so the raw result stays empty on every path.
+//! the provider wait and the reported cost), so the raw result stays empty
+//! on every path.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
