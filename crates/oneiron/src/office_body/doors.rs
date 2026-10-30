@@ -164,7 +164,7 @@ impl Vault {
                 return Ok(());
             };
             let (_, doc) = self.loro_body(&txn, artifact, source.kind, Some(at))?;
-            self.typed_body_unmarked_in_txn(&txn, &doc)?
+            self.typed_body_unmarked_in_txn(&txn, artifact, &doc)?
         };
         if !unmarked {
             return Ok(());

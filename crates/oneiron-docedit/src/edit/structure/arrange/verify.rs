@@ -226,11 +226,36 @@ pub(in crate::edit::structure) fn verify(
                     (read("id"), read("idx"))
                 })
             };
+            // A creation-id end names the native id of the one non-group shape
+            // holding it in the input (FIX 10386); the writer refused any other
+            // case, so anything else here is a read-back fault.
+            let resolve =
+                |end: Option<(ShapeId<'_>, u32)>| -> Result<Option<(u32, u32)>, EditRefusal> {
+                end.map(|(shape, site)| {
+                    let id = match shape {
+                        ShapeId::Native(id) => id,
+                        ShapeId::Creation(guid) => {
+                            let mut held = old
+                                .shapes
+                                .iter()
+                                .filter(|shape| shape.creation_id.as_deref() == Some(guid));
+                            let one = held.next().ok_or(fault("the connector names no shape"))?;
+                            if held.next().is_some() || one.kind == ShapeKind::Group {
+                                return Err(fault("the connector names no single shape"));
+                            }
+                            one.id.ok_or(fault("the connector names a shape with no id"))?
+                        }
+                    };
+                    Ok((id, site))
+                })
+                .transpose()
+            };
+            let (start, end_asked) = (resolve(connector.start)?, resolve(connector.end)?);
             let asked =
                 |end: Option<(u32, u32)>| end.map(|(shape, site)| (Some(shape), Some(site)));
             if prst != Some(connector.preset.name())
-                || end("stCxn") != asked(connector.start)
-                || end("endCxn") != asked(connector.end)
+                || end("stCxn") != asked(start)
+                || end("endCxn") != asked(end_asked)
             {
                 return Err(fault("the connector is not as asked"));
             }

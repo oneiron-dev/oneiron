@@ -16,7 +16,9 @@ use loro::LoroDoc;
 use super::{DOCS, FORK_DOCS, HEADS, load};
 use crate::Vault;
 use crate::batch::secret_scan::{
-    CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_texts_in_txn, write_payload_hit,
+    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    mark_carrier_texts_in_txn, propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn,
+    write_payload_hit,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -79,16 +81,18 @@ fn body_in_txn(
 }
 
 /// `doc`'s state as the write door reads it whole, and each text in it. A
-/// deck's log keeps each operation as its JSON spelling, and a view shows
-/// the values it decodes to, so the decoded operations stand beside the
-/// stored state and each of their strings is a text marked under its own
-/// hash (FIX 2940); the stored spelling stays a text too.
+/// deck's log keeps each operation as its JSON spelling, and its tree and
+/// charts each node's and chart's fields, and a view shows the values they
+/// decode to, so the decoded operations and values stand beside the stored
+/// state and each of their strings is a text marked under its own hash
+/// (FIX 2940, FIX 8995); the stored spelling stays a text too.
 fn state_of(doc: &LoroDoc) -> Result<(serde_json::Value, Vec<String>)> {
     let mut state = serde_json::to_value(doc.get_deep_value())
         .map_err(|_| Error::InvariantViolation("typed body state did not encode"))?;
-    let ops = crate::office_body::deck_log_ops(&state);
-    if !ops.is_empty() {
-        state = serde_json::Value::Array(vec![state, serde_json::Value::Array(ops)]);
+    let mut decoded = crate::office_body::deck_log_ops(&state);
+    decoded.extend(crate::office_body::deck_json_values(&state));
+    if !decoded.is_empty() {
+        state = serde_json::Value::Array(vec![state, serde_json::Value::Array(decoded)]);
     }
     let mut texts = Vec::new();
     collect_texts(&state, &mut texts);
@@ -238,6 +242,16 @@ impl LiftedSources {
     pub(crate) fn keys(&self) -> &[EntityId] {
         &self.0
     }
+
+    /// These keys and `keys`, the custody records the marks of what a read
+    /// shows name, each once, in custody-id order: the keys of the parts a
+    /// deck preview's asked slides draw (FIX 10453).
+    pub(crate) fn with_keys(mut self, keys: impl IntoIterator<Item = EntityId>) -> Self {
+        self.0.extend(keys);
+        self.0.sort_unstable();
+        self.0.dedup();
+        self
+    }
 }
 
 /// The custody records the marks of `texts` name, a key in a marked member
@@ -315,6 +329,42 @@ impl Vault {
         )
     }
 
+    /// The custody records of `entity`'s typed body texts that the strings
+    /// `drawn` hold: a key whose value no drawn string holds withholds
+    /// nothing (FIX 12234). A span that does not read, and a key in a marked
+    /// member, count as [`Self::typed_body_lifted_sources_in_txn`] counts
+    /// them. Each key once, in custody-id order.
+    pub(crate) fn typed_body_lifted_sources_drawn_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        entity: &EntityId,
+        drawn: &[String],
+    ) -> Result<LiftedSources> {
+        let mut keys = Vec::new();
+        for text in body_texts_in_txn(&self.store, txn, entity)? {
+            let hash = blake3::hash(text.as_bytes());
+            let Some(mark) = masked_file_in_txn(&self.store, txn, hash.as_bytes())? else {
+                continue;
+            };
+            for key in &mark.keys {
+                let value = usize::try_from(key.start)
+                    .ok()
+                    .zip(usize::try_from(key.end).ok())
+                    .and_then(|(start, end)| text.get(start..end));
+                match value {
+                    Some(value) if !drawn.iter().any(|held| held.contains(value)) => {}
+                    _ => keys.push(key.custody),
+                }
+            }
+            for member in &mark.members {
+                keys.extend(member.keys.iter().map(|key| key.custody));
+            }
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        Ok(LiftedSources(keys))
+    }
+
     /// The keys the lifted texts a read of `entity`'s typed body may show
     /// hold, and their custody records, from one list of texts read in
     /// `txn`, the snapshot the read projects its view in: the live body's
@@ -348,35 +398,54 @@ impl Vault {
         Ok((LiftedKeys::of_in_txn(&self.store, txn, texts)?, sources))
     }
 
-    /// Whether `doc`, a typed body at an earlier frontier, holds a text with
-    /// a hit the write door finds that no mark covers yet.
+    /// Whether `doc`, `entity`'s typed body at an earlier frontier, holds a
+    /// text with a hit the write door finds that no mark covers yet and that
+    /// a write would act on: one the door's rules place, or one they cannot
+    /// while the owner's proposal for it is due (FIX 8996). A text whose key
+    /// no rule places, once its proposal stands, opens no writer: a masked
+    /// reader reads it as the door's placeholder.
     pub(crate) fn typed_body_unmarked_in_txn(
         &self,
         txn: &RoTxn<'_>,
+        entity: &EntityId,
         doc: &LoroDoc,
     ) -> Result<bool> {
-        Ok(carrier_texts_hit_in_txn(&self.store, txn, &state_of(doc)?.1)?.is_some())
+        let mut unplaced = false;
+        for text in state_of(doc)?.1 {
+            let hash = blake3::hash(text.as_bytes());
+            if write_payload_hit(text.as_bytes()).is_none()
+                || masked_file_in_txn(&self.store, txn, hash.as_bytes())?.is_some()
+            {
+                continue;
+            }
+            if carrier_text_placeable(text.as_bytes())? {
+                return Ok(true);
+            }
+            unplaced = true;
+        }
+        Ok(unplaced && typed_body_at_proposal_due_in_txn(self, txn, entity)?)
     }
 
     /// Marks the keys of each text in `doc`, `entity`'s typed body at an
     /// earlier frontier, in the caller's transaction, as the lift sweep
     /// marks its live body's: under each text's hash, the live body's row
     /// named as where they were found (FIX 2939). Only custody and span rows
-    /// are written; the stored document stays as it is, and a hit no text's
-    /// mark places is left unplaced.
+    /// are written; the stored document stays as it is. A hit no text's mark
+    /// places files the sweep's `unplaceable` proposal on the body's row
+    /// (FIX 8996).
     pub(crate) fn mark_typed_body_at_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
         entity: &EntityId,
         doc: &LoroDoc,
     ) -> Result<()> {
-        mark_state_in_txn(
+        let marked = mark_state_in_txn(
             self,
             txn,
             &side_table::TYPED_BODY_DOC,
             entity.as_bytes(),
             doc,
         )?;
-        Ok(())
+        propose_typed_body_at_in_txn(self, txn, entity, marked)
     }
 }

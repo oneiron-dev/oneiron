@@ -55,6 +55,7 @@ pub use consent::{
     ProposalSettleRequest, ProposalSettlement, ReviewedFork, SettleVerdict,
 };
 pub(crate) use consent::{DiscardAdmission, MergeAdmission};
+pub(crate) use holder_ask::resolve_holder_ask_in_txn;
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
 pub use live_units::LivePin;
@@ -69,7 +70,7 @@ pub use pptx::{
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
-pub(crate) use pptx::{deck_log_ops, live_refused};
+pub(crate) use pptx::{deck_json_values, deck_log_ops, live_refused};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
     OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,

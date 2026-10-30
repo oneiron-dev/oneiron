@@ -56,8 +56,8 @@ use crate::edit::geometry::{glue_of, preset_of};
 use crate::edit::transaction::StepAssetKind;
 use crate::edit::{
     AssetRef, Assets, BREAK, ConnectorPreset, Digest, EditRefusal, Effect, IdMarks, NewConnector,
-    NewGroup, NewPicture, NewShape, NoAssets, Picture, Preset, RunProps, StructureEdit, Target,
-    ValueEdit, Xfrm, edit, structure_patch,
+    NewGroup, NewPicture, NewShape, NoAssets, Picture, Preset, RunProps, ShapeId, StructureEdit,
+    Target, ValueEdit, Xfrm, edit, structure_patch,
 };
 use crate::graphic::{AssetRecord, GraphicLimits};
 use crate::ooxml::XmlTree;
@@ -912,7 +912,7 @@ fn born(
                 let kind = deck.nodes.get(&end.node)?.kind;
                 let (at, native) = work.at.get(&end.node)?;
                 (at == part && !matches!(kind, NodeKind::Slide | NodeKind::Group))
-                    .then_some((*native, end.site))
+                    .then_some((ShapeId::Native(*native), end.site))
             };
             let glued = (glue(start), glue(end));
             let (offset, extent, (flip_h, flip_v)) =
