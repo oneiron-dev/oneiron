@@ -86,10 +86,11 @@ impl Vault {
 
     /// The message text a provider event's archived body carries: Slack's
     /// `event.text`, LINE's `event.message.text` (the LINE door archives
-    /// one `{destination, event}` wrapper per event), and an email reply's
-    /// own top text ([`Self::read_provider_email`]). `None` for a channel
-    /// with no extractor, a non-message event, or a body the vault no longer
-    /// holds.
+    /// one `{destination, event}` wrapper per event), a LinkedIn message's
+    /// `text` (the inbox sync archives one message per event), and an email
+    /// reply's own top text ([`Self::read_provider_email`]). `None` for a
+    /// channel with no extractor, a non-message event, or a body the vault
+    /// no longer holds.
     ///
     /// The text is what the provider's sender wrote: a caller hands it on as
     /// foreign inbound data, never as instructions.
@@ -101,6 +102,7 @@ impl Vault {
         let pointer = match channel {
             crate::channel_identity_provider::SLACK_CHANNEL => "/event/text",
             crate::channel_identity_provider::LINE_CHANNEL => "/event/message/text",
+            crate::linkedin_connector::LINKEDIN_CHANNEL => "/text",
             crate::channel_identity_provider::EMAIL_CHANNEL => {
                 return Ok(self
                     .read_provider_email(payload_ref)?
