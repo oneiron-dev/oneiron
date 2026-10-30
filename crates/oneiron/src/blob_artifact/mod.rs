@@ -40,6 +40,7 @@ mod lifecycle;
 mod made_by;
 mod provenance;
 mod references;
+mod review_request;
 mod store_keys;
 mod verbs;
 mod version_codec;
@@ -79,6 +80,7 @@ pub(crate) use self::references::{
 };
 #[cfg(feature = "sync")]
 pub(crate) use self::references::{readmit_held_asset_in_txn, release_fenced_only};
+pub use self::review_request::SlideReviewLimitsInput;
 pub(crate) use self::store_keys::require_entity_type;
 pub use self::store_keys::{BLOB_ARTIFACT_CONTENT_HASH_LEN, BLOB_ARTIFACT_RUN_REF_MAX_BYTES};
 pub use self::verbs::{
