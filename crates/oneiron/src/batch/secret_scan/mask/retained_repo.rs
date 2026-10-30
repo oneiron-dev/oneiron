@@ -21,6 +21,7 @@
 //! doors, their key bound and their container budget are unchanged.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -252,7 +253,7 @@ fn leaf_hit(bytes: &[u8]) -> Result<Option<&'static str>> {
 /// far, wiped when it drops. A value met again, in one blob or another,
 /// keeps the record it took the first time.
 pub(crate) struct RetainedRepoCustody {
-    known: Option<KnownValues>,
+    known: Option<Arc<KnownValues>>,
     minted: PlanValues<(String, EntityId)>,
 }
 
@@ -260,7 +261,7 @@ impl RetainedRepoCustody {
     /// The index as `wtxn` reads it, with nothing minted yet.
     pub(crate) fn load_in_writer(store: &Store, wtxn: &RwTxn<'_>) -> Result<Self> {
         Ok(Self {
-            known: KnownValues::load_in_writer(store, wtxn)?,
+            known: KnownValues::shared_in_writer(store, wtxn)?,
             minted: PlanValues::default(),
         })
     }
