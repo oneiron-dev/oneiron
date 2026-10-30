@@ -313,6 +313,7 @@ pub fn review_slides(
                 render_hash,
                 evidence_hash: *blake3::hash(&state_bytes).as_bytes(),
                 judged_version: base.version,
+                judged_live: None,
                 comment,
                 labels: labels.clone(),
             });

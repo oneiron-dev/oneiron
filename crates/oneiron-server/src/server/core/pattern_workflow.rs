@@ -22,7 +22,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::agent_dispatch::{CareLevel, CostEnvelope, ExpectedSpend, SpawnNeed, TeamPlan};
 use oneiron::llm::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart,
+    BudgetDenied, BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart,
     DEFAULT_BUDGET_RESERVE_UNITS, FinishReason, LlmCapability, LlmError, LlmMessage,
     LlmMessageRole, LlmRequest, LlmResponse, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
     ResponseFormat, RetryableLlmError, SpentKind, TierPrecedence, validate_json_schema,
@@ -588,10 +588,18 @@ fn unanswered(error: LlmError) -> Error {
         return Error::ProviderUnavailable { retry_after };
     }
     match &error {
-        LlmError::BudgetDenied(_) => stop(format!(
+        // The spend bound refused the run: the house chat turn's line, whose
+        // limit is `[models.chat] turn_budget_units`, or a manifest
+        // `budget_policy` row capping this run below it (FIX 4638). The
+        // refusal's own code reads `budget exhausted` for both, so the hint
+        // names both settings (FIX 11849).
+        LlmError::BudgetDenied(BudgetDenied::Exhausted) => stop(format!(
             "the house chat turn's line refused the pattern run: {error}; raise [models.chat] \
-             turn_budget_units, or wait for its spend to settle, then ask again"
+             turn_budget_units or the budget_policy row in the vault's policy manifest that \
+             caps this run, or wait for its spend to settle, then ask again"
         )),
+        // Any other budget denial held or refused the run before any spend:
+        // no budget setting refused it, so the hint names none.
         _ => stop(format!(
             "the house generative seat did not answer the pattern run: {error}; ask again"
         )),

@@ -295,6 +295,9 @@ impl OneironClient {
                 "vault.runners.seats.top_up" => remote_agent_verb_output::<
                     oneiron::dispatch_byoa::RunnerSeatTopUpReceipt,
                 >(client, verb, &input),
+                "vault.runners.seats.resume" => remote_agent_verb_output::<
+                    oneiron::dispatch_byoa::RunnerWorkResumeView,
+                >(client, verb, &input),
                 "vault.fanout.resume" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ActAnswer<oneiron::task_verb::sdk::FanoutLaunchView>,
                 >(client, verb, &input),
@@ -4809,6 +4812,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.runners.seats.top_up", value)
+    }
+    pub fn vault_runners_seats_resume(
+        &self,
+        input: &oneiron::dispatch_byoa::RunnerWorkResumeRequest,
+    ) -> Result<oneiron::dispatch_byoa::RunnerWorkResumeView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.runners.seats.resume", value)
     }
     pub fn vault_fanout_resume(
         &self,

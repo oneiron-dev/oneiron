@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1261 code-mode rows (1221 host rows, 40 run rows), 4431 declarations.
-// Replies: 1073 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1262 code-mode rows (1222 host rows, 40 run rows), 4438 declarations.
+// Replies: 1074 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -478,6 +478,12 @@ declare namespace Sdk {
   type RunnerSeatCreditTopUpRequest = { seat: RunnerSeat; expected_spent_attempt: string };
   type RunnerSeatTopUpEffect = "cleared" | "already_clear" | "observation_changed" | "not_credit";
   type RunnerSeatTopUpReceipt = { effect: RunnerSeatTopUpEffect; quota: RunnerSeatQuota };
+  type RunnerWorkResumeChoice = { seat: number } | { next_seat: { from: number } };
+  type OnSeatSpent = "stop" | "next_seat" | "internal_models";
+  type RunnerSeatPolicy = { seats: RunnerSeat[]; on_spent?: OnSeatSpent };
+  type RunnerWorkResumeRequest = { binding: string; expected_attempt: string; choice?: RunnerWorkResumeChoice | null; policy: RunnerSeatPolicy };
+  type SkippedRunnerSeatView = { seat: number; runner: string; reason: string };
+  type RunnerWorkResumeView = { resumed: { seat: number; attempt: string; existing: boolean; skipped: SkippedRunnerSeatView[] } } | { current: { seat: number; attempt: string } } | { unchanged: { seat: number; attempt: string } } | { no_seat: { skipped: SkippedRunnerSeatView[] } } | { exhausted: { back_at?: number | null; skipped: SkippedRunnerSeatView[] } } | "gone";
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type DetailsOnDevice = { details_on_device: boolean };
@@ -2859,7 +2865,8 @@ declare namespace Sdk {
   type DecisionMediaRef = { image: ImageRef } | { audio: AudioRef };
   type MediaServed = "full" | "no_image_reader" | "audio_unsupported" | "no_audio_reader";
   type DecisionMedia = { name: string; reference: DecisionMediaRef; served: MediaServed };
-  type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; comment: string; labels: SlideReviewLabels };
+  type LivePin = { frontier: number[]; commits: number };
+  type SlideJudgment = { thread_id: EntityId; target: PptxCommentTarget; anchor: SlideReviewAnchor; decision: TypedDecision; answer_contract: AnswerContract; presence?: TypedDecision | null; location?: SlideLocation | null; band_mode: BandMode; renderer: string; frontier: number[]; media?: DecisionMedia[]; render_hash: number[]; evidence_hash: number[]; judged_version?: number | null; judged_live?: LivePin | null; comment: string; labels: SlideReviewLabels };
   type PptxCommentAction = { add: { target: PptxCommentTarget; text: string } } | { reply: { text: string } } | { resolve: { resolved: boolean } };
   type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction };
   type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null };
@@ -7035,6 +7042,8 @@ declare const vault: Sdk.VaultHost & {
     seats: {
       /** The owner reads the named runner seats' quotas as their captures last recorded them: each spend, when the seat is back, whether it may take work, and the capture each reading came from. */
       quotas(input: Sdk.RunnerSeatQuotasRequest): Promise<Sdk.RunnerSeatQuotasView | StoredResult>;
+      /** The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write. */
+      resume(input: Sdk.RunnerWorkResumeRequest): Promise<Sdk.RunnerWorkResumeView | StoredResult>;
       /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
       top_up(input: Sdk.RunnerSeatCreditTopUpRequest): Promise<Sdk.RunnerSeatTopUpReceipt | StoredResult>;
     };
