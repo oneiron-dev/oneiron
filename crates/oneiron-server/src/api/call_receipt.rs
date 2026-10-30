@@ -478,11 +478,12 @@ pub(crate) fn action_inputs(
 /// on any transport, as the owner's off-record routes write none: ARCH-0052
 /// keeps no wire receipt that a session ran.
 ///
-/// The reply does not wait for the row's commit (Engine ruling 10-30 23:09,
-/// `Vault::record_call_receipt_deferred_commit`): the row is staged in the
-/// vault's group commit, in order, before the reply, and a refusal there is
-/// still logged here; it commits with that group after the reply. A crash can
-/// lose the last receipts of calls already answered.
+/// The reply waits for neither the writer nor the row's commit (Engine ruling
+/// 10-30 23:09, FIX 12023, `Vault::record_call_receipt_deferred_commit`): the
+/// ref is minted before the reply and the row queues in the vault's group
+/// commit, in order; it is staged and committed with a group after the reply,
+/// and a refusal there is logged by the vault's group commit, by name. A
+/// crash can lose the last receipts of calls already answered.
 pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInput) -> CallStamp {
     if anonymous || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&input.verb.as_str()) {
         return CallStamp::NoRecord;

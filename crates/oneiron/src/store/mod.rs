@@ -245,7 +245,9 @@ pub use deadline_jobs::{DEADLINE_JOBS_CHECK_KIND, DeadlineJob};
 pub use diagnostics::Diagnostics;
 pub use gate_decision::*;
 pub use group_commit::GroupCommitStats;
-pub(crate) use group_commit::{Callback, GroupCommit, GroupCommitCounters, Rows};
+pub(crate) use group_commit::{
+    AfterCommit, Callback, DetachedWrite, GroupCommit, GroupCommitCounters, Rows,
+};
 pub use handle::*;
 pub(crate) use inference_snapshot_custody::INFERENCE_SNAPSHOT_WRAPPED_KEY_BYTES;
 pub(crate) use key_custody::ForkedCustodyDir;

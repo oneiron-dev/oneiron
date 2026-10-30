@@ -32,6 +32,8 @@ impl Store {
                 "retrieval policy update skipped inside active write transaction",
             ));
         }
+        // The runs' rows may still be queued detached writes (FIX 12023).
+        self.wait_for_deferred_commits();
         let _guard = self
             .retrieval_blend_tuning_lock
             .lock()

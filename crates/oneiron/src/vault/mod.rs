@@ -235,6 +235,16 @@ pub struct Vault {
         std::sync::Mutex<Option<crate::retrieval_depth::SlowRetrievalStage>>,
 }
 
+/// A vault's detached writes run before it closes (FIX 12023): those queued
+/// through its own doors (a call receipt's) need the vault itself, and run
+/// here, on the closing thread, in arrival order with the rest, before any
+/// part of the vault drops. The store's own drop then ends its leader.
+impl Drop for Vault {
+    fn drop(&mut self) {
+        self.store.finish_detached_writes(Some(&*self));
+    }
+}
+
 #[cfg(test)]
 mod tests;
 

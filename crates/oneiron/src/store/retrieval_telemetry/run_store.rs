@@ -10,7 +10,9 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 #[cfg(test)]
 use crate::store::test_hooks;
-use crate::store::{ManifestDbs, SessionStoreView, Store, active_write_txn_depth};
+use crate::store::{
+    DetachedWrite, ManifestDbs, SessionStoreView, Store, StoreCore, active_write_txn_depth,
+};
 
 use super::types::{
     RETRIEVAL_TELEMETRY_VERSION, RetrievalOutcome, RetrievalOutcomeRecord, RetrievalRunFinalize,
@@ -213,23 +215,42 @@ impl Store {
         self.record_retrieval_run_admitted(record, true, &|_| Ok(()))
     }
 
+    /// Records a context-pack run's provisional row as a detached write
+    /// (FIX 12023): it queues in the vault's group commit, in arrival order,
+    /// and returns at once, since the run's reply needs only the id minted
+    /// in RAM before. Its checks refuse here, before it queues; a failure
+    /// once its group runs it rolls back only this row, trips the write fuse
+    /// as before, and is said in a warn. The finalize the same run queues
+    /// next runs after it.
     pub(crate) fn record_context_pack_provisional_retrieval_run(
         &self,
         record: &RetrievalRunRecord,
     ) -> Result<()> {
-        self.record_retrieval_run_admitted(record, false, &|_| Ok(()))
+        self.admit_retrieval_run_write(record)?;
+        let record = record.clone();
+        self.group_write_detached(DetachedWrite::of_core(
+            "context-pack retrieval run, provisional",
+            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| {
+                let staged = stage_retrieval_run_with_visibility(
+                    &core.canonical_dbs(),
+                    wtxn,
+                    &record,
+                    false,
+                );
+                if staged.is_err() {
+                    core.retrieval_writes_disabled
+                        .store(true, std::sync::atomic::Ordering::Release);
+                }
+                staged
+            },
+        ));
+        Ok(())
     }
 
-    /// Records `record`, published or provisional, with `admit` run first in
-    /// the write's own transaction. A refusal there writes nothing and leaves
-    /// the write fuse alone: the caller's authority lapsed, the store did not
-    /// fail.
-    pub(crate) fn record_retrieval_run_admitted(
-        &self,
-        record: &RetrievalRunRecord,
-        published: bool,
-        admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
-    ) -> Result<()> {
+    /// What a retrieval-run write checks before it queues or joins a group:
+    /// the write fuse, the record's state, and that this thread holds no
+    /// write open.
+    fn admit_retrieval_run_write(&self, record: &RetrievalRunRecord) -> Result<()> {
         if !self.retrieval_telemetry_writes_enabled() {
             return Err(Error::InvariantViolation(
                 "retrieval telemetry writes disabled",
@@ -251,6 +272,20 @@ impl Store {
                 "retrieval telemetry skipped inside active write transaction",
             ));
         }
+        Ok(())
+    }
+
+    /// Records `record`, published or provisional, with `admit` run first in
+    /// the write's own transaction. A refusal there writes nothing and leaves
+    /// the write fuse alone: the caller's authority lapsed, the store did not
+    /// fail.
+    pub(crate) fn record_retrieval_run_admitted(
+        &self,
+        record: &RetrievalRunRecord,
+        published: bool,
+        admit: &dyn Fn(&RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        self.admit_retrieval_run_write(record)?;
 
         // Joins the vault's group commit; a failure here drops only this row.
         let mut refused = false;
@@ -293,11 +328,50 @@ impl Store {
     /// Publishes the caller's scope count and surfaced ids atomically.
     /// Ordinary callers retain the pipeline count; post-filter callers supply
     /// the count from their filtered pack instead.
+    ///
+    /// A detached write (FIX 12023): it queues behind the run's provisional
+    /// row, in arrival order, and returns at once, since the reply needs only
+    /// the run's id. A failure once its group runs it rolls back only this
+    /// publication and is said in a warn.
     pub(crate) fn finalize_context_pack_retrieval_run(
         &self,
         finalize: RetrievalRunFinalize<'_>,
     ) -> Result<()> {
-        self.finalize_context_pack_retrieval_run_admitted(finalize, &|_| Ok(()))
+        if active_write_txn_depth() > 0 {
+            return Err(Error::ConcurrentWrite(
+                "context-pack retrieval telemetry skipped inside active write transaction",
+            ));
+        }
+        let RetrievalRunFinalize {
+            run_id,
+            elapsed_us,
+            total_in_scope,
+            claims_suppressed,
+            surfaced_result_ids,
+            empty_reason,
+            pack_config,
+        } = finalize;
+        let surfaced_result_ids = surfaced_result_ids.to_vec();
+        self.group_write_detached(DetachedWrite::of_core(
+            "context-pack retrieval run, finalize",
+            move |core: &StoreCore, wtxn: &mut RwTxn<'_>| {
+                let finalize = RetrievalRunFinalize {
+                    run_id,
+                    elapsed_us,
+                    total_in_scope,
+                    claims_suppressed,
+                    surfaced_result_ids: &surfaced_result_ids,
+                    empty_reason,
+                    pack_config,
+                };
+                stage_retained_context_pack_retrieval_run_finalize(
+                    &core.canonical_dbs(),
+                    wtxn,
+                    finalize,
+                )
+            },
+        ));
+        Ok(())
     }
 
     /// [`Self::finalize_context_pack_retrieval_run`] with `admit` run first
@@ -315,20 +389,7 @@ impl Store {
 
         self.write_in_group(|wtxn| {
             admit(wtxn)?;
-            let run_id = finalize.run_id;
-            if RETRIEVAL_RUN_PROVISIONAL.contains(self, wtxn, &run_id)? {
-                super::retention::require_prune_retrieval_runs(self, wtxn, 1)?;
-            }
-            stage_context_pack_retrieval_run_finalize(self, wtxn, finalize)?;
-            if RETRIEVAL_RUN.contains(self, wtxn, &run_id)? {
-                super::retention::put_retrieval_age(
-                    self,
-                    wtxn,
-                    run_id,
-                    self.clock.now_recorded_at(),
-                )?;
-            }
-            Ok(())
+            stage_retained_context_pack_retrieval_run_finalize(self, wtxn, finalize)
         })
     }
 
@@ -338,6 +399,8 @@ impl Store {
                 "retrieval outcome telemetry skipped inside active write transaction",
             ));
         }
+        // Its run's rows may still be queued detached writes (FIX 12023).
+        self.wait_for_deferred_commits();
 
         vet_retrieval_outcome(&outcome)?;
         secret_scan::scan_metadata_field(&outcome.key)?;
@@ -381,15 +444,21 @@ impl Store {
         Ok(())
     }
 
+    /// The newest published runs, read once the detached writes queued so
+    /// far are decided (FIX 12023): a run a reply named reads back.
     pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
+        self.wait_for_deferred_commits();
         let rtxn = self.env.read_txn()?;
         read_retrieval_runs_in_txn(self, &rtxn, limit)
     }
 
+    /// One published run, read once the detached writes queued so far are
+    /// decided (FIX 12023).
     pub(crate) fn retrieval_run(
         &self,
         run_id: RetrievalRunId,
     ) -> Result<Option<RetrievalRunRecord>> {
+        self.wait_for_deferred_commits();
         let rtxn = self.env.read_txn()?;
         self.retrieval_run_in_txn(&rtxn, run_id)
     }
@@ -419,6 +488,8 @@ impl Store {
         if is_unknown_retrieval_trace_fork_hash(&fork_hash) {
             return Ok(None);
         }
+        // The runs' rows may still be queued detached writes (FIX 12023).
+        self.wait_for_deferred_commits();
         let rtxn = self.env.read_txn()?;
         let mut latest = None::<RetrievalRunRecord>;
         for row in RETRIEVAL_TRACE_FORK_INDEX.scan_from(self, &rtxn, &fork_hash)? {
@@ -622,6 +693,30 @@ fn stage_context_pack_retrieval_run_finalize(
         put_retrieval_trace_fork_index(target, wtxn, &trace.fork_hash, record.run_id)?;
     }
     RETRIEVAL_RUN_PROVISIONAL.delete(target, wtxn, &run_id)?;
+    Ok(())
+}
+
+/// [`stage_context_pack_retrieval_run_finalize`] on the base ledger, with its
+/// retention: a run published here first makes room under the retention
+/// policy, and a run that stands is aged from now.
+fn stage_retained_context_pack_retrieval_run_finalize(
+    target: &impl ManifestDbs,
+    wtxn: &mut RwTxn<'_>,
+    finalize: RetrievalRunFinalize<'_>,
+) -> Result<()> {
+    let run_id = finalize.run_id;
+    if RETRIEVAL_RUN_PROVISIONAL.contains(target, wtxn, &run_id)? {
+        super::retention::require_prune_retrieval_runs(target, wtxn, 1)?;
+    }
+    stage_context_pack_retrieval_run_finalize(target, wtxn, finalize)?;
+    if RETRIEVAL_RUN.contains(target, wtxn, &run_id)? {
+        super::retention::put_retrieval_age(
+            target,
+            wtxn,
+            run_id,
+            target.clock().now_recorded_at(),
+        )?;
+    }
     Ok(())
 }
 
