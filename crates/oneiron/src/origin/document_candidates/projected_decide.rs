@@ -482,7 +482,7 @@ impl Vault {
         };
         let prepared = match self.prepare_received_files_proposal(canonical, input)? {
             Ok(prepared) => prepared,
-            Err(_) => return held_with(HeldShape, "base_snapshot_refused", pins),
+            Err(reason) => return held_with(HeldShape, reason, pins),
         };
         let hold = super::projected::refresh_projected_candidate_hold(&pins, pins.hold_cause());
         Ok(Some(Ok(PreparedPushCandidate {
