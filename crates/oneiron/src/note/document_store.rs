@@ -684,5 +684,6 @@ pub(crate) fn resolve_deck_pin_in_txn(
 
 mod deck;
 pub(crate) use deck::{
-    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn,
+    observe_deck_span_in_txn,
 };
