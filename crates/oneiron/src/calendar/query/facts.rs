@@ -3,9 +3,10 @@
 use crate::batch::EntityMetadataHeader;
 use crate::calendar::claims::{
     CalendarBusyTransparency, CalendarOrigin, CalendarStatus, CalendarTimeKindValue,
-    PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT, PREDICATE_CALENDAR_STATUS,
-    PREDICATE_CALENDAR_TIME_KIND, decode_passport_value, decode_status_value,
-    decode_time_kind_value, is_calendar_claim_predicate,
+    CalendarWallTimeValue, PREDICATE_CALENDAR_ORIGIN, PREDICATE_CALENDAR_PASSPORT,
+    PREDICATE_CALENDAR_STATUS, PREDICATE_CALENDAR_TIME_KIND, PREDICATE_CALENDAR_WALL_TIME,
+    decode_passport_value, decode_status_value, decode_time_kind_value, decode_wall_time_end,
+    decode_wall_time_value, is_calendar_claim_predicate,
 };
 use crate::claim::{
     ClaimBody, ScopedRead, ScopedReadReceipt, ScopedReadResult, claim_surfaceable,
@@ -222,11 +223,30 @@ enum LaneFact<T> {
     Withheld,
 }
 
+/// A `calendar.wall_time` value: its civil start and, for a floating or
+/// all-day EVENT, its exclusive civil end.
+type WallTimeFact = (CalendarWallTimeValue, Option<CalendarWallTimeValue>);
+
+/// The most a civil time runs ahead of UTC in any zone (UTC+14).
+const EASTERNMOST_OFFSET_SECS: u64 = 14 * 3_600;
+
+/// The most a civil time runs behind UTC in any zone (UTC−12).
+const WESTERNMOST_OFFSET_SECS: u64 = 12 * 3_600;
+
+/// A civil time's seconds on the UTC clock, or `None` for a leap second or a
+/// time before the epoch.
+fn civil_seconds(wall: CalendarWallTimeValue) -> Option<u64> {
+    let at = chrono::NaiveDate::from_ymd_opt(wall.y, u32::from(wall.mo), u32::from(wall.d))?
+        .and_hms_opt(u32::from(wall.h), u32::from(wall.mi), u32::from(wall.s))?;
+    u64::try_from(at.and_utc().timestamp()).ok()
+}
+
 /// The calendar facts one EVENT's admitted claims carry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::calendar) struct CalendarEventFacts {
     origin: LaneFact<CalendarOrigin>,
     time_kind: LaneFact<CalendarTimeKindValue>,
+    wall_time: LaneFact<WallTimeFact>,
     status: LaneFact<CalendarStatus>,
     systems: Vec<String>,
     uids: Vec<String>,
@@ -266,6 +286,39 @@ impl CalendarEventFacts {
             LaneFact::Absent => true,
             LaneFact::Withheld => false,
         }
+    }
+
+    /// Where a floating or all-day EVENT can fall (FIX 7844). Such an EVENT
+    /// names civil time and no instant, so it covers every instant its civil
+    /// start and exclusive end span in some zone: from its start where that
+    /// comes first (UTC+14) to its end where that comes last (UTC−12). A
+    /// window that meets its day in any zone finds it, and free/busy keeps
+    /// all of it busy. An all-day EVENT thus covers its whole day span; an
+    /// EVENT with no stored end covers its start alone. `None` for an
+    /// anchored EVENT, or one whose wall time this lane cannot read.
+    fn wall_span(&self) -> Option<TimeRange> {
+        let LaneFact::Read(kind) = self.time_kind else {
+            return None;
+        };
+        if !matches!(
+            kind.kind,
+            crate::calendar::claims::CalendarTimeKind::Floating
+                | crate::calendar::claims::CalendarTimeKind::AllDay
+        ) {
+            return None;
+        }
+        let LaneFact::Read((start, end)) = self.wall_time else {
+            return None;
+        };
+        let start = civil_seconds(start)?;
+        let last = match end {
+            Some(end) => civil_seconds(end)?.saturating_sub(1).max(start),
+            None => start,
+        };
+        Some(TimeRange {
+            start: start.saturating_sub(EASTERNMOST_OFFSET_SECS),
+            end: last.saturating_add(WESTERNMOST_OFFSET_SECS),
+        })
     }
 
     pub(in crate::calendar) fn origin(&self) -> Option<CalendarOrigin> {
@@ -323,6 +376,10 @@ pub(crate) struct CalendarEventRow {
     /// the interval `[0, 0]` and starts occupying Unix second zero in both
     /// range search and the busy union.
     pub(crate) occurred: Option<TimeRange>,
+    /// Inclusive UTC span a floating or all-day EVENT covers in some zone
+    /// (`CalendarEventFacts::wall_span`), which range search and free/busy
+    /// read where `occurred` is `None`; `None` for an anchored EVENT.
+    pub(in crate::calendar) wall_span: Option<TimeRange>,
     /// The display name the EVENT body carries, read in the row's own
     /// snapshot through the row's lane.
     pub(in crate::calendar) name: Option<String>,
@@ -341,6 +398,7 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     let mut family_member = false;
     let mut origin: Option<(EntityId, LaneFact<CalendarOrigin>)> = None;
     let mut time_kind: Option<(EntityId, LaneFact<CalendarTimeKindValue>)> = None;
+    let mut wall_time: Option<(EntityId, LaneFact<WallTimeFact>)> = None;
     let mut status: Option<(EntityId, LaneFact<CalendarStatus>)> = None;
     let mut systems = Vec::new();
     let mut uids = Vec::new();
@@ -364,6 +422,9 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
                 }
                 Some(PREDICATE_CALENDAR_TIME_KIND) => {
                     replace_when_lower(&mut time_kind, claim_id, LaneFact::Withheld);
+                }
+                Some(PREDICATE_CALENDAR_WALL_TIME) => {
+                    replace_when_lower(&mut wall_time, claim_id, LaneFact::Withheld);
                 }
                 Some(PREDICATE_CALENDAR_STATUS) => {
                     replace_when_lower(&mut status, claim_id, LaneFact::Withheld);
@@ -391,6 +452,11 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
                 match body.predicate.as_str() {
                     PREDICATE_CALENDAR_TIME_KIND => {
                         replace_when_lower(&mut time_kind, claim_id, LaneFact::Absent);
+                    }
+                    // A wall time only places occupancy; it frees nothing.
+                    PREDICATE_CALENDAR_WALL_TIME => {
+                        let value = wall_time_fact(&body.value)?;
+                        replace_when_lower(&mut wall_time, claim_id, LaneFact::Read(value));
                     }
                     PREDICATE_CALENDAR_STATUS => {
                         replace_when_lower(&mut status, claim_id, LaneFact::Absent);
@@ -421,6 +487,10 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
             PREDICATE_CALENDAR_TIME_KIND => {
                 let value = decode_time_kind_value(&body.value)?;
                 replace_when_lower(&mut time_kind, claim_id, LaneFact::Read(value));
+            }
+            PREDICATE_CALENDAR_WALL_TIME => {
+                let value = wall_time_fact(&body.value)?;
+                replace_when_lower(&mut wall_time, claim_id, LaneFact::Read(value));
             }
             PREDICATE_CALENDAR_STATUS => {
                 let value = decode_status_value(&body.value)?;
@@ -459,6 +529,7 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
     Ok(Some(CalendarEventFacts {
         origin: origin.map_or(LaneFact::Absent, |(_, fact)| fact),
         time_kind: time_kind.map_or(LaneFact::Absent, |(_, fact)| fact),
+        wall_time: wall_time.map_or(LaneFact::Absent, |(_, fact)| fact),
         status: status.map_or(LaneFact::Absent, |(_, fact)| fact),
         systems,
         uids,
@@ -467,6 +538,10 @@ fn reduce_event_facts(projected: &[Projected], hold: Hold) -> Result<Option<Cale
         series_withheld,
         exception_withheld,
     }))
+}
+
+fn wall_time_fact(value: &rmpv::Value) -> Result<WallTimeFact> {
+    Ok((decode_wall_time_value(value)?, decode_wall_time_end(value)?))
 }
 
 /// Keeps the lowest-`EntityId` claim for a single-cardinality predicate.
@@ -602,6 +677,7 @@ fn event_row_of(
         } else {
             None
         },
+        wall_span: facts.wall_span(),
         name,
         claims,
         facts,
@@ -629,6 +705,7 @@ pub(crate) fn visit_calendar_events_for_effect(
         };
         visit(CalendarEventRow {
             occurred: row.occurred.filter(|_| settled.occurred.is_some()),
+            wall_span: row.wall_span.filter(|_| settled.wall_span.is_some()),
             ..row
         })
     })

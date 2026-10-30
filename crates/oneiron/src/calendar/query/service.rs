@@ -120,13 +120,17 @@ fn search_events_in(
             for at in super::occurrences::occurrences(&row, window, &exceptions, &withheld)? {
                 if intersects(at, window) {
                     let mut occurrence = view.clone();
-                    occurrence.start_utc = Some(at.start);
-                    occurrence.end_utc = Some(at.end);
+                    // A floating or all-day EVENT matches by its civil span
+                    // and keeps no UTC instant in the view.
+                    if row.occurred.is_some() {
+                        occurrence.start_utc = Some(at.start);
+                        occurrence.end_utc = Some(at.end);
+                    }
                     matched.push((page_key(Some(at), row.id), occurrence));
                 }
             }
         } else {
-            matched.push((page_key(row.occurred, row.id), view));
+            matched.push((page_key(row.occurred.or(row.wall_span), row.id), view));
         }
     }
 
@@ -135,8 +139,9 @@ fn search_events_in(
     Ok(matched.into_iter().map(|(_, view)| view).collect())
 }
 
-/// Deterministic page order: earliest occurrence first, undated EVENTs last,
-/// entity id breaking ties, so `limit` truncates the same rows on every run.
+/// Deterministic page order: earliest occurrence (or civil span) first,
+/// undated EVENTs last, entity id breaking ties, so `limit` truncates the same
+/// rows on every run.
 fn page_key(occurred: Option<TimeRange>, id: EntityId) -> (bool, u64, u64, EntityId) {
     match occurred {
         Some(at) => (false, at.start, at.end, id),
