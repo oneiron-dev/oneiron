@@ -6,7 +6,8 @@ use super::lens::{PrepLensCopy, render_prep_lens};
 use super::pack::{PrepBuildRequest, build_prep_pack};
 use super::wake::{PrepEvent, PrepPolicy, PrepWake, prep_fire_at};
 use crate::calendar::claims::{
-    CalendarStatus, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_STATUS, decode_attendee_value,
+    CalendarStatus, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_PREP_OPT_IN,
+    PREDICATE_CALENDAR_STATUS, decode_attendee_value, decode_prep_opt_in_value,
     decode_status_value,
 };
 use crate::claim::claim_surfaceable;
@@ -101,9 +102,10 @@ pub fn run_due_home_node_prep(
 /// `None` means the EVENT is gone, is not an EVENT, is a shell, or has been
 /// cancelled. Otherwise the facts are the vault's own, read live from the
 /// EVENT's settled claims ([`live_event_facts`]): which attendees are outside
-/// the owner's house, which attendee entities seed the pack, and whether a
-/// campaign or a commitment links the EVENT. The per-event opt-in has no
-/// stored fact; the vault-wide one is [`PrepPolicy::external_only`].
+/// the owner's house, which attendee entities seed the pack, whether a
+/// campaign or a commitment links the EVENT, and whether the EVENT's own
+/// `calendar.prep_opt_in` opts it in; the vault-wide opt-in is
+/// [`PrepPolicy::external_only`].
 fn live_prep_event(vault: &Vault, event_ref: EntityId) -> Result<Option<PrepEvent>> {
     let Some(header) = vault.read_entity_header(&event_ref)? else {
         return Ok(None);
@@ -128,7 +130,7 @@ fn live_prep_event(vault: &Vault, event_ref: EntityId) -> Result<Option<PrepEven
         external_attendee_count: facts.external_attendee_count,
         has_campaign_linkage: facts.has_campaign_linkage,
         has_commitment_linkage: facts.has_commitment_linkage,
-        internal_meeting_opt_in: false,
+        internal_meeting_opt_in: facts.internal_meeting_opt_in,
     }))
 }
 
@@ -143,6 +145,8 @@ struct LiveEventFacts {
     external_attendee_count: u32,
     has_campaign_linkage: bool,
     has_commitment_linkage: bool,
+    /// A settled `calendar.prep_opt_in` on the EVENT says `true`.
+    internal_meeting_opt_in: bool,
 }
 
 /// Reads the live, surfaceable claims on one EVENT in one snapshot.
@@ -152,7 +156,8 @@ struct LiveEventFacts {
 /// row is not a fact a card may be built on. An attendee is inside the house
 /// when it names a vault owner (the embedded owner included) or an address
 /// one of the vault's own channel identities holds; every other attendee is
-/// external. A campaign or commitment claim on the EVENT is its linkage.
+/// external. A campaign or commitment claim on the EVENT is its linkage, and
+/// a `calendar.prep_opt_in` saying `true` is its opt-in.
 fn live_event_facts(vault: &Vault, event_ref: &EntityId) -> Result<LiveEventFacts> {
     let rtxn = vault.store.env.read_txn()?;
     let mut owners = crate::policy_model::owners_in_txn(vault, &rtxn)?;
@@ -171,6 +176,10 @@ fn live_event_facts(vault: &Vault, event_ref: &EntityId) -> Result<LiveEventFact
             continue;
         }
         if !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, &rtxn, &claim_id)? {
+            continue;
+        }
+        if body.predicate == PREDICATE_CALENDAR_PREP_OPT_IN {
+            facts.internal_meeting_opt_in |= decode_prep_opt_in_value(&body.value)?;
             continue;
         }
         if body.predicate == PREDICATE_CALENDAR_ATTENDEE {
