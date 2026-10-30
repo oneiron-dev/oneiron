@@ -10,11 +10,12 @@
 //! [`oneiron::Vault::import_removal_archive`]); one that does not import
 //! stays on disk as written, and each start takes in those not yet taken in
 //! before its first session. On a managed vault each import holds a device
-//! sync admission, and the sessions pause while the vault is frozen for
-//! reap (FIX 12038). A live member's device holds the same sessions,
-//! and a removal wakes them. A failed session is tried again after a wait
-//! that doubles from [`REMOVAL_DELIVERY_RETRY_FIRST`] to
-//! [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs name receipts, never a slip or a key.
+//! sync admission (FIX 11796): a frozen vault takes none, the archive waits
+//! on disk, and the sessions pause until the vault thaws (FIX 12038). A
+//! live member's device holds the same sessions, and a removal wakes them.
+//! A failed session is tried again after a wait that doubles from
+//! [`REMOVAL_DELIVERY_RETRY_FIRST`] to [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs
+//! name receipts, never a slip or a key.
 #![cfg_attr(not(feature = "mesh"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
@@ -668,6 +669,12 @@ fn import_dir(
             }
         };
         let Some(_admitted) = freeze.admit() else {
+            tracing::info!(
+                receipt = %copy.receipt_id,
+                version = copy.delivered_at,
+                "removal archive kept on disk for the sweep after the thaw: the vault is paused \
+                 for reap preparation"
+            );
             continue;
         };
         import(vault, person, &copy);

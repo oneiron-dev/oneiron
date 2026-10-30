@@ -63,6 +63,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
     let mut vault_config = config.base_vault_config();
+    // The supervisor delivered this vault's data key at boot (FIX 4531).
+    vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
     // takes the managed default, and unset training follows the export.
@@ -485,9 +487,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // and the custody publication run on past the vault's deletion, so its
     // backups go at their deadline (FIX 11710).
     let tick = crate::owner::schedule::SCHEDULE_TICK;
-    ladder_workers.extend(
-        sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()),
-    );
+    ladder_workers
+        .extend(sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()));
     ladder_workers.extend(sync_server.spawn_custody_publication_admitted(state.backup_admission()));
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).

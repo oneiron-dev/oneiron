@@ -10,8 +10,8 @@
 
 use std::collections::BTreeSet;
 
-use super::super::routing::IMPORTS;
 use super::super::{ReportIssue, ReportRoute};
+use super::join::ReportImportJoin;
 use crate::attempt_queue::ManifestKind;
 use crate::edit_distance::publisher::{CountKey, tally_judged_outcomes};
 use crate::settings::{
@@ -49,6 +49,17 @@ impl Vault {
         &self,
         issue: &ReportIssue,
     ) -> Result<std::result::Result<ReportPublisherMetadata, &'static str>> {
+        let join_cell = std::cell::RefCell::new(None);
+        self.resolve_report_publisher_metadata_with(issue, &join_cell)
+    }
+
+    /// [`Self::resolve_report_publisher_metadata`] on the run's import join,
+    /// built lazily in `join_cell` on first need.
+    pub(super) fn resolve_report_publisher_metadata_with(
+        &self,
+        issue: &ReportIssue,
+        join_cell: &std::cell::RefCell<Option<ReportImportJoin>>,
+    ) -> Result<std::result::Result<ReportPublisherMetadata, &'static str>> {
         let ReportRoute::Publisher { publisher_ref } = &issue.route else {
             return Ok(Err("not_routed_to_publisher"));
         };
@@ -68,7 +79,10 @@ impl Vault {
         let Some(version) = exact_u32(&skill.version) else {
             return Ok(Err("version_not_u32"));
         };
-        let Some(artifact) = self.report_artifact(publisher_ref, &skill.reference)? else {
+        let Some(artifact) = self.with_report_import_join(join_cell, |join| {
+            self.report_artifact_in(join, publisher_ref, &skill.reference)
+        })?
+        else {
             return Ok(Err("artifact_not_single"));
         };
         let Ok(attribution) = receipt.pack_attribution_fields() else {
@@ -86,19 +100,21 @@ impl Vault {
     }
 
     /// The one SKILL entity `publisher_ref` shipped under `skill_id`, from
-    /// its canonical import receipts and installed packs; `None` when there
-    /// is none, or more than one.
-    fn report_artifact(&self, publisher_ref: &str, skill_id: &str) -> Result<Option<EntityId>> {
+    /// the run's import join of its canonical import receipts and installed
+    /// packs; `None` when there is none, or more than one.
+    fn report_artifact_in(
+        &self,
+        join: &ReportImportJoin,
+        publisher_ref: &str,
+        skill_id: &str,
+    ) -> Result<Option<EntityId>> {
         let mut candidates = BTreeSet::new();
-        let txn = self.store.env.read_txn()?;
-        for row in IMPORTS.iter_from(&self.store, &txn, &[])? {
-            let (_, receipt) = row?;
+        for receipt in &join.receipts {
             if receipt.publisher.as_deref() == Some(publisher_ref) {
                 candidates.extend(EntityId::from_hex(&receipt.entity).ok());
             }
         }
-        drop(txn);
-        for pack in self.installed_packs()? {
+        for pack in &join.packs {
             if pack.publisher == publisher_ref {
                 candidates.extend(
                     pack.skills
@@ -108,8 +124,9 @@ impl Vault {
             }
         }
         let mut artifacts = BTreeSet::new();
+        let txn = self.store.env.read_txn()?;
         for id in candidates {
-            if matches!(self.get_skill_record(&id), Ok(Some(record)) if record.skill_id == skill_id)
+            if matches!(self.get_skill_record_in_txn(&txn, &id), Ok(Some(record)) if record.skill_id == skill_id)
             {
                 artifacts.insert(id);
             }

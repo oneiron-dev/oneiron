@@ -212,6 +212,7 @@ class Oneiron:
         *,
         dimensions: int | None = None,
         device_class: str | None = None,
+        hold_checkpoint_root_signer: bool | None = None,
     ) -> dict[str, Any]:
         """:meth:`open`, then this install's own machine profile from the vault's host root secret.
 
@@ -232,11 +233,14 @@ class Oneiron:
         says so in ``host_root["wrong_root"]``: reported, never refused. The
         handle binds the local owner actor, as :meth:`open` does, and carries
         no owner proof. ``device_class`` is :meth:`open`'s.
+        With ``hold_checkpoint_root_signer`` (FIX 5343) the handle holds this
+        install's host root as its checkpoint signer, unless the secret went
+        unused; omitted or ``None`` is ``False``.
         """
         resolved = os.fspath(path) if path is not None else None
         native = _translate(
             lambda: _NativeClient.open_with_host_root(
-                resolved, host_root_secret, dimensions, device_class
+                resolved, host_root_secret, dimensions, device_class, hold_checkpoint_root_signer
             )
         )
         raw = native.host_root_profile()
@@ -2009,6 +2013,9 @@ class Oneiron:
         def pick(self, spec):
             """Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."""
             return json.loads(_translate(lambda: self._client.vault_skills_optimize_tradeoff_asks_pick(json.dumps(spec))))
+        def resolve(self, spec):
+            """The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_tradeoff_asks_resolve(json.dumps(spec))))
     class _VaultSkillsGovernanceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5216,6 +5223,9 @@ class Oneiron:
         def lineage(self, spec):
             """The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_lineage(json.dumps(spec))))
+        def candidate_decisions(self, spec):
+            """The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_candidate_decisions(json.dumps(spec))))
         def promote(self, spec):
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))

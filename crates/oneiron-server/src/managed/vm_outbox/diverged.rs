@@ -516,12 +516,7 @@ impl Carrier {
 
 /// Says that `side`'s copy of `kind`'s `member` the owner kept moved aside to
 /// `aside`, or was no longer at the member's name.
-fn said_moved_aside(
-    side: VmOutboxSide,
-    kind: VmOutboxKind,
-    member: &str,
-    aside: Option<&str>,
-) {
+fn said_moved_aside(side: VmOutboxSide, kind: VmOutboxKind, member: &str, aside: Option<&str>) {
     tracing::info!(
         reason = "vm_outbox_diverged_moved_aside",
         ?side,

@@ -431,11 +431,7 @@ fn drop_empty_custody_dirs(root: &File, member: &str) -> std::io::Result<()> {
 /// so the twin at the member's name goes and the copy counts as aside
 /// (FIX 11985). Returns the side name, or `None` when no file is at the
 /// member's name.
-pub(super) fn move_aside(
-    root: &File,
-    member: &str,
-    held: &str,
-) -> std::io::Result<Option<String>> {
+pub(super) fn move_aside(root: &File, member: &str, held: &str) -> std::io::Result<Option<String>> {
     let (dir, leaf) = match parent_of(root, member, None) {
         Ok(found) => found,
         Err(error) if is_gone(&error) => return Ok(None),

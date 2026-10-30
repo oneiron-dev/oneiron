@@ -286,6 +286,7 @@ vaultSkillsOptimizePreferencesGet(input: unknown): unknown
 vaultSkillsOptimizePreferencesSet(input: unknown): unknown
 vaultSkillsOptimizeTradeoffAsks(input: unknown): unknown
 vaultSkillsOptimizeTradeoffAsksPick(input: unknown): unknown
+vaultSkillsOptimizeTradeoffAsksResolve(input: unknown): unknown
 vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
@@ -1101,6 +1102,7 @@ vaultRunsProgramHoldRelease(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
+vaultConsolidationCandidateDecisions(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationPin(input: unknown): unknown
 vaultConsolidationFrontier(input: unknown): unknown
@@ -1274,6 +1276,7 @@ interface NativeClientConstructor {
     dimensions: number | undefined,
     hostRootSecret: Uint8Array,
     deviceClass: string | undefined,
+    holdCheckpointRootSigner: boolean | undefined,
   ): NativeClient
   connect(url: string, key: string): NativeClient
   /** `pin` is absent when the vault has no attested checkpoint. */

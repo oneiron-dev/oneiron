@@ -126,7 +126,8 @@ impl DeviceSyncHost {
 
     /// The connection to `dial`'s home and its archive receiver, or, with the
     /// line that says why, the receiver alone or `None`. `first` is the
-    /// first run's admission.
+    /// first run's admission; `freeze` also admits each archive import (FIX
+    /// 11796).
     async fn open_logged(
         server: &Arc<SyncServer>,
         dial: Dial,

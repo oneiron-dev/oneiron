@@ -24,6 +24,20 @@ pub(crate) fn apply(
                 dropped.insert(*note);
             }
         }
+        // A bundle's attachment of a NOTE deleted here stages as deleted,
+        // whichever window carries that NOTE's core (FIX 8878).
+        let judge = super::workflows::Judge {
+            vault,
+            txn,
+            tombstones: &tombstones,
+            flagged: &BTreeSet::new(),
+            selector: None,
+        };
+        for note in state.notes() {
+            if !state.cores.contains_key(&note) && !judge.attaches(&note)? {
+                dropped.insert(note);
+            }
+        }
         state.drop_deleted(&dropped);
         state.validate()?;
         // Erasure reads this namespace to find and purge workflow residue;

@@ -157,6 +157,7 @@ reqwest = { version = "0.12", default-features = false, features = ["blocking", 
 # version already in the tree through hyper.
 httpdate = "1"
 thiserror = { workspace = true }
+tempfile = "3"
 utoipa = "5.5.0"
 # The `/v1/ai/voices` route bodies' schemas in the OpenAPI document
 # (DOOR-143), at the engine's own pin.
@@ -232,7 +233,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
-tempfile = "3"
 # `util` carries `ServiceExt::oneshot`, which the router-level rows in
 # `src/api/tests.rs` and `src/commands/tests.rs` drive requests through. The
 # feature reached us only because axum enables it on its own `tower` edge —

@@ -1261,6 +1261,11 @@ export_facade! {
     let output = client.vault_skills_optimize_tradeoff_asks_pick(&input)?;
     crate::codec::lift_record("vault.skills.optimize.tradeoff_asks.pick", &output)
 };
+"vault.skills.optimize.tradeoff_asks.resolve" => fn vault_skills_optimize_tradeoff_asks_resolve(&self, input: SkillOptimizeTradeoffResolveRequest) -> SkillOptimizeResultView = |client| {
+    let input: oneiron::task_verb::sdk::SkillOptimizeTradeoffResolveRequest = crate::codec::lower_record("vault.skills.optimize.tradeoff_asks.resolve", input)?;
+    let output = client.vault_skills_optimize_tradeoff_asks_resolve(&input)?;
+    crate::codec::lift_record("vault.skills.optimize.tradeoff_asks.resolve", &output)
+};
 "vault.skills.governance.get" => fn vault_skills_governance_get(&self, input: HubSkillRequest) -> SkillGovernanceView = |client| {
     let input: oneiron::task_verb::sdk::HubSkillRequest = crate::codec::lower_record("vault.skills.governance.get", input)?;
     let output = client.vault_skills_governance_get(&input)?;
@@ -5335,6 +5340,11 @@ export_facade! {
     let input: oneiron::dreamer_runner::ConsolidationLineageRequest = crate::codec::lower_record("vault.consolidation.lineage", input)?;
     let output = client.vault_consolidation_lineage(&input)?;
     crate::codec::lift_record("vault.consolidation.lineage", &output)
+};
+"vault.consolidation.candidate_decisions" => fn vault_consolidation_candidate_decisions(&self, input: DreamerCandidateDecisionsRequest) -> Vec<DreamerDecidedCandidateView> = |client| {
+    let input: oneiron::memory::DreamerCandidateDecisionsRequest = crate::codec::lower_record("vault.consolidation.candidate_decisions", input)?;
+    let output = client.vault_consolidation_candidate_decisions(&input)?;
+    crate::codec::lift_record("vault.consolidation.candidate_decisions", &output)
 };
 "vault.consolidation.promote" => fn vault_consolidation_promote(&self, input: ConsolidationPromoteRequest) -> ConsolidationPromotion = |client| {
     let input: oneiron::memory::consolidation::ConsolidationPromoteRequest = crate::codec::lower_record("vault.consolidation.promote", input)?;

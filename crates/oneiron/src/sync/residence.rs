@@ -5,6 +5,7 @@
 mod tests;
 
 mod admission;
+mod authority_parts;
 mod authority_tail;
 mod bundle;
 mod bundle_access;
@@ -23,6 +24,11 @@ mod prune;
 mod recall_scope;
 mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
+pub use authority_parts::{
+    AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
+    AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage,
+    authority_append_part_for, authority_entry_part_for, split_authority_page,
+};
 pub use authority_tail::{
     AUTHORITY_APPEND_WORK_SLICE, AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
     AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
@@ -77,8 +83,9 @@ pub use home_handoff::{
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
-    KIT_PAD_INDEX_FETCH_PATH, KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitPadIndexFetch,
-    KitPadIndexPage, kit_bundle_fetch_origin, kit_sealed_bundle_index, kit_sealed_bundle_part,
+    KIT_CUSTODY_FETCH_PATH, KIT_CUSTODY_REPLY_MAX, KIT_PAD_INDEX_FETCH_PATH,
+    KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitCustodyFetch, KitPadIndexFetch, KitPadIndexPage,
+    kit_bundle_fetch_origin, kit_custody_page, kit_sealed_bundle_index, kit_sealed_bundle_part,
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
@@ -393,7 +400,12 @@ pub fn selected_item_blob_with(
     // FIX 7608 slice 4: a copy id reads its source; a marked row is its copy.
     super::selector::secret_projection::released_item_blob(vault, item, |item| {
         let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
-        Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+        match map_get_bytes(&selected.get_map("entities"), &item.to_hex()) {
+            // A carrier its window binds by reference reads as the body it
+            // names (FIX 5532).
+            Some(blob) => super::asset_body::served_row(vault, source, &item, blob),
+            None => Ok(None),
+        }
     })
 }
 
@@ -644,6 +656,8 @@ pub fn promotion_covers_full_window_for(
         }
         copy_embedding_setup_rows(source, &selected)?;
     }
+    // A body reference stands beside each owner the grant kept (FIX 5532).
+    super::asset_body::references::copy_refs_within(source, &selected)?;
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

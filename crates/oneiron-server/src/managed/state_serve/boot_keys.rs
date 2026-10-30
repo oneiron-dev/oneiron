@@ -81,13 +81,16 @@ pub(super) fn seal_escrow_recipient(
 /// data key its supervisor delivered: a sealed vault's, reopened from the
 /// mirror beside it; a new one where no vault is yet and `maximum_tier`
 /// (`--maximum-tier`, else the settings file's) opted in; none for a plain
-/// vault, which stays plain (no converter).
+/// vault, which stays plain (no converter). A sealed creation a crash left
+/// unfinished served nothing: it is removed first, and opens as a first open
+/// that creates it again (FIX 2546).
 pub(super) fn managed_page_seal(
     managed: &ManagedArgs,
     maximum_tier: bool,
     dek: &[u8; 32],
 ) -> anyhow::Result<Option<oneiron::VaultPageSeal>> {
     let path = &managed.data_dir;
+    oneiron::world_keys::remove_unfinished_sealed_creation(path)?;
     if oneiron::world_keys::vault_is_sealed(path)? {
         return Ok(Some(oneiron::world_keys::reopen_delivered_page_seal(
             path, dek,

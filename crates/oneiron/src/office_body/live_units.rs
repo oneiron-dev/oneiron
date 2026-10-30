@@ -222,15 +222,20 @@ impl Vault {
         self.live_recalc(artifact, Some(sheet), &mut bodies);
         let [was, now] = bodies;
         let named = |body: &XlsxBody| {
-            body.sheets.iter().find(|entry| entry.name == sheet).map(|entry| {
-                let cells: SheetCells = entry
-                    .cells
-                    .iter()
-                    .filter(|(_, cell)| cell.value != XlsxValue::Blank || cell.formula.is_some())
-                    .map(|(at, cell)| (*at, (cell.value.clone(), cell.formula.clone())))
-                    .collect();
-                (entry.key.clone(), cells)
-            })
+            body.sheets
+                .iter()
+                .find(|entry| entry.name == sheet)
+                .map(|entry| {
+                    let cells: SheetCells = entry
+                        .cells
+                        .iter()
+                        .filter(|(_, cell)| {
+                            cell.value != XlsxValue::Blank || cell.formula.is_some()
+                        })
+                        .map(|(at, cell)| (*at, (cell.value.clone(), cell.formula.clone())))
+                        .collect();
+                    (entry.key.clone(), cells)
+                })
         };
         let axes = |body: &XlsxBody, key: &str| {
             body.axes

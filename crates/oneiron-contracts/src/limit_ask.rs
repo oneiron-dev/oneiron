@@ -510,6 +510,10 @@ pub enum EngineLimit {
     /// The vault policy's admission quota asks first when it is lower. Past
     /// it the row asks and the whole manifest is admitted.
     ConnectorManifestEntries,
+    /// Held-out receipts one shared-skill merge scores its base over
+    /// (FIX 5218). Past it the row asks whether everything is okay and
+    /// the merge scores over every receipt.
+    SharedMergeEvidenceRows,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
