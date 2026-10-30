@@ -154,10 +154,7 @@ impl RefusalRetry {
             )
         {
             Self::DependencyPending
-        } else if matches!(
-            err,
-            Error::Sync(SyncError::MaintenanceIngestQuotaExceeded { .. })
-        ) || err.kind() == ErrorKind::AuthorityLogFull
+        } else if err.kind() == ErrorKind::AuthorityLogFull
             || pack_sync::pack_rejection_keeps_retry_marker(err)
         {
             Self::Retry
