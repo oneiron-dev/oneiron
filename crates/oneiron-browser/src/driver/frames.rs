@@ -10,9 +10,8 @@
 //! is found in the frame it is in, on that frame's session. An OOPIF
 //! session's own same-process children read on that session and graft
 //! under it the same way (FIX 11577). A frame whose tree the read already
-//! holds, or that does not read, is left as it was. An OOPIF's rows act as
-//! the engine allows them: a row with no DOM node on the page's session
-//! stays read-only.
+//! holds, or that does not read, is left as it was. An OOPIF's rows act
+//! on their own frame session (FIX 11576).
 //!
 //! A screenshot masks an OOPIF's secret rows on the frame's own session,
 //! and its secret-marked fields there too, as the front document's are

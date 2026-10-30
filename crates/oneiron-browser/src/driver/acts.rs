@@ -37,12 +37,7 @@ impl CdpDriver {
         // page's session. One the read names on no session, or on two, is
         // stale, as a row with no node is.
         let session = self.row_session(&capture.ax, node).ok_or_else(stale)?;
-        let resolved = self.pipe.call(
-            Some(&session),
-            "DOM.resolveNode",
-            json!({"backendNodeId": node}),
-            Instant::now() + CALL,
-        )?;
+        let resolved = self.call_in(&session, "DOM.resolveNode", json!({"backendNodeId": node}))?;
         let object = resolved
             .pointer("/object/objectId")
             .cloned()
@@ -61,6 +56,7 @@ impl CdpDriver {
         Ok(Target {
             row: capture.rows[at].clone(),
             node,
+            session,
             rebound,
         })
     }
@@ -84,30 +80,6 @@ impl CdpDriver {
             session = Some(found);
         }
         session
-    }
-
-    /// `node`'s `function` on `session` (FIX 11576), as `call_on` calls it
-    /// on the front tab's session.
-    fn call_on_in(
-        &self,
-        session: &str,
-        node: &Value,
-        function: &str,
-        args: Value,
-    ) -> Result<Value, BrowserError> {
-        let result = self.pipe.call(
-            Some(session),
-            "Runtime.callFunctionOn",
-            json!({"objectId": node["objectId"], "functionDeclaration": function, "arguments": args, "returnByValue": true}),
-            Instant::now() + CALL,
-        )?;
-        if let Some(error) = result.get("exceptionDetails") {
-            return Err(BrowserError::Protocol(self.thrown_text(error)));
-        }
-        Ok(result
-            .pointer("/result/value")
-            .cloned()
-            .unwrap_or(Value::Null))
     }
 
     /// The viewport point, in CSS pixels, at fractions `x`, `y` of a held
@@ -175,10 +147,18 @@ impl CdpDriver {
         Ok(None)
     }
 
-    /// A left click at viewport point (`x`, `y`).
+    /// A left click at viewport point (`x`, `y`) of the front tab.
     fn mouse_click(&self, x: f64, y: f64) -> Result<(), BrowserError> {
+        self.mouse_click_in(&self.session, x, y)
+    }
+
+    /// A left click at viewport point (`x`, `y`) of `session`'s viewport
+    /// (FIX 11576): a frame target's box reads in its frame's viewport, so
+    /// its click dispatches there too.
+    fn mouse_click_in(&self, session: &str, x: f64, y: f64) -> Result<(), BrowserError> {
         for kind in ["mouseMoved", "mousePressed", "mouseReleased"] {
-            self.page(
+            self.call_in(
+                session,
                 "Input.dispatchMouseEvent",
                 json!({"type": kind, "x": x, "y": y, "button": "left", "clickCount": 1}),
             )?;
@@ -208,12 +188,15 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
+        let session = &target.session;
         let covered = || BrowserError::Covered(target.row.target.clone());
-        self.page(
+        self.call_in(
+            session,
             "DOM.scrollIntoViewIfNeeded",
             json!({"backendNodeId": node["backendNodeId"]}),
         )?;
-        let model = self.page(
+        let model = self.call_in(
+            session,
             "DOM.getBoxModel",
             json!({"backendNodeId": node["backendNodeId"]}),
         )?;
@@ -228,7 +211,8 @@ impl CdpDriver {
         let x = (quad[0] + quad[2] + quad[4] + quad[6]) / 4.0;
         let y = (quad[1] + quad[3] + quad[5] + quad[7]) / 4.0;
         // The point must land on the element or inside it, not on a cover.
-        let hit = self.call_on(
+        let hit = self.call_on_in(
+            session,
             node,
             "function(x, y) { const e = document.elementFromPoint(x, y); return !!e && (e === this || this.contains(e)); }",
             json!([{"value": x}, {"value": y}]),
@@ -236,9 +220,16 @@ impl CdpDriver {
         if hit != Value::Bool(true) {
             return Err(covered());
         }
-        let watch = Watch::Click(change::row_target(&target.row), Some(node));
-        let mut observation =
-            self.act(base, &watch, |_| Ok(()), |driver| driver.mouse_click(x, y))?;
+        let watch = Watch::Click(
+            change::row_target(&target.row),
+            Some((node, session.as_str())),
+        );
+        let mut observation = self.act(
+            base,
+            &watch,
+            |_| Ok(()),
+            |driver| driver.mouse_click_in(session, x, y),
+        )?;
         observation.rebound.clone_from(&target.rebound);
         Ok(observation)
     }
@@ -255,6 +246,7 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
+        let session = &target.session;
         if let Entry::Secret(handle) = entry
             && let Some(backend) = node["backendNodeId"].as_u64()
         {
@@ -262,14 +254,19 @@ impl CdpDriver {
             self.typed
                 .insert(backend, kind.unwrap_or(SecretKind::Password));
         }
-        let watch = Watch::Entry(change::row_target(&target.row), node);
+        let watch = Watch::Entry(change::row_target(&target.row), node, session);
         let mut observation = self.act(
             base,
             &watch,
             |driver| {
-                driver.page("DOM.focus", json!({"backendNodeId": node["backendNodeId"]}))?;
+                driver.call_in(
+                    session,
+                    "DOM.focus",
+                    json!({"backendNodeId": node["backendNodeId"]}),
+                )?;
                 if clear {
-                    driver.call_on(
+                    driver.call_on_in(
+                        session,
                         node,
                         "function() { if (typeof this.select === 'function') this.select(); else getSelection().selectAllChildren(this); }",
                         json!([]),
@@ -279,13 +276,13 @@ impl CdpDriver {
             },
             |driver| match entry {
                 Entry::Text(text) => driver
-                    .page("Input.insertText", json!({"text": text}))
+                    .call_in(session, "Input.insertText", json!({"text": text}))
                     .map(drop),
                 Entry::Secret(handle) => {
                     let use_ = SecretUse::Type;
                     driver.secrets.with_value(handle, use_, &mut |text: &str| {
                         driver
-                            .page("Input.insertText", json!({"text": text}))
+                            .call_in(session, "Input.insertText", json!({"text": text}))
                             .map(drop)
                     })
                 }
@@ -304,9 +301,11 @@ impl CdpDriver {
         base: &Base,
     ) -> Result<Observation, BrowserError> {
         let node = &target.node;
-        let watch = Watch::Entry(change::row_target(&target.row), node);
+        let session = &target.session;
+        let watch = Watch::Entry(change::row_target(&target.row), node, session);
         let mut observation = self.act(base, &watch, |_| Ok(()), |driver| {
-            let picked = driver.call_on(
+            let picked = driver.call_on_in(
+                session,
                 node,
                 "function(want) {
                     if (this.tagName !== 'SELECT') return false;
