@@ -81,7 +81,7 @@ pub(super) enum PreparedRepoMutationExecution {
     /// A file bundle's ONE staged commit and its exact tree change.
     FileBundle {
         commit: PreparedCommitFile,
-        edits: Vec<super::received_file::tree::ReceivedTreeEdit>,
+        edits: Vec<super::bundle::tree::BundleTreeEdit>,
     },
 }
 
@@ -695,10 +695,7 @@ pub(super) fn execute_repo_mutation(
         }
         RepoMutationOperation::ReceivedFiles { .. } => {
             super::received_file::require_received_files_execution(vault, request)?;
-            super::received_file::tree::apply_prepared_received_files(
-                repo_root,
-                execution.commit_file()?,
-            )?;
+            super::bundle::tree::apply_prepared_bundle_files(repo_root, execution.commit_file()?)?;
             Ok(None)
         }
         RepoMutationOperation::CommitFiles { .. } => {

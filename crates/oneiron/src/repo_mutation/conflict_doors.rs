@@ -1,9 +1,9 @@
 //! Owner-bound admission of real overlaps, retaining both proposed changes.
+use super::bundle::tree::{bundle_tree_edits, prepare_bundle_files_commit};
 use super::git::{
     admitted_repo_ref, git_common_dir, require_pinned_head, resolve_mutable_repo_root,
 };
 use super::proposal::{RepoProposalOperation, RepoProposalStatus, invalid};
-use super::received_file::tree::{prepare_received_files_commit, received_tree_edits};
 use super::snapshot::capture_repo_snapshot;
 use super::worktree::{prepare_commit_file_through_queue_worktree, remove_queue_worktree};
 use crate::codebase::RepoRef;
@@ -206,8 +206,8 @@ fn queue_conflict_sides(
     let mut sides = Vec::new();
     for row in rows {
         let prepared = if row.is_source_bound_received() {
-            let edits = received_tree_edits(&row.files)?;
-            prepare_received_files_commit(root, &edits, &row.message)?
+            let edits = bundle_tree_edits(&row.files)?;
+            prepare_bundle_files_commit(root, &edits, &row.message)?
         } else {
             let message = super::trailer::commit_message_with_provenance_trailer(
                 &row.message,
