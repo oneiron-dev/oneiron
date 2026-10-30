@@ -178,7 +178,11 @@ impl From<SecretRevealAsk> for RevealView {
             disclosure: ask.disclosure,
             expected_digest: ask.once_digest.map(|digest| digest.to_hex()),
             grant_ref: ask.grant_ref,
-            scopes: ask.scopes.into_iter().map(RevealGrantScope::as_str).collect(),
+            scopes: ask
+                .scopes
+                .into_iter()
+                .map(RevealGrantScope::as_str)
+                .collect(),
             card: ask.card,
         }
     }
