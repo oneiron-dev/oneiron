@@ -145,6 +145,7 @@ mod host_issuer_custody;
 pub(crate) mod home_handoff_custody;
 mod idempotency_intent;
 mod inference_snapshot_custody;
+mod invocation_claims;
 mod key_custody;
 mod key_encoding;
 mod known_history;
@@ -295,7 +296,17 @@ pub(crate) use structural_kind_registry::{
 // FIX 10379: the intent a keyed request's route writes under, counted by
 // each write it commits.
 #[doc(hidden)]
-pub use idempotency_intent::{IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent};
+pub use idempotency_intent::{
+    IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent,
+};
+#[doc(hidden)]
+pub use invocation_claims::{
+    InvocationClaimEntry, InvocationClaimRelease, StoredPeerMachine,
+    invocation_claim_opaque_retired_at, invocation_claim_response_read,
+};
+pub(crate) use invocation_claims::{
+    erase_invocation_claim_owner_in_txn, invocation_claim_owners, invocation_claim_scan,
+};
 // KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
 #[cfg(feature = "sync")]
 pub(crate) use sync_responses::media_job_put_fenced_in_txn;

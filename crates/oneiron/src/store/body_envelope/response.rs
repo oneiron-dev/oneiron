@@ -195,6 +195,8 @@ pub(crate) enum ResponseFamily {
     /// An HTTP idempotency cache entry: its request, headers, target and
     /// response (KS-2B2).
     Http,
+    /// A durable invocation intent or its settled JSON outcome (FIX 11889).
+    InvocationClaim,
     /// A media job's row: its request and its end (KS-2B2).
     MediaJob,
     /// One of a media job's clips, in a row of its own beside the job's.
@@ -276,6 +278,9 @@ impl ResponseFamily {
                 if key.starts_with(side_table::HTTP_IDEMPOTENCY_REPLY.prefix) {
                     return Some(Self::Http);
                 }
+                if key.starts_with(side_table::INVOCATION_CLAIM.prefix) {
+                    return Some(Self::InvocationClaim);
+                }
                 crate::store::media_key(key).map(|media| match media {
                     MediaKey::Job => Self::MediaJob,
                     MediaKey::Part { .. } => Self::MediaPart,
@@ -290,7 +295,9 @@ impl ResponseFamily {
     pub(crate) const fn database(self) -> ResponseDb {
         match self {
             Self::StepClaim => ResponseDb::Entities,
-            Self::Http | Self::MediaJob | Self::MediaPart => ResponseDb::SyncState,
+            Self::Http | Self::InvocationClaim | Self::MediaJob | Self::MediaPart => {
+                ResponseDb::SyncState
+            }
             Self::AttemptPayload => ResponseDb::Attempts,
             Self::ProgramStep
             | Self::StepState
@@ -332,6 +339,7 @@ impl ResponseFamily {
             Self::StepClaim => crate::llm::step_claim_carriage(value),
             Self::Replay => crate::code_run::replay_carriage(value),
             Self::Http => crate::store::http_scan(value),
+            Self::InvocationClaim => crate::store::invocation_claim_scan(value),
             Self::MediaJob => crate::store::media_job_scan(value),
             Self::MediaPart => ResponseScan::decoded(
                 crate::store::media_part_carriage(value).map(ResponseCarriage::whole),
@@ -427,6 +435,7 @@ impl ResponseFamily {
             )?]),
             Self::Replay => crate::code_run::replay_owners(store, txn, value),
             Self::Http => Ok(crate::store::http_owners(value)),
+            Self::InvocationClaim => Ok(crate::store::invocation_claim_owners(value)),
             Self::MediaJob => Ok(crate::store::media_job_owners(value)),
             Self::BlockedCapture => Ok(crate::self_heal::blocked_reports::blocked_capture_owners(
                 key, value,
@@ -506,6 +515,7 @@ impl ResponseFamily {
             | Self::StepState
             | Self::Replay
             | Self::Http
+            | Self::InvocationClaim
             | Self::MediaJob
             | Self::WaitDelivery
             | Self::WaitSettled
@@ -560,7 +570,7 @@ impl ResponseFamily {
             Self::AttemptPayload => {
                 crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, &kept()?)
             }
-            Self::Http | Self::MediaJob => {
+            Self::Http | Self::InvocationClaim | Self::MediaJob => {
                 store
                     .side_sync_state()?
                     .put(wtxn, sync_state_key(key)?, &kept()?)

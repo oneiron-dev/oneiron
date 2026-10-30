@@ -1,8 +1,9 @@
 //! The facade's invocation claims: one call per client-named invocation id (OF-580).
 //! `claim_door_invocation` and `finish_door_claim` are its call surface; a door gets a `DoorClaim`.
-//! `oneiron::runtime_hooks::verb` defines the `InvocationClaim` and outcome records forwarded.
+//! The live claim is the fast path; `InvocationClaimStore` is its restart twin (FIX 11889).
 
 use super::*;
+use crate::invocation_claims::{InvocationClaimStore, invocation_claim_key};
 
 /// Claims the invocation a request names, once, around its whole route
 /// (OF-580): a second request naming it for the same call waits for this
@@ -54,10 +55,10 @@ pub(super) async fn facade_invocation_claim(
             digest.as_bytes(),
         ],
     );
-    match claim_door_invocation(&server, invocation, call).await {
+    match claim_door_invocation(&server, invocation, call, auth.principal_entity()).await {
         DoorClaim::Run(claim) => {
-            let response = next
-                .run(Request::from_parts(parts, Body::from(bytes)))
+            let response = claim
+                .run(next.run(Request::from_parts(parts, Body::from(bytes))))
                 .await;
             finish_door_claim(claim, response).await
         }
@@ -90,6 +91,32 @@ pub(super) async fn facade_invocation_claim(
             ["Name a fresh invocation for a different call."],
         )
         .into_response(),
+        DoorClaim::ReplyNotKept { committed_writes } => FacadeApiError::new(
+            StatusCode::CONFLICT,
+            crate::idempotency::REPLY_NOT_KEPT_STATE,
+            format!(
+                "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+            ),
+            [
+                "Read the resource's current state to see what landed.",
+                "Send the request with a new invocation to act again.",
+            ],
+        )
+        .into_response(),
+        DoorClaim::Erased => FacadeApiError::new(
+            StatusCode::CONFLICT,
+            INVOCATION_RESPONSE_ERASED,
+            "the first response with this invocation was erased",
+            ["Send the request with a new invocation to act again."],
+        )
+        .into_response(),
+        DoorClaim::StoreFailed => FacadeApiError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            INVOCATION_STORE_FAILED,
+            "the invocation claim could not be stored",
+            ["Retry the request once the invocation store is available."],
+        )
+        .into_response(),
     }
 }
 
@@ -105,28 +132,172 @@ pub(crate) const INVOCATION_IN_FLIGHT: &str = "invocation_in_flight";
 /// gets at once.
 pub(crate) const INVOCATION_CONFLICT: &str = "invocation_conflict";
 
+/// The first response was erased and is never treated as a cache miss.
+pub(crate) const INVOCATION_RESPONSE_ERASED: &str = "invocation_response_erased";
+
+/// The durable intent could not be written or read, so the route did not run.
+pub(crate) const INVOCATION_STORE_FAILED: &str = "invocation_store_failed";
+
 /// What a door does with an invocation its client named (OF-580).
 pub(crate) enum DoorClaim {
     /// This request runs the call: hand its reply to [`finish_door_claim`].
-    Run(InvocationClaim),
+    Run(DoorInvocationClaim),
     /// The first call's reply, sent as this request's.
     Answered(InvocationOutcome),
     /// The first call is still running past the wait, or left no reply.
     InFlight,
     /// The id names a different call.
     Conflict,
+    /// The first call committed writes but no reply was kept after the
+    /// caller's bounded wait, or its open intent reached the TTL.
+    ReplyNotKept { committed_writes: u32 },
+    /// An owner's erase took the first call's claim or response.
+    Erased,
+    /// The claim store failed; no route effect ran.
+    StoreFailed,
+}
+
+/// The live claim plus its durable intent. A normal drop without `finish`
+/// releases the intent, matching the old live-only retry behavior. A process
+/// crash runs no drop, so the intent stands and a duplicate cannot rerun.
+pub(crate) struct DoorInvocationClaim {
+    live: Option<InvocationClaim>,
+    store: InvocationClaimStore,
+    store_key: String,
+}
+
+impl DoorInvocationClaim {
+    /// Runs a route future with its durable intent open on every poll, so
+    /// grouped writes count on it (FIX 10379). Detached workers carry it too.
+    pub(crate) async fn run<F: std::future::Future>(&self, run: F) -> F::Output {
+        crate::idempotency::run_under_intent(&self.store_key, run).await
+    }
+
+    /// Saves a successful JSON outcome, releases a failed one, and wakes the
+    /// live waiters in either case. A storage error is logged and leaves the
+    /// durable intent standing rather than permitting a second run.
+    pub(crate) fn finish(self, outcome: InvocationOutcome) {
+        let keep = outcome.status < 400;
+        self.finish_with(outcome, keep);
+    }
+
+    /// Releases a domain-level failure carried inside a 200 transport
+    /// envelope, but still gives the original refusal to live waiters.
+    pub(crate) fn finish_failed(self, outcome: InvocationOutcome) {
+        self.finish_with(outcome, false);
+    }
+
+    fn finish_with(mut self, outcome: InvocationOutcome, keep: bool) {
+        let kept = if keep {
+            self.store.settle(&self.store_key, &outcome).map(|_| ())
+        } else {
+            self.store.release_intent(&self.store_key)
+        };
+        if let Err(error) = kept {
+            tracing::error!(
+                reason = "invocation_claim_finish_failed",
+                error = %error,
+                "failed to finish the durable invocation claim; its intent stands"
+            );
+        }
+        if let Some(live) = self.live.take() {
+            live.finish(outcome);
+        }
+    }
+}
+
+impl Drop for DoorInvocationClaim {
+    fn drop(&mut self) {
+        if self.live.is_some()
+            && let Err(error) = self.store.release_intent(&self.store_key)
+        {
+            tracing::error!(
+                reason = "invocation_claim_release_failed",
+                error = %error,
+                "failed to release an unfinished durable invocation claim"
+            );
+        }
+    }
 }
 
 /// Claims `invocation` for the request whose call `body` names, waiting up
-/// to [`INVOCATION_WAIT`] for another request's run of the same call. Each
-/// door that takes a client's id claims it once, at its outermost point.
+/// to [`INVOCATION_WAIT`] for another request's run of the same call. A live
+/// miss then reads its durable twin: a settled answer replays, an open one
+/// gets one bounded poll, and only a miss or released failure runs.
 pub(crate) async fn claim_door_invocation(
     server: &SyncServer,
     invocation: InvocationId,
     body: [u8; 32],
+    actor: Option<EntityId>,
 ) -> DoorClaim {
+    let store = server.invocation_claims.clone();
+    let store_key = invocation_claim_key(invocation);
+    store.reclaim_expired_page().await;
     match server.vault.claim_invocation(invocation, body) {
-        InvocationEntry::Claimed(claim) => DoorClaim::Run(claim),
+        InvocationEntry::Claimed(live) => {
+            let mut live = Some(live);
+            let mut waited = false;
+            loop {
+                let _guard = store.lock_for(&store_key).await;
+                let lookup = match store.lookup(&store_key, &body) {
+                    Ok(lookup) => lookup,
+                    Err(error) => {
+                        tracing::error!(
+                            reason = "invocation_claim_read_failed",
+                            error = %error,
+                            "failed to read a durable invocation claim"
+                        );
+                        return DoorClaim::StoreFailed;
+                    }
+                };
+                match lookup {
+                    crate::invocation_claims::InvocationClaimLookup::Miss => {
+                        if let Err(error) = store.insert_intent(&store_key, body, actor) {
+                            tracing::error!(
+                                reason = "invocation_claim_intent_write_failed",
+                                error = %error,
+                                "failed to persist a durable invocation intent"
+                            );
+                            return DoorClaim::StoreFailed;
+                        }
+                        return DoorClaim::Run(DoorInvocationClaim {
+                            live: live.take(),
+                            store,
+                            store_key,
+                        });
+                    }
+                    crate::invocation_claims::InvocationClaimLookup::Replay(outcome) => {
+                        if let Some(live) = live.take() {
+                            live.finish(outcome.clone());
+                        }
+                        return DoorClaim::Answered(outcome);
+                    }
+                    crate::invocation_claims::InvocationClaimLookup::Conflict => {
+                        return DoorClaim::Conflict;
+                    }
+                    crate::invocation_claims::InvocationClaimLookup::Erased => {
+                        return DoorClaim::Erased;
+                    }
+                    crate::invocation_claims::InvocationClaimLookup::ReplyNotKept {
+                        committed_writes,
+                    } => return DoorClaim::ReplyNotKept { committed_writes },
+                    crate::invocation_claims::InvocationClaimLookup::Interrupted {
+                        committed_writes,
+                    } if waited => {
+                        return if committed_writes == 0 {
+                            DoorClaim::InFlight
+                        } else {
+                            DoorClaim::ReplyNotKept { committed_writes }
+                        };
+                    }
+                    crate::invocation_claims::InvocationClaimLookup::Interrupted { .. } => {
+                        waited = true;
+                    }
+                }
+                drop(_guard);
+                tokio::time::sleep(INVOCATION_WAIT).await;
+            }
+        }
         InvocationEntry::Conflict => DoorClaim::Conflict,
         InvocationEntry::Busy(wait) => {
             match super::clock_ingress::run_blocking(move || wait.outcome(INVOCATION_WAIT)).await {
@@ -174,8 +345,8 @@ pub(crate) fn invocation_body(
 /// waiting on the same call, beside what its route kept to release it again
 /// ([`FacadeReleased`], FIX 8212): the answer before its release, its rows
 /// and its caller's machine. A body that is not JSON is sent as it is and
-/// saved for none of them.
-pub(crate) async fn finish_door_claim(claim: InvocationClaim, response: Response) -> Response {
+/// releases the durable intent, as the old live claim allowed a later retry.
+pub(crate) async fn finish_door_claim(claim: DoorInvocationClaim, response: Response) -> Response {
     let (mut head, body) = response.into_parts();
     let released = head.extensions.remove::<FacadeReleased>();
     let Ok(bytes) = axum::body::to_bytes(body, usize::MAX).await else {

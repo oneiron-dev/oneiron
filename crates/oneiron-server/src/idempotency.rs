@@ -204,7 +204,9 @@ enum IdempotencyLookup {
     /// The first request's intent stands with no outcome (FIX 9527): the
     /// writes committed while it ran, each counted in its own transaction
     /// (FIX 10379).
-    Interrupted { committed_writes: u32 },
+    Interrupted {
+        committed_writes: u32,
+    },
 }
 
 #[derive(Clone)]
@@ -425,6 +427,7 @@ mod intent;
 mod reclaim;
 mod request;
 
+pub(crate) use self::intent::{REPLY_NOT_KEPT_STATE, run_under_intent, run_under_intent_owned};
 pub(crate) use self::request::{idempotency_for_mutating_form, idempotency_middleware};
 
 #[cfg(test)]

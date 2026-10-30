@@ -141,7 +141,8 @@ families! {
     Class::Structure => DELETION_ARCHIVE_MARKER DELETION_ROW_FENCE DELETION_HARD_DELETE_MARKER
         DELETION_IDENTITY_SOFT_DELETE_MARKER SYNC_M_U_SEQ_E SYNC_M_U_SEQ_W
         DELETION_WITHDRAWN_GENERATION_FENCE;
-    Class::Other(Client::Dispatch(OtherClient::Response)) => HTTP_IDEMPOTENCY_REPLY MODEL_MEDIA_JOB;
+    Class::Other(Client::Dispatch(OtherClient::Response)) => HTTP_IDEMPOTENCY_REPLY INVOCATION_CLAIM
+        MODEL_MEDIA_JOB;
     Class::Mixed(Carrier::WindowSnapshot) => WINDOW_SNAPSHOT;
     Class::Mixed(Carrier::PendingEdit) => SYNC_QD_E;
     Class::Mixed(Carrier::PendingNoteOperation) => SYNC_QN_E;

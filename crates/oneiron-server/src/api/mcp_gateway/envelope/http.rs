@@ -234,7 +234,14 @@ pub(super) async fn mcp_endpoint(
                 &request,
                 raw_arguments.as_deref(),
             );
-            match facade::claim_door_invocation(&server, invocation, call).await {
+            match facade::claim_door_invocation(
+                &server,
+                invocation,
+                call,
+                oneiron::EntityId::from_hex(&owner).ok(),
+            )
+            .await
+            {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
                     // And again once the wait is over, before a reply is his.
@@ -325,6 +332,50 @@ pub(super) async fn mcp_endpoint(
                         ),
                     );
                 }
+                DoorClaim::ReplyNotKept { committed_writes } => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        McpGatewayError::new(
+                            -32020,
+                            crate::idempotency::REPLY_NOT_KEPT_STATE,
+                            format!(
+                                "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+                            ),
+                        ),
+                    );
+                }
+                DoorClaim::Erased => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        McpGatewayError::new(
+                            -32020,
+                            facade::INVOCATION_RESPONSE_ERASED,
+                            "the first response with this invocation was erased",
+                        ),
+                    );
+                }
+                DoorClaim::StoreFailed => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        McpGatewayError::new(
+                            -32603,
+                            facade::INVOCATION_STORE_FAILED,
+                            "the invocation claim could not be stored",
+                        ),
+                    );
+                }
             }
         }
     };
@@ -353,6 +404,7 @@ pub(super) async fn mcp_endpoint(
     };
     let stamp =
         (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
+    let failed = result.is_err();
     let reply = mcp_envelope(id, result);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
@@ -361,11 +413,16 @@ pub(super) async fn mcp_endpoint(
         }
         let peer = crate::auth::proved_peer(&headers, &connection);
         let release = super::super::claimed_release::kept(peer, &saved, judged);
-        claim.finish(InvocationOutcome {
+        let outcome = InvocationOutcome {
             status: 200,
             body: saved,
             release,
-        });
+        };
+        if failed {
+            claim.finish_failed(outcome);
+        } else {
+            claim.finish(outcome);
+        }
     }
     mcp_http_reply(reply, stamp.as_ref())
 }
