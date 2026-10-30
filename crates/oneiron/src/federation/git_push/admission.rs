@@ -59,6 +59,9 @@ const IN_PROCESS_OWNER_ONLY: &str = "a push no host transport authenticated is t
 const NO_LONGER_STANDS: &str = "the authority this push was admitted under no longer stands";
 /// The credential was revoked while the push ran.
 const CREDENTIAL_REVOKED: &str = "the credential this push was admitted under is revoked";
+/// The owner's standing did not read at the final writer (FIX 7134).
+const OWNER_RECHECK_UNREAD: &str =
+    "the owner's standing did not read at the final writer; nothing landed, push again";
 /// A checkout push whose changed paths the door could not list.
 const PATHS_UNKNOWN: &str = "the checkout push's changed paths could not be listed";
 
@@ -313,7 +316,9 @@ impl Vault {
     /// and anchor; or the same checkout still holds, and the run's same
     /// Grant admits every ref move and changed path in `changes`. The
     /// current credential is still unrevoked. In-process pushes have no
-    /// credential to recheck.
+    /// credential to recheck. A recheck that cannot read admits nothing:
+    /// an owner push's is logged and refused with the typed capability
+    /// refusal, which he retries (FIX 7134).
     ///
     /// # Errors
     /// [`crate::error::CodeError::GitPushCapabilityRequired`] when the authority no longer
@@ -328,8 +333,9 @@ impl Vault {
         let principal = EntityId::from_hex(&stamp.principal)
             .map_err(|_| refused(&stamp.served, NO_LONGER_STANDS))?;
         let stands = match stamp.arm {
-            // A recheck that cannot read refuses no owner push it admitted:
-            // it is logged, and the push lands as it did before G1-PUSH.
+            // A recheck that cannot read never lands the push (FIX 7134): it
+            // is logged and refused with the typed capability refusal, as
+            // the non-owner arms are.
             GitPushArm::Owner => {
                 return match self.git_push_owner_rechecks_in_txn(txn, stamp, principal) {
                     Ok(true) => Ok(()),
@@ -337,9 +343,9 @@ impl Vault {
                     Err(error) => {
                         tracing::warn!(
                             kind = ?error.kind(),
-                            "git push: an owner push's recheck did not read; it lands as admitted"
+                            "git push: an owner push's recheck did not read; it is refused"
                         );
-                        Ok(())
+                        Err(refused(&stamp.served, OWNER_RECHECK_UNREAD))
                     }
                 };
             }
