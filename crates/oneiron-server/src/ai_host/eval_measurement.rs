@@ -23,10 +23,12 @@ use oneiron::{BudgetExhaustionPolicy, Vault};
 use crate::replay_judge::ServeReplayJudge;
 use crate::server::SyncServer;
 
+mod helper;
 mod legs;
 mod offer;
 mod score;
 
+pub(super) use helper::request_helper_measurements;
 pub(super) use offer::attach_measured_card;
 
 use legs::{Arms, Generated, Opened};
