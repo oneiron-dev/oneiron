@@ -4,8 +4,9 @@
 //! What arrives on a copy is translated onto its source before this device
 //! imports it, after the envelope's pads are installed: a copy edit lands on
 //! the stored bytes through the shipped visible diff, and a ruled hold
-//! imports nothing (the home sends it again). A device holding no marked
-//! repo item imports every payload as it came.
+//! imports nothing (its held record is kept; the home sends it again). A
+//! whole window state takes the same hold (FIX 10735). A device holding no
+//! marked repo item imports every payload as it came.
 
 use super::base::SyncClient;
 use crate::sync::selector::RepoSyncAdmission;
@@ -37,10 +38,14 @@ impl SyncClient {
 
     /// `payload`, a whole window state the home sent for `key` (bulk state
     /// or a promotion snapshot), as this window takes it: its copy rows
-    /// translated onto the sources this device holds. A state nothing here
-    /// can take as a source edit (a ruled hold) is taken as it came: its
-    /// copy rows stay copy rows under their own ids, masked, and no source
-    /// row changes.
+    /// translated onto the sources this device holds. A state whose copy
+    /// edit holds on its ruled cause takes the per-edit path's hold (FIX
+    /// 10735): its held record is kept and nothing of it imports, so no copy
+    /// row lands beside its source; the bulk keeps its marker and a
+    /// promotion is not taken, each tried again as a failed one is.
+    ///
+    /// # Errors
+    /// A store failure, the visible diff's own, or a ruled hold.
     pub(super) fn admitted_whole_payload(
         &self,
         key: &WindowKey,
@@ -53,11 +58,10 @@ impl SyncClient {
             RepoSyncAdmission::Admit(std::borrow::Cow::Owned(translated)) => translated,
             RepoSyncAdmission::Admit(std::borrow::Cow::Borrowed(_)) => payload,
             RepoSyncAdmission::Held => {
-                tracing::warn!(
-                    window = key.as_str(),
-                    "sync: a whole window state holds a copy edit on its ruled cause; its copy rows stay copies"
-                );
-                payload
+                return Err(TransportError::Storage(
+                    "a whole window state holds a copy edit on its ruled cause; it is not imported"
+                        .into(),
+                ));
             }
         })
     }
