@@ -10,7 +10,9 @@
 //! rows) answers the stored copy as it did before projection existed
 //! (`ISOLATION_NEW_CHECK_ERROR_MODE`); bounds that were judged still bound.
 //! A one-shot transfer is served once (FIX-LIST 10773): the row keeps each
-//! slip an archive door spent so, on every archive of its removed Owner.
+//! slip an archive door spent so, on every archive of its removed Owner. A
+//! pact-bound transfer is served only while its pact holds, and the row logs
+//! each serve under that pact (FIX 11860).
 
 use std::collections::BTreeSet;
 
@@ -60,6 +62,19 @@ pub(crate) struct StoredRemovalExport {
     /// slip id (FIX-LIST 10773): each is kept on every archive of the
     /// removed Owner, so it takes none of them again.
     spent_slips: BTreeSet<[u8; 32]>,
+    /// Each serve of this archive to a pact-bound transferred slip, oldest
+    /// first (FIX 11860).
+    pact_serves: Vec<PactServe>,
+}
+
+/// One serve of an archive to a pact-bound transferred slip (FIX 11860): the
+/// grant whose pact held at the serve, the slip, and when it was served.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PactServe {
+    grant: EntityId,
+    slip_id: [u8; 32],
+    served_at: u64,
 }
 
 impl StoredRemovalExport {
@@ -68,6 +83,7 @@ impl StoredRemovalExport {
             copy,
             positions,
             spent_slips: BTreeSet::new(),
+            pact_serves: Vec::new(),
         }
     }
 
@@ -196,6 +212,30 @@ impl Vault {
             REMOVAL_EXPORT.scan_from(&self.store, txn, prefix.as_bytes())?
         {
             if stored.spent_slips.insert(slip_id) {
+                REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Logs on each archive in `served` that the pact-bound transferred slip
+    /// `slip_id` took it at `now` while `grant`'s pact held (FIX 11860).
+    pub(crate) fn log_removal_archive_pact_serve_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        served: &[RemovalExportCopy],
+        grant: EntityId,
+        slip_id: [u8; 32],
+        now: u64,
+    ) -> Result<()> {
+        for copy in served {
+            let row_key = removal_export_key(&copy.member, &copy.receipt_id);
+            if let Some(mut stored) = REMOVAL_EXPORT.get(&self.store, txn, &row_key)? {
+                stored.pact_serves.push(PactServe {
+                    grant,
+                    slip_id,
+                    served_at: now,
+                });
                 REMOVAL_EXPORT.put(&self.store, txn, &row_key, &stored)?;
             }
         }
