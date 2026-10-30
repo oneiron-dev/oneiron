@@ -59,6 +59,10 @@ pub const AGENT_PRINCIPAL: &[u8] = b"oneiron/agent-principal/v1";
 /// (`commitment_schedule::commitment_projection_actor`). No parts.
 pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.actor.v1\0";
 
+/// The System actor a facade row's verb hooks name for a scoped credential
+/// bound to no actor (`api::facade::hooks`, FIX 1439). No parts.
+pub const FACADE_UNBOUND_CALLER: &[u8] = b"oneiron:facade-unbound-caller:v1";
+
 /// One occurrence of one commitment series
 /// (`commitment_schedule::commitment_instance_id`). Parts: series, due-at, window
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
