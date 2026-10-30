@@ -195,6 +195,14 @@ pub enum ChartEdit {
         family: Option<ChartKind>,
         #[serde(default)]
         x: Option<Vec<Option<serde_json::Number>>>,
+        /// A scatter or bubble series' x values as text, one label per
+        /// value (FIX 10295).
+        #[serde(default)]
+        x_labels: Option<Vec<Option<String>>>,
+        /// The nth plot of its family that draws it ([`ChartEdit::SetSeriesPlot`]);
+        /// none places it as settlement does.
+        #[serde(default)]
+        plot: Option<u32>,
         /// Its own categories; none draws the chart's.
         #[serde(default)]
         categories: Option<ChartCategories>,
@@ -229,11 +237,24 @@ pub enum ChartEdit {
         #[serde(default)]
         family: Option<ChartKind>,
     },
-    /// A scatter or bubble series' x values.
+    /// A scatter or bubble series' x values: numbers, or text labels it
+    /// draws by index (FIX 10295). Numbers written replace text ones, and
+    /// none writes no labels.
     SetSeriesX {
         series: NodeId,
         #[serde(default)]
         x: Option<Vec<Option<serde_json::Number>>>,
+        #[serde(default)]
+        x_labels: Option<Vec<Option<String>>>,
+    },
+    /// The plot of its family that draws one series, as Plot Series On
+    /// Secondary Axis moves it (FIX 10295): the nth (0 the first) of the
+    /// chart's plots of that family; one past them opens a new plot of the
+    /// family after them, on its own axes, while the series' plot keeps
+    /// another series. A plot every series of which moved away goes.
+    SetSeriesPlot {
+        series: NodeId,
+        plot: u32,
     },
     /// A bubble series' sizes, one per value.
     SetSeriesBubbleSize {

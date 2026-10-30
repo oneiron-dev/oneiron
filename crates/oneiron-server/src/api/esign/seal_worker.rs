@@ -79,7 +79,7 @@ pub(crate) struct SealConfig {
 
 impl SealConfig {
     /// The `ONEIRON_SEAL_*` environment.
-    fn from_env() -> Self {
+    pub(crate) fn from_env() -> Self {
         let text = |(name, _): SettingName| std::env::var(name).ok().filter(|v| !v.is_empty());
         Self {
             key: env_path(KEY),

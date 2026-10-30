@@ -77,22 +77,25 @@ impl MergeQueue<'_> {
         if batch.schema_version != 1
             || batch.id != id
             || batch.proposals.is_empty()
-            || batch.proposals.len() > 6
+            || batch.proposals.len() > super::staging::MAX_BATCH_PROPOSALS
         {
             return Err(Error::CorruptedIndex("merge batch identity or schema"));
         }
+        let masks = super::staging::speculative_masks(batch.proposals.len());
         if !matches!(
             batch.state,
             BatchState::Queued | BatchState::Quarantined | BatchState::Cancelled
-        ) && (batch.paths.len() != (1 << batch.proposals.len()) - 1
-            || batch.pre_snapshot.is_none())
+        ) && (batch.paths.len() != masks.len() || batch.pre_snapshot.is_none())
         {
             return Err(Error::CorruptedIndex("merge batch paths incomplete"));
         }
-        for (index, path) in batch.paths.iter().enumerate() {
-            if path.mask != index as u64 + 1 || path.worktree != self.worktree_path(id, path.mask) {
+        for (path, mask) in batch.paths.iter().zip(&masks) {
+            if path.mask != *mask || path.worktree != self.worktree_path(id, path.mask) {
                 return Err(Error::CorruptedIndex("merge worktree path identity"));
             }
+        }
+        if batch.paths.len() > masks.len() {
+            return Err(Error::CorruptedIndex("merge worktree path identity"));
         }
         Ok(batch)
     }

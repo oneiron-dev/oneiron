@@ -84,7 +84,11 @@ impl ConsolidationExecutor<'_> {
         };
         resources.require_output(resources.scope())?;
         resources.require_signals(resources.scope())?;
-        super::neighbourhood::pin(ctx.vault, attempt_id, resources.known())?;
+        super::neighbourhood::pin(
+            ctx.vault,
+            super::neighbourhood::ListingPin::attempt(attempt_id),
+            resources.known(),
+        )?;
         let config = ctx.vault.consolidation_selection()?;
         let (slices, low_trust) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;

@@ -93,6 +93,21 @@ pub(crate) fn stage_session_position(
     SCOPE_RECORD.put(view, txn, &id, &stamp)
 }
 
+/// Takes the position [`stage_session_position`] staged beside `id`, a row
+/// `view`'s room deletes (FIX 11932), as base's delete retires its stamp. A
+/// position the room did not stage is not the room's to take; base and its
+/// scope revision see nothing.
+pub(crate) fn unstage_session_position(
+    view: &crate::store::SessionStoreView<'_>,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+) -> Result<()> {
+    if view.vault_meta.stages_row(&SCOPE_RECORD.key_bytes(&id)) {
+        SCOPE_RECORD.delete(view, txn, &id)?;
+    }
+    Ok(())
+}
+
 /// Whether every row `view`'s room stages a body, words, a vector or an
 /// out-edge for is one the room placed itself (WILL L11-01): a room birth
 /// carrying the position its write staged beside it

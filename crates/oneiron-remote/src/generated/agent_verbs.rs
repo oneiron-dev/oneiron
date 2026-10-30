@@ -337,6 +337,9 @@ impl OneironClient {
                 "vault.message_stream_partial" => remote_agent_verb_output::<
                     oneiron::memory::MessageStreamPartial,
                 >(client, verb, &input),
+                "vault.message_streams.refused" => remote_agent_verb_output::<
+                    Vec<oneiron::memory::StreamRecoveryRefusal>,
+                >(client, verb, &input),
                 "vault.messages.durability" => remote_agent_verb_output::<
                     oneiron::claim::ScopedReadResult<Option<oneiron::memory::MessageDurability>>,
                 >(client, verb, &input),
@@ -2137,7 +2140,9 @@ impl OneironClient {
                     oneiron::memory::checkout_doors::CheckoutLeaseView,
                 >(client, verb, &input),
                 "vault.code.checkout.get" => remote_agent_verb_output::<
-                    oneiron::memory::checkout_doors::CheckoutLeaseView,
+                    oneiron::claim::ScopedReadResult<
+                        Option<oneiron::memory::checkout_doors::CheckoutLeaseView>,
+                    >,
                 >(client, verb, &input),
                 "vault.code.checkout.renew" => remote_agent_verb_output::<
                     oneiron::memory::checkout_doors::CheckoutLeaseView,
@@ -4997,6 +5002,18 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.message_stream_partial", value)
+    }
+    pub fn vault_message_streams_refused(
+        &self,
+        input: &oneiron::task_verb::sdk::EmptyRequest,
+    ) -> Result<Vec<oneiron::memory::StreamRecoveryRefusal>, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.message_streams.refused", value)
     }
     pub fn vault_messages_durability(
         &self,
@@ -12206,7 +12223,12 @@ impl OneironClient {
     pub fn vault_code_checkout_get(
         &self,
         input: &oneiron::memory::checkout_doors::CheckoutGetInput,
-    ) -> Result<oneiron::memory::checkout_doors::CheckoutLeaseView, MemoryError> {
+    ) -> Result<
+        oneiron::claim::ScopedReadResult<
+            Option<oneiron::memory::checkout_doors::CheckoutLeaseView>,
+        >,
+        MemoryError,
+    > {
         let value = serde_json::to_value(input).map_err(|_| {
             crate::error::bad_request(
                 "SDK input encoding failed",

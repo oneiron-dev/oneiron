@@ -128,8 +128,8 @@ pub(crate) mod host_action;
 // the invocation a call names as the HTTP facade does (FIX 2059).
 pub(crate) use self::facade::{
     AsrSessions, DoorClaim, ExportTransfers, FacadeApiError, FacadeCall, INVOCATION_CONFLICT,
-    INVOCATION_IN_FLIGHT, ModelStreams, admission_observer, ai_speech_for_run,
-    call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
+    INVOCATION_IN_FLIGHT, INVOCATION_RESPONSE_ERASED, ModelStreams, admission_observer,
+    ai_speech_for_run, call_verb as facade_call_verb, claim_door_invocation, connector_answer_as,
     connector_call_listing_as, connector_call_listing_on, invocation_body, self_use_as,
 };
 // FIX 11190, FIX 11201: the binding door's decision on a call over a damaged
@@ -323,9 +323,9 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                 "service": "oneiron-server",
                 "modes": ["flash", "thinking", "pro", "ultra"],
                 "capabilities": {
-                    "total": 2228,
+                    "total": 2229,
                     "digest": "blake3:5f0c8a1d2e3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d5",
-                    "counts": {"booking": 5, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
+                    "counts": {"booking": 6, "core": 14, "mcp.endpoint.primary": 2, "mcp.endpoint.tool_first": 1091, "mcp.tool": 15, "mcp.tool.vault": 920, "search": 3, "self": 10}
                 },
                 "formats": ["json", "yaml", "toon", "markdown", "plaintext"],
                 "rate_limit": {

@@ -401,6 +401,9 @@ pub(super) fn fold_policy_manifest(
                     .booking_conversion_rows
                     .extend(decoded.booking_conversion_rows);
                 resolution
+                    .booking_anti_abuse_rows
+                    .extend(decoded.booking_anti_abuse_rows);
+                resolution
                     .dreamer_failure_rules
                     .extend(decoded.dreamer_failure_rules);
                 if let Some(precedence) = decoded.dreamer_failure_precedence {

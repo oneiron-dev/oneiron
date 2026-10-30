@@ -125,7 +125,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // #ov-custody): its sealed artifacts derive from it, and each escrow
     // recipient the node's operator installed keeps a copy of it.
     vault.admit_vault_key(&credentials.dek)?;
-    escrow_vault_key(&vault, &managed)?;
+    escrow_vault_key(
+        &vault,
+        &managed,
+        restore.as_ref().map(|restore| restore.checked_recipients()),
+    )?;
     let spooled = spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
@@ -166,8 +170,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), Some(rows)).await?;
     // The browser and desktop guests, as plain serve attaches them: each
     // section's own checks decide, and a run with no guest is refused.
-    // Managed mode reads no environment, so the feedback destination carries
-    // no bearer: our inbox takes none.
+    // Managed mode reads no environment: a private endpoint's bearer comes
+    // from its vault secret alone (FIX 5013); our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
@@ -189,7 +193,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
-                bearer: None,
+                bearer: config.feedback.bearer_from_secret(&vault),
             }
         }))
         .with_feedback_triage(config.feedback.triage.clone())
@@ -250,6 +254,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
+    // Served sends reach this host's provider APIs and mail server (FIX 4435).
+    crate::builtin_host::install_served_transports(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -305,10 +311,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // a served write, as a voice loop call does: a session in flight keeps a
     // reap from finding the vault quiescent, and a frozen vault opens none.
     // One no call named for a minute releases it until the next call names
-    // it. Bound before anything serves.
-    sync_server
-        .live_voice
-        .admit_with(state.background_admission(WriteKind::OwnerWrite));
+    // it; a deleted vault opens none either (FIX 12053). Bound before
+    // anything serves.
+    sync_server.live_voice.admit_with(state.voice_admission());
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
@@ -437,13 +442,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Checked built-in channels, under the same admission (OF-519).
     let builtin_host = crate::builtin_host::spawn(&sync_server, admitted());
     // Failure signals reach our collector under the same admission (OF-380).
-    // Managed mode reads no environment, so the send carries no bearer.
+    // Managed mode reads no environment: the send's bearer is its vault secret (FIX 5013).
     let failure_signals = crate::ai_host::failure_signals::spawn(
         &sync_server,
         crate::ai_host::failure_signals::FailureSignalHost::new(
             &config.failure_signals,
             true,
-            None,
+            config.failure_signals.bearer_from_secret(&vault),
         ),
         admitted(),
     );
@@ -559,7 +564,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // the vault's owner, or on the owner's own slip from a machine that
         // stands as his enrolled device (FIX 1949 = B), and is admitted like a
         // served write for its whole length: a call in flight keeps a reap from
-        // finding the vault quiescent, and a frozen vault takes no call.
+        // finding the vault quiescent; a frozen vault takes no call, and a
+        // deleted vault takes none either (FIX 12039).
         #[cfg(unix)]
         let voice = crate::voice_host::VoiceBoot::start(
             &sync_server,
@@ -576,7 +582,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                     },
                 )
             }),
-            state.background_admission(WriteKind::OwnerWrite),
+            state.voice_admission(),
         );
         // The supervisor reaches the loop on the vault VM's voice port.
         #[cfg(unix)]
@@ -613,13 +619,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // A vault that is a device of another home dials it, on that mesh when
         // the home has a paired address there, as plain serve does (WILL-PLAN
         // L14 row 14): the owner's `[device_sync]` or `oneiron device enrol`
-        // names the home. The connection holds one admission for its whole run,
-        // so a frozen vault starts none and a reap waits for it.
+        // names the home. Each run between freezes holds an admission of its
+        // own (FIX 5127): a freeze pauses it, a reap waits for the pause, and
+        // after a thaw it runs again; a frozen vault starts none.
         let device_sync = crate::device_sync::DeviceSyncHost::start_admitted(
             &sync_server,
             &config,
             mesh.as_ref(),
-            &state.background_admission(WriteKind::OwnerWrite),
+            state.device_sync_freeze(),
         )
         .await;
         let artifact_task = artifacts.map(|listener| {

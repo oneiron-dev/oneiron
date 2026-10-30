@@ -256,8 +256,9 @@ pub struct CompactionCall {
     /// Every record the call's words were read from: its request's sources
     /// and each home part it wore, the summary's own lineage. Its filed step
     /// and any response artifact derive from each (FIX 5977), so withdrawing
-    /// one withdraws them as it withdraws the summary.
-    pub sources: Vec<EntityId>,
+    /// one withdraws them as it withdraws the summary. `None` means the whole
+    /// input was not witnessed: the call stays unfiled (FIX 11937).
+    pub sources: Option<Vec<EntityId>>,
 }
 
 /// The name of a filed compaction step's response artifact: an answer over

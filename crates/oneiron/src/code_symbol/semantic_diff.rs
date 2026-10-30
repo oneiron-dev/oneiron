@@ -11,7 +11,15 @@ pub struct CodeContentVersion {
     pub text: String,
     pub start_line: u32,
     pub end_line: u32,
+    /// The byte ranges of the source the text was cut from, in source order:
+    /// one for a definition, one per block for an impl joined from several
+    /// places (FIX 9720). Blame reads these, never whole lines.
+    pub byte_spans: Vec<(usize, usize)>,
 }
+
+/// The unit holding the root's unnamed source (imports, attributes, macro
+/// calls). It spans the whole file, so it is never an embedding range.
+pub(super) const FILE_RESIDUAL_UNIT: &str = "file-residual";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeSemanticChange {
@@ -89,8 +97,8 @@ fn units(path: &str, source: &str) -> Result<Units> {
                 "file".into(),
                 source,
                 source,
-                1,
-                source.lines().count().max(1) as u32,
+                (1, source.lines().count().max(1) as u32),
+                vec![(0, source.len())],
             )?;
         }
         return Ok(units);
@@ -127,7 +135,9 @@ fn units(path: &str, source: &str) -> Result<Units> {
             .join("\n");
         let start = blocks.iter().map(|b| b.start).min().ok_or_else(invalid)?;
         let end = blocks.iter().map(|b| b.end).max().ok_or_else(invalid)?;
-        insert(&mut units, key, &text, &own, start, end)?;
+        let mut spans: Vec<_> = blocks.iter().map(|b| b.span).collect();
+        spans.sort_unstable();
+        insert(&mut units, key, &text, &own, (start, end), spans)?;
     }
     Ok(units)
 }
@@ -137,6 +147,7 @@ struct ImplBlock {
     text: String,
     start: u32,
     end: u32,
+    span: (usize, usize),
 }
 
 fn invalid() -> Error {
@@ -150,8 +161,8 @@ fn insert(
     key: String,
     text: &str,
     own: &str,
-    start_line: u32,
-    end_line: u32,
+    (start_line, end_line): (u32, u32),
+    byte_spans: Vec<(usize, usize)>,
 ) -> Result<()> {
     let value = (
         sha256_bytes(own.as_bytes()),
@@ -160,6 +171,7 @@ fn insert(
             text: text.to_owned(),
             start_line,
             end_line,
+            byte_spans,
         },
     );
     if units.insert(key, value).is_some() {
@@ -172,7 +184,11 @@ fn identity(node: tree_sitter::Node<'_>, source: &str) -> Option<String> {
     if matches!(node.kind(), "attribute_item" | "inner_attribute_item") {
         return None;
     }
-    if node.kind().ends_with("_item") || node.kind() == "function_signature_item" {
+    // A macro_rules definition is a unit of its own, as embedding selection
+    // reads it, not a part of the file residual (FIX 9719).
+    if node.kind().ends_with("_item")
+        || matches!(node.kind(), "function_signature_item" | "macro_definition")
+    {
         let name = node
             .child_by_field_name("name")
             .or_else(|| node.child_by_field_name("type"));
@@ -353,6 +369,7 @@ fn close_frame(
                 text: source[start..node.end_byte()].to_owned(),
                 start: start_line,
                 end: node.end_position().row as u32 + 1,
+                span: (start, node.end_byte()),
             });
         } else {
             insert(
@@ -360,8 +377,8 @@ fn close_frame(
                 key,
                 &source[start..node.end_byte()],
                 &comparison,
-                start_line,
-                node.end_position().row as u32 + 1,
+                (start_line, node.end_position().row as u32 + 1),
+                vec![(start, node.end_byte())],
             )?;
         }
         // Conditional identity is already retained by the definition's unit.
@@ -375,11 +392,11 @@ fn close_frame(
             let residual = own.trim();
             insert(
                 units,
-                "file-residual".into(),
+                FILE_RESIDUAL_UNIT.into(),
                 source,
                 residual,
-                1,
-                source.lines().count().max(1) as u32,
+                (1, source.lines().count().max(1) as u32),
+                vec![(0, source.len())],
             )?;
         }
         Ok(own)

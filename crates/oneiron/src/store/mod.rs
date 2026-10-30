@@ -147,6 +147,7 @@ mod host_issuer_custody;
 pub(crate) mod home_handoff_custody;
 mod idempotency_intent;
 mod inference_snapshot_custody;
+mod invocation_claims;
 mod key_custody;
 mod key_encoding;
 mod known_history;
@@ -186,8 +187,8 @@ pub(crate) use archive_scratch::ScratchEnv;
 #[cfg(unix)]
 pub(crate) use asset_body::{
     ASSET_FILE_PLANE, ASSET_INLINE_BODY_BYTES, AssetBodyFacts, AssetFileKind, AssetFileManifest,
-    asset_body_file_of_row, asset_file_in_txn, file_put_body_in_txn, short_content_hash_in_txn,
-    stage_asset_body_in_txn,
+    CheckedAssetBody, asset_body_file_of_row, asset_file_in_txn, asset_file_of_raw_in_txn,
+    file_put_body_in_txn, short_content_hash_in_txn, stage_asset_body_in_txn,
 };
 #[cfg(unix)]
 #[allow(
@@ -299,6 +300,14 @@ pub(crate) use structural_kind_registry::{
 #[doc(hidden)]
 pub use idempotency_intent::{
     IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent,
+};
+#[doc(hidden)]
+pub use invocation_claims::{
+    InvocationClaimEntry, InvocationClaimRelease, StoredPeerMachine,
+    invocation_claim_opaque_retired_at, invocation_claim_response_read,
+};
+pub(crate) use invocation_claims::{
+    erase_invocation_claim_owner_in_txn, invocation_claim_owners, invocation_claim_scan,
 };
 // KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
 #[cfg(feature = "sync")]

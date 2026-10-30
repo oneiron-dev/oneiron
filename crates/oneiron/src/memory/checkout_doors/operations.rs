@@ -6,7 +6,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::checkout::lease::teardown::{TeardownStep, prepare_teardown_in_txn, teardown_through};
 use crate::checkout::lease::transactions as transition;
-use crate::claim::{ClaimReadStatus, ScopedRead};
+use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
 use crate::codebase::RepoRef;
 use crate::task_verb::CheckoutTaskAccess;
 
@@ -132,7 +132,24 @@ impl Memory<'_> {
         view(act, now, Some(receipt))
     }
 
+    /// [`Self::checkout_scoped_get`]'s view, an unreadable one the same
+    /// not-found as an absent one (FIX 9936).
     pub fn checkout_get(&self, input: CheckoutGetInput) -> MemoryResult<CheckoutLeaseView> {
+        self.checkout_scoped_get(input)?
+            .value
+            .ok_or_else(|| MemoryError::not_found("checkout not found"))
+    }
+
+    /// Reads one checkout with the mandatory narrowing receipt, resolved in
+    /// the read's own snapshot, on a found read and a not-found one alike
+    /// (FIX 9935); the view keeps its separate lifecycle receipt. An absent
+    /// lease and one whose TASK the caller cannot read are the same `None`,
+    /// and the receipt counts no withheld row, so neither says the id exists
+    /// (FIX 9936).
+    pub fn checkout_scoped_get(
+        &self,
+        input: CheckoutGetInput,
+    ) -> MemoryResult<ScopedReadResult<Option<CheckoutLeaseView>>> {
         let id = checkout_id(&input.checkout)?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let txn = self
@@ -141,11 +158,33 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        let act = self.checkout_act_in(&txn, id)?;
+        let receipt = lane.read_receipt_in(&txn, None, 0)?;
+        let Some(act) =
+            crate::checkout::lease::load_act_in_txn(self.vault(), &txn, id).map_err(refusal)?
+        else {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        };
+        self.produced_from([act.task_ref]);
+        if !lane
+            .entities_readable_in_txn(&txn, &[act.task_ref])?
+            .into_iter()
+            .all(|readable| readable)
+        {
+            return Ok(ScopedReadResult {
+                value: None,
+                receipt,
+            });
+        }
         self.checkout_check_in(&txn, &lane, &act, CheckoutTaskAccess::Read)?;
         let now = self.vault().instant_in_txn(&txn)?.secs();
-        let receipt = self.checkout_receipt_exists_in(&txn, &act, "checkout.grant", &[])?;
-        view(act, now, receipt)
+        let lifecycle = self.checkout_receipt_exists_in(&txn, &act, "checkout.grant", &[])?;
+        Ok(ScopedReadResult {
+            value: Some(view(act, now, lifecycle)?),
+            receipt,
+        })
     }
 
     pub fn checkout_renew_through<L: CheckoutLiveness>(
