@@ -19,6 +19,11 @@ pub(crate) const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
 const PREDICATE_NAME: SideTable<String, (), Raw> =
     SideTable::new(&side_table::CLAIM_PREDICATE_NAME);
 
+/// Posting-list row of one claim under its world, base reality under the reserved base id.
+/// Key: id16 (world) + id16 (claim).
+const WORLD_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CLAIM_WORLD_INDEX);
+
 /// Reverse index: the projection-index keys written for one claim, so they can be removed
 /// together. Key: id16.
 const PROJECTION_REVERSE: SideTable<EntityId, Vec<Vec<u8>>, LegacyCompact> =
@@ -76,6 +81,14 @@ pub(crate) fn remove_claim_projection_index(
             }
             PENDING_PRODUCER.delete(store, txn, &(producer, tail_id))?;
             None
+        } else if let Some(tail) = key.strip_prefix(WORLD_INDEX.decl().prefix) {
+            let (world, tail_id) = <(EntityId, EntityId)>::decode_key(tail)
+                .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+            if tail_id != id {
+                return Err(Error::CorruptedIndex("claim projection reverse key"));
+            }
+            WORLD_INDEX.delete(store, txn, &(world, tail_id))?;
+            None
         } else {
             return Err(Error::CorruptedIndex("claim projection reverse key"));
         };
@@ -125,6 +138,10 @@ pub(crate) fn remove_claim_projection_index_in_rows(
             <(EntityId, EntityId)>::decode_key(tail)
                 .filter(|(_, tail_id)| *tail_id == id)
                 .map(|_| None)
+        } else if let Some(tail) = key.strip_prefix(WORLD_INDEX.decl().prefix) {
+            <(EntityId, EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|_| None)
         } else {
             None
         }
@@ -162,6 +179,9 @@ pub(crate) fn maintain_claim_projection_index(
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
     PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
+    let world = body.world.unwrap_or_else(super::base_world_id);
+    reverse_keys.push(WORLD_INDEX.key_bytes(&(world, id)));
+    WORLD_INDEX.put(store, txn, &(world, id), &())?;
     crate::blob_artifact::record_version_claim(store, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
@@ -256,6 +276,50 @@ pub(crate) fn claim_ids_for_predicate_page_in_txn(
             break;
         }
         ids.push(key.1);
+    }
+    Ok(ids)
+}
+/// The first world after `after` (from the start when `None`) that holds a
+/// claim in the world index, in id order: one key read, however many claims
+/// the skipped world holds.
+pub(crate) fn next_claim_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    after: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    let last = after.map(|world| (world, EntityId::from_bytes_unchecked([0xff; 16])));
+    let start = match &last {
+        Some(last) => std::ops::Bound::Excluded(last),
+        None => std::ops::Bound::Unbounded,
+    };
+    WORLD_INDEX
+        .iter_range(store, txn, start, std::ops::Bound::Unbounded)?
+        .next()
+        .transpose()
+        .map(|row| row.map(|((world, _), ())| world))
+}
+
+/// One page of `world`'s claims in the world index: at most `limit` claim ids
+/// after `after`, in id order.
+pub(crate) fn claim_ids_for_world_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let from = (world, after.unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16])));
+    let start = match after {
+        Some(_) => std::ops::Bound::Excluded(&from),
+        None => std::ops::Bound::Included(&from),
+    };
+    let mut ids = Vec::new();
+    for row in WORLD_INDEX.iter_range(store, txn, start, std::ops::Bound::Unbounded)? {
+        let ((row_world, id), ()) = row?;
+        if row_world != world || ids.len() == limit {
+            break;
+        }
+        ids.push(id);
     }
     Ok(ids)
 }
