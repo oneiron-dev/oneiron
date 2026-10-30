@@ -45,8 +45,8 @@ mod validity;
 mod widen;
 pub use asks::ProjectAsk;
 pub(crate) use capture::{
-    capture_before_tear, capture_project_put, check_revision_put, projects_touched_by_put,
-    rebuild_project_revision_indexes, refuse_revision_delete,
+    RevisionPut, capture_before_tear, capture_project_put, check_revision_put,
+    projects_touched_by_put, rebuild_project_revision_indexes, refuse_revision_delete,
 };
 #[cfg(feature = "sync")]
 pub(crate) use capture::{

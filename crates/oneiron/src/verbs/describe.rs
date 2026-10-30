@@ -34,13 +34,13 @@ pub struct DescribeRequest {
     /// A task highway handle (OF-220): describe answers its status, the
     /// highway's own `TaskCallReceipt`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub handle: Option<super::TaskHandle>,
+    pub handle: Option<crate::task_verb::TaskHandle>,
     /// The digest of the last status observed for `handle`: describe then
     /// polls, and an unchanged answer is `unchanged`.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        with = "super::brief::hex32::option"
+        with = "crate::task_verb::hex32::option"
     )]
     #[schemars(with = "Option<String>")]
     pub after: Option<[u8; 32]>,
@@ -93,16 +93,16 @@ impl DescribeRequest {
 pub fn describe_handle_status(
     memory: &Memory<'_>,
     input: &DescribeRequest,
-) -> MemoryResult<super::TaskDescription> {
+) -> MemoryResult<crate::task_verb::TaskDescription> {
     input.validate()?;
     let Some(handle) = input.handle else {
         return Err(MemoryError::bad_request(AFTER_NEEDS_HANDLE));
     };
-    let receipt = memory.tasks_status(super::TaskStatusQuery {
+    let receipt = memory.tasks_status(crate::task_verb::TaskStatusQuery {
         handle,
         after: input.after,
     })?;
-    Ok(super::TaskDescription::Status { receipt })
+    Ok(crate::task_verb::TaskDescription::Status { receipt })
 }
 
 /// Whether `describe` over the raw request `input` reaches
@@ -128,10 +128,12 @@ pub fn describe_named_rows(input: &DescribeRequest) -> Vec<crate::EntityId> {
         .as_deref()
         .and_then(|id| crate::EntityId::from_hex(id).ok());
     let handle = input.handle.map(|handle| match handle {
-        super::TaskHandle::Proposed { proposal_ref } => proposal_ref,
-        super::TaskHandle::Task { task_ref }
-        | super::TaskHandle::Attempt(super::AttemptHandle { task_ref, .. }) => task_ref,
-        super::TaskHandle::Ask { group_ref } => group_ref,
+        crate::task_verb::TaskHandle::Proposed { proposal_ref } => proposal_ref,
+        crate::task_verb::TaskHandle::Task { task_ref }
+        | crate::task_verb::TaskHandle::Attempt(crate::task_verb::AttemptHandle {
+            task_ref, ..
+        }) => task_ref,
+        crate::task_verb::TaskHandle::Ask { group_ref } => group_ref,
     });
     task.into_iter().chain(handle).collect()
 }
