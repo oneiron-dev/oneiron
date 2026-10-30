@@ -102,6 +102,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "answer_cell_formula".into(),
+                    judged_live: None,
                 });
                 continue;
             }
@@ -116,6 +117,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -125,6 +127,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -151,6 +154,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
@@ -166,6 +170,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -176,6 +181,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision.clone()),
+                    judged_live: judged_live.clone(),
                 });
             }
             answers.push(SheetCellAnswer {

@@ -5722,9 +5722,9 @@ export type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string
 /** `oneiron::blob_artifact::verbs::ArtifactAskSubmit` */
 export type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null }
 /** `oneiron::edit_roundtrip::artifact_question::UnitAbstention` */
-export type UnitAbstention = { unit: unknown; decision?: TypedDecision | null }
+export type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null }
 /** `oneiron::edit_roundtrip::artifact_question::UnitRefusal` */
-export type UnitRefusal = { unit: unknown; reason: string }
+export type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAskOutcome` */
 export type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] }
 /** `oneiron::blob_artifact::verbs::ArtifactAdmitSubmit` */
