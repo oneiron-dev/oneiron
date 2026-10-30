@@ -247,6 +247,8 @@ export type ClaimInput = {
   /** One of `user_stated`, `observed`, `inferred`, `imported`, `tool_output`, `generated`. */
   source: string
   worldRef?: string
+  /** RELATIONSHIP refs: omitted means all relationships, `[]` the explicit empty set. */
+  relationshipRef?: string[]
   scope?: unknown
   /** Unix seconds. */
   validFrom?: number

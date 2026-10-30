@@ -2,7 +2,7 @@
 //! The durable bytes never enter a decay operation. Only the context view changes.
 
 use crate::side_table::{self, Raw, SideTable};
-use crate::{Error, Result, Vault};
+use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 /// The occurrence path a context output's manifest names. Its body is one of
@@ -331,10 +331,24 @@ impl OutputContextEntry {
 /// Stores an output in the vault's result-body store, keyed by its content.
 /// No interpretation or claim write.
 pub fn store_output(vault: &Vault, bytes: &[u8]) -> Result<OutputRef> {
+    store_output_sourced(vault, bytes, None)
+}
+
+/// [`store_output`] with the rows the output was made from, or `None` when
+/// any of them is unknown (FIX 10447, Engine 10-31 00:19): they are recorded
+/// as its occurrence's input rows, so once any of them is erased or
+/// withdrawn, every read of the reference ([`restore_output`],
+/// [`summarize_output`]) is the withheld mark. The reference and the stored
+/// bytes stay.
+pub fn store_output_sourced(
+    vault: &Vault,
+    bytes: &[u8],
+    sources: Option<Vec<EntityId>>,
+) -> Result<OutputRef> {
     let mut sink = vault.code_run_output_sink()?;
     sink.write(bytes)?;
     Ok(vault
-        .publish_code_run_output(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None)?
+        .publish_code_run_output_sourced(CONTEXT_OUTPUT_PATH.to_owned(), sink, true, None, sources)?
         .output_ref())
 }
 

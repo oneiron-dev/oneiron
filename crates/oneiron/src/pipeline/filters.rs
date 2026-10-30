@@ -326,8 +326,10 @@ pub(super) fn apply_relationship_filter(
     let mut in_scope = Vec::with_capacity(scores.len());
     let mut other = Vec::new();
     for scored in scores.iter().copied() {
-        let is_other = claim_rel(store, rtxn, &scored.id)?
-            .is_some_and(|relationship| relationship != *active_relationship);
+        let is_other = !crate::claim::relationship_scope_includes(
+            claim_rel(store, rtxn, &scored.id)?.as_ref(),
+            *active_relationship,
+        );
         if is_other {
             other.push(scored);
         } else {
@@ -344,7 +346,12 @@ pub(super) fn apply_relationship_filter(
     Ok(())
 }
 
-fn claim_rel(store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+/// A CLAIM's relationship key; every other kind reads as `all`.
+fn claim_rel(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<crate::claim::RelationshipScope> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
@@ -794,12 +801,10 @@ fn pipeline_candidate_matches_relationship_filter(
     if entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
-    Ok(match claim_rel(store, rtxn, id)? {
-        Some(relationship) if relationship != active_relationship => {
-            matches!(mode, RelMode::Demote)
-        }
-        _ => true,
-    })
+    Ok(crate::claim::relationship_scope_includes(
+        claim_rel(store, rtxn, id)?.as_ref(),
+        active_relationship,
+    ) || matches!(mode, RelMode::Demote))
 }
 
 pub(super) fn pipeline_candidate_matches_world_filter(
