@@ -7,9 +7,9 @@
 //! carries it across each thread hop the route makes
 //! ([`carry_idempotency_intent`]). Each write that commits through the
 //! store's group commit on such a thread counts itself on that row, in its
-//! own transaction: a crash between the route's last commit and the settle
-//! leaves a row that says how many writes the request committed, and no
-//! second store holds it. A write that commits any other way (its own
+//! own transaction, so the count commits or rolls back with the write: a
+//! crash between the route's last commit and the settle leaves a row that
+//! says how many writes the request committed, and no second store holds it. A write that commits any other way (its own
 //! `env.write_txn()`, or on a hop the host did not carry) counts nothing, so
 //! a row with no count still says only that the outcome is unknown.
 
@@ -59,28 +59,16 @@ impl IdempotencyIntent {
         Ok(Self(Arc::from(store_key)))
     }
 
-    /// Counts one committed write on this intent's row in `txn`, while the
-    /// row still stands as an open intent: a row that is settled, erased,
-    /// released or does not decode is left as it is. Capture-only, in one
-    /// savepoint: a count that cannot be kept is logged and dropped, and the
-    /// write stands.
-    fn count_commit_in_txn(&self, store: &Store, txn: &mut RwTxn<'_>) {
-        #[cfg(feature = "sync")]
-        if let Err(error) = self.try_count_commit_in_txn(store, txn) {
-            tracing::warn!(
-                kind = ?error.kind(),
-                %error,
-                "a keyed request's committed write was not counted on its intent"
-            );
-        }
-        #[cfg(not(feature = "sync"))]
-        let _ = (store, txn);
-    }
-
+    /// Counts one committed write on this intent's row in the write's own
+    /// `txn`, while the row still stands as an open intent: a row that is
+    /// settled, erased, released or does not decode is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, which the write answers as its own.
     #[cfg(feature = "sync")]
-    fn try_count_commit_in_txn(&self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
-        let mut savepoint = store.env.nested_write_txn(txn)?;
-        let kept = match store.sync_state.get(&savepoint, &self.0)? {
+    fn count_commit_in_txn(&self, store: &Store, txn: &mut RwTxn<'_>) -> Result<()> {
+        let kept = match store.sync_state.get(txn, &self.0)? {
             Some(row) => IdempotencyEntry::decode(&row).ok(),
             None => None,
         };
@@ -89,8 +77,12 @@ impl IdempotencyIntent {
         };
         intent.committed_writes = intent.committed_writes.saturating_add(1);
         let raw = intent.encode()?;
-        crate::side_table::host_sync_state_put(store, &mut savepoint, &self.0, &raw)?;
-        savepoint.commit()?;
+        crate::side_table::host_sync_state_put(store, txn, &self.0, &raw)
+    }
+
+    /// A build without sync keeps no HTTP idempotency rows to count on.
+    #[cfg(not(feature = "sync"))]
+    fn count_commit_in_txn(&self, _store: &Store, _txn: &mut RwTxn<'_>) -> Result<()> {
         Ok(())
     }
 }
@@ -117,19 +109,24 @@ pub fn carry_idempotency_intent<T>(work: impl FnOnce() -> T) -> impl FnOnce() ->
 }
 
 /// `write`, made to count itself on the intent open on the calling thread
-/// when its rows stay ([`Rows::Commit`]), in its own transaction. The intent
-/// is read here, before the write joins any group.
+/// when its rows stay ([`Rows::Commit`]), in its own transaction, so the
+/// count commits or rolls back with them. The intent is read here, before
+/// the write joins any group; with none open, that read is all it adds. A
+/// count that fails drops the write's rows with its storage error.
 pub(super) fn counting_commits<T, E>(
     store: &Store,
     write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
-) -> impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E> {
+) -> impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>
+where
+    E: From<Error>,
+{
     let intent = open_intent();
-    move |txn: &mut RwTxn<'_>| {
-        let rows = write(&mut *txn);
-        if let (Some(intent), Rows::Commit(_)) = (&intent, &rows) {
-            intent.count_commit_in_txn(store, txn);
-        }
-        rows
+    move |txn: &mut RwTxn<'_>| match (intent, write(&mut *txn)) {
+        (Some(intent), Rows::Commit(answer)) => match intent.count_commit_in_txn(store, txn) {
+            Ok(()) => Rows::Commit(answer),
+            Err(error) => Rows::Discard(Err(E::from(error))),
+        },
+        (_, rows) => rows,
     }
 }
 
