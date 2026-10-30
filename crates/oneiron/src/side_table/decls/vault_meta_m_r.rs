@@ -16,15 +16,24 @@ side_tables! {
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
+    /// One merge batch filed under a proposal, run work or run declaration it names, so a run's
+    /// enqueue, stage and observe read its own batches by key (FIX 7067). Key: hex(repo
+    /// identity) ":" kind ":" id ":" hex64(batch id).
+    MERGE_QUEUE_BATCH_INDEX: VaultMeta b"merge_queue:batch_index:v1:" Named Engine;
     /// One object store's checked queue configuration: the approved baseline, the plan frozen
     /// from it and the owner's queued check approval (FIX 6868). Key: hex(repo identity).
     MERGE_QUEUE_CHECK_CONFIG: VaultMeta b"merge_queue:check_config:v1:" Named Authored;
     /// One requested queue init, check or diagnosis: its attempt, generation, status and
     /// receipts (FIX 6868). Key: hex(repo identity) ":" hex64(request digest).
     MERGE_QUEUE_CHECK_WORK: VaultMeta b"merge_queue:check_work:v1:" Named Authored;
+    /// One checker receipt filed under its inputs digest and verdict, so a reused, bound or
+    /// sealed receipt is read by key (FIX 7349). Key: hex(repo identity) ":" inputs digest ":"
+    /// verdict ref (empty for none) ":" hex64(request digest).
+    MERGE_QUEUE_RECEIPT_INDEX: VaultMeta b"merge_queue:receipt_index:v1:" Named Engine;
     /// The vault's one opt-in review policy for merge queue work; no row lands on green (FIX
-    /// 8268). Key: ().
-    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored;
+    /// 8268). Key: (). FIX 8519: this entry's scrub takes an erased setter's id out of it.
+    MERGE_QUEUE_REVIEW_POLICY: VaultMeta b"merge_queue:review_policy:v1" Named Authored
+        => crate::merge_queue::erase_review_policy_actor_in_txn;
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;

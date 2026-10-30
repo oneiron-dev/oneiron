@@ -41937,8 +41937,8 @@ pub struct QueueReviewPolicy {
     pub catalog: LensCatalog,
     #[serde(rename = "thresholds")]
     pub thresholds: QueueReviewThresholds,
-    #[serde(rename = "set_by")]
-    pub set_by: String,
+    #[serde(rename = "set_by", default, skip_serializing_if = "Option::is_none")]
+    pub set_by: Option<String>,
     #[serde(rename = "set_at")]
     pub set_at: u64,
 }

@@ -5319,7 +5319,7 @@ export type QueueReviewMode = "land_on_green" | "review" | "held"
 /** `oneiron::merge_queue::review_policy::QueueReviewThresholds` */
 export type QueueReviewThresholds = { critics?: number; votes?: number }
 /** `oneiron::merge_queue::review_policy::QueueReviewPolicy` */
-export type QueueReviewPolicy = { catalog: LensCatalog; thresholds: QueueReviewThresholds; set_by: EntityId; set_at: number }
+export type QueueReviewPolicy = { catalog: LensCatalog; thresholds: QueueReviewThresholds; set_by?: EntityId | null; set_at: number }
 /** `oneiron::memory::merge_queue_doors::review_policy::QueueReviewPolicyView` */
 export type QueueReviewPolicyView = { state: QueueReviewPolicyState; mode: QueueReviewMode; policy?: QueueReviewPolicy | null; hold?: string | null }
 /** `oneiron::memory::merge_queue_doors::review_policy::QueueReviewPolicyInput` */

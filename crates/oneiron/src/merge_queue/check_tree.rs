@@ -99,4 +99,90 @@ impl QueueCheckTreeSource for PinnedTree<'_> {
     fn blob(&self, oid: &str) -> Result<Vec<u8>> {
         Ok(self.wire.read_object(self.repo, &GitOid::parse_hex(oid)?)?)
     }
+
+    /// The commit object, then each level of trees in bounded `cat-file
+    /// --batch` reads (FIX 7228). The commit must name this tree.
+    fn git_objects(
+        &self,
+        commit: &str,
+        visit: &mut dyn FnMut(&str, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        let commit = GitOid::parse_hex(commit)?;
+        let body = self.wire.read_object(self.repo, &commit)?;
+        let names_tree = body
+            .split(|byte| *byte == b'\n')
+            .next()
+            .and_then(|line| line.strip_prefix(b"tree "))
+            .is_some_and(|hex| hex == self.tree.as_str().as_bytes());
+        if !names_tree {
+            return Err(invalid("the pinned commit names another tree"));
+        }
+        if !visit("commit", &body)? {
+            return Ok(false);
+        }
+        let mut seen = std::collections::HashSet::from([self.tree.clone()]);
+        let mut level = vec![self.tree.clone()];
+        while !level.is_empty() {
+            let mut next = Vec::new();
+            let read =
+                self.wire
+                    .read_objects_in_order(self.repo, &level, "tree", &mut |_, body| {
+                        next.extend(raw_subtrees(body)?);
+                        visit("tree", body)
+                    })?;
+            if !read {
+                return Ok(false);
+            }
+            level = next
+                .into_iter()
+                .filter(|oid| seen.insert(oid.clone()))
+                .collect();
+        }
+        Ok(true)
+    }
+
+    /// Every blob in bounded `cat-file --batch` reads, never two git
+    /// processes a blob (FIX 7229).
+    fn blobs(
+        &self,
+        oids: &[&str],
+        visit: &mut dyn FnMut(usize, &[u8]) -> Result<bool>,
+    ) -> Result<bool> {
+        let oids = oids
+            .iter()
+            .map(|oid| GitOid::parse_hex(*oid))
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        self.wire
+            .read_objects_in_order(self.repo, &oids, "blob", visit)
+    }
+}
+
+/// The subtrees one raw tree object names: its entries are `<mode>
+/// <name>\0` and a 20-byte object id.
+fn raw_subtrees(mut body: &[u8]) -> Result<Vec<GitOid>> {
+    let mut trees = Vec::new();
+    while !body.is_empty() {
+        let malformed = || invalid("a tree object is malformed");
+        let space = body
+            .iter()
+            .position(|byte| *byte == b' ')
+            .ok_or_else(malformed)?;
+        let nul = body
+            .iter()
+            .position(|byte| *byte == 0)
+            .ok_or_else(malformed)?;
+        let end = nul.checked_add(21).ok_or_else(malformed)?;
+        if space > nul || body.len() < end {
+            return Err(malformed());
+        }
+        if &body[..space] == b"40000" {
+            let hex: String = body[nul + 1..end]
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            trees.push(GitOid::parse_hex(hex)?);
+        }
+        body = &body[end..];
+    }
+    Ok(trees)
 }
