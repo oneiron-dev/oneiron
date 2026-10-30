@@ -166,7 +166,6 @@ impl<'b> RestoreRoom<'b> {
     /// image's (KS-7), each its key and value lengths: their bytes join the
     /// rows', and what they write past them the bound. None open while
     /// CHECKPOINT_PAYLOADS_ENABLED is off.
-    #[allow(dead_code, reason = "KS7-5 lands the opened payload rows")]
     pub(super) fn with_payload(mut self, rows: &[(u64, u64)]) -> Self {
         let bytes = rows.iter().map(|(key, value)| key.saturating_add(*value));
         self.payload = bytes.fold(0_u64, u64::saturating_add);

@@ -1,11 +1,11 @@
 //! Typed, caller-bound calendar origin creation. Imported origins belong to ICS admission.
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::calendar::origin::CalendarEventInput;
 use crate::calendar::{CalendarOrigin, CalendarRangeDto};
 use crate::claim::ClaimReadStatus;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::{EntityId, WriteActor};
 
 /// The origin union forbids extraction evidence on native entries and requires
 /// it on extracted entries. Recorded time and actor are always engine-stamped.
@@ -100,7 +100,7 @@ impl Memory<'_> {
                 txn,
                 &input,
                 occurred.to_time_range(),
-                WriteActor::new(self.actor(), self.actor_class()),
+                self.write_actor(),
                 event,
                 recorded_at,
             )?;

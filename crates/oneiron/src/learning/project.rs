@@ -470,7 +470,8 @@ pub(crate) fn reproject_setting_cells_in_txn(
     Ok(())
 }
 
-/// The active, engine-written heads of `cell`.
+/// The active, engine-written heads of `cell`. A head whose owner has not
+/// yet answered its critical confirm is none yet (ARCH-0026 §G3).
 pub(crate) fn active_heads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -486,6 +487,7 @@ pub(crate) fn active_heads_in_txn(
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.source != Some(ClaimSource::Observed)
             || body.approval != ClaimApprovalStatus::Auto
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
         {
             continue;
         }

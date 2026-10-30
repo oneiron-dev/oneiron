@@ -33,7 +33,6 @@ use crate::session_overlay::{RouteTarget, SessionWriteRoute, TxnSegmentGuard};
 use crate::store::ManifestDbs;
 use crate::temporal::TimeRange;
 use crate::workspace_roster::RoomRegenerationPermit;
-use crate::write_envelope::WriteActor;
 
 mod execute;
 mod planning;

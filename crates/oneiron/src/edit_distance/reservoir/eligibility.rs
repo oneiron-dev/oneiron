@@ -198,20 +198,30 @@ fn fails_export(error: &Error) -> bool {
     )
 }
 
-/// Why the pair whose artifact is `artifact` stays out, or `None` when it
-/// goes in. `run` is what a training run also holds its source to.
-fn refusal_in(
+/// What the pre-tick checks say about the pair whose artifact is `artifact`.
+enum PreTick {
+    /// No input source: nothing further to judge.
+    NoSource,
+    /// A row check refused, with the pair/source reason code.
+    Refused(&'static str),
+    /// The input source and its entity type, for the people check.
+    Source { source: EntityId, entity_type: u8 },
+}
+
+/// The pair's row check, its PROPOSAL_ARTIFACT source lookup, each MadeBy
+/// input's row check and the source's row check: the checks `refusal_in`
+/// and `ticked_source_in` used to carry as two copies (FIX 11721). Same
+/// order, same values, same `?` propagation points as both copies.
+fn pre_tick_checks_in(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     readable: &dyn Fn(&EntityId) -> Result<bool>,
-    run: Option<&RunTerms>,
     artifact: EntityId,
-    imported_owner_side: &mut BTreeMap<EntityId, bool>,
-) -> Result<Option<&'static str>> {
+) -> Result<PreTick> {
     match row_check_in(vault, rtxn, readable, artifact)? {
         RowCheck::Absent | RowCheck::Passes(_) => {}
-        RowCheck::Unreadable => return Ok(Some(PAIR_UNREADABLE)),
-        RowCheck::Withheld => return Ok(Some(PAIR_WITHHELD)),
+        RowCheck::Unreadable => return Ok(PreTick::Refused(PAIR_UNREADABLE)),
+        RowCheck::Withheld => return Ok(PreTick::Refused(PAIR_WITHHELD)),
     }
     let (source, inputs) = PROPOSAL_ARTIFACT
         .get(&vault.store, rtxn, &artifact)?
@@ -224,17 +234,42 @@ fn refusal_in(
     for input in &inputs {
         match row_check_in(vault, rtxn, readable, *input)? {
             RowCheck::Passes(_) => {}
-            RowCheck::Absent | RowCheck::Unreadable => return Ok(Some(SOURCE_UNREADABLE)),
-            RowCheck::Withheld => return Ok(Some(SOURCE_WITHHELD)),
+            RowCheck::Absent | RowCheck::Unreadable => {
+                return Ok(PreTick::Refused(SOURCE_UNREADABLE));
+            }
+            RowCheck::Withheld => return Ok(PreTick::Refused(SOURCE_WITHHELD)),
         }
     }
     let Some(source) = source else {
-        return Ok(None);
+        return Ok(PreTick::NoSource);
     };
-    let entity_type = match row_check_in(vault, rtxn, readable, source)? {
-        RowCheck::Passes(entity_type) => entity_type,
-        RowCheck::Absent | RowCheck::Unreadable => return Ok(Some(SOURCE_UNREADABLE)),
-        RowCheck::Withheld => return Ok(Some(SOURCE_WITHHELD)),
+    match row_check_in(vault, rtxn, readable, source)? {
+        RowCheck::Passes(entity_type) => Ok(PreTick::Source {
+            source,
+            entity_type,
+        }),
+        RowCheck::Absent | RowCheck::Unreadable => Ok(PreTick::Refused(SOURCE_UNREADABLE)),
+        RowCheck::Withheld => Ok(PreTick::Refused(SOURCE_WITHHELD)),
+    }
+}
+
+/// Why the pair whose artifact is `artifact` stays out, or `None` when it
+/// goes in. `run` is what a training run also holds its source to.
+fn refusal_in(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    readable: &dyn Fn(&EntityId) -> Result<bool>,
+    run: Option<&RunTerms>,
+    artifact: EntityId,
+    imported_owner_side: &mut BTreeMap<EntityId, bool>,
+) -> Result<Option<&'static str>> {
+    let (source, entity_type) = match pre_tick_checks_in(vault, rtxn, readable, artifact)? {
+        PreTick::NoSource => return Ok(None),
+        PreTick::Refused(code) => return Ok(Some(code)),
+        PreTick::Source {
+            source,
+            entity_type,
+        } => (source, entity_type),
     };
     let Some(run) = run else {
         return Ok(None);
@@ -487,28 +522,11 @@ fn ticked_source_in(
     artifact: EntityId,
     imported_owner_side: &mut BTreeMap<EntityId, bool>,
 ) -> Result<Option<SourcePeople>> {
-    match row_check_in(vault, rtxn, readable, artifact)? {
-        RowCheck::Absent | RowCheck::Passes(_) => {}
-        RowCheck::Unreadable | RowCheck::Withheld => return Ok(None),
-    }
-    let (source, inputs) = PROPOSAL_ARTIFACT
-        .get(&vault.store, rtxn, &artifact)?
-        .map(|stored| (stored.record.source_turn_ref, stored.record.made_by_inputs))
-        .unwrap_or((None, Vec::new()));
-    // An unreadable MadeBy input keeps the pair out whatever the tick (FIX
-    // 11350), so it names no ticked source.
-    for input in &inputs {
-        if !matches!(
-            row_check_in(vault, rtxn, readable, *input)?,
-            RowCheck::Passes(_)
-        ) {
-            return Ok(None);
-        }
-    }
-    let Some(source) = source else {
-        return Ok(None);
-    };
-    let RowCheck::Passes(entity_type) = row_check_in(vault, rtxn, readable, source)? else {
+    let PreTick::Source {
+        source,
+        entity_type,
+    } = pre_tick_checks_in(vault, rtxn, readable, artifact)?
+    else {
         return Ok(None);
     };
     source_people_in(vault, rtxn, run, source, entity_type, imported_owner_side).map(Some)

@@ -152,8 +152,9 @@ fn facade_admit_readable(
 /// ran alone on the memory its engine call would have run on, so the
 /// refusal is receipted as the SDK receipts it (none inside an anonymous
 /// off-record session). No effect runs, and a receipt that could not be
-/// written is logged, never the call's answer. A call in a room turn keeps
-/// its NOT_FOUND unreceipted.
+/// written is logged, never the call's answer. A call in a room turn is
+/// receipted on the turn's own memory, for a verb the turn serves (FIX
+/// 10634).
 pub(super) fn facade_admit_receipted(
     server: &SyncServer,
     call: &FacadeCall<'_>,
@@ -170,14 +171,21 @@ pub(super) fn facade_admit_receipted(
     else {
         return Ok(());
     };
-    if refused.body.error.code == MEMORY_CODE_NOT_FOUND && matches!(call.room_turn(), Ok(None)) {
+    if refused.body.error.code == MEMORY_CODE_NOT_FOUND
+        && let Ok(room) = call.room_turn()
+    {
         crate::server::blocking(|| {
             let memory = facade_invocation(
                 credential_memory(&server.vault, Some(auth), actor, class).at(auth.locality()),
                 call,
             );
-            let receipted = memory.map(|memory| {
-                oneiron::task_verb::sdk::receipt_declared_refs(&memory, verb, value.clone())
+            let receipted = memory.map(|memory| match room {
+                Some(room) => memory
+                    .for_room_turn(room)
+                    .and_then(|turn| turn.receipt_declared_refs(verb, value.clone())),
+                None => {
+                    oneiron::task_verb::sdk::receipt_declared_refs(&memory, verb, value.clone())
+                }
             });
             if let Ok(Err(error)) = receipted
                 && error.code == MEMORY_CODE_INTERNAL

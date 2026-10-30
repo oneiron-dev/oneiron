@@ -131,19 +131,20 @@ impl From<oneiron::sync::ResidenceSearch> for ResidenceAnswer {
 /// ([`home_text::ask_home_text`]). `None` on a machine that holds every
 /// window. An owner-grade caller is the device's paired owner, so the home
 /// answers it within this device's own grants. A narrower caller is judged
-/// at the home on its own holder proof, `forwarded` (FIX 2907); one with
-/// none to forward gets the local page, marked incomplete, as does a device
-/// whose own sync connection dropped. A deadline bounds the ask as it
-/// bounds the page.
+/// at the home on its own holder proof, `forwarded` (FIX 2907), at the
+/// `locality` its ingress placed it (FIX 3550); one with none to forward
+/// gets the local page, marked incomplete, as does a device whose own sync
+/// connection dropped. A deadline bounds the ask as it bounds the page.
 async fn ask_home(
     vault: Arc<oneiron::Vault>,
     owner_grade: bool,
     forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    locality: oneiron::claim::CallerLocality,
     query: String,
     limit: usize,
     due: Option<Instant>,
 ) -> Option<ResidenceAnswer> {
-    let caller = oneiron::memory::HomeRecallCaller::admitted(owner_grade, forwarded);
+    let caller = oneiron::memory::HomeRecallCaller::admitted(owner_grade, forwarded, locality);
     // A refused or late ask leaves the local page, marked incomplete.
     match home_text::ask_home_text(&vault, &caller, &query, limit, due).await {
         home_text::HomeText::Whole => None,
@@ -506,6 +507,7 @@ pub(crate) async fn search_text(
         (!auth.is_owner_grade())
             .then(|| auth.forwarded_caller_proof_admitted(&parts.headers, &parts.extensions))
             .flatten(),
+        auth.locality(),
         params.query.clone(),
         page_limit,
         deadline.map(|budget| arrived + budget),

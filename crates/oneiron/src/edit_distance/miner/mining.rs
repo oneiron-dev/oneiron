@@ -1,5 +1,6 @@
 //! ED-04 substitution-cluster mining pass.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use rmpv::Value;
@@ -381,11 +382,13 @@ fn amendment_source(
 }
 
 /// Reads the artifact rows once per pass, unopened, keyed by the artifact id
-/// a Δ's refs name. Each row opens only when a judgment resolves it.
+/// a Δ's refs name. Each row opens only when a judgment resolves it and then
+/// stays open for the pass.
 fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
     let rtxn = vault.store.env.read_txn()?;
     let mut index = ArtifactIndex {
         records: BTreeMap::new(),
+        opened: RefCell::new(BTreeMap::new()),
     };
     // Every artifact is indexed: past the threshold row the scan raises one
     // check and reads on, so no judged artifact drops out of mining.

@@ -16,7 +16,7 @@
 
 use std::fmt;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oneiron_organ_protocol::{AskCode, AskRefusal, MemoryAnswer, MemoryAsk};
 
@@ -41,6 +41,22 @@ pub trait MachineFloor: Send + Sync {
         deadline: Instant,
         stopped: &dyn Fn() -> bool,
     ) -> Result<Box<dyn Send>, FloorRefusal>;
+
+    /// [`Self::lease`] with no deadline, as a frame's bytes wait (FIX 10580):
+    /// only `stopped` ends the wait. A floor with no untimed line of its own
+    /// waits a year, past any wait a stop does not end first.
+    ///
+    /// # Errors
+    /// The machine's floor, as [`Self::lease`]; [`FloorRefusal::Deadline`]
+    /// once `stopped` says so.
+    fn lease_untimed(
+        &self,
+        bytes: u64,
+        stopped: &dyn Fn() -> bool,
+    ) -> Result<Box<dyn Send>, FloorRefusal> {
+        let deadline = Instant::now() + Duration::from_secs(60 * 60 * 24 * 365);
+        self.lease(bytes, deadline, stopped)
+    }
 }
 
 /// Why a [`MachineFloor`] leased nothing.
