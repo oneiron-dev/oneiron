@@ -157,7 +157,7 @@ pub use site_exposure::{SiteSkillExposure, record_site_exposures, site_exposed};
 mod run_writes;
 pub use run_writes::{RunWriteToken, with_run_write_token};
 pub(crate) use run_writes::{
-    current_run_write_token, enter_run_write_token, enter_run_writes,
+    RunDerivations, current_run_write_token, enter_run_write_token, enter_run_writes,
     note_direct_derivation_in_txn, note_promoted_ops_in_txn, note_run_derivations_in_txn,
     run_derivations,
 };

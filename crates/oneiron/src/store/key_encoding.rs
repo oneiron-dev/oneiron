@@ -34,25 +34,11 @@ pub(crate) fn decode_vector_row_into<'a>(
     dimensions: usize,
     scratch: &'a mut Vec<f32>,
 ) -> Result<&'a [f32]> {
-    let legacy_len = dimensions
-        .checked_mul(4)
-        .ok_or(Error::CorruptedIndex("vector row bytes"))?;
     let v1_len = dimensions
         .checked_mul(2)
         .and_then(|n| n.checked_add(1))
         .ok_or(Error::CorruptedIndex("vector row bytes"))?;
 
-    // Length is the primary discriminator. A legacy f32 payload may begin
-    // with byte 1, so inspecting the header before its exact legacy length is
-    // a compatibility bug.
-    if raw.len() == legacy_len {
-        let (chunks, _) = raw.as_chunks::<4>();
-        scratch.resize(dimensions, 0.0);
-        for (slot, bytes) in scratch.iter_mut().zip(chunks) {
-            *slot = f32::from_le_bytes(*bytes);
-        }
-        return Ok(scratch.as_slice());
-    }
     if raw.len() == v1_len && raw.first() == Some(&VECTOR_ROW_FORMAT_F16_V1) {
         scratch.clear();
         scratch.reserve(dimensions);
