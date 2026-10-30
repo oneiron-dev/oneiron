@@ -107,7 +107,9 @@ impl PipelineBuilder<'_> {
         overrides: HydeAttemptOverrides<'_>,
     ) -> Result<RetrievalTxnOutput> {
         let _ppr_work = self.admit_ppr_work()?;
+        let l15_txn_open = crate::stage_timing::stage("pipe.txn_open");
         let rtxn = self.vault.store.env.read_txn()?;
+        drop(l15_txn_open);
         let inputs = SnapshotInputs {
             occurred_range,
             bm25_config,
@@ -165,6 +167,7 @@ impl PipelineBuilder<'_> {
         if occurred_range.is_some() && !telemetry_signals.contains(&RetrievalSignal::Temporal) {
             telemetry_signals.push(RetrievalSignal::Temporal);
         }
+        let l15_setup = crate::stage_timing::stage("pipe.setup");
         {
             let ScopedChannelAdmission {
                 private_note_ids,
@@ -234,6 +237,7 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                     &mut claim_gate_widening_probe,
                 )?;
+            drop(l15_setup);
             let mut stages = StagePlan::new([
                 self.vector_search.is_some(),
                 hyde_expansion.is_some(),
@@ -306,6 +310,7 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            let l15_text = crate::stage_timing::stage("pipe.text");
             let text_channel_index = self.run_text_channel(
                 rtxn,
                 stages.next_if(self.text_search.is_some()),
@@ -325,6 +330,7 @@ impl PipelineBuilder<'_> {
                 &mut metadata_cache,
                 &mut claim_gate,
             )?;
+            drop(l15_text);
 
             #[cfg(test)]
             if text_channel_index.is_some() {
@@ -363,6 +369,7 @@ impl PipelineBuilder<'_> {
                 )?);
             }
 
+            let l15_temporal = crate::stage_timing::stage("pipe.temporal");
             if let Some(config) = &self.temporal_search
                 && let Some(temporal_results) =
                     self.run_stage(RetrievalSignal::Temporal, stages.next(), || {
@@ -391,6 +398,7 @@ impl PipelineBuilder<'_> {
                     &mut metadata_cache,
                 )?;
             }
+            drop(l15_temporal);
 
             if let Some((seeds, depth)) = &self.ppr_search
                 && let Some(ppr) = self.run_stage(RetrievalSignal::Ppr, stages.next(), || {
@@ -466,6 +474,7 @@ impl PipelineBuilder<'_> {
                 )?;
             }
 
+            let l15_fusion = crate::stage_timing::stage("pipe.fusion");
             // Entity-type authority can narrow each channel before fusion.
             // CLAIM scalar constraints use the decoded post-fusion stage below.
             for scores in &mut acc.ranked_lists {
@@ -830,6 +839,7 @@ impl PipelineBuilder<'_> {
                 None => truncate_critical_first(&mut scores, self.result_limit, &critical),
             }
             let critical = pack_critical_accounting(critical, &scores);
+            drop(l15_fusion);
             if before_limit > 0 && scores.is_empty() && !emptied_by_policy {
                 empty_reason = Some(EmptyReason::BelowThreshold);
             }
