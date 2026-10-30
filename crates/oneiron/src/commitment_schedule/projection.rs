@@ -698,9 +698,7 @@ fn series_scoped(candidate: ClaimCandidate, series: &ClaimBody) -> ClaimCandidat
     if let Some(world) = series.world {
         candidate = candidate.with_world(world);
     }
-    if let Some(relationship) = series.rel {
-        candidate = candidate.with_relationship(relationship);
-    }
+    candidate = candidate.with_relationships(series.rel.clone());
     if let Some(scope) = &series.scope {
         candidate = candidate.with_scope(scope.clone());
     }
