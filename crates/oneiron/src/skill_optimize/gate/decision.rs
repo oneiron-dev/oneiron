@@ -286,6 +286,7 @@ fn rule_on_proposal(
     let anchor = anchor_score(
         &crate::skill_optimize::labels::skill_label_anchor(vault, inputs.target)?,
         incumbent.as_ref().map(|incumbent| incumbent.judge.as_str()),
+        judge_revision,
     );
     // Pair responses by their common-rubric scores and freeze the preference
     // before either version's instructions or a label is read; both share it.

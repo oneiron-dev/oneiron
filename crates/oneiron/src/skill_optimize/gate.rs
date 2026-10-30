@@ -164,7 +164,7 @@ pub use admission::{
 };
 pub use basis::{
     HELD_OUT_REPLAY_SCORER, HeldOutReplayCase, HeldOutReplayNotes, SkillEditCycle, dev_receipts,
-    held_out_receipt_set_digest, held_out_receipts, receipt_is_held_out,
+    held_out_receipt_set_digest, held_out_receipts, held_out_receipts_sourced, receipt_is_held_out,
     register_held_out_replay_scorer, set_skill_edit_cycle_cap, skill_body_binding_digest,
     skill_edit_cycle_cap, skill_edit_score_call_purpose,
 };
