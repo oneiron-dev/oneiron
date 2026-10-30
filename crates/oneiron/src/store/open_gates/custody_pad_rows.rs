@@ -31,8 +31,10 @@ pub(in crate::store) struct PairedSourceAsk<'a> {
     pub(in crate::store) sync_state: &'a [&'a [u8]],
     /// Which `sync_state` rows under those prefixes are pad object rows.
     pub(in crate::store) pad_object: fn(&[u8]) -> bool,
-    /// Which of them are bundle parts, read apart from the pad object rows.
-    pub(in crate::store) bundle_part: fn(&[u8]) -> bool,
+    /// Which of them are bundle parts it takes, read apart from the pad
+    /// object rows: the parts of the generations a copy does not keep, none
+    /// of the rest (FIX 11824).
+    pub(in crate::store) bundle_part: Box<dyn Fn(&[u8]) -> bool + 'a>,
     /// The `sync_state` key its install's machine id is stored under.
     pub(in crate::store) machine_id: &'a [u8],
     /// The entity type whose stored records it reads, by the type index.

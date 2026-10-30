@@ -42,7 +42,7 @@ pub(crate) use self::destination::{MadeDestination, replace_host_holds_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use self::pad_objects::put_back_pad_objects_in_txn;
 pub(crate) use self::pad_objects::{
-    ExpectedPadObjects, PAD_SOURCE_IDENTITY, PadObjectsCapture, PadObjectsLanding,
+    CopyGenerations, ExpectedPadObjects, PAD_SOURCE_IDENTITY, PadObjectsCapture, PadObjectsLanding,
     PadSourceIdentity, UncapturedPadObjects, install_source_pad_objects_in_txn,
 };
 use super::keys::GATE_DECISION_KEY_PREFIX;
@@ -280,10 +280,12 @@ pub(crate) fn admit_existing_vault_root(vault_dir: &Path) -> Result<()> {
 /// process serves reads beside it, and one this process holds, under any
 /// name, is refused. A sealed vault reads with `page_seal`. A missing or
 /// unreadable vault refuses; pad object rows that do not read, or do not
-/// name their vault, leave its objects not captured (PAD-1).
+/// name their vault, leave its objects not captured (PAD-1). Its bundle
+/// parts are taken for the generations `copy` does not keep (FIX 11824).
 pub(crate) fn read_live_custody(
     vault_dir: &Path,
     page_seal: Option<&crate::world_keys::VaultPageSeal>,
+    copy: &CopyGenerations,
 ) -> Result<LiveCustody> {
     // A shared directory on the source's path is no reason to refuse: the
     // vault opens, reads and writes there as it is, so whoever could move it
@@ -298,7 +300,7 @@ pub(crate) fn read_live_custody(
         read_existing_custody_pad_rows(
             vault_dir,
             &live_custody_prefixes(),
-            &pad_objects::paired_source_ask(&prefixes),
+            &pad_objects::paired_source_ask(&prefixes, copy),
         )
     })?;
     let pad_objects = pad_objects::disk_capture(read.sync_state, read.identity);
