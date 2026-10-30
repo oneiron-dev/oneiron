@@ -14,6 +14,7 @@ impl Memory<'_> {
         read: &crate::pipeline::WorldAuthoritySet,
         deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> MemoryResult<ScopeHonesty> {
+        let _l15 = crate::stage_timing::stage("recall.census");
         let mut stopped = false;
         let ids = self.census_claim_ids(lane, deadline, &mut stopped)?;
         let mut worlds = BTreeSet::new();
