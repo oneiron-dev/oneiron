@@ -5710,7 +5710,7 @@ export type PptxCommentAction = { add: { target: PptxCommentTarget; text: string
 /** `oneiron::edit_roundtrip::pptx::package::PptxCommentPatch` */
 export type PptxCommentPatch = { asked_by: string; answered_by: string; author: PptxAuthor; thread_id: string; comment_id: string; at: number; action: PptxCommentAction }
 /** `oneiron::edit_roundtrip::slides_review::SlideAbstention` */
-export type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null }
+export type SlideAbstention = { target: PptxCommentTarget; decision?: TypedDecision | null; judged_live?: LivePin | null }
 /** `oneiron::edit_roundtrip::slides_review::SlideUnitRefusalReason` */
 export type SlideUnitRefusalReason = "MissingShape" | "AmbiguousShape" | "TargetChanged" | "UnresolvedGeometry" | "EvidenceBudget" | "UnreadableImage" | "RunDeadline"
 /** `oneiron::blob_artifact::verbs::SlideUnitRefused` */
@@ -5724,9 +5724,9 @@ export type ArtifactAskUnits = { kind: "sheet_rows"; sheet: string; rows: string
 /** `oneiron::blob_artifact::verbs::ArtifactAskSubmit` */
 export type ArtifactAskSubmit = { artifact_ref: string; run_ref: string; question: DecisionQuestion; units: ArtifactAskUnits; reversibility?: unknown | null; evidence_refs?: string[]; unit_budget_ms?: number | null; deadline_ms?: number | null; made_by?: unknown | null }
 /** `oneiron::edit_roundtrip::artifact_question::UnitAbstention` */
-export type UnitAbstention = { unit: unknown; decision?: TypedDecision | null }
+export type UnitAbstention = { unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null }
 /** `oneiron::edit_roundtrip::artifact_question::UnitRefusal` */
-export type UnitRefusal = { unit: unknown; reason: string }
+export type UnitRefusal = { unit: unknown; reason: string; judged_live?: LivePin | null }
 /** `oneiron::blob_artifact::verbs::ArtifactAskOutcome` */
 export type ArtifactAskOutcome = { proposed?: PendingProposalView | null; abstained: UnitAbstention[]; refused: UnitRefusal[] }
 /** `oneiron::blob_artifact::verbs::ArtifactAdmitSubmit` */
@@ -6820,7 +6820,7 @@ export type QuestionAnswersRequest = { id: EntityId; cursor?: string | null; pag
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskStanding` */
 export type ArtifactAskStanding = { state: "unanswered" } | { state: "waiting" } | { state: "kept"; version: number } | { state: "closed" } | { state: "failed" } | { state: "details_omitted" }
 /** `oneiron::llm::decision::questions::artifact_refresh::unit_receipts::ArtifactUnitReceipt` */
-export type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null } | { status: "refused"; unit: unknown; reason: string } | { status: "omitted" }
+export type ArtifactUnitReceipt = { status: "abstained"; unit: unknown; decision?: TypedDecision | null; judged_live?: LivePin | null } | { status: "refused"; unit: unknown; reason: string; judged_live?: LivePin | null } | { status: "omitted" }
 /** `oneiron::llm::decision::questions::artifact_refresh::ArtifactAskRecord` */
 export type ArtifactAskRecord = { artifact: EntityId; question_version: number; artifact_version: number; asked_at: number; proposal_ref?: string | null; standing: ArtifactAskStanding; ask_id?: EntityId | null; failed?: string | null; parent_proposal_ref?: string | null; details_omitted?: boolean; units?: ArtifactUnitReceipt[] }
 /** `oneiron::receipt::questions::QuestionAnswer` */

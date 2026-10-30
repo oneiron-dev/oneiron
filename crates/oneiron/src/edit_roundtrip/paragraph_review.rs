@@ -77,7 +77,11 @@ impl Vault {
         {
             return Err(invalid("invalid paragraph ask selection"));
         }
-        let judged_live = self.office_body_pin(artifact)?;
+        // A document with a live body is read there at its head, pinned with
+        // it; each paragraph's kind, lock and quoted text are the version's,
+        // where its comment lands (FIX 11981).
+        let live = self.live_head_blocks(artifact)?;
+        let judged_live = live.as_ref().map(|(pin, _)| pin.clone());
         let (version, bytes, read_rows) = self.office_head(artifact, OfficeFormat::Docx)?;
         let limits = {
             let rtxn = self.store.env.read_txn()?;
@@ -104,6 +108,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_block".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -115,24 +120,41 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "read_only_block".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
-            if block.text.trim().is_empty() {
+            let text = match &live {
+                None => block.text.as_str(),
+                Some((_, live)) => match live.iter().find(|live| live.id == *id) {
+                    Some(live) => live.text.as_str(),
+                    None => {
+                        refused.push(UnitRefusal {
+                            unit,
+                            reason: "missing_block".into(),
+                            judged_live: judged_live.clone(),
+                        });
+                        continue;
+                    }
+                },
+            };
+            if text.trim().is_empty() {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
             let state = json!({
                 "unit": { "block": id, "kind": block.kind, "role": block.role },
-                "text": block.text,
+                "text": text,
             });
             let Some(decision) = ask.decide(&state, &sources, &[])? else {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -142,6 +164,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }

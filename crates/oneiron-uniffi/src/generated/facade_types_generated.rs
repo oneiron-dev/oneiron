@@ -45079,6 +45079,12 @@ pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<TypedDecision>,
+    #[serde(
+        rename = "judged_live",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_live: Option<LivePin>,
 }
 
 /// `oneiron::edit_roundtrip::slides_review::SlideUnitRefusalReason`.
@@ -45235,6 +45241,12 @@ pub struct UnitAbstention {
     pub unit: crate::WireJson,
     #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<TypedDecision>,
+    #[serde(
+        rename = "judged_live",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_live: Option<LivePin>,
 }
 
 /// `oneiron::edit_roundtrip::artifact_question::UnitRefusal`.
@@ -45244,6 +45256,12 @@ pub struct UnitRefusal {
     pub unit: crate::WireJson,
     #[serde(rename = "reason")]
     pub reason: String,
+    #[serde(
+        rename = "judged_live",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_live: Option<LivePin>,
 }
 
 /// `oneiron::blob_artifact::verbs::ArtifactAskOutcome`.
@@ -54537,6 +54555,12 @@ pub enum ArtifactUnitReceipt {
         unit: crate::WireJson,
         #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
         decision: Option<TypedDecision>,
+        #[serde(
+            rename = "judged_live",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        judged_live: Option<LivePin>,
     },
     #[serde(rename = "refused")]
     Refused {
@@ -54544,6 +54568,12 @@ pub enum ArtifactUnitReceipt {
         unit: crate::WireJson,
         #[serde(rename = "reason")]
         reason: String,
+        #[serde(
+            rename = "judged_live",
+            default,
+            skip_serializing_if = "Option::is_none"
+        )]
+        judged_live: Option<LivePin>,
     },
     #[serde(rename = "omitted")]
     Omitted,
