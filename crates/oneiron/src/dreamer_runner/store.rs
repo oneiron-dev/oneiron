@@ -1155,6 +1155,15 @@ impl<'a> DreamerRunnerStore<'a> {
             .collect())
     }
 
+    /// The working attempts that hold a parked row, in creation order, each
+    /// read by its key on one snapshot, so a reader of parks decodes no
+    /// other attempt (FIX 12253).
+    pub fn parked_working_rows(&self) -> Result<Vec<AttemptRecord>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        let ids = PARKED.scan_keys(&self.vault.store, &rtxn, &[])?;
+        self.attempts.working_rows_in_txn(&rtxn, ids)
+    }
+
     /// Pure proposal step. This method performs no LMDB write and enqueues no
     /// attempt.
     ///
