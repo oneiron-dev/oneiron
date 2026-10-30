@@ -72,6 +72,7 @@ pub use self::setup::{
     NATIVE_MAIL_JMAP_CHECK, PACK_CONNECTION_ACTOR_CLASS, PACK_SETUP_ALLOW_ASK_DOOR,
     PACK_SETUP_ALLOW_ASK_QUEUE, PackConnectionCheck, PackConnectionEvidence,
     PackConnectionVerifier, PackSetupOwnerAsk, ProviderConnectionChecks, SLACK_AUTH_TEST_CHECK,
+    TELEGRAM_GET_ME_CHECK,
 };
 pub use self::txn::ConnectorKeyGeneration;
 
