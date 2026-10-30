@@ -32,8 +32,7 @@ use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::edit_distance::publisher::{
     IssueSignature, PublisherActor, PublisherError, SignatureDeliveryOutcome,
     emit_issue_signature_in_txn, issue_signature, record_signature_delivery,
-    record_signature_delivery_in_txn, record_signature_hold_in_txn,
-    record_signature_local_in_txn,
+    record_signature_delivery_in_txn, record_signature_hold_in_txn, record_signature_local_in_txn,
 };
 use crate::outbound::{
     OutboundDispatchError, OutboundDispatchOutcome, OutboundExecutionOutcome,
@@ -677,9 +676,7 @@ impl Vault {
         let Some(signature) = signature else {
             return Ok(());
         };
-        self.with_write_txn_grouped(|txn| {
-            record_signature_local_in_txn(self, txn, signature).map_err(engine_error)
-        })
+        self.with_write_txn_grouped(|txn| record_signature_local_in_txn(self, txn, signature))
     }
 }
 

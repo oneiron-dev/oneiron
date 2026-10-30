@@ -148,10 +148,7 @@ impl Vault {
             return Ok(Some(ReportRoute::Publisher { publisher_ref }));
         }
         for artifact in artifacts {
-            if self
-                .report_publisher_actor(&publisher_ref, artifact)?
-                .is_some()
-            {
+            if self.report_has_publisher_actor(&publisher_ref, artifact)? {
                 return Ok(Some(ReportRoute::Publisher { publisher_ref }));
             }
         }

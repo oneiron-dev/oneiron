@@ -242,7 +242,7 @@ fn object_without_duplicates(bytes: &[u8]) -> Option<serde_json::Map<String, ser
         fn visit_map<A: serde::de::MapAccess<'de>>(
             self,
             mut map: A,
-        ) -> Result<Unique, A::Error> {
+        ) -> std::result::Result<Unique, A::Error> {
             let mut entries = serde_json::Map::new();
             while let Some(key) = map.next_key::<String>()? {
                 let value = map.next_value::<serde_json::Value>()?;
@@ -255,7 +255,9 @@ fn object_without_duplicates(bytes: &[u8]) -> Option<serde_json::Map<String, ser
     }
 
     impl<'de> serde::Deserialize<'de> for Unique {
-        fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Unique, D::Error> {
+        fn deserialize<D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> std::result::Result<Unique, D::Error> {
             deserializer.deserialize_map(UniqueVisitor)
         }
     }

@@ -14,19 +14,12 @@ use crate::edit_distance::publisher::PublisherActor;
 use crate::{EntityId, Result, Vault};
 
 impl Vault {
-    /// The ACTOR `publisher_ref` published `artifact` as. `None` for an
-    /// artifact with no publisher actor (the owner's own or local packs) and
-    /// for one shipped through more than one hub: its delivery names no comm
-    /// counterparty, and none is invented.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub(super::super) fn report_publisher_actor(
+    /// Every hub through which `publisher_ref` shipped `artifact`.
+    fn report_publisher_hubs(
         &self,
         publisher_ref: &str,
         artifact: EntityId,
-    ) -> Result<Option<PublisherActor>> {
+    ) -> Result<BTreeSet<EntityId>> {
         let artifact = artifact.to_hex();
         let mut hubs = BTreeSet::new();
         let txn = self.store.env.read_txn()?;
@@ -42,7 +35,46 @@ impl Vault {
                 hubs.extend(EntityId::from_hex(&pack.hub_id).ok());
             }
         }
-        let mut hubs = hubs.into_iter();
+        Ok(hubs)
+    }
+
+    /// Whether any hub names `publisher_ref` as this artifact's publisher.
+    /// Routing keeps a multi-hub artifact with its real publisher even when
+    /// its comm counterparty is ambiguous; an owner pack has no such actor.
+    pub(in super::super) fn report_has_publisher_actor(
+        &self,
+        publisher_ref: &str,
+        artifact: EntityId,
+    ) -> Result<bool> {
+        let hubs = self.report_publisher_hubs(publisher_ref, artifact)?;
+        let txn = self.store.env.read_txn()?;
+        for hub in hubs {
+            if self
+                .skill_publisher_actor_in_txn(&txn, hub, publisher_ref)?
+                .is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The ACTOR `publisher_ref` published `artifact` as. `None` for an
+    /// artifact with no publisher actor (the owner's own or local packs) and
+    /// for one shipped through more than one hub: its delivery names no comm
+    /// counterparty, and none is invented.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(in super::super) fn report_publisher_actor(
+        &self,
+        publisher_ref: &str,
+        artifact: EntityId,
+    ) -> Result<Option<PublisherActor>> {
+        let mut hubs = self
+            .report_publisher_hubs(publisher_ref, artifact)?
+            .into_iter();
         let (Some(hub), None) = (hubs.next(), hubs.next()) else {
             return Ok(None);
         };
