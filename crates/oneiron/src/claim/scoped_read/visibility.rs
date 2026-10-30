@@ -451,27 +451,16 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        // A non-CLAIM body carries its own `stale: true` once withdrawn; a
-        // CLAIM's staleness is judged by its claim read below. A recorded
-        // source that no longer stands withdraws the row, the owner's too.
-        let readable = match (self.session_view, use_asked) {
-            (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
-            (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
-            (Some(view), true) => {
-                crate::ports::raw_readable_apart_from_use_in_txn(view, rtxn, id, raw)?
-            }
-            (None, true) => {
-                crate::ports::raw_readable_apart_from_use_in_txn(&self.vault.store, rtxn, id, raw)?
-            }
-        };
-        if !readable
-            || self.vault.archive_tombstone_in_txn(rtxn, id)?.is_some()
-            || (raw.len() == ENTITY_METADATA_HEADER_LEN
-                && self
-                    .vault
-                    .store
-                    .entity_deletion_present_in_txn(rtxn, id, header.learned_at)?)
+        // A CLAIM a reader with no record list reads is judged once per
+        // access class (FIX 11915); every other row, and a CLAIM that path
+        // leaves, takes the row admission below.
+        if header.entity_type == ENTITY_TYPE_CLAIM
+            && let Some(admitted) =
+                self.claim_by_class_in(rtxn, policy, id, raw, &header, filter, authority, grant)?
         {
+            return Ok(admitted);
+        }
+        if !self.row_stands_in(rtxn, id, raw, &header, use_asked)? {
             return Ok(false);
         }
         if grant.is_none() && !self.relationship_raw_allowed_in(rtxn, id, raw, authority)? {
@@ -523,6 +512,41 @@ impl<'v> ScopedRead<'v> {
                 ),
             })
         }
+    }
+
+    /// Whether the stored row `raw` of `id`, with `header`, still stands as
+    /// a row: not withdrawn, not stale, every recorded source standing, not
+    /// archived and no deleted shell. A non-CLAIM body carries its own
+    /// `stale: true` once withdrawn; a CLAIM's staleness is judged by its
+    /// claim read. A recorded source that no longer stands withdraws the row,
+    /// the owner's too. `use_asked`: the named read asks the row's legal
+    /// non-use conjunct on its own (FIX 5226).
+    pub(super) fn row_stands_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+        header: &EntityMetadataHeader,
+        use_asked: bool,
+    ) -> Result<bool> {
+        let readable = match (self.session_view, use_asked) {
+            (Some(view), false) => crate::ports::raw_readable_in_txn(view, rtxn, id, raw)?,
+            (None, false) => crate::ports::raw_readable_in_txn(&self.vault.store, rtxn, id, raw)?,
+            (Some(view), true) => {
+                crate::ports::raw_readable_apart_from_use_in_txn(view, rtxn, id, raw)?
+            }
+            (None, true) => {
+                crate::ports::raw_readable_apart_from_use_in_txn(&self.vault.store, rtxn, id, raw)?
+            }
+        };
+        Ok(readable
+            && self.vault.archive_tombstone_in_txn(rtxn, id)?.is_none()
+            && (raw.len() != ENTITY_METADATA_HEADER_LEN
+                || !self.vault.store.entity_deletion_present_in_txn(
+                    rtxn,
+                    id,
+                    header.learned_at,
+                )?))
     }
 
     /// Whether `viewers` read the revision `raw` when it is a private

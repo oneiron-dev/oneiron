@@ -23,17 +23,45 @@ pub(crate) enum ClaimReadStatus {
 impl ClaimReadStatus {
     /// Whether `body`'s status passes this mode.
     pub(crate) fn admits(self, filter: &ResolvedRetrievalFilter, body: &ClaimBody) -> bool {
-        crate::claim::claim_generic_readable(body)
+        self.admits_status(
+            filter,
+            crate::claim::claim_generic_readable(body),
+            body.approval,
+            body.lifecycle,
+            body.stale,
+        )
+    }
+
+    /// [`Self::admits`] over the status a claim's access class carries
+    /// (FIX 11915): whether its predicate reads generically, its approval,
+    /// its lifecycle and its staleness.
+    pub(super) fn admits_status(
+        self,
+        filter: &ResolvedRetrievalFilter,
+        generic_readable: bool,
+        approval: ClaimApprovalStatus,
+        lifecycle: ClaimLifecycleStatus,
+        stale: bool,
+    ) -> bool {
+        generic_readable
             && match self {
                 Self::Surfaceable => {
                     matches!(
-                        body.approval,
+                        approval,
                         ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
-                    ) && body.lifecycle == ClaimLifecycleStatus::Active
-                        && (filter.include_stale || !body.stale)
+                    ) && lifecycle == ClaimLifecycleStatus::Active
+                        && (filter.include_stale || !stale)
                 }
                 Self::Recorded => true,
             }
+    }
+}
+
+impl ScopedReadActorKey {
+    /// Whether a claim whose principal audience is `principal` admits this
+    /// key's reader: one that names a principal admits that principal alone.
+    pub(super) fn admits_principal(&self, principal: Option<EntityId>) -> bool {
+        principal.is_none() || principal == EntityId::from_hex(self.actor_ref()).ok()
     }
 }
 
@@ -89,7 +117,7 @@ impl<'v> ScopedRead<'v> {
     /// Whether a claim whose principal audience is `principal` admits this
     /// reader: one that names a principal admits that principal alone.
     pub(crate) fn principal_admits(&self, principal: Option<EntityId>) -> bool {
-        principal.is_none() || principal == EntityId::from_hex(self.actor_key.actor_ref()).ok()
+        self.actor_key.admits_principal(principal)
     }
 
     /// A CLAIM row's admission. Under `grant`, one live Grant of the reader's
@@ -157,12 +185,7 @@ impl<'v> ScopedRead<'v> {
             if principal.is_none() {
                 return Ok(false);
             }
-            let learned_at = self
-                .entity_record_in(rtxn, id)?
-                .ok_or(Error::CorruptedIndex("preference entity"))?
-                .learned_at;
-            let now = self.judged_at.unwrap_or_else(crate::unix_seconds_now);
-            if !preference_in_force(body, learned_at, now)? {
+            if !self.preference_in_force_in(rtxn, id, body)? {
                 return Ok(false);
             }
         }
@@ -172,31 +195,7 @@ impl<'v> ScopedRead<'v> {
         {
             return Ok(false);
         }
-        let causal_admitted = {
-            let cached = self
-                .recall_authority
-                .lock()
-                .map_err(|_| Error::InvariantViolation("recall authority lock"))?;
-            match cached.as_ref() {
-                Some(fold) => crate::authority::claim_causal_admitted(
-                    &self.vault.store,
-                    rtxn,
-                    fold,
-                    id,
-                    body,
-                )?,
-                // The shared view of this snapshot's fold, not a copy: this
-                // runs per claim, and a copy grows with the vault's agents.
-                None => crate::authority::claim_causal_admitted(
-                    &self.vault.store,
-                    rtxn,
-                    &*self.vault.authority_view_readonly_in_txn(rtxn)?,
-                    id,
-                    body,
-                )?,
-            }
-        };
-        if !causal_admitted {
+        if !self.claim_causally_admitted_in(rtxn, id, body)? {
             return Ok(false);
         }
         let admitted = self.claim_status.admits(filter, body)
@@ -221,5 +220,49 @@ impl<'v> ScopedRead<'v> {
                 Some(grant),
             ),
         })
+    }
+
+    /// Whether the mined preference `body` of `id` stands at this lane's
+    /// judged time: its decay and evidence from when it was learned.
+    pub(super) fn preference_in_force_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        let learned_at = self
+            .entity_record_in(rtxn, id)?
+            .ok_or(Error::CorruptedIndex("preference entity"))?
+            .learned_at;
+        let now = self.judged_at.unwrap_or_else(crate::unix_seconds_now);
+        preference_in_force(body, learned_at, now)
+    }
+
+    /// Whether the claim `body` of `id` stands causally: its machine read
+    /// standing and its writers' revocations under this snapshot's fold.
+    pub(super) fn claim_causally_admitted_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        let cached = self
+            .recall_authority
+            .lock()
+            .map_err(|_| Error::InvariantViolation("recall authority lock"))?;
+        match cached.as_ref() {
+            Some(fold) => {
+                crate::authority::claim_causal_admitted(&self.vault.store, rtxn, fold, id, body)
+            }
+            // The shared view of this snapshot's fold, not a copy: this runs
+            // per claim, and a copy grows with the vault's agents.
+            None => crate::authority::claim_causal_admitted(
+                &self.vault.store,
+                rtxn,
+                &*self.vault.authority_view_readonly_in_txn(rtxn)?,
+                id,
+                body,
+            ),
+        }
     }
 }

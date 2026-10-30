@@ -78,6 +78,7 @@ pub use weave_serve::{
 };
 pub use weave_trigger::WeaveDigestRendered;
 
+mod access_class;
 mod access_gate;
 pub(crate) use access_gate::{RelationshipRead, claim_access_axes, relationship_read};
 mod actor_key;

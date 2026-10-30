@@ -105,7 +105,7 @@ pub(crate) use scope::*;
 pub use scope_stamp::{
     PREDICATE_VAULT_DEFAULT_FACET, base_world_id, default_project_id, substrate_facet_id,
 };
-pub(crate) use scope_stamp::{default_facet_in, upgrade_pre_scope_body};
+pub(crate) use scope_stamp::{default_facet_in, record_scope_at, upgrade_pre_scope_body};
 pub use scoped_read::*;
 pub(crate) use scoped_read::{Admitted, claim_access_axes, invalidate_weave_digest_source_in_txn};
 pub use source_trust::*;
