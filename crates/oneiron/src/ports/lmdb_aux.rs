@@ -234,9 +234,9 @@ impl BlobStore for Vault {
     /// instance of `mint` (FIX 6021); any other goes in its row, as
     /// [`BlobStore::port_blob_put`] puts it. The staged file's own pin falls
     /// when this returns, so a caller that passes `mint` holds
-    /// [`Vault::pin_all_result_bodies`] from before `txn` opens until it
+    /// `Vault::pin_all_result_bodies` from before `txn` opens until it
     /// commits (FIX 5399b); one that stages with
-    /// [`Vault::stage_blob_body_in_txn`] holds the staged body instead.
+    /// `Vault::stage_blob_body_in_txn` holds the staged body instead.
     fn port_blob_put_staged(
         &self,
         txn: &mut RwTxn<'_>,
