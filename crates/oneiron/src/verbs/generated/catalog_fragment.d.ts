@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4457 declarations.
+// Census: 1265 code-mode rows (1225 host rows, 40 run rows), 4458 declarations.
 // Replies: 1078 fully typed, 186 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -3904,7 +3904,8 @@ declare namespace Sdk {
   type OfficeBodyReviewedFork = { fork_ref: string; reviewed_fork: number[] };
   type OfficeBodyProposalSettleRequest = { artifact_ref: string; proposal_ref: string; verdict: SettleVerdict; scope?: ApproveScope | null; reviewed_head: number[]; reviewed: OfficeBodyReviewedFork[]; reason?: string | null };
   type OfficeBodyExportVerbRequest = { artifact_ref: string; run_ref: string; author?: string | null; made_by?: unknown | null; utc_offset_minutes?: number | null; iana_timezone?: string | null };
-  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; effects: string[] };
+  type OfficeRecalcZone = { utc_offset_minutes: number; iana_timezone?: string | null };
+  type OfficeBodyExportRecord = { artifact: EntityId; version: number; frontier: number[]; source_version: number; actor: BodyActor; author: string; token?: string | null; at: number; changes: number; recalc?: string | null; recalc_zone?: OfficeRecalcZone | null; effects: string[] };
   type OfficeBodyExportView = { frontier: number[]; record?: OfficeBodyExportRecord | null };
   type OfficeBodyPreviewRequest = { artifact_ref: string; utc_offset_minutes?: number | null; iana_timezone?: string | null };
   type XlsxCell = { col: number; row: number; value: XlsxValue; formula?: string | null; style?: number | null; locked?: XlsxLock | null };

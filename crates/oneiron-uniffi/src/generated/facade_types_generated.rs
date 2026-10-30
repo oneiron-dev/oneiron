@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1214 facade rows, 4400 generated types.
+// UniFFI census: 1214 facade rows, 4401 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1166.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -61123,6 +61123,19 @@ pub struct OfficeBodyExportVerbRequest {
     pub iana_timezone: Option<String>,
 }
 
+/// `oneiron::office_body::records::OfficeRecalcZone`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct OfficeRecalcZone {
+    #[serde(rename = "utc_offset_minutes")]
+    pub utc_offset_minutes: i16,
+    #[serde(
+        rename = "iana_timezone",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub iana_timezone: Option<String>,
+}
+
 /// `oneiron::office_body::records::OfficeBodyExportRecord`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct OfficeBodyExportRecord {
@@ -61146,6 +61159,12 @@ pub struct OfficeBodyExportRecord {
     pub changes: u64,
     #[serde(rename = "recalc", default, skip_serializing_if = "Option::is_none")]
     pub recalc: Option<String>,
+    #[serde(
+        rename = "recalc_zone",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub recalc_zone: Option<OfficeRecalcZone>,
     #[serde(rename = "effects")]
     pub effects: Vec<String>,
 }

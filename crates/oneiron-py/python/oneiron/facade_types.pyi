@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1214 facade rows, 4402 declarations.
+Census: 1214 facade rows, 4403 declarations.
 Inputs: 1142 of 1214 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1048 of 1214 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -19691,6 +19691,9 @@ class OfficeBodyExportVerbRequest(TypedDict):
     made_by: NotRequired[Any | None]
     utc_offset_minutes: NotRequired[int | None]
     iana_timezone: NotRequired[str | None]
+class OfficeRecalcZone(TypedDict):
+    utc_offset_minutes: int
+    iana_timezone: NotRequired[str | None]
 class OfficeBodyExportRecord(TypedDict):
     artifact: EntityId
     version: int
@@ -19702,6 +19705,7 @@ class OfficeBodyExportRecord(TypedDict):
     at: int
     changes: int
     recalc: NotRequired[str | None]
+    recalc_zone: NotRequired[OfficeRecalcZone | None]
     effects: list[str]
 class OfficeBodyExportView(TypedDict):
     frontier: list[int]
