@@ -28,6 +28,7 @@ use super::*;
 use crate::EntityId;
 
 mod capture;
+mod heads;
 mod image;
 mod resumed;
 mod side_tail;
@@ -156,6 +157,9 @@ pub(in crate::authority) struct FoldBase {
     projected: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     receipts: BaseReceipts,
     once: Once,
+    /// The heads, scope heads and next sequences of the base's view, which
+    /// a fold past it updates from its new rows (FIX 12307).
+    heads: heads::LogHeads,
 }
 
 /// The first-seen seconds and sequence floors a base folded its rows under,
@@ -173,13 +177,23 @@ struct BaseReceipts {
 }
 
 impl FoldBase {
+    /// The base of `view`, a full fold of `rows` whose last once fold is
+    /// `once`.
     fn capture(
         inputs: Inputs,
         once: Once,
         rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
         first_seen: &BTreeMap<AuthorityEntryHash, u64>,
         floors: &BTreeMap<AuthorityEntryHash, u64>,
+        view: &AuthorityFold,
     ) -> Self {
+        let expired = once
+            .fold
+            .valid_entries
+            .iter()
+            .filter(|hash| !view.valid_entries.contains(*hash))
+            .copied()
+            .collect();
         Self {
             inputs,
             rows: rows
@@ -198,6 +212,7 @@ impl FoldBase {
                 unpinned: rows.iter().map(|(hash, _)| *hash).collect(),
             },
             once,
+            heads: heads::LogHeads::of(view, expired),
         }
     }
 
@@ -494,6 +509,7 @@ pub(in crate::authority) fn fold_stored_log(
             &rows,
             first_seen_at_secs,
             &observations.sequence_floors,
+            &fold,
         )
     });
     (fold, base)
@@ -630,7 +646,7 @@ impl FoldBase {
         // rows its stale-roster window reads.
         let receipts = self.receipts.past(&log, &self.rows, &new_rows);
         let read_whole: Vec<&AuthorityLogEntry> = projected.values().collect();
-        let mut view = super::install_fold::install_view(
+        let (mut view, expired) = super::install_fold::install_view_expiring(
             &read_whole,
             fold.clone(),
             &receipts.first_seen,
@@ -641,7 +657,18 @@ impl FoldBase {
         if view.rests_on_counting() && !super::install_fold::stale_chains(&view).is_empty() {
             return None;
         }
-        super::install_fold::finish_install_fold_of(&self.rows_with(&tail_rows), &mut view);
+        // The heads from the new rows alone where every base row counts as
+        // the base's view counted it, else over every row (FIX 12307).
+        let heads = match self.heads.past(&view, &expired, &new_rows) {
+            Some(heads) => {
+                heads.set_on(&mut view);
+                heads
+            }
+            None => {
+                super::install_fold::finish_install_fold_of(&self.rows_with(&tail_rows), &mut view);
+                heads::LogHeads::of(&view, expired)
+            }
+        };
         let mut judged = once.judged.clone();
         judged.extend(tail.order.iter().copied());
         let mut rows = self.rows.clone();
@@ -671,6 +698,7 @@ impl FoldBase {
                 confirm_nonces: tail.confirms.1,
                 fold,
             },
+            heads,
         };
         Some((view, next))
     }

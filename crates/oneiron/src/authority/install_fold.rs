@@ -138,7 +138,28 @@ pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
     stale_roster_window_secs: u64,
     pin: Option<&PinnedRoot>,
 ) -> AuthorityFold {
-    let mut fold = apply_stale_roster_window(
+    install_view_expiring(
+        entries,
+        once,
+        first_seen_at_secs,
+        now_secs,
+        stale_roster_window_secs,
+        pin,
+    )
+    .0
+}
+
+/// [`install_view`], and the approvals its stale-roster window expired: the
+/// valid entries of `once` the view does not hold.
+pub(super) fn install_view_expiring<E: std::borrow::Borrow<AuthorityLogEntry>>(
+    entries: &[E],
+    once: AuthorityFold,
+    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
+    now_secs: Option<u64>,
+    stale_roster_window_secs: u64,
+    pin: Option<&PinnedRoot>,
+) -> (AuthorityFold, BTreeSet<AuthorityEntryHash>) {
+    let (mut fold, expired) = apply_stale_roster_window(
         entries,
         once,
         first_seen_at_secs,
@@ -150,7 +171,7 @@ pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
             .get(&pin.anchor_key)
             .is_some_and(|ids| ids.contains(&pin.id))
     });
-    fold
+    (fold, expired)
 }
 
 /// The machines whose roster chain is stale here, or left with no settled

@@ -148,16 +148,17 @@ pub(super) fn next_stale_roster_deadline<E: Borrow<AuthorityLogEntry>>(
 
 /// Project after the structural DAG fold has reached its fixed point. All
 /// authorization consumers use this projection, including the readonly fold.
+/// The approvals it expired come back beside: the valid entries it took out.
 pub(super) fn apply_stale_roster_window<E: Borrow<AuthorityLogEntry>>(
     entries: &[E],
     mut fold: AuthorityFold,
     first_seen: &BTreeMap<AuthorityEntryHash, u64>,
     now_secs: Option<u64>,
     window_secs: u64,
-) -> AuthorityFold {
+) -> (AuthorityFold, BTreeSet<AuthorityEntryHash>) {
     let expired = expired_stale_roster_approvals(entries, &fold, first_seen, now_secs, window_secs);
     if expired.is_empty() {
-        return fold;
+        return (fold, expired);
     }
     // A fresh independently authorized rebind must survive expiry of its old
     // parent approval. Match the winning tuple, not just the bound key. Equal
@@ -228,12 +229,12 @@ pub(super) fn apply_stale_roster_window<E: Borrow<AuthorityLogEntry>>(
     }
     fold.critical_write_confirms
         .retain(|_, confirm| !expired.contains(&confirm.authority_entry_hash));
-    for hash in expired {
-        fold.valid_entries.remove(&hash);
+    for hash in &expired {
+        fold.valid_entries.remove(hash);
         fold.issues
-            .push(AuthorityFoldIssue::StaleRosterApproval(hash));
+            .push(AuthorityFoldIssue::StaleRosterApproval(*hash));
     }
-    fold
+    (fold, expired)
 }
 
 /// The valid roster marks a key P1 accepts signed, judged as the trusted chain
