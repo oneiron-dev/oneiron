@@ -293,6 +293,9 @@ struct Masker {
     mints: bool,
     /// The switch is off: place known values only, mint nothing (FIX 8644).
     known_only: bool,
+    /// The door's scan read each text this pass reads now by the same text
+    /// rules and found no shape: none is sought again (speed).
+    shapes_read: bool,
     /// Each file's key places by its bytes' hash: marked before, or by this
     /// plan.
     marked: HashMap<[u8; 32], KeyPlaces>,
@@ -365,9 +368,13 @@ impl Masker {
                     // MACHINE candidate can need its proof renewed.
                     let before = (self.minted && envelope.machine_signature().is_some())
                         .then(|| (**candidate).clone());
+                    // The door read the claim's encoded body, not each value
+                    // as a text: each value is read by the text rules.
+                    let shapes_read = std::mem::take(&mut self.shapes_read);
                     for value in candidate.values_mut() {
                         self.mask_value(value)?;
                     }
+                    self.shapes_read = shapes_read;
                     if let Some(before) = before
                         && **candidate != before
                     {

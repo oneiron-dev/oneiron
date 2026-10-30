@@ -66,6 +66,9 @@ pub(in crate::batch) fn mask_batch_ops(
     // The owner's switch, read once: when it is off the plan places known
     // values only and mints nothing (FIX 8644).
     let known_only = secret_scan_mode_in_txn(store, &*wtxn)? == SecretScanMode::Off;
+    // A clean scan read each body and text field the passes read by the
+    // same text rules: no shape is sought in them again (speed).
+    let shapes_read = refusal.is_none() && !known_only;
     // The plan's copy, and every value it finds, are wiped however the
     // plan ends (FIX 1101).
     let mut planned = PlanOps::of(ops);
@@ -75,6 +78,7 @@ pub(in crate::batch) fn mask_batch_ops(
         kept,
         known: known.clone(),
         known_only,
+        shapes_read,
         ..Masker::default()
     };
     plan.mask_ops(&mut planned)?;
@@ -107,6 +111,7 @@ pub(in crate::batch) fn mask_batch_ops(
         kept,
         known,
         known_only,
+        shapes_read,
         ..Masker::default()
     };
     minted_pass.mask_ops(ops)?;

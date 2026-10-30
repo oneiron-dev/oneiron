@@ -28,9 +28,10 @@ impl Masker {
     /// each handle went.
     pub(super) fn mask_text(&mut self, text: &str) -> Result<Option<String>> {
         let known = self.known_spans(text);
-        // The switch is off: no shape span is discovered (FIX 8644).
+        // The switch is off: no shape span is discovered (FIX 8644). A text
+        // the door's scan read clean holds none.
         let mut hits: Vec<(Range<usize>, TextHit)> = Vec::new();
-        if !self.known_only {
+        if !self.known_only && !self.shapes_read {
             hits.extend(
                 secret_spans(text)
                     .into_iter()
