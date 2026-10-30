@@ -128,12 +128,10 @@ fn sweep_orphans(vault: &oneiron::Vault, plan: &BackupPlan) -> anyhow::Result<()
             && matches!(entry.file_type(), Ok(kind) if kind.is_file())
             && entry
                 .metadata()
-                .and_then(|metadata| metadata.modified())
-                .is_ok_and(|modified| {
-                    modified
-                        .elapsed()
-                        .is_ok_and(|age| age > ORPHAN_INVENTORY_GRACE)
-                })
+                .ok()
+                .and_then(|metadata| metadata.modified().ok())
+                .and_then(|modified| modified.elapsed().ok())
+                .is_some_and(|age| age > ORPHAN_INVENTORY_GRACE)
         {
             inventories.push(file);
         }
