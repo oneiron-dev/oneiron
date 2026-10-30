@@ -91,6 +91,10 @@ pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor
 /// feed dedupe key.
 pub const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
 
+/// The archived remote copy of one calendar connector resource
+/// (`calendar::connectors::resource`). Parts: system, calendar ref, UID.
+pub const CALENDAR_CONNECTOR_SOURCE_BLOB: &[u8] = b"oneiron:calendar-connector-source-blob:v1:";
+
 /// The BLOB artifact holding one verified provider event's body
 /// (`surface_event::provider_payload`). Parts: channel, provider event id.
 pub const SURFACE_PROVIDER_EVENT_BLOB: &[u8] = b"oneiron:surface-provider-event-blob:v1:";
