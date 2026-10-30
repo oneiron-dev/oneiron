@@ -125,7 +125,7 @@ impl Vault {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
         let slot = self.owner_signing_slot(machine);
-        let mut signer = OwnerRootSigner::from_seed(&super::slot_seed(keystore.as_ref(), &slot)?);
+        let mut signer = OwnerRootSigner::from_seed(&*super::slot_seed(keystore.as_ref(), &slot)?);
         // The owner's proof is revalidated before the roster is read.
         let mut challenge =
             self.owner_key_enrollment_challenge_as(authority, machine, &signer.public_key())?;
@@ -141,7 +141,7 @@ impl Vault {
             // A revoked key is never enrolled again: a fresh seed takes its slot.
             Some(_) => {
                 DeviceKeystore::delete(keystore.as_ref(), &slot).map_err(super::keystore_error)?;
-                signer = OwnerRootSigner::from_seed(&super::slot_seed(keystore.as_ref(), &slot)?);
+                signer = OwnerRootSigner::from_seed(&*super::slot_seed(keystore.as_ref(), &slot)?);
                 challenge = self.owner_key_enrollment_challenge_as(
                     authority,
                     machine,
