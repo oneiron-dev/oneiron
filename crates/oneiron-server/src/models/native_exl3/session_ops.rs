@@ -193,6 +193,6 @@ fn cut(op: SessionOp, cause: &dyn std::fmt::Display) -> OpFault {
 /// Feeds the cheap stats an answer carries to `worker`'s activity.
 fn report(worker: &InferenceWorker, body: &JsonValue) {
     if let Some(activity) = body.get("stats").and_then(super::activity_of) {
-        worker.report(activity);
+        super::worker_host::report_device_activity(worker, activity);
     }
 }

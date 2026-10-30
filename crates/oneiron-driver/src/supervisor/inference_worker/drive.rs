@@ -55,12 +55,23 @@ impl Inner {
         let restart = {
             let mut state = self.lock();
             let restart = !state.retiring && state.waiting > 0;
-            if !restart {
+            if restart {
+                if matches!(phase, Phase::IdleStopped) {
+                    // Publish the completed pressure unload before the
+                    // victim's own demand starts its next incarnation.
+                    state.phase = Phase::IdleStopped;
+                }
+            } else {
                 state.phase = phase;
                 state.driving = false;
             }
             restart
         };
+        if matches!(phase, Phase::IdleStopped) {
+            // The completion stays readable even after a restart overwrites
+            // the transient phase: outstanding waiters see the request end.
+            self.lock().unload_requested = false;
+        }
         self.notify();
         restart
     }
