@@ -9,7 +9,7 @@ use loro::LoroDoc;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
-use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode};
+use crate::claim::{restamp_federated_claim_source, validate_claim_body_and_decode_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::registry::{
@@ -189,7 +189,14 @@ fn admit_federated_entity_blob_graded(
         return Ok((here, blob.to_vec()));
     }
 
-    let body = validate_claim_body_and_decode(&blob[ENTITY_METADATA_HEADER_LEN..], true)?;
+    // The claim meets its class's synced descriptor too, read in this
+    // admission's txn (ARCH-0057 §4.1; FIX 12237).
+    let body = validate_claim_body_and_decode_in_txn(
+        &vault.store,
+        txn,
+        &blob[ENTITY_METADATA_HEADER_LEN..],
+        true,
+    )?;
     let mut body = match grading {
         ImportGrading::Imported { scale } => {
             downweight_federated_claim(restamp_federated_claim_source(body), scale)?
