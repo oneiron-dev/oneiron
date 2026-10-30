@@ -14,8 +14,10 @@
 //! - **Checkout**: on the lease route only, the ticket's stored checkout is
 //!   live and held by the pusher on this repository, its TASK stands, and
 //!   the run's own Grant (PR1 repo bounds) admits the pusher to this repo.
-//!   Its ref moves and every changed path are judged under that same Grant
-//!   by `admit_repo_edit_in_txn` before the quarantine is released.
+//!   Each ref move and its changed paths are judged by
+//!   `admit_repo_edit_in_txn` before the quarantine is released: any live
+//!   Grant of the pusher's over this repo admits it, and the intent records
+//!   which one did (FIX 7138).
 //!
 //! None of the three reads the holder's class to decide; a class reaches
 //! the Checkout arm only as the run's own identity, which PR1's seam judges
@@ -27,6 +29,8 @@
 //!
 //! [`Vault::recheck_git_push_in_txn`] runs in the final intent writer and
 //! rechecks the same authority, the same Grant, and the current credential.
+
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::authority::{GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn};
@@ -313,12 +317,16 @@ impl Vault {
     /// The final intent writer's recheck of `stamp`, in its own write
     /// snapshot, before the quarantine is released: the owner is still a
     /// live owner; the same GitPush grant still stands for the same repo
-    /// and anchor; or the same checkout still holds, and the run's same
-    /// Grant admits every ref move and changed path in `changes`. The
-    /// current credential is still unrevoked. In-process pushes have no
-    /// credential to recheck. A recheck that cannot read admits nothing:
-    /// an owner push's is logged and refused with the typed capability
-    /// refusal, which he retries (FIX 7134).
+    /// and anchor; or the same checkout still holds, and a live Grant of
+    /// the pusher's over this repo admits each ref move and changed path in
+    /// `changes`. The current credential is still unrevoked. In-process
+    /// pushes have no credential to recheck. A recheck that cannot read
+    /// admits nothing: an owner push's is logged and refused with the typed
+    /// capability refusal, which he retries (FIX 7134).
+    ///
+    /// `Ok` names, for a checkout push, the Grant that admitted each ref move
+    /// by its full ref name (FIX 7138), for the intent to record
+    /// ([`GitPushStamp::record_ref_grants`]); it is empty for the other arms.
     ///
     /// # Errors
     /// [`crate::error::CodeError::GitPushCapabilityRequired`] when the authority no longer
@@ -329,7 +337,7 @@ impl Vault {
         stamp: &GitPushStamp,
         repo: &RepoRef,
         changes: Option<&[GitPushRefChange]>,
-    ) -> Result<()> {
+    ) -> Result<BTreeMap<String, EntityId>> {
         let principal = EntityId::from_hex(&stamp.principal)
             .map_err(|_| refused(&stamp.served, NO_LONGER_STANDS))?;
         let stands = match stamp.arm {
@@ -338,7 +346,7 @@ impl Vault {
             // the non-owner arms are.
             GitPushArm::Owner => {
                 return match self.git_push_owner_rechecks_in_txn(txn, stamp, principal) {
-                    Ok(true) => Ok(()),
+                    Ok(true) => Ok(BTreeMap::new()),
                     Ok(false) => Err(refused(&stamp.served, NO_LONGER_STANDS)),
                     Err(error) => {
                         tracing::warn!(
@@ -359,7 +367,8 @@ impl Vault {
         if !stands {
             return Err(refused(&stamp.served, NO_LONGER_STANDS));
         }
-        self.git_push_credential_rechecks_in_txn(txn, stamp)
+        self.git_push_credential_rechecks_in_txn(txn, stamp)?;
+        Ok(BTreeMap::new())
     }
 
     /// The owner, read again: still a live owner, his credential unrevoked.
@@ -413,8 +422,10 @@ impl Vault {
         Ok(stands)
     }
 
-    /// The same checkout and the run's same Grant, over every ref move and
-    /// changed path of the push.
+    /// The same checkout, and over every ref move and changed path of the
+    /// push a live Grant of the pusher's over this repo: the one the push
+    /// was admitted under or another, never a refusal of what a live Grant
+    /// allows (FIX 7138). Answers the Grant that admitted each ref move.
     fn git_push_checkout_rechecks_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -422,9 +433,9 @@ impl Vault {
         principal: EntityId,
         repo: &RepoRef,
         changes: &[GitPushRefChange],
-    ) -> Result<()> {
+    ) -> Result<BTreeMap<String, EntityId>> {
         let no_longer = || refused(&stamp.served, NO_LONGER_STANDS);
-        let (Some(ticket), Some(grant), Some(anchor_repo), Some(class)) = (
+        let (Some(ticket), Some(_), Some(anchor_repo), Some(class)) = (
             stamp.checkout.as_deref(),
             stamp
                 .grant
@@ -453,6 +464,7 @@ impl Vault {
         {
             return Err(refused(&stamp.served, STALE_CHECKOUT));
         }
+        let mut admitted = BTreeMap::new();
         for change in changes {
             let target = RepoTarget {
                 repo: anchor_repo.repo,
@@ -460,12 +472,14 @@ impl Vault {
                 paths: change.paths.clone(),
             };
             match self.admit_repo_edit_in_txn(txn, principal, class, anchor_repo.repo, &target)? {
-                Ok(membership) if membership.grant == grant => {}
-                Ok(_) => return Err(no_longer()),
+                Ok(membership) => {
+                    admitted.insert(change.git_ref.clone(), membership.grant);
+                }
                 Err(refusal) => return Err(refused(&stamp.served, refusal.message())),
             }
         }
-        self.git_push_credential_rechecks_in_txn(txn, stamp)
+        self.git_push_credential_rechecks_in_txn(txn, stamp)?;
+        Ok(admitted)
     }
 
     /// The credential the push was admitted under is still unrevoked, or
