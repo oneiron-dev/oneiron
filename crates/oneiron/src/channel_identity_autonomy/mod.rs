@@ -13,7 +13,7 @@ mod types;
 pub use self::types::{
     CHANNEL_IDENTITY_AUTONOMY_SCHEMA_VERSION, ChannelIdentityActionEnvelope,
     ChannelIdentityAutonomyMode, ChannelIdentityAutonomyRequest, ChannelIdentityAutonomyRung,
-    ChannelIdentityAutonomyState, ChannelIdentityEffectCandidate, ChannelIdentityGrantWindowUsage,
+    ChannelIdentityAutonomyState, ChannelIdentityEffectCandidate,
     DEFAULT_GRADUATION_UNCHANGED_STREAK, DraftReviewOutcome, GraduationEvidence, GraduationOffer,
     GraduationScopeKey, MailboxReadCandidate, MailboxReadEnvelope, PREDICATE_ACTION_ENVELOPE,
     PREDICATE_AUTONOMY_MODE, PREDICATE_GRADUATION_EVIDENCE, PREDICATE_MAILBOX_READ_ENVELOPE,

@@ -132,12 +132,6 @@ pub fn send_counterparty_class(explicit_class: Option<&str>) -> Option<String> {
     explicit_class.map(str::to_owned)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChannelIdentityGrantWindowUsage {
-    pub window_started_at: u64,
-    pub used_actions: u32,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChannelIdentityAutonomyMode {
     pub identity_ref: EntityId,
