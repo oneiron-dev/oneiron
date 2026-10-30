@@ -90,6 +90,7 @@ pub use stream::{
     PendingDiaryReview, RouteObservation, StreamConnectionId, StreamConnectionState,
     SubscriptionError, SubscriptionReceipt, SubscriptionScope, WakeEnvelope,
 };
+pub(crate) use stream::task_for_announcement;
 #[cfg(test)]
 mod surfaces_tests;
 mod tasks;
