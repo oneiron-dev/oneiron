@@ -169,11 +169,23 @@ impl Vault {
         }
         Ok(Some(window))
     }
+
+    /// Mirrors into `doc`, the old window a replacement of `key` carries over
+    /// from, what the markers of `key` owe it, as an open mirrors them
+    /// (FIX 11822): the carry-over then judges each like any other unseen
+    /// write, and the install retires the markers ([`Owed::retire_in_txn`]).
+    pub(in crate::sync) fn mirror_owed_into_replaced(
+        &self,
+        doc: &LoroDoc,
+        key: &WindowKey,
+    ) -> Result<Owed> {
+        Owed::mirror_on_open(self, doc, key)
+    }
 }
 
 /// What one window's pending-mirror markers owe it, as one pass read them.
 #[derive(Default)]
-pub(super) struct Owed {
+pub(in crate::sync) struct Owed {
     /// Rows whose carrier the window owes.
     rows: BTreeSet<EntityId>,
     /// Removed edges: the edges-map key, and the edge it names.
@@ -257,17 +269,31 @@ impl Owed {
         if self.read.is_empty() {
             return;
         }
-        let retired = vault.with_write_txn_grouped(|wtxn| {
-            for (key, stamp) in &self.read {
-                if PENDING_MIRROR.get(&vault.store, wtxn, key)? == Some(*stamp) {
-                    PENDING_MIRROR.delete(&vault.store, wtxn, key)?;
-                }
-            }
-            Ok(())
-        });
+        let retired =
+            vault.with_write_txn_grouped(|wtxn| self.retire_in_txn(vault, wtxn, |_| false));
         if let Err(error) = retired {
             tracing::warn!(%error, "pending-mirror markers kept for the next pass");
         }
+    }
+
+    /// Retires, in `wtxn`, every marker read but those whose carrier `stays`
+    /// names, unless a later write left its key again since. A replacement
+    /// retires them in the write that persists it, and keeps owed each one
+    /// whose value the installed window does not hold (FIX 11822).
+    pub(in crate::sync) fn retire_in_txn(
+        &self,
+        vault: &Vault,
+        wtxn: &mut RwTxn<'_>,
+        stays: impl Fn(&str) -> bool,
+    ) -> Result<()> {
+        for (key, stamp) in &self.read {
+            if !stays(&key.carrier)
+                && PENDING_MIRROR.get(&vault.store, wtxn, key)? == Some(*stamp)
+            {
+                PENDING_MIRROR.delete(&vault.store, wtxn, key)?;
+            }
+        }
+        Ok(())
     }
 }
 
