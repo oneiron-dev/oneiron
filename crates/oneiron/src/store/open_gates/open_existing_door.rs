@@ -125,13 +125,24 @@ impl Store {
                 clock.observe_id_floor(floor)?;
             }
             if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::CLOCK_FLOOR)? {
-                let floor = u64::from_be_bytes(
+                // The floor alone, or the floor and its authorization lease
+                // (FIX 11664): a reopen reads both shapes the writer stores.
+                let half = |at: usize| -> Result<u64> {
                     bytes
-                        .as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("recorded clock floor"))?,
-                );
-                clock.observe_floor(floor)?;
+                        .get(at..at + 8)
+                        .and_then(|part| part.try_into().ok())
+                        .map(u64::from_be_bytes)
+                        .ok_or(Error::CorruptedIndex("recorded clock floor"))
+                };
+                match bytes.len() {
+                    8 => {
+                        clock.observe_floor(half(0)?)?;
+                    }
+                    16 => {
+                        clock.observe_leased_floor(half(0)?, half(8)?)?;
+                    }
+                    _ => return Err(Error::CorruptedIndex("recorded clock floor")),
+                }
             }
         }
         let key_custody = {
