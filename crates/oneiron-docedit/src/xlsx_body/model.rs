@@ -52,6 +52,12 @@ pub struct XlsxSheet {
     pub locked: Vec<XlsxArea>,
     pub tables: Vec<XlsxTable>,
     pub visibility: XlsxSheetVisibility,
+    /// The rows with their own height or format, one each (FIX 9081).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rows: Vec<XlsxLines>,
+    /// The column ranges with their own width or format.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub columns: Vec<XlsxLines>,
 }
 
 /// Whether a sheet's tab shows, as Excel's `<sheet state>` holds it. A

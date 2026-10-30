@@ -9,8 +9,9 @@
 //! workbook order as `[key, name]` pairs, each sheet's read-only ranges by key
 //! and the workbook's cell formats. A sheet's key is its imported name, or one
 //! minted when the body adds it, so renaming or moving a sheet changes only the
-//! list. `office.tables` maps a sheet key to its tables, as JSON, as the row
-//! and column edits leave them. Root `cells` maps each sheet key to a map from
+//! list. `office.tables` maps a sheet key to its tables, and `office.lines`
+//! to its rows and columns with their own size or format, as JSON, as the
+//! row and column edits leave them. Root `cells` maps each sheet key to a map from
 //! A1 address to one cell
 //! value: its content (`t` type, `v` value, `f` formula), its format `s` and
 //! its import lock. A cell is one value, so concurrent writes to it resolve
@@ -42,9 +43,10 @@ use crate::error::Result;
 use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 use oneiron_docedit::xlsx_body::{
     SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxConditionalFormat,
-    XlsxFormat, XlsxLock, XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1,
-    calculated_fill, check_cell, check_conditional, check_format, check_name, check_sheet_name,
-    drop_tables, parse_a1, retarget_sheets, shift_axis_formula, shift_conditional_range,
+    XlsxFormat, XlsxLines, XlsxLock, XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable,
+    XlsxValue, a1, calculated_fill, check_cell, check_conditional, check_format, check_name,
+    check_sheet_name, drop_tables, parse_a1, retarget_sheets, shift_axis_formula,
+    shift_conditional_range, shift_lines,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -61,9 +63,9 @@ use sheets::{
     sheet_at, sheet_key, sheet_list, sheet_names, sheet_states,
 };
 use wire::{
-    child_map, decode_axis, decode_cell, decode_name, encode_areas, encode_axes, encode_cell,
-    encode_name, encode_tables, name_key, parse_lock, read_styles_len, string, writable_name,
-    write_cell,
+    child_map, decode_axis, decode_cell, decode_lines, decode_name, encode_areas, encode_axes,
+    encode_cell, encode_lines, encode_name, encode_tables, name_key, parse_lock, read_styles_len,
+    string, writable_name, write_cell,
 };
 
 const OFFICE: &str = "office";
@@ -106,6 +108,11 @@ pub struct BodySheet {
     pub visibility: XlsxSheetVisibility,
     /// The conditional formats the body added, by id (FIX 3468).
     pub conditional: BTreeMap<String, XlsxConditionalFormat>,
+    /// The rows with their own height or format, and the column ranges with
+    /// their own width or format, as the row and column log leaves them
+    /// (FIX 9081).
+    pub rows: Vec<XlsxLines>,
+    pub columns: Vec<XlsxLines>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]

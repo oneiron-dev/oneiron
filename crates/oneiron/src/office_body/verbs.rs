@@ -28,6 +28,7 @@ use crate::typed_body::LiftedSources;
 use crate::write_envelope::WriteActor;
 use oneiron_docedit::docx_body::DocxRun;
 use oneiron_docedit::live::{ApproveScope, DeckOp};
+use oneiron_docedit::xlsx_body::XlsxLines;
 
 /// `vault.artifacts.body.head`: the artifact.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -280,6 +281,10 @@ pub struct XlsxSheetView {
     pub visibility: XlsxSheetVisibility,
     /// The conditional formats the body added, by id.
     pub conditional_formats: Vec<BodyConditionalFormat>,
+    /// The rows with their own height (points) or format, and the column
+    /// ranges with their own width (characters) or format.
+    pub rows: Vec<XlsxLines>,
+    pub columns: Vec<XlsxLines>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -352,6 +357,8 @@ impl From<XlsxBody> for XlsxBodyView {
                         .into_iter()
                         .map(|(id, format)| BodyConditionalFormat { id, format })
                         .collect(),
+                    rows: sheet.rows,
+                    columns: sheet.columns,
                 })
                 .collect(),
             names: body.names.into_values().collect(),

@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4397 generated types.
+// UniFFI census: 1211 facade rows, 4398 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -59236,6 +59236,19 @@ pub struct BodyConditionalFormat {
     pub format: XlsxConditionalFormat,
 }
 
+/// `oneiron_docedit::xlsx_body::insert::XlsxLines`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct XlsxLines {
+    #[serde(rename = "first")]
+    pub first: u32,
+    #[serde(rename = "last")]
+    pub last: u32,
+    #[serde(rename = "size", default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<f64>,
+    #[serde(rename = "style", default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<u32>,
+}
+
 /// `oneiron::office_body::verbs::XlsxSheetView`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct XlsxSheetView {
@@ -59251,6 +59264,10 @@ pub struct XlsxSheetView {
     pub visibility: XlsxSheetVisibility,
     #[serde(rename = "conditional_formats")]
     pub conditional_formats: Vec<BodyConditionalFormat>,
+    #[serde(rename = "rows")]
+    pub rows: Vec<XlsxLines>,
+    #[serde(rename = "columns")]
+    pub columns: Vec<XlsxLines>,
 }
 
 /// `oneiron::office_body::xlsx::BodyName`.
@@ -61219,6 +61236,10 @@ pub struct XlsxSheet {
     pub tables: Vec<XlsxTable>,
     #[serde(rename = "visibility")]
     pub visibility: XlsxSheetVisibility,
+    #[serde(rename = "rows", default, skip_serializing_if = "Option::is_none")]
+    pub rows: Option<Vec<XlsxLines>>,
+    #[serde(rename = "columns", default, skip_serializing_if = "Option::is_none")]
+    pub columns: Option<Vec<XlsxLines>>,
 }
 
 /// `oneiron_docedit::xlsx_body::model::XlsxName`.

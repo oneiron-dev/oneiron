@@ -36,7 +36,7 @@ pub use conditional::{
     shift_conditional_range,
 };
 pub use header::header_rename;
-pub use insert::calculated_fill;
+pub use insert::{XlsxLines, calculated_fill, shift_lines};
 
 use crate::edit::xml::{
     Splice, escape_attribute, insert_end, next_part, replace_text, set_attribute, splice,

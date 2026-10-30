@@ -6,11 +6,13 @@
 //! the inserted ones, as the body's cell formats have it.
 use super::{
     Book, MAX_COLUMN, MAX_ROW, Result, SML, XlsxAxis, XlsxAxisEdit, XlsxChange, XlsxTable,
-    XlsxValue, refused, rewrite_rows,
+    XlsxValue, refused, rewrite_rows, truthy,
 };
 use crate::edit::xml::{Splice, splice};
 use crate::ooxml::{Node, XmlTree};
 use crate::xlsx_shift::shift_formula;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 /// A row's attributes an inserted row takes from its neighbour.
@@ -18,6 +20,110 @@ const ROW_FORMAT: &[&str] = &["s", "customFormat", "ht", "customHeight"];
 /// A column range's attributes an inserted column takes from its
 /// neighbour's.
 const COLUMN_FORMAT: &[&str] = &["width", "customWidth", "style"];
+
+/// Rows or columns `first..=last` with their own size or format (FIX 9081):
+/// one row each as a worksheet stores them, or one column range.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct XlsxLines {
+    pub first: u32,
+    pub last: u32,
+    /// A row's height in points, or a column's width in characters.
+    pub size: Option<f64>,
+    /// The cell format their empty cells show, an index into the workbook's.
+    pub style: Option<u32>,
+}
+
+/// `lines`, the rows or the columns along `edit`'s axis, after the edit as
+/// the export leaves the worksheet's rows and column ranges: each moves, a
+/// range an insert lands inside widens, and a delete shrinks or removes what
+/// it covers; an insert's new lines take the size and format of the lines
+/// holding their neighbour, unless those already span them.
+#[must_use]
+pub fn shift_lines(lines: &[XlsxLines], edit: &XlsxAxisEdit) -> Vec<XlsxLines> {
+    let mut out: Vec<XlsxLines> = lines
+        .iter()
+        .filter_map(|line| {
+            let (first, last) = edit.range(line.first, line.last)?;
+            Some(XlsxLines {
+                first,
+                last,
+                ..*line
+            })
+        })
+        .collect();
+    if edit.delete {
+        return out;
+    }
+    let (source, last) = (neighbour(edit), last_inserted(edit));
+    if let Some(like) = out
+        .iter()
+        .find(|line| (line.first..=line.last).contains(&source))
+        .copied()
+        && !(like.first..=like.last).contains(&edit.at)
+    {
+        out.push(XlsxLines {
+            first: edit.at,
+            last,
+            ..like
+        });
+        out.sort_by_key(|line| line.first);
+    }
+    out
+}
+
+/// A worksheet's rows with their own height or format, one each, and its
+/// column ranges with their own width or format. A row's format holds only
+/// where it says so (`customFormat`).
+pub(super) fn sheet_lines(tree: &XmlTree) -> Result<(Vec<XlsxLines>, Vec<XlsxLines>)> {
+    let number = |node: &Node, name: &str| node.attr(name)?.trim().parse::<u32>().ok();
+    let size = |node: &Node, name: &str| {
+        node.attr(name)?
+            .trim()
+            .parse::<f64>()
+            .ok()
+            .filter(|size| size.is_finite())
+    };
+    let mut rows = Vec::new();
+    if let Some((data, _)) = tree.child(0, SML, "sheetData")? {
+        for (_, row) in tree.children(data).filter(|(_, node)| node.is(SML, "row")) {
+            let Some(at) = number(row, "r") else {
+                continue;
+            };
+            let style = number(row, "s").filter(|_| row.attr("customFormat").is_some_and(truthy));
+            let height = size(row, "ht");
+            if height.is_some() || style.is_some() {
+                rows.push(XlsxLines {
+                    first: at,
+                    last: at,
+                    size: height,
+                    style,
+                });
+            }
+        }
+    }
+    let mut columns = Vec::new();
+    for range in tree
+        .children(0)
+        .filter(|(_, node)| node.is(SML, "cols"))
+        .flat_map(|(at, _)| tree.children(at))
+        .map(|(_, node)| node)
+        .filter(|node| node.is(SML, "col"))
+    {
+        let (Some(min), Some(max)) = (number(range, "min"), number(range, "max")) else {
+            continue;
+        };
+        let (width, style) = (size(range, "width"), number(range, "style"));
+        if width.is_some() || style.is_some() {
+            columns.push(XlsxLines {
+                first: min.min(max),
+                last: min.max(max),
+                size: width,
+                style,
+            });
+        }
+    }
+    Ok((rows, columns))
+}
 
 /// The row or column an insert's new lines take after, as the edit leaves
 /// the sheet.

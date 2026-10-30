@@ -497,6 +497,8 @@ pub(in crate::office_body) fn landed(
         sheet.locked.clone_from(&held.locked);
         sheet.tables.clone_from(&held.tables);
         sheet.conditional.clone_from(&held.conditional);
+        sheet.rows.clone_from(&held.rows);
+        sheet.columns.clone_from(&held.columns);
         let Some(after) = after else {
             continue;
         };

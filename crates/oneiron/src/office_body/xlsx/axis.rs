@@ -191,6 +191,13 @@ pub(super) fn axis(
             tables.push(shift.table);
         }
         sheet.tables = tables;
+        // Its rows' heights and formats and its columns' widths and formats
+        // move as the export's do, and inserted lines take their neighbour's
+        // (FIX 9081).
+        match edit.axis {
+            XlsxAxis::Row => sheet.rows = shift_lines(&sheet.rows, edit),
+            XlsxAxis::Column => sheet.columns = shift_lines(&sheet.columns, edit),
+        }
         let mut cells = BTreeMap::new();
         for ((row, col), cell) in std::mem::take(&mut sheet.cells) {
             match edit.cell((col, row)) {
@@ -440,6 +447,32 @@ pub(super) fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> 
             },
         )
         .collect();
+    let relined: Vec<&BodySheet> = after
+        .sheets
+        .iter()
+        .filter(
+            |sheet| match before.sheets.iter().find(|held| held.key == sheet.key) {
+                Some(held) => held.rows != sheet.rows || held.columns != sheet.columns,
+                None => !sheet.rows.is_empty() || !sheet.columns.is_empty(),
+            },
+        )
+        .collect();
+    if !relined.is_empty() {
+        let mut lines: HashMap<String, LoroValue> = match office.get("lines") {
+            Some(ValueOrContainer::Value(LoroValue::Map(held))) => held
+                .iter()
+                .map(|(key, lines)| (key.clone(), lines.clone()))
+                .collect(),
+            _ => HashMap::new(),
+        };
+        for sheet in relined {
+            lines.insert(
+                sheet.key.clone(),
+                encode_lines(&sheet.rows, &sheet.columns)?,
+            );
+        }
+        office.insert("lines", lines).map_err(loro)?;
+    }
     if !retabled.is_empty() {
         let mut tables: HashMap<String, LoroValue> = match office.get("tables") {
             Some(ValueOrContainer::Value(LoroValue::Map(held))) => held
