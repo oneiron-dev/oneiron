@@ -47,7 +47,7 @@ use oneiron::booking::{
 };
 use oneiron::{EntityId, Vault};
 
-use super::booking_anti_abuse::{enforce_amend, enforce_book, enforce_hold, enforce_slot_list};
+use super::booking_anti_abuse::{enforce_amend, enforce_hold, enforce_slot_list};
 use super::{json_payload, scoped_auth::check_request_owner_act};
 use crate::auth::ClientAddress;
 use crate::error::ApiError;

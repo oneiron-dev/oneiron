@@ -38,6 +38,7 @@
 mod amendment;
 mod evaluation;
 mod quarantine;
+mod quarantine_restore;
 mod rate;
 mod rules;
 mod storage;
@@ -56,7 +57,11 @@ pub use self::evaluation::{
 };
 pub use self::quarantine::{
     BookingQuarantineAdmission, BookingQuarantineReceipt, admit_quarantine_submission,
-    quarantine_borderline_submission,
+    admit_restorable_quarantine_submission, quarantine_borderline_submission,
+};
+pub use self::quarantine_restore::{
+    BookingQuarantineRestoreInput, BookingQuarantinedSubmission, booking_quarantined_submission,
+    record_quarantined_submission_restored,
 };
 pub use self::rate::{
     BookingRateDecision, observe_book_request, observe_hold_request, observe_quarantine_request,

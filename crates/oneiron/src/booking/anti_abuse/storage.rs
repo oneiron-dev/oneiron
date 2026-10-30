@@ -16,8 +16,9 @@ use super::rules::BookingAntiAbuseRuleRow;
 // -------------------------------------------------------------------------
 
 /// Booking-only `vault_meta` prefix. Every row this module stores — rule
-/// rows, owner notices, rate counters, and the slot-list response cache —
-/// lives under it. Quarantine records are the one deliberate exception:
+/// rows and rule proposals, owner notices, rate counters, the slot-list
+/// response cache, and quarantined confirms' restorable submissions — lives
+/// under it. Quarantine records are the one deliberate exception:
 /// those ride the gate's existing pending-consent rows so the inbox's
 /// pending-review pattern can enumerate them.
 pub const BOOKING_ANTI_ABUSE_META_PREFIX: &[u8] = b"booking:anti_abuse:v1:";
@@ -29,6 +30,7 @@ pub(super) const NOTICE_KEY_TAG: &[u8; 7] = b"notice\x00";
 pub(super) const RATE_KEY_TAG: &[u8; 5] = b"rate\x00";
 pub(super) const CACHE_KEY_TAG: &[u8; 6] = b"cache\x00";
 pub(super) const PROPOSAL_KEY_TAG: &[u8; 9] = b"proposal\x00";
+pub(super) const SUBMISSION_KEY_TAG: &[u8; 11] = b"submission\x00";
 
 /// One activated rule row. Key: `"rule\0"` + hash32 (the row id digest).
 pub(super) const RULE: SideTable<([u8; 5], [u8; 32]), BookingAntiAbuseRuleRow, Raw> =
