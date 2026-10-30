@@ -513,6 +513,21 @@ impl<'v> ScopedRead<'v> {
             let Some(scope) = scope else {
                 return Ok(false);
             };
+            // A WORLD row in base reality reads, under a credential that
+            // cannot read base, at the world it describes when the
+            // credential already holds that world, never wider (FIX 3830).
+            if header.entity_type == crate::registry::ENTITY_TYPE_WORLD {
+                let ceiling = self.actor_key.world_ceiling();
+                let held = [&ceiling.worlds, &grant.unwrap_or(&ceiling).worlds];
+                let worlds = crate::federation::record_scope::note_world::world_row_worlds(*id);
+                return Ok(crate::gate::scoped_read_note_allowed(
+                    policy,
+                    &self.actor_key,
+                    &scope,
+                    grant.or(self.actor_key.authority_scope()),
+                    (&worlds, &held[..]),
+                ));
+            }
             Ok(match grant {
                 None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
                 Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(

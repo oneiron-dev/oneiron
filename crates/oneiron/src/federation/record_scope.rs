@@ -348,7 +348,10 @@ fn stored_scope(
 /// epoch SUMMARY, in whatever form it is stored (`stored_epoch_in`), sits
 /// where its birth stamp says; a NOTE where its live `InWorld` edges place
 /// it (`note_world`); every other record, and any
-/// other SUMMARY, is base reality (`Some(None)`). `None` where the row cannot
+/// other SUMMARY, is base reality (`Some(None)`). A WORLD row is base reality
+/// here too; a door reading under a world ceiling that holds the world it
+/// describes, but not base, holds it there (`note_world::held_worlds_of`,
+/// FIX 3830). `None` where the row cannot
 /// prove its world (an erased CLAIM, a TASK or epoch SUMMARY whose stamp is
 /// gone or was never settled, a NOTE in no single world), which a read
 /// narrowed on worlds keeps out.
