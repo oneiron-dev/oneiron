@@ -94,6 +94,7 @@ pub(crate) fn import_note_from_authority(
         head,
         seq,
         seal: carried,
+        overrides: carried_overrides,
         document: bytes,
     } = NoteStateEnvelope::decode(id, bytes)?;
     vault.with_write_txn_grouped(|txn| {
@@ -128,6 +129,9 @@ pub(crate) fn import_note_from_authority(
         // A seal and the state it froze land together, judged before the
         // head moves (FIX 2401).
         let frozen = seal::admit_frame(vault, txn, id, carried.as_ref(), head, new_head, &staged)?;
+        // The NOTE's own overrides ride its frames (FIX 3819): they
+        // decode, validate and land with the state in this same write.
+        super::overrides::install_frame_overrides_in_txn(vault, txn, &id, carried_overrides)?;
         // The imported document is measured as a load is (rule 5, FIX
         // 10342): a crossing raises a check and the import goes on.
         if let Err(error) = super::scan::measure_document(

@@ -10,8 +10,8 @@
 //! When such an ask settles, its continuation moves the TASK once: met
 //! lands the saved result, unmet requeues, proceed resumes, stop fails it.
 //! Each move keeps a lifecycle receipt naming the ask; a settling move's is
-//! its TASK's settled row, unless the owner's answer or a review the owner
-//! accepted already kept that row as its anchor (FIX 5079).
+//! its TASK's settled row, which the owner's answer or a review the owner
+//! accepted anchors (FIX 5079, FIX 12195).
 //! A hold, an unknown or no answer changes nothing and is never recorded as
 //! the owner's permission. Asks an agent supplied itself carry no
 //! continuation; the agent's Progress is their exit.
@@ -538,12 +538,22 @@ pub(super) fn continue_blocked_task_in(
     memory
         .rewrite_task_in_txn(txn, task_ref, body, now)
         .map_err(continuation_refusal)?;
+    // The move's receipt is the settled row, as a report's is; an anchor
+    // below lands on it, and routing counts that anchor (FIX 12195).
+    keep_continuation_receipt_in(
+        vault,
+        txn,
+        lifecycle.as_ref(),
+        task_ref,
+        group_ref,
+        settled_at,
+    )?;
     // FIX 1140: a TASK the answer settled wakes its peer-result waiters when
     // the settling write commits, not at the next wake pass.
     if settled {
         crate::batch::queue_settled_tasks(vault, txn, [task_ref]);
         // The TASK's owner answered it in their own counted word: the ask
-        // anchors the settlement, on the settled row it keeps.
+        // anchors the settlement, on the continuation's settled row.
         if owner_answered(result, option, owner) {
             anchor_settlement_in_txn(
                 vault,
@@ -556,19 +566,9 @@ pub(super) fn continue_blocked_task_in(
             )?;
         }
         // A review the owner accepted before the TASK settled anchors the
-        // settlement, on that row when the ask kept one.
+        // settlement, on that row.
         anchor_kept_review_in_txn(vault, txn, task_ref, continuation.attempt)?;
     }
-    // After the anchors, so a settled row one of them kept stands, as its
-    // reporter and anchor name the settlement (FIX 5079).
-    keep_continuation_receipt_in(
-        vault,
-        txn,
-        lifecycle.as_ref(),
-        task_ref,
-        group_ref,
-        settled_at,
-    )?;
     if settled {
         // The routing projection counts this settlement on the folds whose
         // runs worked this TASK before it settled (FIX 11807).
@@ -624,8 +624,10 @@ fn continuation_lifecycle(
 /// transaction that made it, under an id its TASK and ask derive; `None`
 /// when its surface keeps no record. A move that settled the TASK at
 /// `settled_at` marks it as the settling write's, so a replayed Done and a
-/// status read name it, unless an anchor already kept the settled row of
-/// that time: that row stands, and this keeps none beside it.
+/// status read name it; an owner-answered ask or a kept review anchors the
+/// settlement on this row (FIX 12195). A settled row of that time that
+/// already stands (a retried move's own, or another write's) stays, keeps
+/// its anchor, and this keeps none beside it.
 fn keep_continuation_receipt_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

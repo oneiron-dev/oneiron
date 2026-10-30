@@ -23,7 +23,8 @@ pub use self::lift_history::{
     SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner, secret_lift_as_owner_toward,
 };
 pub(crate) use self::lift_history::{
-    enqueue_known_remark_in_txn, enqueue_lift_in_txn, run_lift_pass,
+    enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_typed_body_at_in_txn, run_lift_pass,
+    typed_body_at_proposal_due_in_txn,
 };
 pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
@@ -31,8 +32,8 @@ pub(crate) use self::mask::admit::{
     scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
-    CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_text_in_txn,
-    mark_carrier_texts_in_txn,
+    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_unplaced_json,
 };
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::mask_origin_in_txn;
