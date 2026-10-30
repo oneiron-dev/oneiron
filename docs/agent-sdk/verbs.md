@@ -575,6 +575,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.inference_defaults`
 - `vault.settings.inference_defaults.replace`
 - `vault.lenses.propose`
+- `vault.lenses.propose_from_pack`
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`

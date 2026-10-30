@@ -3077,6 +3077,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
             ),
             (
+                "vault.lenses.propose_from_pack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_hub::pack_catalog::PackLensProposeRequest,
+                >(),
+            ),
+            (
                 "vault.lenses.activate",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensActivateRequest>(),
             ),
@@ -14401,6 +14407,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.lenses.propose_from_pack" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.lenses.activate" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -20772,6 +20785,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
         }
+        "vault.lenses.propose_from_pack" => {
+            let _input: crate::skill_hub::pack_catalog::PackLensProposeRequest =
+                decode(value.clone())?;
+        }
         "vault.lenses.activate" => {
             let _input: crate::lens::LensActivateRequest = decode(value.clone())?;
         }
@@ -24266,6 +24283,9 @@ pub fn invoke(
             vault_settings_inference_defaults_replace(memory, decode(value)?)?,
         ),
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
+        "vault.lenses.propose_from_pack" => {
+            encode(vault_lenses_propose_from_pack(memory, decode(value)?)?)
+        }
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
@@ -30491,6 +30511,12 @@ pub fn vault_lenses_propose(
     input: crate::lens::LensProposeRequest,
 ) -> MemoryResult<crate::receipt::LensProposalReceipt> {
     memory.lenses_propose(input)
+}
+pub fn vault_lenses_propose_from_pack(
+    memory: &Memory<'_>,
+    input: crate::skill_hub::pack_catalog::PackLensProposeRequest,
+) -> MemoryResult<crate::receipt::LensProposalReceipt> {
+    memory.lenses_propose_from_pack(input)
 }
 pub fn vault_lenses_activate(
     memory: &Memory<'_>,
