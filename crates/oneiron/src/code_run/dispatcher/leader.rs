@@ -587,12 +587,12 @@ impl HostSelfDispatcher<'_> {
         let version = ProjectProofVersion::V3;
         let challenge = body
             .authority_at(version)
-            .write_challenge(child, version, signed_at, None)?;
+            .write_challenge(child, version, signed_at, &[])?;
         Ok(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: issuer.binding_proof(&slip, &challenge)?,
             signed_at,
-            anchor: None,
+            anchor: Vec::new(),
             version,
         })
     }
