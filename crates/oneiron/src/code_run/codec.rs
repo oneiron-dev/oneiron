@@ -10,6 +10,7 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::CallerLocality;
 use crate::{EdgeActorClass, Error, Result};
 
+use super::callable_rows::{decode_callable_rows, encode_callable_rows};
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
 use super::replay::{
@@ -25,7 +26,7 @@ use super::support::{
     validate_text,
 };
 
-pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
+pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 10] = [
     "schema_version",
     "run_id",
     "determinism",
@@ -35,6 +36,7 @@ pub const CODE_RUN_REPLAY_RECORD_KEYS: [&str; 9] = [
     "abi_layout_checks",
     "bindings",
     "live_run",
+    "callable_rows",
 ];
 pub const CODE_RUN_DETERMINISM_KEYS: [&str; 2] = ["frozen_unix_ms", "rng_seed"];
 pub const CODE_RUN_BRIDGE_CALL_KEYS: [&str; 8] = [
@@ -83,6 +85,8 @@ const KEY_OUTPUTS: &str = CODE_RUN_REPLAY_RECORD_KEYS[5];
 const KEY_ABI_LAYOUT_CHECKS: &str = CODE_RUN_REPLAY_RECORD_KEYS[6];
 const KEY_BINDINGS: &str = CODE_RUN_REPLAY_RECORD_KEYS[7];
 const KEY_LIVE_RUN: &str = CODE_RUN_REPLAY_RECORD_KEYS[8];
+/// Written only once a callable added a row (FIX 5763); absent, none.
+const KEY_CALLABLE_ROWS: &str = CODE_RUN_REPLAY_RECORD_KEYS[9];
 
 const KEY_FROZEN_UNIX_MS: &str = CODE_RUN_DETERMINISM_KEYS[0];
 const KEY_RNG_SEED: &str = CODE_RUN_DETERMINISM_KEYS[1];
@@ -120,7 +124,7 @@ const KEY_LAYOUT_HASH: &str = CODE_RUN_ABI_LAYOUT_CHECK_KEYS[3];
 /// Encodes a deterministic code-run replay record as pinned MessagePack.
 pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec<u8>> {
     validate_code_run_replay_record(record)?;
-    let value = Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(CODE_RUN_REPLAY_SCHEMA_VERSION),
@@ -169,7 +173,11 @@ pub fn encode_code_run_replay_record(record: &CodeRunReplayRecord) -> Result<Vec
             Value::from(KEY_LIVE_RUN),
             record.live_run.as_ref().map_or(Value::Nil, encode_live_run),
         ),
-    ]);
+    ];
+    if let Some(rows) = encode_callable_rows(&record.callable_rows) {
+        entries.push((Value::from(KEY_CALLABLE_ROWS), rows));
+    }
+    let value = Value::Map(entries);
     encode_value(&value, "code-run replay record MessagePack encode failed")
 }
 
@@ -224,6 +232,7 @@ pub fn decode_code_run_replay_record(bytes: &[u8]) -> Result<CodeRunReplayRecord
             decode_binding,
         )?,
         live_run: decode_live_run(required(fields[8], "missing replay live_run")?)?,
+        callable_rows: decode_callable_rows(fields[9])?,
     };
     validate_code_run_replay_record(&record)?;
     Ok(record)

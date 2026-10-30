@@ -688,6 +688,10 @@ pub struct CodeRunReplayRecord {
     /// The credential attached to this live agent run (OF-181), as its host
     /// stored it: association metadata, never the lease proof.
     pub live_run: Option<super::live_run::CodeRunLiveRunBinding>,
+    /// The rows the run's callables answered from (FIX 5763): each stored
+    /// skill they loaded and the rows of every other run's result its reads
+    /// took, kept across steps.
+    pub(crate) callable_rows: super::callable_rows::CodeRunCallableRows,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -765,6 +769,7 @@ impl CodeRunReplayRecord {
             abi_layout_checks: code_run_replay_abi_layout_checks(),
             bindings: Vec::new(),
             live_run: None,
+            callable_rows: super::callable_rows::CodeRunCallableRows::default(),
         }
     }
 
@@ -812,6 +817,15 @@ impl CodeRunReplayRecord {
     #[must_use]
     pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
         agent_verb_rows_of(&self.bridge_calls)
+    }
+
+    /// The rows this run's results were served from, as a step's host
+    /// counts them: its verb answers' rows ([`Self::agent_verb_rows`]) and
+    /// the rows its callables answered from (FIX 5763). `None` when one kept
+    /// no set.
+    #[must_use]
+    pub fn result_rows(&self) -> Option<Vec<EntityId>> {
+        self.callable_rows.beside(self.agent_verb_rows()?)
     }
 }
 

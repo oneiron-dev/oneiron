@@ -17,6 +17,7 @@ pub(crate) mod activity;
 // The guest authoring request is decoded at the typed component bridge, and
 // a verb hook's rewrite of it as the guest's own.
 mod agent_authoring;
+mod callable_rows;
 mod codec;
 mod compaction_fork;
 mod compaction_home;
