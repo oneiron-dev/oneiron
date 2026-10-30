@@ -10038,7 +10038,7 @@
       "crate-vis": 5,
       "enum": 5,
       "fn": 6,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 4
      }
     },
@@ -10127,9 +10127,19 @@
      "purpose": "The solved-run index (CUA E8a; DESIGN-2 \"The Coach\", row E8): group, coverage, failure, dirty and seen rows…",
      "surface": {
       "const": 1,
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 7,
       "struct": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/browser_library/index/all_groups.rs",
+     "purpose": "Every solved group, including generations the browser-programs Coach already processed (FIX 7606)",
+     "surface": {
+      "fn": 1
      }
     },
     {
@@ -27515,7 +27525,7 @@
      "path": "src/dreamer_runner/maintenance/coach.rs",
      "purpose": "The Coach's jobs on the Dreamer's runner (ARCH-0026 #base-agents, ARCH-0066 #coach): skill discovery and…",
      "surface": {
-      "const": 35,
+      "const": 36,
       "crate-vis": 11,
       "fn": 11,
       "re-export": 1,
@@ -28219,7 +28229,7 @@
       "const": 3,
       "crate-vis": 15,
       "fn": 1,
-      "mod": 20,
+      "mod": 21,
       "re-export": 10
      }
     },
@@ -28368,6 +28378,30 @@
       "fn": 2,
       "struct": 1,
       "trait": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "CoachSiteSkillsReport"
+     ],
+     "path": "src/dreamer_runner/maintenance/site_skills.rs",
+     "purpose": "The Coach's site skills (CUA E8b, FIX 7606): each night, fixed code reads the same solved-run evidence…",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "L",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_runner/maintenance/site_skills/distill.rs",
+     "purpose": "Deterministic rendering for the Coach's site skills (CUA E8b, FIX 7606): one candidate folder per site from…",
+     "surface": {
+      "crate-vis": 12
      }
     },
     {
@@ -82562,7 +82596,7 @@
      "purpose": "BRST forward test oracle — ARCH-0052 off-record branch store (ONE-1725)"
     },
     "browser_library": {
-     "files": 7,
+     "files": 8,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -82947,7 +82981,7 @@
      "purpose": "Dreamer promotion write path (ONE-1290, WP-011) — the ONE promotion door for consolidated beliefs (design D7)"
     },
     "dreamer_runner": {
-     "files": 176,
+     "files": 178,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83983,9 +84017,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 113,
+   "over_bar": 114,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5631,
+   "source_files": 5634,
    "test_files": 902
   },
   "oneiron-android": {
@@ -99480,6 +99514,16 @@
      "notable": [],
      "path": "src/ai_host/coach_host/weave_digest_settings.rs",
      "purpose": "The host's digest settings drafter (FIX 5609, ARCH-0026): the Coach's model, on its own seat or else the…",
+     "surface": {
+      "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/ai_host/coach_site_skills.rs",
+     "purpose": "The Coach's site skills on the host (CUA E8b, FIX 7606): the engine's fixed-code distill pass under the…",
      "surface": {
       "crate-vis": 1
      }
@@ -116589,7 +116633,7 @@
      "purpose": "Admission for work a remote caller can start"
     },
     "ai_host": {
-     "files": 103,
+     "files": 104,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -117095,7 +117139,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1460,
+   "source_files": 1461,
    "test_files": 182
   },
   "oneiron-spawn": {
