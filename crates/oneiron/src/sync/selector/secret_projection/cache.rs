@@ -1,5 +1,8 @@
 //! The masked copies one pass made, kept for the next (FIX 10599; owner
-//! order 30 Oct: speed is in scope).
+//! order 30 Oct: speed is in scope): a pass-local memo in this process's
+//! memory, never written to the store. The mark walk stays the one
+//! authority of every pass (CALL 8033 option d); the memo only spares a pass
+//! masking a blob again.
 //!
 //! Every window release and admission reads the marks once and makes each
 //! marked blob's copy. A copy is a pure function of three things: the blob's
