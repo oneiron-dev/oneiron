@@ -147,6 +147,16 @@ pub enum NativeRefusal {
     Invalid(&'static str),
     #[error("a re-imported cache differs from its workbook cells")]
     CacheMismatch,
+    /// A size the part declares that this host cannot hold now: more bytes
+    /// than its free memory (`needed` against `available`), more than its
+    /// address space reaches, or an allocation its allocator refused (FIX
+    /// 9165). A resource floor, never a count limit.
+    #[error("memory floor: {reason}")]
+    MemoryFloor {
+        reason: &'static str,
+        needed: Option<u64>,
+        available: Option<u64>,
+    },
     #[error("changed part outside the edit's allowed set: {0}")]
     OutsideAllowedParts(String),
     #[error("embedded workbook: {0}")]

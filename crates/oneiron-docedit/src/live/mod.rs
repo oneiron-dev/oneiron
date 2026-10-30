@@ -56,9 +56,10 @@ pub enum LiveError {
     Package(#[from] retained_opc::Error),
     #[error(transparent)]
     Edit(#[from] EditRefusal),
-    /// A live-born table or chart the native writer refused.
+    /// A live-born table or chart the native writer refused; what the
+    /// host cannot hold is [`LiveError::MemoryFloor`] (FIX 9165).
     #[error(transparent)]
-    Native(#[from] NativeRefusal),
+    Native(NativeRefusal),
     #[error("invalid live deck operation: {0}")]
     Invalid(&'static str),
     #[error("unknown node")]
@@ -88,6 +89,24 @@ pub enum LiveError {
         needed: Option<u64>,
         available: Option<u64>,
     },
+}
+
+impl From<NativeRefusal> for LiveError {
+    /// The native writer's refusal; a memory floor stays a memory floor.
+    fn from(refusal: NativeRefusal) -> Self {
+        match refusal {
+            NativeRefusal::MemoryFloor {
+                reason,
+                needed,
+                available,
+            } => Self::MemoryFloor {
+                reason,
+                needed,
+                available,
+            },
+            refusal => Self::Native(refusal),
+        }
+    }
 }
 
 /// A memory floor's measured bytes, where known.

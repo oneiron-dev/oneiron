@@ -147,8 +147,9 @@ pub enum Conversion {
     LabelRangesUnlinked { labels: u32 },
     /// The chart's embedded workbook could not be edited in place, so the
     /// chart's data was rebuilt from the live chart data: on `sheet`, a new
-    /// sheet of the original workbook, which shows it first and keeps every
-    /// other sheet, name and table it held (FIX 6714); or, `None`, in a new
+    /// sheet of the original workbook (FIX 6714) or the sheet that held only
+    /// the chart's data, rewritten (FIX 9169), which it shows first, keeping
+    /// every other sheet, name and table it held; or, `None`, in a new
     /// workbook, when the original could not be read.
     WorkbookRebuilt {
         part: String,
@@ -385,7 +386,7 @@ impl Conversion {
                 reason,
                 sheet: Some(sheet),
             } => format!(
-                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its new sheet {sheet}, shown first; its other sheets, names and tables kept",
+                "chart workbook {part} not edited in place ({}): the live chart data rebuilt on its sheet {sheet}, shown first; its other sheets, names and tables kept",
                 reason.describe()
             ),
             Self::WorkbookRebuilt {
