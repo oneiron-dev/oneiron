@@ -136,7 +136,7 @@ impl Vault {
                 &pin,
                 package_limits,
                 archive_limits,
-            );
+            )?;
             if text.is_none() && (images.is_empty() || !ask.decider.reads_images()) {
                 abstained.push(UnitAbstention {
                     unit,
@@ -213,7 +213,7 @@ fn file_content(
     pin: &EvidenceVersion,
     package_limits: Limits,
     archive_limits: ArchiveLimits,
-) -> (Option<String>, Vec<DecisionImage>) {
+) -> Result<(Option<String>, Vec<DecisionImage>)> {
     let lower = media_type.to_ascii_lowercase();
     if matches!(lower.as_str(), "image/png" | "image/jpeg" | "image/jpg") {
         let image = DecisionImage {
@@ -229,61 +229,101 @@ fn file_content(
             .then_some(image)
             .into_iter()
             .collect();
-        return (None, images);
+        return Ok((None, images));
     }
     if lower.starts_with("text/") || lower == "application/json" {
         let text = String::from_utf8(bytes.to_vec()).ok();
-        return (text.filter(|text| !text.trim().is_empty()), Vec::new());
+        return Ok((text.filter(|text| !text.trim().is_empty()), Vec::new()));
     }
     let text = match OfficeFormat::from_media_type(media_type) {
-        Ok(OfficeFormat::Docx) => read_docx_blocks(bytes, archive_limits).ok().map(|blocks| {
-            blocks
-                .iter()
-                .flat_map(|block| {
-                    std::iter::once(block.text.clone())
-                        .chain(block.cells.iter().map(|cell| cell.text.clone()))
-                })
-                .filter(|text| !text.trim().is_empty())
-                .collect::<Vec<_>>()
-                .join("\n\n")
-        }),
-        Ok(OfficeFormat::Pptx) => Package::open(bytes, package_limits, &document_resources())
-            .ok()
-            .and_then(|package| DeckView::read(&package).ok())
-            .map(|view| {
-                view.slides
-                    .iter()
-                    .flat_map(|slide| slide.shapes.iter())
-                    .filter_map(super::slides_review::shape_text)
-                    .filter(|text| !text.trim().is_empty())
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            }),
-        Ok(OfficeFormat::Xlsx) => read_xlsx_cells(bytes, package_limits, &document_resources())
-            .ok()
-            .map(|book| {
-                book.sheets
-                    .iter()
-                    .flat_map(|sheet| {
-                        sheet.cells.iter().filter_map(move |cell| {
-                            let value = match &cell.value {
-                                XlsxValue::Blank => return None,
-                                XlsxValue::Number(number) => number.to_string(),
-                                XlsxValue::Text(text) | XlsxValue::Error(text) => text.clone(),
-                                XlsxValue::Bool(value) => value.to_string(),
-                            };
-                            Some(format!(
-                                "{}!{}{}: {value}",
-                                sheet.name,
-                                super::address::column_to_letters(cell.col),
-                                cell.row
-                            ))
+        Ok(OfficeFormat::Docx) => {
+            // The DOCX read runs in the host's memory (FIX 10651); a resource
+            // refusal is the engine's error, never a quiet abstention (FIX 10587).
+            let resources = document_resources();
+            match resources.docx(|| read_docx_blocks(bytes, archive_limits)) {
+                Ok(blocks) => Some(
+                    blocks
+                        .iter()
+                        .flat_map(|block| {
+                            std::iter::once(block.text.clone())
+                                .chain(block.cells.iter().map(|cell| cell.text.clone()))
                         })
-                    })
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            }),
+                        .filter(|text| !text.trim().is_empty())
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                ),
+                Err(error) => {
+                    if let Some(refusal) = error.resource() {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    None
+                }
+            }
+        }
+        Ok(OfficeFormat::Pptx) => {
+            // A resource refusal is the engine's error, never a quiet
+            // abstention (FIX 10587).
+            match Package::open(bytes, package_limits, &document_resources()) {
+                Err(error) => {
+                    if let Some(refusal) = error.resource() {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    None
+                }
+                Ok(package) => match DeckView::read(&package) {
+                    Err(error) => {
+                        if let Some(refusal) = error.resource() {
+                            return Err(crate::office_body::document_refused(refusal));
+                        }
+                        None
+                    }
+                    Ok(view) => Some(
+                        view.slides
+                            .iter()
+                            .flat_map(|slide| slide.shapes.iter())
+                            .filter_map(super::slides_review::shape_text)
+                            .filter(|text| !text.trim().is_empty())
+                            .collect::<Vec<_>>()
+                            .join("\n\n"),
+                    ),
+                },
+            }
+        }
+        Ok(OfficeFormat::Xlsx) => {
+            // A resource refusal is the engine's error, never a quiet
+            // abstention (FIX 10587).
+            match read_xlsx_cells(bytes, package_limits, &document_resources()) {
+                Err(error) => {
+                    if let Some(refusal) = error.resource() {
+                        return Err(crate::office_body::document_refused(refusal));
+                    }
+                    None
+                }
+                Ok(book) => Some(
+                    book.sheets
+                        .iter()
+                        .flat_map(|sheet| {
+                            sheet.cells.iter().filter_map(move |cell| {
+                                let value = match &cell.value {
+                                    XlsxValue::Blank => return None,
+                                    XlsxValue::Number(number) => number.to_string(),
+                                    XlsxValue::Text(text) | XlsxValue::Error(text) => text.clone(),
+                                    XlsxValue::Bool(value) => value.to_string(),
+                                };
+                                Some(format!(
+                                    "{}!{}{}: {value}",
+                                    sheet.name,
+                                    super::address::column_to_letters(cell.col),
+                                    cell.row
+                                ))
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"),
+                ),
+            }
+        }
         _ => None,
     };
-    (text.filter(|text| !text.trim().is_empty()), Vec::new())
+    Ok((text.filter(|text| !text.trim().is_empty()), Vec::new()))
 }
