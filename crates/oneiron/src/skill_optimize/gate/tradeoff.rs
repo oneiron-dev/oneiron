@@ -198,6 +198,9 @@ impl JevTradeoffVerdict {
 #[serde(deny_unknown_fields)]
 pub struct SkillTradeoffAsk {
     pub pending: EntityId,
+    /// The ACTIVE skill the pending verdict revises, stamped from the
+    /// verdict at ask creation (FIX 10383).
+    pub skill: EntityId,
     pub question: SkillTradeoffQuestion,
     pub jev: Option<JevTradeoffVerdict>,
     /// The highest rung of `question.roles` the ask has reached. Every role

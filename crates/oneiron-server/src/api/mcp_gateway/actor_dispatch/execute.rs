@@ -77,18 +77,26 @@ pub(crate) async fn execute_mcp_tool(
             )?;
         }
     }
+    // Each arm's future on the heap: the match would otherwise be as large
+    // as its largest arm, inline in every caller's (FIX 12072).
     match args {
-        McpValidatedToolArgs::Setup(args) => execute_mcp_setup(server, *args, actor).await,
+        McpValidatedToolArgs::Setup(args) => {
+            Box::pin(execute_mcp_setup(server, *args, actor)).await
+        }
         McpValidatedToolArgs::ExecuteCode(args) => {
-            execute_mcp_execute_code(server, *args, actor).await
+            Box::pin(execute_mcp_execute_code(server, *args, actor)).await
         }
         McpValidatedToolArgs::ReadResult(args) => {
-            execute_mcp_read_result(server, *args, actor).await
+            Box::pin(execute_mcp_read_result(server, *args, actor)).await
         }
         McpValidatedToolArgs::InvokeAction(args) => {
-            super::actions::execute_mcp_invoke_action(server, *args, actor, headers, connection)
-                .await
+            Box::pin(super::actions::execute_mcp_invoke_action(
+                server, *args, actor, headers, connection,
+            ))
+            .await
         }
-        McpValidatedToolArgs::Verb(args) => execute_mcp_generated_verb(server, *args, actor).await,
+        McpValidatedToolArgs::Verb(args) => {
+            Box::pin(execute_mcp_generated_verb(server, *args, actor)).await
+        }
     }
 }

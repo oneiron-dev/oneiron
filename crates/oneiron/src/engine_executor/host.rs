@@ -246,6 +246,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
+        // The skills and other runs' result rows its earlier steps' callables
+        // answered from, so this step judges its results with them too
+        // (FIX 5763).
+        self.callable_rows.1 = record.callable_rows.clone();
         self.storage = Some(storage);
         Ok(self)
     }
