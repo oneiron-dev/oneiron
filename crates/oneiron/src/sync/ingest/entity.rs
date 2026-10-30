@@ -25,10 +25,10 @@ use crate::vault::Vault;
 /// lease vault its receipts verify against, and that window's tombstones, indexed once per pass.
 pub(in crate::sync) struct IngestCtx<'a> {
     pub(super) vault: &'a Vault,
-    window_key: &'a str,
+    pub(super) window_key: &'a str,
     lease_vault_id: u64,
     tombstones: &'a TombstoneIndex,
-    residence: Option<Residence<'a>>,
+    pub(super) residence: Option<Residence<'a>>,
     pub(super) staged: super::task_pairs::Staging,
 }
 
@@ -604,8 +604,9 @@ fn admit(
     // LMDB. The public gate would drop them; `put_replicated` admits both engine-authored bands
     // while still validating structure: unknown type bytes, ungrammatical predicates, malformed
     // CLAIM bodies and ONE-1159 provenance records fail typed, and come back as refusals.
-    // A TASK row its component stages lands in the component's batch (FIX 5998).
-    let applied = super::task_pairs::put_or_stage(&ctx.staged, vault, wtxn, id, header, &data);
+    // A TASK row its component stages lands in the component's batch (FIX 5998). A MESSAGE row
+    // an own machine's proven connection sent takes its own-device lane to the put (FIX 9600).
+    let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
     if let Err(err) = applied {
         if let Some(quota_debit) = quota_debit {
             quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
