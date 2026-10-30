@@ -40,10 +40,13 @@ pub(crate) struct RepoQueueTarget {
 /// read under the repo's coordinator with the queue's pointers. A detached
 /// HEAD, another ref, a remote pointer, or a store with no queue is
 /// [`RepoAccessRefusal::WrongRef`]: no `main`, no `HEAD` and no per-ref queue
-/// is guessed.
+/// is guessed. A queue whose merge effect needs recovery, or whose HEAD
+/// moved off the queue's head, holds the ref for now: that is the retryable
+/// error it raised, never a wrong ref (FIX 6950).
 ///
 /// # Errors
-/// The coordinator cannot be taken.
+/// The coordinator cannot be taken, or the queue is held for recovery or a
+/// moved HEAD ([`Error::ConcurrentWrite`], retryable).
 pub(crate) fn resolve_repo_queue_target(
     vault: &Vault,
     repo_ref: &RepoRef,
@@ -56,10 +59,12 @@ pub(crate) fn resolve_repo_queue_target(
     if attached_head(&repo).as_deref() != Some(git_ref) {
         return Ok(Err(RepoAccessRefusal::WrongRef));
     }
-    let Ok(pointers) = MergeQueue::open(vault, repo_ref.clone()).and_then(|queue| queue.pointers())
-    else {
-        return Ok(Err(RepoAccessRefusal::WrongRef));
-    };
+    let pointers =
+        match MergeQueue::open(vault, repo_ref.clone()).and_then(|queue| queue.pointers()) {
+            Ok(pointers) => pointers,
+            Err(held @ Error::ConcurrentWrite(_)) => return Err(held),
+            Err(_) => return Ok(Err(RepoAccessRefusal::WrongRef)),
+        };
     Ok(Ok(RepoQueueTarget {
         repo,
         head: pointers.head,
