@@ -250,6 +250,8 @@ impl CaseRuntimes {
     /// A server built without the code sandbox runs no case.
     #[cfg(not(feature = "code-sandbox-wasmtime"))]
     fn fresh(&self) -> oneiron::Result<Box<dyn JsCodeModeRuntime>> {
-        Err(Error::InvalidConfig("this server has no code sandbox".to_owned()))
+        Err(Error::InvalidConfig(
+            "this server has no code sandbox".to_owned(),
+        ))
     }
 }

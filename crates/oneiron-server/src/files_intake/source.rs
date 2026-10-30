@@ -250,8 +250,11 @@ pub(crate) fn rescan(
             present.push(FolderFile {
                 path: note.path.clone(),
                 markdown,
-                links: links_complete
-                    .then(|| present_targets.remove(note.path.as_str()).unwrap_or_default()),
+                links: links_complete.then(|| {
+                    present_targets
+                        .remove(note.path.as_str())
+                        .unwrap_or_default()
+                }),
             });
             continue;
         }
