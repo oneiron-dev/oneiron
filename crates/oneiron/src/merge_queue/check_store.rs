@@ -391,6 +391,7 @@ impl MergeQueue<'_> {
         put_work(store, &mut txn, &work)?;
         txn.commit()?;
         store.notify_attempt_observers();
+        self.vault.wake_merge_queue();
         Ok(work)
     }
 
@@ -485,11 +486,25 @@ impl Vault {
     /// longer here: a checker pass starts with none of its own running.
     /// Its attempt is failed and a new generation queued; its receipts are
     /// kept. A check is declared-idempotent verify work, so it runs again.
+    /// A pass with none running reads, and opens no writer (FIX 7306).
     ///
     /// # Errors
     /// A store failure.
     pub fn requeue_interrupted_queue_checks(&self) -> Result<usize> {
         let store = &self.store;
+        {
+            let txn = store.env.read_txn()?;
+            let mut any = false;
+            for row in CHECK_WORK.iter_from(store, &txn, &[])? {
+                if row?.1.status == QueueCheckStatus::Running {
+                    any = true;
+                    break;
+                }
+            }
+            if !any {
+                return Ok(0);
+            }
+        }
         let mut txn = store.env.write_txn()?;
         let running: Vec<QueueCheckWork> = CHECK_WORK
             .scan(store, &txn)?
@@ -668,6 +683,7 @@ impl Vault {
         put_work(store, &mut txn, &current)?;
         txn.commit()?;
         store.notify_attempt_observers();
+        self.wake_merge_queue();
         Ok(current)
     }
 }
