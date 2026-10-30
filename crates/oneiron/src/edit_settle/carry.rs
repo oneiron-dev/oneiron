@@ -299,7 +299,7 @@ impl Vault {
                 artifact,
                 bundle.base_live.as_ref(),
                 &bundle.sheet,
-                Some(span.frontier.as_slice()),
+                Some((span.frontier.as_slice(), span.version)),
             )?,
             None => None,
         };
