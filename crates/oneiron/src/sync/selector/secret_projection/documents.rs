@@ -5,8 +5,9 @@
 //! **Copy lineage.** A marked snapshot ASSET whose text moved into an entity
 //! document leaves this device only as its copy lineage: a separate document
 //! under the copy id, kept here in that id's document rows, written by one
-//! author derived from the source, and brought current with the copy of the
-//! source's text before every release. A mask may change a text's units, so
+//! author derived from the source and its document's incarnation (FIX 10758),
+//! and brought current with the copy of the source's text before every
+//! release. A mask may change a text's units, so
 //! the lineage never shares an operation with the source (C1 of the s4
 //! soundness read). Its disclosure floor names the copy's stamp: a re-mask
 //! reaches every peer as state, never as history holding an older copy (C3).
@@ -45,7 +46,10 @@ use crate::sync::documents::storage;
 /// The text root of an entity document.
 const BODY: &str = "body";
 /// The domain the copy lineage's one author is derived in.
-const AUTHOR_CONTEXT: &str = "oneiron.repo-sync-projection.document-author.v1";
+const AUTHOR_CONTEXT: &str = "oneiron.repo-sync-projection.document-author.v2";
+/// The length of the incarnation a document head names: an id's 32 hex
+/// characters, the head of its incarnation-qualified frontier.
+const INCARNATION_LEN: usize = 32;
 
 /// A marked document's copy lineage, current with its source.
 pub(crate) struct DocumentCopy {
@@ -238,15 +242,31 @@ fn project_text_in_txn(
     }))
 }
 
-/// The one author of `source`'s copy lineage.
-fn author(source: &EntityId) -> u64 {
-    let mut material = Vec::with_capacity(2 + 16);
+/// The one author of `source`'s copy lineage for this incarnation of its
+/// document (FIX 10758): derived from the source and the incarnation its
+/// document head names, never from the content-derived id alone. A marked
+/// blob erased and ingested again keeps its ASSET id, but its document is
+/// born again under a fresh incarnation, so its rebuilt lineage is written
+/// by a fresh author and never restarts an old author's counters that a
+/// peer still holding the old lineage would dedupe against. A text with no
+/// document head takes the source alone.
+///
+/// # Errors
+/// A store failure reading the document.
+fn author(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<u64> {
+    let pin = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, source)?;
+    let incarnation = pin
+        .as_deref()
+        .and_then(|pin| pin.get(..INCARNATION_LEN))
+        .unwrap_or_default();
+    let mut material = Vec::with_capacity(2 + 16 + INCARNATION_LEN);
     material.extend_from_slice(&SyncSecretProjection::SCHEMA.to_be_bytes());
     material.extend_from_slice(source.as_bytes());
+    material.extend_from_slice(incarnation);
     let key = blake3::derive_key(AUTHOR_CONTEXT, &material);
     let mut head = [0u8; 8];
     head.copy_from_slice(&key[..8]);
-    u64::from_be_bytes(head) >> 1
+    Ok(u64::from_be_bytes(head) >> 1)
 }
 
 /// The copy lineage stored under `copy`; an empty one before its first
@@ -274,14 +294,21 @@ fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDo
         .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())
 }
 
-/// Bring `lineage`'s text to `copy` as its author; whether it changed.
-fn bring_current(lineage: &LoroDoc, source: &EntityId, copy: &str) -> Result<bool> {
+/// Bring `lineage`'s text to `copy` as `source`'s lineage author, read
+/// only when the text changes; whether it changed.
+fn bring_current(
+    vault: &Vault,
+    txn: &RoTxn<'_>,
+    lineage: &LoroDoc,
+    source: &EntityId,
+    copy: &str,
+) -> Result<bool> {
     let text = lineage.get_text(BODY);
     if text.to_string() == copy {
         return Ok(false);
     }
     lineage
-        .set_peer_id(author(source))
+        .set_peer_id(author(vault, txn, source)?)
         .map_err(|_| Error::InvariantViolation("document copy author"))?;
     text.update(copy, UpdateOptions::default())
         .map_err(|_| Error::InvariantViolation("document copy diff"))?;
@@ -313,7 +340,7 @@ pub(crate) fn document_copy_in_txn(
     };
     let id = copy_id(&source)?;
     let lineage = load_lineage(vault, txn, id)?;
-    if bring_current(&lineage, &source, &copy.copy)? {
+    if bring_current(vault, txn, &lineage, &source, &copy.copy)? {
         save_lineage(vault, txn, id, &lineage)?;
     }
     Ok(Some(DocumentCopy {
@@ -363,7 +390,7 @@ where
         }
         let id = copy_id(&source)?;
         let lineage = load_lineage(vault, txn, id)?;
-        bring_current(&lineage, &source, &copy.copy)?;
+        bring_current(vault, txn, &lineage, &source, &copy.copy)?;
         storage::import_complete(&lineage, bytes)?;
         let submitted = lineage.get_text(BODY).to_string();
         let result = if submitted == copy.copy {
