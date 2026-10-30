@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1258 code-mode rows (1218 host rows, 40 run rows), 4411 declarations.
-// Replies: 1070 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4428 declarations.
+// Replies: 1072 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -85,7 +85,7 @@ declare namespace Sdk {
   type DiaryEntryRequest = { content: string; kind?: string | null };
   type RecordRef = { kind: string; id: string; short_id?: string | null; label: string };
   type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null };
-  type DiaryReadsRequest = { limit?: number | null };
+  type DiaryReadsRequest = { limit?: number | null; include_used?: boolean };
   type DiaryReadRecord = { read: EntityId; reader: EntityId; reader_class: string; reason: string; at: number; entries: EntityId[]; grants: string[]; request?: EntityId | null; source: string };
   type DiaryReviewState = "pending" | "approved" | "declined" | "used";
   type DiaryReadRequest = { request: EntityId; reader: EntityId; reader_class: string; reason: string; asked_at: number; state: DiaryReviewState; answered_at?: number | null; read?: EntityId | null };
@@ -704,9 +704,14 @@ declare namespace Sdk {
   type RetrievalPolicyDisposition = "applied" | "offered";
   type RetrievalPolicyUpdateReceipt = { disposition: RetrievalPolicyDisposition; reason?: string | null; candidate: RetrievalPolicyCandidate; view: RetrievalPolicyView };
   type ExportDelivery = "inline" | "transfer";
-  type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null };
-  type MemoryExport = { format: string; archive: string; digest: string };
-  type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string };
+  type ExportOptions = { format?: string | null; include_secrets?: boolean | null; delivery?: ExportDelivery | null; secrets_recipient?: EntityId | null };
+  type OwnerWorkRefusal = "stale_revision" | "owner_not_live" | "world_not_live" | "executor_not_reader" | "home_not_linked" | "secret_not_portable" | "secret_not_active" | "recipient_changed" | "invalid_input" | "custody_conflict" | "wider_than_floor" | "root_revision_mismatch";
+  type OwnerWorkStatus = { state: "recorded_awaiting_holder" } | { state: "enacted" } | { state: "refused"; reason: OwnerWorkRefusal } | { state: "cancelled" } | { state: "superseded" };
+  type HolderExportUnassigned = "no_owner_act" | "owner_not_live" | "no_recipient" | "recipient_not_linked" | "no_holder" | "no_carrier";
+  type HolderExportState = { kind: "recorded"; request: string; holder: EntityId; status: OwnerWorkStatus } | { kind: "unassigned"; reason: HolderExportUnassigned } | { kind: "unrecorded" };
+  type HolderExportRequest = { secret: EntityId; generation: number; state: HolderExportState };
+  type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[] };
+  type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[] };
   type ExportAnswer = MemoryExport | ExportTransfer;
   type ExportTransferReadRequest = { transfer_ref: string; offset?: number; length?: number | null };
   type ExportTransferPiece = { transfer_ref: string; offset: number; bytes_base64: string; length: number; total_bytes: number; digest: string; end: boolean };
@@ -1310,6 +1315,17 @@ declare namespace Sdk {
   type MeshMachineRevokeRequest = { machine: EntityId };
   type MeshMachineRevoked = { machine: EntityId };
   type MeshDialRequest = { address: MeshMachineAddress; alpn: number[] };
+  type VmOutboxKind = "escrow" | "custody" | "esign" | "training" | "recipients" | "backup" | "backup_stage_ack";
+  type VmOutboxSide = "guest" | "host";
+  type OutboxDivergedAnswer = "keep" | "remove";
+  type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string };
+  type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged";
+  type OutboxCardAction = { label: string; answer: OutboxDivergedAnswer; route: string };
+  type OutboxOwnerCard = { kind: OutboxCardKind; headline: string; body: string; actions: OutboxCardAction[] };
+  type OutboxDivergedMember = OutboxMemberStatus & { card: OutboxOwnerCard };
+  type OutboxDivergedPage = { carrier: boolean; members: OutboxDivergedMember[] };
+  type OutboxDivergedAnswerRequest = { kind: VmOutboxKind; member: string; held: string; answer: OutboxDivergedAnswer };
+  type OutboxDivergedAnswerReceipt = { kind: VmOutboxKind; member: string; held: string; answer: OutboxDivergedAnswer; queued: boolean };
   type InspectionResolveRequest = { handle: string };
   type LensBackingTargetKind = "entity" | "claim";
   type InspectionState = { target_ref: EntityId; target_kind: LensBackingTargetKind };
@@ -1839,9 +1855,7 @@ declare namespace Sdk {
   type AuthorityHandoffAlarm = { signer: string; refused: string; handoffs: string[]; raised_at: number; acknowledged?: AuthorityHandoffAlarmAck | null; seen: string[] };
   type HandoffAlarmRequest = { signer: string };
   type RootRequestCancelRequest = { request: string };
-  type OwnerWorkKind = "world_key" | "root" | "publish_bundle" | "custody";
-  type OwnerWorkRefusal = "stale_revision" | "owner_not_live" | "world_not_live" | "executor_not_reader" | "home_not_linked" | "secret_not_portable" | "secret_not_active" | "recipient_changed" | "invalid_input" | "custody_conflict" | "wider_than_floor" | "root_revision_mismatch";
-  type OwnerWorkStatus = { state: "recorded_awaiting_holder" } | { state: "enacted" } | { state: "refused"; reason: OwnerWorkRefusal } | { state: "cancelled" } | { state: "superseded" };
+  type OwnerWorkKind = "world_key" | "root" | "publish_bundle" | "custody" | "export_secret";
   type OwnerWorkUnassigned = "no_eligible_reader" | "target_is_recorder" | "target_not_linked" | "no_bundle_holder" | "no_custody_holder";
   type CustodyUncheckedReason = "none_named" | "none_published" | "unread" | "other_manifest" | "disagrees";
   type CustodyRegisterCheck = { kind: "checked"; manifest_ref: string } | { kind: "unchecked"; reason: CustodyUncheckedReason; refs: string[] };
@@ -2245,7 +2259,7 @@ declare namespace Sdk {
   type DisclosureCeilingView = { connection: string; class?: DisclosureDataClass | null; ceiling?: DisclosureBand | null };
   type DisclosureCeilingSet = { connection: string; class?: DisclosureDataClass | null; ceiling: DisclosureBand };
   type RevealAsksRequest = { pending?: boolean; limit?: number | null };
-  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null };
+  type RevealReceipt = { reveal: string; handle: string; class: string; why: string; connection?: string | null; provider?: string | null; project?: string | null; run?: string | null; answered_by?: string | null; decision?: string | null; lease?: string | null; asked_at: number; delivered_at?: number | null; cause?: string | null; scope?: string | null };
   type RevealAskView = { receipt: RevealReceipt; state: string; expires_at: number; disclosure?: string | null; expected_digest?: string | null; grant_ref?: string | null };
   type RevealOutcome = "once" | "standing" | "deny";
   type RevealAnswerRequest = { reveal: string; expected_digest: string; outcome: RevealOutcome };
@@ -2253,7 +2267,7 @@ declare namespace Sdk {
   type RevealRequest = { handle: string; why: string };
   type RevealPending = { reveal: string };
   type RevealWaitRequest = { reveal: string };
-  type RevealDecision = "pending" | "granted" | "denied" | "expired";
+  type RevealDecision = "pending" | "granted" | "denied" | "expired" | "unavailable";
   type RevealWaitAnswer = { decision: RevealDecision; value?: string | null; value_base64?: string | null; receipt?: RevealReceipt | null };
   type RevealDescribeRequest = { handle: string };
   type RevealProvenance = { record: string; place: string; kind: string; masked_at?: number | null; learned_at?: number | null };
@@ -3269,7 +3283,8 @@ declare namespace Sdk {
   type ConnectorToolResult = { source: string; foreign: boolean; content: unknown; structured_content?: unknown | null; is_error: boolean; rpc_error?: unknown | null };
   type ConnectorQuestion = { key: string; message: string; requested_schema: unknown };
   type ConnectorCallReply = { outcome: "delivered"; result?: ConnectorToolResult | null; reasons?: string[]; budget_steering?: string[] } | { outcome: "held"; call_ref: string; decision_ref?: string | null; reasons: string[]; approval_digest?: string | null } | { outcome: "refused"; decision_ref?: string | null; reasons: string[] } | { outcome: "pending_delivery"; call_ref?: string | null; reasons: string[] } | { outcome: "awaiting_input"; handle: string; call_ref: string; source: string; foreign: boolean; questions: ConnectorQuestion[]; live_until_ms: number; reasons?: string[] };
-  type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: ConnectorCallReply };
+  type LiveVoiceToolCallReply = NarrowedQuestions | ConnectorCallReply;
+  type LiveVoiceToolReply = { processed: LiveVoiceProcessed; reply: LiveVoiceToolCallReply };
   type LiveVoiceSessionRequest = { session_ref: string };
   type AnonymousChatRequestTarget = "house_mind" | "plain_model";
   type AnonymousChatRequest = { text: string; target?: AnonymousChatRequestTarget; model?: ModelId | null };
@@ -3531,7 +3546,9 @@ declare namespace Sdk {
   type ThingDecideOutput = { pack: string; state: string; questions: number; missing: string[] };
   type ScopedCommitRequest = { claims: ScopedClaimInput[] };
   type RefusalReason = "INVENTED_REFERENCE" | "GATE_REFUSED";
-  type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string };
+  type LegalHoldState = "retained_for_law" | "use_restricted";
+  type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; works_self_hosted: boolean; self_hosted_note: string };
+  type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string; legal_hold?: LegalHoldNotice | null };
   type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null };
   type ClaimRefRequest = { claim_ref: string };
   type ForgetPredicateRequest = { subject_ref: string; predicate: string };
@@ -3718,7 +3735,7 @@ declare namespace Sdk {
   type MemoryPolicyDenial = { level: string; row_ref: string; role: string; exception_proposal: MemoryPolicyExceptionProposal };
   type MemoryWrongRoot = { attempted: string; replacement: string; schemaRef: string };
   type VerbHookStop = { status: "skipped"; hook: string; reason: string } | { status: "pending"; invocation: string; ask: string } | { status: "hidden"; hook: string } | { status: "completed"; invocation: string; result: unknown } | { status: "completed_with_error"; invocation: string; code: string; message: string; receipt_ref?: string | null };
-  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[] };
+  type MemoryError = Partial<MemoryWrongRoot> & { code: string; message: string; suggestions: string[]; successor_short_id?: string | null; gate_denial?: MemoryGateDenial | null; narrowing?: ScopedReadReceipt | null; policy_denial?: MemoryPolicyDenial | null; hook?: VerbHookStop | null; retry_after?: number | null; resets_at?: number[]; reason_codes?: string[]; legal_hold?: LegalHoldNotice | null };
   type EsignDocumentTrail = { trail: "readable"; status: DocumentStatus; awaits_owner_answer: boolean; document: EsignDocument; recipients: Record<string, RecipientState>; signatures: SignatureRow[]; rejection?: string | null; sealed_sha256: string[]; audit: EsignEventRow[] } | { trail: "unreadable"; error: MemoryError };
   type EsignDocumentView = EsignDocumentTrail & { document_ref: string; delivery_receipts: EsignDeliveryReceipt[] };
   type EsignLinksIssueRequest = { document_ref: string; rotate?: boolean };
@@ -6517,6 +6534,14 @@ declare const vault: Sdk.VaultHost & {
     configure(input: Sdk.OrgAdminConfigureRequest): Promise<Sdk.OrgAdminConfigured | StoredResult>;
     /** The caller reads only the organization's fixed named Admin powers that their own credential carries. */
     powers(input: Sdk.OrgAdminPowersRequest): Promise<Sdk.OrgAdminPowers | StoredResult>;
+  };
+  outbox: {
+    diverged: {
+      /** The owner's answer to one diverged outbox copy, remove or keep, by the digest the list shows; the carrier's companion carries it out at its next turn. */
+      answer(input: Sdk.OutboxDivergedAnswerRequest): Promise<Sdk.OutboxDivergedAnswerReceipt | StoredResult>;
+      /** The vault VM's outbox carrier members for the owner: each copy the carrier never agreed on, with its remove-or-keep card, and each file held back as damaged at its source. */
+      list(input: Sdk.EmptyRequest): Promise<Sdk.OutboxDivergedPage | StoredResult>;
+    };
   };
   owner_work: {
     /** The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it. */

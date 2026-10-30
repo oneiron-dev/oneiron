@@ -163,6 +163,7 @@ fn request(arm: &ServedArm, task: &str) -> LlmRequest {
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: arm.locality,
+            host_keyless: false,
         },
         messages: vec![LlmMessage {
             role: LlmMessageRole::User,
