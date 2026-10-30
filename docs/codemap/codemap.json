@@ -17061,7 +17061,7 @@
      "path": "src/code_run/storage/routing.rs",
      "purpose": "Where one run's reads and writes land: the canonical vault or a bound off-record session",
      "surface": {
-      "crate-vis": 36
+      "crate-vis": 37
      }
     },
     {
@@ -17115,13 +17115,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_run/storage/speech_identity.rs",
      "purpose": "Deterministic conversation, turn and message ids derived from a run's identity",
      "surface": {
-      "crate-vis": 12
+      "crate-vis": 16
      }
     },
     {
@@ -17720,7 +17720,7 @@
      "purpose": "The engine's open egress proxy",
      "surface": {
       "enum": 1,
-      "fn": 6,
+      "fn": 7,
       "re-export": 4,
       "struct": 3
      }
@@ -88698,7 +88698,7 @@
      "path": "src/cdp/requests.rs",
      "purpose": "Each paused request's custody (FIX 7122), on the routing of both transports",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -89438,16 +89438,18 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "BrowserBody",
       "BrowserRequestHandler",
       "DestinationRefusal",
-      "RenderedDocument"
+      "RenderedDocument",
+      "SpooledResponse"
      ],
      "path": "src/request.rs",
      "purpose": "A host's custody of a browser session's requests (FIX 7122)",
      "surface": {
       "crate-vis": 6,
-      "struct": 2,
-      "trait": 1
+      "struct": 3,
+      "trait": 2
      }
     },
     {
@@ -117408,6 +117410,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/web_fetch/headless/body.rs",
+     "purpose": "A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/web_fetch/headless/handler.rs",
      "purpose": "A render's custody of its pages' requests (FIX 7122, FIX 7332): each HTTP(S) request the browser pauses (a…",
      "surface": {
@@ -118881,7 +118893,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 73,
+     "files": 74,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -118960,7 +118972,7 @@
    },
    "over_bar": 30,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1475,
+   "source_files": 1476,
    "test_files": 182
   },
   "oneiron-spawn": {

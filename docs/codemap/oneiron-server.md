@@ -1569,6 +1569,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/server/wave_door.rs` | src | s | 3 crate-vis | — | The wave door (OF-427, ARCH-0068 RC5): `tasks.wave` cuts an epic TASK into a wave of TASKs through a planner… |
 | `src/server/web_fetch.rs` | src | s | 1 fn · 1 crate-vis | — | The host owns renderer configuration; acquisition itself stays in the engine |
 | `src/server/web_fetch/headless.rs` | src | m | 2 crate-vis | — | The host's headless browser rung (FIX 7122): one fresh browser guest per render, from the host's `[browser]`… |
+| `src/server/web_fetch/headless/body.rs` | src | s | 5 crate-vis | — | A headless answer's decoded body, held inline up to a small bound and in an anonymous temporary file past it |
 | `src/server/web_fetch/headless/handler.rs` | src | s | 4 crate-vis | — | A render's custody of its pages' requests (FIX 7122, FIX 7332): each HTTP(S) request the browser pauses (a… |
 | `src/server/web_fetch/headless/relay.rs` | src | s | 2 crate-vis | — | A render's relay (FIX 7333): every connection and datagram the guest's sockets reach for off the guest's own… |
 | `src/server/windows.rs` | src | s | 9 crate-vis | — | Window serving: snapshots, exports, and the local-change broadcast bridge |
