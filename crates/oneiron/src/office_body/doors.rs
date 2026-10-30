@@ -677,25 +677,14 @@ impl Vault {
                 })?;
             return Ok(Some((bytes, changes.len(), None, Vec::new())));
         }
-        let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
-        if changes.is_empty() {
-            return Ok(None);
-        }
-        let limits = self.docedit_package_limits()?;
-        let projected = project_xlsx(
-            &self.body_source(artifact, head)?,
-            &changes,
-            limits,
-            &crate::office_body::document_resources(),
+        self.project_xlsx_body(
+            artifact,
+            head,
+            &xlsx::read(&base)?,
+            &xlsx::read(&live)?,
+            at,
+            zone,
         )
-        .map_err(|error| {
-            super::document_error(
-                error.resource(),
-                "the body could not be projected onto its package",
-            )
-        })?;
-        let (bytes, recalc) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
-        Ok(Some((bytes, changes.len(), recalc, projected.effects)))
     }
 
     /// The imported version, checked against the hash the import recorded.

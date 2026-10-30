@@ -18,6 +18,11 @@
 //! An export version holds the body as it stood at the frontier its record
 //! names, so the same units compare up to that frontier in place of the
 //! head when a split asks what an export changed (FIX 12017).
+//!
+//! A workbook's formula cells are read as an export would compute them from
+//! the cells of the same read ([`super::live_recalc`], FIX 11982), so a live
+//! edit to a formula's inputs changes the formula cell, and an ask reads the
+//! value the export of what it read lands (FIX 12052).
 
 use super::*;
 use crate::edit_roundtrip::{CellRef, CellValue};
@@ -59,7 +64,8 @@ impl<K: Ord> LiveUnits<K> {
     }
 }
 
-/// A sheet's cells, by `(row, col)`: each one's value and formula.
+/// A sheet's cells, by `(row, col)`: each one's value and formula, a
+/// formula's value as an export would compute it.
 type SheetCells = BTreeMap<(u32, u32), (XlsxValue, Option<String>)>;
 
 /// One sheet of a live workbook, by name, at a pinned frontier and at the
@@ -212,7 +218,9 @@ impl Vault {
         let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Xlsx, then, until)? else {
             return Ok(None);
         };
-        let (was, now) = (xlsx::read(&was)?, xlsx::read(&now)?);
+        let mut bodies = [xlsx::read(&was)?, xlsx::read(&now)?];
+        self.live_recalc(artifact, Some(sheet), &mut bodies);
+        let [was, now] = bodies;
         let named = |body: &XlsxBody| {
             body.sheets.iter().find(|entry| entry.name == sheet).map(|entry| {
                 let cells: SheetCells = entry
@@ -313,9 +321,9 @@ impl Vault {
     }
 
     /// The cells of the sheet named `sheet` of `artifact`'s live workbook at
-    /// its head, a formula's by its last computed value, with the pin they
-    /// were read at. `None` when it has no live workbook; a sheet the body
-    /// does not hold has no cells.
+    /// its head, a formula's by the value an export would compute, with the
+    /// pin they were read at. `None` when it has no live workbook; a sheet
+    /// the body does not hold has no cells.
     pub(crate) fn live_head_cells(
         &self,
         artifact: &EntityId,
@@ -324,7 +332,10 @@ impl Vault {
         let Some((OfficeBodyKind::Xlsx, pin, doc)) = self.live_head(artifact)? else {
             return Ok(None);
         };
-        let cells: BTreeMap<CellRef, CellValue> = xlsx::read(&doc)?
+        let mut bodies = [xlsx::read(&doc)?];
+        self.live_recalc(artifact, Some(sheet), &mut bodies);
+        let [body] = bodies;
+        let cells: BTreeMap<CellRef, CellValue> = body
             .sheets
             .into_iter()
             .find(|entry| entry.name == sheet)
@@ -373,7 +384,9 @@ impl Vault {
                 .collect::<Vec<_>>()
                 .join("\n\n"),
             OfficeBodyKind::Xlsx => {
-                let body = xlsx::read(&doc)?;
+                let mut bodies = [xlsx::read(&doc)?];
+                self.live_recalc(artifact, None, &mut bodies);
+                let [body] = bodies;
                 body.sheets
                     .iter()
                     .flat_map(|sheet| {
@@ -547,7 +560,7 @@ fn deck_slides(deck: &LiveDeck) -> Result<BTreeMap<(String, u32), [u8; 32]>> {
     Ok(slides)
 }
 
-/// A live cell as an ask reads a saved one: a formula by its last computed
+/// A live cell as an ask reads a saved one: a formula by its computed
 /// value.
 fn cell_value(cell: BodyCell) -> CellValue {
     let value = match cell.value {
