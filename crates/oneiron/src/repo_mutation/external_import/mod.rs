@@ -267,20 +267,16 @@ impl Vault {
         let import = self
             .with_write_txn_grouped(|txn| {
                 // An imported ref is never rebound from an unrelated source.
-                for (_, stored) in self.external_import_sources_on_ref_in_txn(
-                    txn,
-                    request.code_repo,
-                    name.as_str(),
-                )? {
-                    if stored.host != record.host
-                        || stored.repository != record.repository
-                        || stored.source_ref != record.source_ref
-                        || stored.pull_request != record.pull_request
-                    {
-                        return Ok(Err("external_import_ref_bound_to_another_source"));
-                    }
+                let bound =
+                    self.external_import_ref_binding_in_txn(txn, request.code_repo, name.as_str())?;
+                if bound.as_ref().is_some_and(|bound| !bound.binds(&record)) {
+                    return Ok(Err("external_import_ref_bound_to_another_source"));
                 }
-                self.put_external_import_source_in_txn(txn, &record, now)
+                let import = self.put_external_import_source_in_txn(txn, &record, now)?;
+                if import.is_ok() && bound.is_none() {
+                    self.put_external_import_ref_binding_in_txn(txn, &record, now)?;
+                }
+                Ok(import)
             })?
             .map_err(refused)?;
         let call = ImportCall {

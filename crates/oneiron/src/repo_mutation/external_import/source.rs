@@ -1,6 +1,7 @@
-//! The outside import's three reserved claim families (FIX 6871): the
-//! immutable source, one immutable dispatch per send, and immutable
-//! observations of what a fetch or send did.
+//! The outside import's four reserved claim families (FIX 6871): the
+//! immutable source, one immutable dispatch per send, immutable
+//! observations of what a fetch or send did, and the source an imported
+//! ref is bound to.
 //!
 //! - `repo.external_import_source`, about the served CODE anchor: the
 //!   canonical store, source tuple, base, imported ref and the
@@ -14,6 +15,10 @@
 //! - `repo.external_import_observation`, about the source claim: one
 //!   attempt's observed fact, with a safe reason code and the receive
 //!   links it proved. Never a live status.
+//! - `repo.external_import_ref`, about the served CODE anchor: the source
+//!   tuple the first import onto one imported ref fixed. Its id is the
+//!   anchor and the ref, so a later import reads it by key, never by a
+//!   walk of the anchor's claims (FIX 7595).
 //!
 //! Every id is deterministic over a length-prefixed named encoding, and an
 //! id that already holds a different body is refused, never overwritten.
@@ -35,10 +40,13 @@ pub(crate) const EXTERNAL_IMPORT_SOURCE_PREDICATE: &str = "repo.external_import_
 pub(crate) const EXTERNAL_IMPORT_DISPATCH_PREDICATE: &str = "repo.external_import_dispatch";
 /// One immutable observed fact.
 pub(crate) const EXTERNAL_IMPORT_OBSERVATION_PREDICATE: &str = "repo.external_import_observation";
+/// The source one imported ref is bound to.
+pub(crate) const EXTERNAL_IMPORT_REF_PREDICATE: &str = "repo.external_import_ref";
 
 const SOURCE_DOMAIN: &[u8] = b"oneiron:external-import:v1";
 const DISPATCH_DOMAIN: &[u8] = b"oneiron:external-import-dispatch:v1";
 const OBSERVATION_DOMAIN: &[u8] = b"oneiron:external-import-observation:v1";
+const REF_DOMAIN: &[u8] = b"oneiron:external-import-ref:v1";
 
 /// The only schema these records are read at: no migration, no default.
 const SCHEMA_VERSION: u32 = 1;
@@ -132,6 +140,42 @@ pub(crate) struct ObservationRecord {
     pub(crate) publication: Option<String>,
 }
 
+/// The source tuple one imported ref is bound to: no actor, no commits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RefBindingRecord {
+    pub(crate) schema_version: u32,
+    pub(crate) code_repo: String,
+    pub(crate) imported_ref: String,
+    pub(crate) host: String,
+    pub(crate) repository: String,
+    pub(crate) source_ref: String,
+    pub(crate) pull_request: Option<u64>,
+}
+
+impl RefBindingRecord {
+    /// The binding `record` fixes for its imported ref.
+    fn of(record: &SourceRecord) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            code_repo: record.code_repo.clone(),
+            imported_ref: record.imported_ref.clone(),
+            host: record.host.clone(),
+            repository: record.repository.clone(),
+            source_ref: record.source_ref.clone(),
+            pull_request: record.pull_request,
+        }
+    }
+
+    /// Whether `record` imports from the source this ref is bound to.
+    pub(crate) fn binds(&self, record: &SourceRecord) -> bool {
+        self.host == record.host
+            && self.repository == record.repository
+            && self.source_ref == record.source_ref
+            && self.pull_request == record.pull_request
+    }
+}
+
 fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidCodeArtifactBody(reason))
 }
@@ -181,6 +225,19 @@ pub(crate) fn dispatch_id(import: EntityId, step: ImportStep) -> Result<EntityId
             import.as_bytes(),
             b"step",
             step.as_str().as_bytes(),
+        ],
+    )
+}
+
+/// The one binding id of `imported_ref` on the anchor `code_repo`.
+fn ref_binding_id(code_repo: EntityId, imported_ref: &str) -> Result<EntityId> {
+    entity_id_from_hash_material(
+        REF_DOMAIN,
+        &[
+            b"code_repo",
+            code_repo.as_bytes(),
+            b"imported_ref",
+            imported_ref.as_bytes(),
         ],
     )
 }
@@ -261,27 +318,52 @@ impl Vault {
         Ok(Some(record))
     }
 
-    /// Every other source claim about `code_repo` that names `imported_ref`.
-    pub(crate) fn external_import_sources_on_ref_in_txn(
+    /// The source `imported_ref` on `code_repo` is bound to, read by key:
+    /// `None` before the first import onto it.
+    ///
+    /// # Errors
+    /// A claim of another shape at that id, or a store failure.
+    pub(crate) fn external_import_ref_binding_in_txn(
         &self,
         txn: &RoTxn<'_>,
         code_repo: EntityId,
         imported_ref: &str,
-    ) -> Result<Vec<(EntityId, SourceRecord)>> {
-        let mut found = Vec::new();
-        for id in self.claims_for_subject_in_txn(txn, &code_repo)? {
-            let Some(body) = self.get_claim_in_txn(txn, &id)? else {
-                continue;
-            };
-            if body.predicate != EXTERNAL_IMPORT_SOURCE_PREDICATE {
-                continue;
-            }
-            let record: SourceRecord = decode(&body, EXTERNAL_IMPORT_SOURCE_PREDICATE, code_repo)?;
-            if record.imported_ref == imported_ref {
-                found.push((id, record));
-            }
+    ) -> Result<Option<RefBindingRecord>> {
+        let id = ref_binding_id(code_repo, imported_ref)?;
+        let Some(body) = self.get_claim_in_txn(txn, &id)? else {
+            return Ok(None);
+        };
+        let record: RefBindingRecord = decode(&body, EXTERNAL_IMPORT_REF_PREDICATE, code_repo)?;
+        if record.schema_version != SCHEMA_VERSION || record.imported_ref != imported_ref {
+            return Err(Error::CorruptedIndex(
+                "an external import ref binding has another shape",
+            ));
         }
-        Ok(found)
+        Ok(Some(record))
+    }
+
+    /// Binds `record`'s imported ref to its source in `txn`, once: an
+    /// existing binding is never rewritten.
+    ///
+    /// # Errors
+    /// A store failure.
+    pub(crate) fn put_external_import_ref_binding_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        record: &SourceRecord,
+        now: u64,
+    ) -> Result<()> {
+        let subject = EntityId::from_hex(&record.code_repo)?;
+        let id = ref_binding_id(subject, &record.imported_ref)?;
+        if self.get_raw_in(txn, &id)?.is_some() {
+            return Ok(());
+        }
+        let body = claim_body(
+            EXTERNAL_IMPORT_REF_PREDICATE,
+            subject,
+            &RefBindingRecord::of(record),
+        )?;
+        self.put_reserved_claim_in_txn(txn, &id, &body, instant(now), now)
     }
 
     /// The dispatch of `step` for `import`, if one was written.
