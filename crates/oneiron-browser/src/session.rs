@@ -250,6 +250,9 @@ struct Effect<'a> {
     target: Option<&'a Row>,
     class: Option<&'a str>,
     press: PressMode,
+    /// The counterparty the effect's send reported (FIX 11907); none
+    /// where it reported none.
+    audience: Option<String>,
     started: Instant,
 }
 
@@ -363,6 +366,7 @@ impl BrowserSession {
             target: None,
             class: None,
             press: PressMode::None,
+            audience: None,
             started,
         };
         self.receipt(&effect, &mut observation);
@@ -386,7 +390,17 @@ impl BrowserSession {
         // A send on a payment step is a payment (FIX 8009).
         let class = effect_class_on(&target.row.name, source.url.as_deref());
         let page = source.url.as_deref();
-        let press = self.press_or_hold("click", &input, class, Some(&target.row), page)?;
+        // The counterparty the send reports (FIX 11907): the origin of
+        // the page it acts on, the one the browser can name.
+        let audience = source.origin.clone();
+        let press = self.press_or_hold(
+            "click",
+            &input,
+            class,
+            Some(&target.row),
+            page,
+            audience.as_deref(),
+        )?;
         let action = ReplayAction::Click {
             locator: target.row.locator.clone(),
         };
@@ -399,6 +413,7 @@ impl BrowserSession {
             target: Some(&target.row),
             class: receipt_class(class, Some(&target.row)),
             press,
+            audience,
             started,
         };
         let clicked = self.driver.click_target(&target, &Base::of(input.base));
@@ -419,7 +434,16 @@ impl BrowserSession {
         let class = row
             .as_ref()
             .and_then(|row| effect_class_on(&row.name, page));
-        let press = self.press_or_hold("click_at", &input, class, row.as_ref(), page)?;
+        // The counterparty the send reports (FIX 11907), as a click's.
+        let audience = source.origin.clone();
+        let press = self.press_or_hold(
+            "click_at",
+            &input,
+            class,
+            row.as_ref(),
+            page,
+            audience.as_deref(),
+        )?;
         let base = Base::of(input.base);
         self.acted = Some(Acted {
             action: None,
@@ -430,6 +454,7 @@ impl BrowserSession {
             target: row.as_ref(),
             class: receipt_class(class, row.as_ref()),
             press,
+            audience,
             started,
         };
         let clicked = self.driver.click_point(x, y, row.as_ref(), &base);
@@ -458,6 +483,7 @@ impl BrowserSession {
             target: Some(&target.row),
             class: None,
             press: PressMode::None,
+            audience: None,
             started,
         };
         let selected = self.driver.select_target(&target, &input.option, &base);

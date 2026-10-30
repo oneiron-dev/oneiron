@@ -43,6 +43,7 @@ fn hold_press(
         name: held.name,
         locator: held.locator,
         page: held.page,
+        audience: held.audience,
         tab: held.tab,
         document: held.document,
         session: held.generation,

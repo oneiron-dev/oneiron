@@ -135,7 +135,7 @@ impl Memory<'_> {
                 actor: self.actor(),
                 actor_class: self.actor_class(),
                 project: vault.browser_run_project(site.run_id)?,
-                audience: None,
+                audience: action.audience.clone(),
             },
             run: site.run_id,
             attempt: site.write_receipt_id,

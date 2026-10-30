@@ -71,7 +71,10 @@ impl DesktopSession {
     /// browser session's press runs (FIX 4613, 4615, 12133). With no live
     /// read given, it is the policy as last set, less those paid sends.
     pub(super) fn press_policy(&mut self) -> &mut SendPolicy {
-        self.policy = self.presses.refresh();
+        // A desktop send reports no counterparty (FIX 11907): its window
+        // names no page whose origin stands for one, so the grants read
+        // with none, and an audience grant keeps its cover on that axis.
+        self.policy = self.presses.refresh(None);
         &mut self.policy
     }
 
@@ -140,6 +143,7 @@ impl DesktopSession {
                 name: row.name.clone(),
                 locator: row.locator.clone(),
                 page: Some(page),
+                audience: None,
                 tab,
                 document: None,
                 generation: self.manifest.generation.clone(),
