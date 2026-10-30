@@ -218,6 +218,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
     (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
+    (&t::REPO_MANIFEST_BY_CODE, CONTENT),
+    // A restore never makes this machine a repo's refs writer again (FIX 6870).
+    (&t::REPO_MANIFEST_MINTED, LIVE),
+    (&t::REPO_MANIFEST, CONTENT),
     (&t::REPO_MUTATION_OPLOG, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL_OP, CONTENT),
