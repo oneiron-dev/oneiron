@@ -20,6 +20,7 @@ impl OfferLadder {
         if !self.picked || self.rungs.len() != 1 {
             return Err(FatalLlmError::InvalidRequest.into());
         }
+        let routes = self.rests.world_routes(&request);
         let call = Call {
             run,
             request: &request,
@@ -28,6 +29,7 @@ impl OfferLadder {
                 request: &request,
                 stream: false,
             },
+            routes: &routes,
             // The executor's own retry policy bounds the attempt.
             deadline: CallDeadline::Open,
         };

@@ -61,6 +61,21 @@ fn owed_claim_vads_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<Vec<EntityId
         .collect())
 }
 
+/// How many claim VAD consolidations are owed, for the write door's drain
+/// and work-due check (FIX 11858, 11923). A row that does not decode counts.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn owed_claim_vad_count_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<u64> {
+    let mut count = 0_u64;
+    for row in OWED.iter_raw_from(store, txn, &[])? {
+        row?;
+        count = count.saturating_add(1);
+    }
+    Ok(count)
+}
+
 impl crate::Vault {
     /// Finishes the owed claim VAD consolidations, each in its own writer,
     /// until `stop` says the pass is out of time. A consolidation that

@@ -173,6 +173,21 @@ impl RpcReply {
         request_id: u64,
         result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
     ) -> Result<Self, ProtocolError> {
+        Self::answer_attributed(server, auth, None, call, request_id, result)
+    }
+
+    /// [`Self::answer`], with the receipt of a call a device forwarded for
+    /// its caller (FIX 3550) naming that caller, as the home verified it, and
+    /// the machine that carried it. With no `attribution` the receipt names
+    /// the bound credential, as [`Self::answer`]'s does.
+    fn answer_attributed(
+        server: &crate::server::SyncServer,
+        auth: &CoreAuth,
+        attribution: Option<&call_receipt::ForwardedAttribution>,
+        call: RpcCall,
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> Result<Self, ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         // A `reveal.wait` reply is digested with its value masked (OF-560).
         let mut masked = None;
@@ -206,7 +221,17 @@ impl RpcReply {
                 Vec::new(),
             ),
         };
-        let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+        let (actor_ref, actor_class, credential_ref) = match attribution {
+            Some(caller) => (
+                caller.actor_ref.clone(),
+                caller.actor_class.clone(),
+                Some(caller.credential_ref.clone()),
+            ),
+            None => {
+                let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+                (actor_ref, actor_class, call_receipt::credential_ref(auth))
+            }
+        };
         let stamp = call_receipt::record(
             server,
             call.anonymous,
@@ -215,7 +240,8 @@ impl RpcReply {
                 verb: call.method,
                 actor_ref,
                 actor_class,
-                credential_ref: call_receipt::credential_ref(auth),
+                credential_ref,
+                carrier_machine: attribution.map(|caller| caller.carrier_machine.clone()),
                 outcome,
                 request_digest: call.request_digest,
                 result_digest,

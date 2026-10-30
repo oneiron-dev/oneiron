@@ -34,8 +34,9 @@ pub struct OwnerWorkDrain {
 /// Whether a request's pickup reads this install's hybrid secret: a world's
 /// key work and a root change open keys with it, a bundle publication waits
 /// for it as it always has, and a custody register, rotate or bind's holder
-/// opens its protected input with it. A revoke needs no byte, and a rewrap
-/// with no input seals the value its holder holds.
+/// opens its protected input with it. A revoke needs no byte, a rewrap
+/// with no input seals the value its holder holds, and an export secret
+/// reads only the custody leaf it seals (FIX 11845).
 fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
     !matches!(
         work,
@@ -46,7 +47,7 @@ fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
             change: CustodyChange::Rewrap,
             input: None,
             ..
-        }
+        } | OwnerWorkBody::ExportSecret(_)
     )
 }
 
@@ -73,7 +74,7 @@ impl Vault {
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
     /// request stays pending, and nothing is taken over. A custody revoke,
-    /// or a rewrap with no input, reads none.
+    /// a rewrap with no input, or an export secret reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's

@@ -146,14 +146,20 @@ impl ContentWriteSet {
                 let header = EntityMetadataHeader::parse(&raw)
                     .ok_or(Error::CorruptedIndex("actor content header"))?;
                 // Only an actor's local Put gets a final-body stamp. Opaque
-                // replay never enters this adapter and stays unstamped.
+                // replay never enters this adapter and stays unstamped, and
+                // so does a replicated row an actor re-puts (FIX 11925).
+                let put = if effect.old.is_some() {
+                    crate::federation::record_scope::RowPut::LocalReput
+                } else {
+                    crate::federation::record_scope::RowPut::Birth
+                };
                 crate::federation::record_scope::stamp_put(
                     &vault.store,
                     txn,
                     id,
                     header.entity_type,
                     &raw[ENTITY_METADATA_HEADER_LEN..],
-                    false,
+                    put,
                 )?;
             }
             let new = vault

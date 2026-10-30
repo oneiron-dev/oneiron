@@ -101,6 +101,9 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
             (StatusCode::SERVICE_UNAVAILABLE, "kept_on_device")
         }
+        LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "world_route_not_admitted")
+        }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
     let mut body = serde_json::json!({"error":{"code":code,"llm":error}});

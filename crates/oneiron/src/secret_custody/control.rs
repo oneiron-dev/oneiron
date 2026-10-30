@@ -51,7 +51,8 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{
-    InputBinding, RelayedInput, SealedFrame, keep_witnessed_input_in_txn, request_witness_in_txn,
+    InputBinding, LeafSource, RelayedInput, SealedFrame, input_digest, keep_witnessed_input_in_txn,
+    leaf_input_retries_in_txn, request_witness_in_txn, seal_leaf_input_in_txn, surface_leaf_input,
 };
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
@@ -59,6 +60,7 @@ pub(crate) use self::revoked::{
     custody_revoked_in_txn, drop_revoked_copies_in_txn, refuse_revoked_use_in_txn,
     settle_revoked_in_txn,
 };
+use super::carrier_custody::CUSTODY_CARRIER_LEAF_WIRE;
 use super::codec::{encode_bind_input, encode_register_input};
 use crate::authority::{
     ActSurface, AuthorityEntryHash, AuthorityFold, CustodyChange, CustodyRecipientPermit,
@@ -406,7 +408,9 @@ impl Vault {
     /// did not happen. Any other holder gets the input relayed. With no live
     /// machine profile here, or no importable key on this install as holder,
     /// nothing is recorded and the result says the change stays here; the
-    /// door then keeps it locally.
+    /// door then keeps it locally. While the carrier wire is on, an input
+    /// that is kept or relayed is sealed under its own carrier key, minted
+    /// here first (FIX 7402, `input::carrier_seal`).
     pub(crate) fn record_custody_change_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -432,8 +436,10 @@ impl Vault {
         };
         let permits = change_permits(&fold, &change, holder)?;
         // Every permitted install is kept, however many (FIX 7906): measured,
-        // never refused; its transition carries them in pieces.
-        crate::authority::measure_authority_work(&self.store.limit_watch, permits.len());
+        // never refused; its transition carries them in pieces. The request
+        // rides whole, so it also asks well before one sync frame (FIX 8087;
+        // L04 09:40 (b)).
+        crate::authority::measure_custody_permits(&self.store.limit_watch, &permits);
         let seen = fold.custody_work_revision(change.id);
         if change.seen.is_some_and(|stated| stated != seen) {
             return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
@@ -450,6 +456,36 @@ impl Vault {
             holder,
             permits: &permits,
         };
+        // An input that is kept or relayed is sealed under its own carrier
+        // key while the carrier wire is on (FIX 7402); one the holder's own
+        // door executes from in this commit is never kept.
+        let leafed = CUSTODY_CARRIER_LEAF_WIRE && (holder != machine || change.sealed.is_some());
+        // A surface's input is sealed under the key joined, so only while it
+        // fits one row (FIX 11140); one past it is kept as it lies.
+        let surface_input = match change.sealed {
+            Some(frame) if leafed => surface_leaf_input(&frame)?,
+            _ => None,
+        };
+        // CALLS CUSTODY_RETRY under the carrier wire: a surface's same input
+        // again is the request whose kept input sealed it, never a second
+        // change.
+        if let Some(joined) = &surface_input {
+            let retry = input_digest(joined);
+            for (hash, live) in fold.custody_heads(change.id) {
+                if let OwnerWorkBody::Custody {
+                    input: Some(named), ..
+                } = &live.work
+                    && leaf_input_retries_in_txn(&self.store, txn, named, &retry)?
+                {
+                    let receipt =
+                        OwnerWorkReceipt::of(&fold, hash).ok_or_else(invalid_authority)?;
+                    return Ok(Recorded {
+                        custody: SecretCustodyWork::recorded(receipt),
+                        rotation: None,
+                    });
+                }
+            }
+        }
         // A rewrap carries an input only for a bind (CALLS
         // CUSTODY_BIND_TRAVEL); a revoke never does. One the owner's surface
         // sealed is read where it lies, its digest part by part (FIX 11140).
@@ -457,9 +493,32 @@ impl Vault {
         let frame = match (change.change, &change.material, change.sealed) {
             (CustodyChange::Revoke, ..)
             | (CustodyChange::Rewrap, Material::Held | Material::Input(_), _) => None,
-            (_, _, Some(sealed)) => Some(sealed),
+            (_, _, Some(sealed)) => match &surface_input {
+                Some(joined) => {
+                    sealed_here = seal_leaf_input_in_txn(
+                        self,
+                        txn,
+                        &binding,
+                        &holder_key,
+                        LeafSource::Sealed(joined),
+                    )?;
+                    Some(SealedFrame::whole(&sealed_here))
+                }
+                None => Some(sealed),
+            },
             (_, material, None) => {
-                sealed_here = binding.seal(&holder_key, &plaintext(material)?)?;
+                let body = plaintext(material)?;
+                sealed_here = if leafed {
+                    seal_leaf_input_in_txn(
+                        self,
+                        txn,
+                        &binding,
+                        &holder_key,
+                        LeafSource::Body(&body),
+                    )?
+                } else {
+                    binding.seal(&holder_key, &body)?
+                };
                 Some(SealedFrame::whole(&sealed_here))
             }
         };

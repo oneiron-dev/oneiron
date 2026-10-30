@@ -56,7 +56,7 @@ pub(crate) fn ask_image_refusal_status(code: &str) -> Option<StatusCode> {
         | "invalid_request" => StatusCode::BAD_REQUEST,
         "principal_required" => StatusCode::FORBIDDEN,
         "call_not_admitted" | "budget_denied" => StatusCode::PAYMENT_REQUIRED,
-        "kept_on_device" => StatusCode::CONFLICT,
+        "kept_on_device" | "world_route_not_admitted" => StatusCode::CONFLICT,
         "content_filtered" => StatusCode::UNPROCESSABLE_ENTITY,
         "rate_limited" | "quota_spent" => StatusCode::TOO_MANY_REQUESTS,
         "pixels_missing" => StatusCode::INTERNAL_SERVER_ERROR,

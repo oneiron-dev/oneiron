@@ -160,7 +160,7 @@ impl Vault {
     }
 
     /// `owner`'s live own-device grant that confers at `now`, if any.
-    fn own_device_grant_in_txn(
+    pub(crate) fn own_device_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         owner: EntityId,
