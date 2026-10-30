@@ -226,8 +226,9 @@ pub(crate) fn relayed_export_output_due_in_txn(
 }
 
 /// Keeps `output`, a copy a window relayed, under its request when it is due
-/// in `wtxn` ([`relayed_export_output_due_in_txn`]), checked again here
-/// against `fold`, read in `wtxn`. Returns whether it kept it.
+/// in `wtxn` ([`relayed_export_output_due_in_txn`]) and `fold` holds no
+/// import mark of its request, both checked again here against `fold`, read
+/// in `wtxn`. Returns whether it kept it.
 #[cfg(feature = "sync")]
 pub(crate) fn keep_relayed_export_output_in_txn(
     vault: &Vault,
@@ -235,7 +236,11 @@ pub(crate) fn keep_relayed_export_output_in_txn(
     fold: &AuthorityFold,
     output: &KeptExportOutput,
 ) -> Result<bool> {
-    if !relayed_export_output_due_in_txn(vault, wtxn, fold, output)? {
+    // A copy the owner marked imported after the read side looked is not
+    // kept: its relay is over (FIX 12062, 12292).
+    if fold.export_supplement_imported(&output.request)
+        || !relayed_export_output_due_in_txn(vault, wtxn, fold, output)?
+    {
         return Ok(false);
     }
     OUTPUTS.put(&vault.store, wtxn, &output.request, &output.encode())?;
