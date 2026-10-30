@@ -37,6 +37,7 @@ mod docx;
 mod doors;
 mod fork;
 mod holder_ask;
+mod live_recalc;
 mod live_units;
 mod pptx;
 mod records;
