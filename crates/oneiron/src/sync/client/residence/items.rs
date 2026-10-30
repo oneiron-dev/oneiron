@@ -94,10 +94,11 @@ impl SyncClient {
             .decode(reply.blob)
             .map_err(|_| refused())?;
         let header = crate::batch::EntityMetadataHeader::parse(&blob).ok_or_else(refused)?;
-        if blob.len() > transport::MAX_DECODED_PAYLOAD_BYTES
-            || window
-                .start_timestamp()
-                .is_none_or(|start| header.learned_at < start)
+        // A row past one frame, such as an authority entry, is taken whole:
+        // the RPC reply's own bound holds it (FIX 8246).
+        if window
+            .start_timestamp()
+            .is_none_or(|start| header.learned_at < start)
             || window
                 .end_timestamp()
                 .is_some_and(|end| header.learned_at >= end)

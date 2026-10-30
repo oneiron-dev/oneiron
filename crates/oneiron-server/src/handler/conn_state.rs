@@ -39,6 +39,9 @@ pub(super) struct ConnState {
     pub(super) locality: oneiron::claim::CallerLocality,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// The authority entry this socket's machine appends in parts, held
+    /// until it is whole; it goes with the socket (FIX 8246).
+    pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
     /// Whether this socket sent countersign parts: as it closes, its
     /// machine's countersign stage goes (FIX 5111).
     pub(super) countersigned: bool,
@@ -72,6 +75,7 @@ impl ConnState {
             bound_auth: None,
             locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
+            authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
             window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
