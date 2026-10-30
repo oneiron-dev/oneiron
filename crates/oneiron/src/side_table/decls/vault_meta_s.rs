@@ -473,6 +473,9 @@ side_tables! {
     /// Hub-import receipt for one entity, keyed by (entity, source hub id, hash of the source ref
     /// string). Key: id16 + id16 + hash32.
     SKILL_HUB_IMPORT_RECEIPT: VaultMeta b"skill_hub/import-receipt/v1\0" LegacyJson;
+    /// Owner switch (`0` off, `1` on) turning a dependency advisory hit into one owner ask on a
+    /// ready marketplace fit; an absent row is on. Key: ().
+    SKILL_HUB_MARKETPLACE_ADVISORY_ASK: VaultMeta b"skill_hub/marketplace-advisory-ask/v1" Raw;
     /// Owner blocking rule (`0` off, `1` on) on one canonical marketplace content hash. Key: hash32.
     SKILL_HUB_MARKETPLACE_BLOCKED_HASH: VaultMeta b"skill_hub/marketplace-blocked-hash/v1\0" Raw;
     /// Revision (u64be) of the owner's code auto-install switch, bound into each change's consent.

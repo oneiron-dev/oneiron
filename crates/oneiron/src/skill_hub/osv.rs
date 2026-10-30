@@ -216,8 +216,15 @@ impl Vault {
     }
     /// Dynamic dependency install door. Coordinates are host-resolved package
     /// identities, never SKILL instructions, files, credentials or vault data.
+    /// `owner` is checked again in the writer that commits the skill, its
+    /// provenance and scan receipts, after the advisory query.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the install binds owner proof, package identity, inventory and import timing"
+    )]
     pub fn install_skill_with_advisories(
         &self,
+        owner: &crate::consent::AuthenticatedOwner,
         hub_ref: &HubRef,
         package: &HubPackage,
         coordinates: &[DependencyCoordinate],
@@ -226,6 +233,7 @@ impl Vault {
         learned_at: u64,
     ) -> Result<SkillInstallAdvisories> {
         self.import_with_advisories(
+            Some(owner),
             hub_ref,
             package,
             EntityId::now(),
@@ -237,10 +245,11 @@ impl Vault {
     }
     #[expect(
         clippy::too_many_arguments,
-        reason = "the install binds package identity, dependency inventory and import timing"
+        reason = "the install binds owner proof, package identity, inventory and import timing"
     )]
     pub(super) fn import_with_advisories(
         &self,
+        owner: Option<&crate::consent::AuthenticatedOwner>,
         hub_ref: &HubRef,
         package: &HubPackage,
         id: EntityId,
@@ -251,8 +260,9 @@ impl Vault {
     ) -> Result<SkillInstallAdvisories> {
         let (status, advisory_ids, scans) =
             self.dependency_advisories(package.content_hash()?, coordinates, query, learned_at)?;
-        let entity = self
-            .import_skill_from_hub_with_scans(hub_ref, package, id, &scans, occurred, learned_at)?;
+        let entity = self.import_skill_from_hub_with_scans(
+            owner, hub_ref, package, id, &scans, occurred, learned_at,
+        )?;
         Ok(SkillInstallAdvisories {
             entity,
             advisory_ids,
