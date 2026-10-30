@@ -89,6 +89,9 @@ impl NativeMailInboxes {
                 for (identity, error) in read.failed {
                     tracing::warn!(identity = %identity.to_hex(), %error, "a native mail inbox read failed; it is read again next pass");
                 }
+                for (identity, set_aside) in read.set_aside {
+                    tracing::warn!(identity = %identity.to_hex(), %set_aside, "a native mail message kept failing and was set aside; the inbox reads on");
+                }
             }
             Err(error) => tracing::warn!(%error, "native mail identities unreadable"),
         }
