@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::{StalwartClient, StalwartMailbox, array, invalid, method_result, string};
-use crate::Result;
 use crate::channel_identity_provider::native_mail::canonical_recipient;
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest, OutboundExecutionSink};
+use crate::{EntityId, Result};
 
 pub const NATIVE_MAIL_MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
 
@@ -77,12 +77,26 @@ impl NativeMailMessage {
 pub struct StalwartSendSink<'a> {
     client: &'a StalwartClient,
     message: &'a NativeMailMessage,
+    /// The sending identity and its own address, derived or named, read from
+    /// its facts by the caller. A request naming another identity fails.
+    sender: EntityId,
+    sender_address: &'a str,
 }
 
 impl<'a> StalwartSendSink<'a> {
-    pub fn new(client: &'a StalwartClient, message: &'a NativeMailMessage) -> Result<Self> {
+    pub fn new(
+        client: &'a StalwartClient,
+        message: &'a NativeMailMessage,
+        sender: EntityId,
+        sender_address: &'a str,
+    ) -> Result<Self> {
         message.validate()?;
-        Ok(Self { client, message })
+        Ok(Self {
+            client,
+            message,
+            sender,
+            sender_address,
+        })
     }
 }
 
@@ -103,7 +117,10 @@ impl OutboundExecutionSink for StalwartSendSink<'_> {
             let identity = request
                 .channel_identity_ref
                 .ok_or_else(|| invalid("native mail send lacks an identity"))?;
-            let mailbox = self.client.mailbox(identity)?;
+            if identity != self.sender {
+                return Err(invalid("native mail send names another identity"));
+            }
+            let mailbox = self.client.mailbox(identity, self.sender_address)?;
             // Email's common contract correctly does not claim provider-native
             // idempotency. This Message-ID is only a draft/reconciliation key;
             // ambiguous sends still remain ambiguous in the ordinary ledger.

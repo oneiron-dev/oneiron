@@ -205,7 +205,19 @@ pub(super) fn conflicts(
         HeadsKey::Unsettled => return Ok(false),
     };
     let slot = read_slot(store, txn, &key)?;
-    Ok(slot.occupant.is_some_and(|other| other != *id))
+    if slot.occupant.is_some_and(|other| other != *id) {
+        return Ok(true);
+    }
+    // Another identity's alias routes this address (ARCH-0063 R6).
+    super::alias::alias_held_by_other_in_txn(store, txn, &key, id)
+}
+
+/// Whether an identity's slot holds `key`: an occupant or a retiring
+/// predecessor, a deleted row's hold included. Such an address is never
+/// free to be an alias.
+pub(super) fn holds_key(store: &Store, txn: &heed::RoTxn<'_>, key: &AssignmentKey) -> Result<bool> {
+    let slot = read_slot(store, txn, key)?;
+    Ok(slot.occupant.is_some() || slot.predecessor.is_some())
 }
 
 /// The one slot law for put, claim re-key and rebuild (OF-272). An occupying

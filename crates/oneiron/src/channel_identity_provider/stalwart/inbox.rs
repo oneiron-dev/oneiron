@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{StalwartClient, StalwartMailbox, array, invalid, string};
 use crate::channel_identity_provider::mail_placement::{MailPlacement, PlacementPolicy};
-use crate::channel_identity_provider::native_mail::NativeMailAdapter;
+use crate::channel_identity_provider::native_mail::{NativeMailAdapter, mailbox_local_part};
 use crate::channel_identity_provider::{
     ChannelIdentityProviderAdapter, ChannelIdentityProviderInbound, EmailProviderInbound,
     EmailThreadHeaders,
@@ -139,14 +139,17 @@ impl StalwartClient {
         let facts = vault
             .channel_identity_facts(&identity_ref)?
             .ok_or(crate::Error::EntityNotFound)?;
-        let address = self.address_for_identity(identity_ref);
-        if facts.channel != "email" || identity.is_delegated() || facts.address_or_handle != address
+        // The identity's own address, derived or named, is its mailbox.
+        if facts.channel != "email"
+            || identity.is_delegated()
+            || mailbox_local_part(&self.config.domain, identity_ref, &facts.address_or_handle)
+                .is_err()
         {
             return Err(invalid(
                 "native inbox identity differs from the instance mailbox",
             ));
         }
-        let mailbox = self.mailbox(identity_ref)?;
+        let mailbox = self.mailbox(identity_ref, &facts.address_or_handle)?;
         let boxes = self.mailboxes(&mailbox)?;
         let role_ids = |role: &str| -> Vec<String> {
             boxes
