@@ -81,7 +81,9 @@ impl PromotionRejection {
             outcome.rejected_kinds.push((id, kind));
         }
         if let Some((gate_outcome, reason_codes)) = self.gate {
-            outcome.rejected_gates.push((id, gate_outcome, reason_codes));
+            outcome
+                .rejected_gates
+                .push((id, gate_outcome, reason_codes));
         }
         outcome.rejected.push((id, self.reason));
     }

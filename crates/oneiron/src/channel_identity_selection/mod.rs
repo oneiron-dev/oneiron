@@ -59,7 +59,9 @@ pub use self::selection_vocabulary::{
     RelationshipContext, SelectionRuleWriterKind,
 };
 
-pub(crate) use self::selection_storage::erase_rule_actor_in_txn;
+pub(crate) use self::selection_storage::{
+    channel_identity_selection_rules_in_txn, erase_rule_actor_in_txn,
+};
 
 #[cfg(test)]
 mod tests;
