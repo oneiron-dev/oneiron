@@ -370,12 +370,10 @@ fn blob_copy_in_txn(
         .port_entity_raw(txn, &id.source)?
         .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..).map(<[u8]>::to_vec))
         .filter(|body| blake3::hash(body).as_bytes() == &hash);
-    // What the copy is made over: the spans the marks and mask row place now,
-    // read for stored bytes only (the placeholder takes none).
-    let placed = match &stored {
-        Some(_) => marks.copy_places_in_txn(vault, txn, &hash)?,
-        None => None,
-    };
+    // What the copy is made over: the spans the marks and mask row place now.
+    // Read for every blob, so one whose mark does not decode fails here, kept
+    // copy or not (FIX 10793).
+    let placed = marks.copy_places_in_txn(vault, txn, &hash)?;
     let present = stored.is_some();
     let copy = match kept.take(&hash, present, placed.as_ref()) {
         Some(copy) => copy,
