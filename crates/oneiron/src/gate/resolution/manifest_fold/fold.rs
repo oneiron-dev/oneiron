@@ -8,6 +8,8 @@ pub(super) fn fold_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
+    let _l15 = crate::stage_timing::stage("gate.policy_fold");
+    crate::stage_timing::record("count.policy_fold", 1);
     let mut resolution = PolicyManifestResolution::default();
     // The shipped manifest supplies bootstrap policy even when a replacement
     // omits optional count rows; a peer cannot replace these trusted defaults.
