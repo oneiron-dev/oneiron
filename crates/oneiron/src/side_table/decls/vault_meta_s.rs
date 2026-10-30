@@ -407,6 +407,9 @@ side_tables! {
         => crate::skill_attribution::erase_credit_adjustments_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
+    /// The receipts of the decisions that gave one attempt-lane judgment, in hunk order, kept once
+    /// beside it (FIX 11512). Key: u64be (the judgment's evidence sequence).
+    SKILL_ATTRIBUTION_DECISION_RECEIPTS: VaultMeta b"skill_attribution:decision_receipts:v1:" Named;
     /// A leased run's derivation witnesses (FIX 3103): each exact DerivedFrom edge a write of the
     /// run left stored, with its producer, whether the run's lease held as it landed and when
     /// (each end nil once erased); beside them, each scope summary a run asked for, with its lease
