@@ -1217,7 +1217,7 @@ fn act_policy_default_entry() -> (Value, Value) {
             ),
             (
                 Value::from(ACT_POLICY_POSTURE_KEY),
-                Value::from(ActPosture::RequireCapability.as_str()),
+                Value::from(crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE.as_str()),
             ),
         ]),
         // A self-held row is an account the product minted, so the

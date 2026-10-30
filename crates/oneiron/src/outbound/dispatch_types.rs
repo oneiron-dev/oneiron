@@ -195,6 +195,11 @@ pub struct OutboundDispatchRequest {
     /// when the delivery window degrades this send to its surface, the
     /// pipeline sends it as a send of its own. `None` keeps today's park.
     pub ambient_alternative: Option<Box<super::OutboundAmbientAlternative>>,
+    /// Set when the pipeline resolves this send's sender: its outbound send
+    /// runs under the posture the default manifest ships, because the
+    /// vault's manifests name no act row for its pairing. The dispatch
+    /// receipt names that fallback. In memory only, never persisted.
+    pub(crate) sender_posture_fallback: bool,
 }
 
 /// A drain's clock for one send's delivery window (FIX 8817): the frozen host
@@ -249,6 +254,7 @@ impl OutboundDispatchRequest {
             send_autonomy: None,
             publisher_signature: None,
             ambient_alternative: None,
+            sender_posture_fallback: false,
         }
     }
 

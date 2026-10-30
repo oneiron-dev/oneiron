@@ -140,7 +140,11 @@ impl PreparedOutboundDispatch {
         if let Some(record) = replay.as_ref().filter(|_| completed.is_some()) {
             idempotency_supported = record.idempotency_supported;
         }
-        (request.channel_identity_ref, request.facet_ref) = resolve_dispatch_sender(
+        (
+            request.channel_identity_ref,
+            request.facet_ref,
+            request.sender_posture_fallback,
+        ) = resolve_dispatch_sender(
             vault,
             &request,
             replay
@@ -406,16 +410,17 @@ pub(super) fn invalid_replay() -> OutboundDispatchError {
     ))
 }
 
-/// The sender identity and facet a send goes out as. A replay reads both
-/// from its frozen binding; a new send on a reply thread wears the thread's
-/// pin (OF-272); an unpinned send whose host named the faces of its actor's
-/// identities selects by the vault's selection law (FIX 1906); any other new
-/// send enriches by connector and actor.
+/// The sender identity and facet a send goes out as, and whether the
+/// sender's send runs under the posture the default manifest ships. A
+/// replay reads both from its frozen binding; a new send on a reply thread
+/// wears the thread's pin (OF-272); an unpinned send whose host named the
+/// faces of its actor's identities selects by the vault's selection law
+/// (FIX 1906); any other new send enriches by connector and actor.
 fn resolve_dispatch_sender(
     vault: &Vault,
     request: &OutboundDispatchRequest,
     replay_payload: Option<&[u8]>,
-) -> std::result::Result<(Option<EntityId>, Option<EntityId>), OutboundDispatchError> {
+) -> std::result::Result<(Option<EntityId>, Option<EntityId>, bool), OutboundDispatchError> {
     if let Some(payload) = replay_payload {
         let frozen: serde_json::Value =
             serde_json::from_slice(payload).map_err(|_| invalid_replay())?;
@@ -426,7 +431,7 @@ fn resolve_dispatch_sender(
         {
             return Err(invalid_replay());
         }
-        return Ok((sender, facet));
+        return Ok((sender, facet, false));
     }
     let (requested, facet) = match request.reply_thread_ref.as_deref() {
         Some(thread_ref) => match reply_thread_pin(vault, request, thread_ref)? {
@@ -447,7 +452,15 @@ fn resolve_dispatch_sender(
         request.actor.actor_entity_ref.as_ref(),
         requested,
     )?;
-    Ok((sender, facet))
+    let shipped_posture = match sender {
+        Some(id) => crate::channel_identity::outbound_send_runs_under_shipped_posture_in_txn(
+            &vault.store,
+            &txn,
+            &id,
+        )?,
+        None => false,
+    };
+    Ok((sender, facet, shipped_posture))
 }
 
 /// The sender the vault's selection law picks for an unpinned send, from the
