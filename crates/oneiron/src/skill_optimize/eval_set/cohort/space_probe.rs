@@ -22,6 +22,11 @@ use crate::error::Result;
 /// The reserved seat namespace (FIX 6744 CALLS): one `space_probe.<kind>` seat per probe kind.
 const SPACE_PROBE_SEAT_PREFIX: &str = "space_probe.";
 
+/// Whether `seat` is one of the space probes' reserved metadata seats.
+pub(crate) fn is_space_probe_seat(seat: &EvalSeat) -> bool {
+    matches!(seat, EvalSeat::Named(name) if name.starts_with(SPACE_PROBE_SEAT_PREFIX))
+}
+
 /// One probe as a call names it: its stable id, the document its query was written from, and
 /// the date window that document falls in.
 type Member = ([u8; 16], EntityId, Range<u64>);
