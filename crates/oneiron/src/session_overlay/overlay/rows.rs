@@ -389,20 +389,15 @@ impl SessionOverlay {
             })
         });
 
-        if let Some((generation, state)) = active {
-            let lease = self.acquire_existing_lease(generation)?;
-            return Ok(OverlaySnapshot {
-                state,
-                _lease: lease,
-            });
+        if let Some((generation, preview)) = active {
+            let mut lease = self.acquire_existing_lease(generation)?;
+            let state = lease.hold_preview(preview);
+            return Ok(OverlaySnapshot { state, lease });
         }
 
-        let lease = self.acquire_read_lease()?;
-        let state = self.state.load_full();
-        Ok(OverlaySnapshot {
-            state,
-            _lease: lease,
-        })
+        let mut lease = self.acquire_read_lease()?;
+        let state = lease.hold_published();
+        Ok(OverlaySnapshot { state, lease })
     }
 
     #[allow(
