@@ -56,7 +56,7 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         vault_path: Some(args.path),
         ..ServeArgs::default()
     })?;
-    let mut vault = super::owner::open_stopped_vault_with(
+    let vault = super::owner::open_stopped_vault_with(
         &config,
         super::owner::vault_config(&config),
         "then enrol again",
@@ -68,21 +68,73 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         "pass the pairing link on stdin: `oneiron token pair --machine yours` prints it on the \
          home"
     );
-    // A vault with no authority root joins from empty; any other enrols as
-    // the copy of its home's vault it is.
-    let (join, set_aside) = if vault.authority_fold()?.vault_id.is_none() {
-        let join = crate::device_sync::join::fetch_join_pin(&link)?;
-        let (joined, set_aside) = open_joining_store(&config, vault, &join)?;
-        vault = joined;
-        (Some(join), Some(set_aside))
-    } else {
-        (None, None)
-    };
-    let files = crate::device_sync::EnrolmentFiles::for_vault(&config.keystore, &vault)?;
+    // A vault with no authority root and no rows of its own joins from
+    // empty; any other enrols as the copy of its home's vault it is.
+    if vault.authority_fold()?.vault_id.is_some() {
+        let (files, shown, enrolled) = enrol_into(&config, &vault, &link, None)?;
+        return emit(files, shown, enrolled, None);
+    }
+    crate::device_sync::join::ensure_joinable(&vault)?;
+    let join = crate::device_sync::join::fetch_join_pin(&link)?;
+    let path = config.vault_path.clone();
+    let set_aside = set_aside_path(&path)?;
+    drop(vault);
+    std::fs::rename(&path, &set_aside).map_err(|error| {
+        anyhow::anyhow!(
+            "set the empty vault {} aside as {}: {error}",
+            path.display(),
+            set_aside.display()
+        )
+    })?;
+    // Any failure from here on puts the empty store back where it was: a
+    // join that does not finish leaves the vault as `device enrol` found it.
+    // The fresh store's handle closes with the closure, before any restore.
+    let joined = open_joining_store(&config, &join)
+        .and_then(|vault| enrol_into(&config, &vault, &link, Some(&join)));
+    match joined {
+        Ok((files, shown, enrolled)) => emit(files, shown, enrolled, Some(&set_aside)),
+        Err(error) => match restore_empty_store(&path, &set_aside) {
+            Ok(()) => Err(error),
+            Err(restore) => Err(error.context(format!(
+                "and the empty vault set aside as {} could not be put back at {}: {restore:#}",
+                set_aside.display(),
+                path.display()
+            ))),
+        },
+    }
+}
+
+/// What one enrolment wrote and showed: its files, the request code and
+/// enrolment request it showed, and the enrolment.
+type EnrolledInto = (
+    crate::device_sync::EnrolmentFiles,
+    (String, serde_json::Value),
+    crate::device_sync::Enrolled,
+);
+
+/// Enrols `vault`'s machine from `link`, as the copy of its home's vault, or
+/// as a vault joining from empty under `join`.
+fn enrol_into(
+    config: &crate::config::ServeConfig,
+    vault: &oneiron::Vault,
+    link: &str,
+    join: Option<&crate::device_sync::join::JoinPin>,
+) -> anyhow::Result<EnrolledInto> {
+    let files = crate::device_sync::EnrolmentFiles::for_vault(&config.keystore, vault)?;
     // Read before the enrolment, as it reads it: nothing that can fail runs
     // after the link is spent.
-    let (request_code, enrolment) = shown_request(&vault, join.as_ref())?;
-    let enrolled = crate::device_sync::enrol(&vault, &files, &link, join.as_ref())?;
+    let shown = shown_request(vault, join)?;
+    let enrolled = crate::device_sync::enrol(vault, &files, link, join)?;
+    Ok((files, shown, enrolled))
+}
+
+/// Prints what an enrolment stored.
+fn emit(
+    files: crate::device_sync::EnrolmentFiles,
+    (request_code, enrolment): (String, serde_json::Value),
+    enrolled: crate::device_sync::Enrolled,
+    set_aside: Option<&std::path::Path>,
+) -> anyhow::Result<()> {
     let record = enrolled.record;
     super::owner::emit(&Enrolled {
         home_machine: record.home_machine,
@@ -100,20 +152,8 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
     })
 }
 
-/// Sets the empty store `vault` holds aside, beside the vault directory, and
-/// creates a fresh store there under the home's storage id the verified
-/// `join` pin names (`OpenOptions::adopt_storage_id`, L01 04:55); returns it
-/// and where the empty store went. Nothing of the empty store is deleted.
-fn open_joining_store(
-    config: &crate::config::ServeConfig,
-    vault: oneiron::Vault,
-    join: &crate::device_sync::join::JoinPin,
-) -> anyhow::Result<(oneiron::Vault, std::path::PathBuf)> {
-    use crate::device_sync::join::JoinRefusal;
-
-    let storage_id = oneiron::VaultStorageId::from_verified_pin(&join.pin);
-    drop(vault);
-    let path = &config.vault_path;
+/// Where the empty store at `path` is set aside: beside it, named for when.
+fn set_aside_path(path: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
     let name = path
         .file_name()
         .ok_or_else(|| anyhow::anyhow!("vault path {} names no directory", path.display()))?;
@@ -126,13 +166,19 @@ fn open_joining_store(
         "{} already exists; move it and enrol again",
         set_aside.display()
     );
-    std::fs::rename(path, &set_aside).map_err(|error| {
-        anyhow::anyhow!(
-            "set the empty vault {} aside as {}: {error}",
-            path.display(),
-            set_aside.display()
-        )
-    })?;
+    Ok(set_aside)
+}
+
+/// Creates the fresh store at the vault path under the home's storage id the
+/// verified `join` pin names (`OpenOptions::adopt_storage_id`, L01 04:55).
+fn open_joining_store(
+    config: &crate::config::ServeConfig,
+    join: &crate::device_sync::join::JoinPin,
+) -> anyhow::Result<oneiron::Vault> {
+    use crate::device_sync::join::JoinRefusal;
+
+    let path = &config.vault_path;
+    let storage_id = oneiron::VaultStorageId::from_verified_pin(&join.pin);
     let vault = oneiron::Vault::open_owned_with(
         path,
         super::owner::vault_config(config),
@@ -147,7 +193,20 @@ fn open_joining_store(
     if vault.vault_key_vault_id() != *storage_id.as_bytes() {
         return Err(JoinRefusal::StorageId.into());
     }
-    Ok((vault, set_aside))
+    Ok(vault)
+}
+
+/// Puts the empty store set aside back at `path` after a join that did not
+/// finish. What a failed join left at `path` is only the fresh store this
+/// run created, and goes first.
+fn restore_empty_store(path: &std::path::Path, set_aside: &std::path::Path) -> anyhow::Result<()> {
+    if path.exists() {
+        std::fs::remove_dir_all(path)
+            .map_err(|error| anyhow::anyhow!("remove {}: {error}", path.display()))?;
+    }
+    std::fs::rename(set_aside, path).map_err(|error| {
+        anyhow::anyhow!("move {} back to {}: {error}", set_aside.display(), path.display())
+    })
 }
 
 /// This machine's enrolment request for its vault, the one `enrol` sends
