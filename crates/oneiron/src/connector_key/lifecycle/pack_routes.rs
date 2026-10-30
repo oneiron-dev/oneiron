@@ -39,7 +39,7 @@ impl Vault {
         at: u64,
     ) -> Result<()> {
         for (id, record, slate_id, slate) in
-            self.pack_bound_keys_in_txn(wtxn, source_ref, content_hash)?
+            self.pack_bound_keys_in_txn(wtxn, exact_install(source_ref, content_hash))?
         {
             let qualified = next.connector_qualification.as_ref().filter(|pack| {
                 pack.source_hash == next.content_hash
@@ -102,19 +102,50 @@ impl Vault {
         content_hash: &str,
         at: u64,
     ) -> Result<()> {
-        for (id, record, _, _) in self.pack_bound_keys_in_txn(wtxn, source_ref, content_hash)? {
+        let bound = self.pack_bound_keys_in_txn(wtxn, exact_install(source_ref, content_hash))?;
+        for (id, record, _, _) in bound {
             self.halt_connector_key_route_in_txn(wtxn, &id, record, at)?;
         }
         Ok(())
     }
 
-    /// Every Active or Suspended catalog key whose slate names the pack
-    /// install `source_ref` at `content_hash`, with its slate.
+    /// Pack `pack` left the install catalog, in the caller's transaction:
+    /// the owner removed it, the source of its install was erased, or a
+    /// restore did not bring it back. Every Active or Suspended catalog key
+    /// whose slate names any install of that pack halts as
+    /// [`Self::halt_pack_connector_routes_in_txn`] halts it, including one
+    /// an update left routing on an older install because its declaration
+    /// moved (FIX 11678). A binding whose source does not read back names no
+    /// pack; an erased source's erase halted its keys.
+    pub(crate) fn halt_named_pack_connector_routes_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        pack: &str,
+        at: u64,
+    ) -> Result<()> {
+        let txn: &heed::RwTxn<'_> = wtxn;
+        let bound = self.pack_bound_keys_in_txn(txn, |binding| {
+            let Ok(source_id) = EntityId::from_hex(&binding.source_ref) else {
+                return Ok(false);
+            };
+            Ok(self
+                .pack_source_in_txn(txn, &source_id)
+                .ok()
+                .flatten()
+                .is_some_and(|source| source.manifest().name == pack))
+        })?;
+        for (id, record, _, _) in bound {
+            self.halt_connector_key_route_in_txn(wtxn, &id, record, at)?;
+        }
+        Ok(())
+    }
+
+    /// Every Active or Suspended catalog key whose slate's pack binding
+    /// `names` accepts, with its slate.
     fn pack_bound_keys_in_txn(
         &self,
         wtxn: &heed::RwTxn<'_>,
-        source_ref: &str,
-        content_hash: &str,
+        names: impl Fn(&SlatePackSource) -> Result<bool>,
     ) -> Result<Vec<(EntityId, ConnectorKeyRecord, EntityId, ConnectorGrantSlate)>> {
         let mut bound = Vec::new();
         for (_, id) in CATALOG_NAME_INDEX.scan(&self.store, wtxn)? {
@@ -134,14 +165,10 @@ impl Vault {
             let Some(slate) = read_connector_slate_in_txn(self, wtxn, slate_id)? else {
                 continue;
             };
-            let names = slate
-                .slate_manifest()
-                .pack_source
-                .as_ref()
-                .is_some_and(|binding| {
-                    binding.source_ref == source_ref && binding.content_hash == content_hash
-                });
-            if names {
+            let Some(binding) = slate.slate_manifest().pack_source.as_ref() else {
+                continue;
+            };
+            if names(binding)? {
                 bound.push((id, record, slate_id, slate));
             }
         }
@@ -183,5 +210,15 @@ impl Vault {
             at,
         )?;
         self.sync_derived_keys_in_txn(wtxn, &pending, at)
+    }
+}
+
+/// A binding that names the install `source_ref` at `content_hash` exactly.
+fn exact_install<'a>(
+    source_ref: &'a str,
+    content_hash: &'a str,
+) -> impl Fn(&SlatePackSource) -> Result<bool> + 'a {
+    move |binding: &SlatePackSource| {
+        Ok(binding.source_ref == source_ref && binding.content_hash == content_hash)
     }
 }
