@@ -51,6 +51,12 @@ own qualification passes.
 6. Once the check passes, the host answers Slack's events, and presses on the
    buttons of the app's messages, within a minute. Each delivery is verified
    with the Signing Secret before it is kept.
+7. Once the check passes, offer to subscribe an agent to the channel's
+   messages. Each message Slack routes to the agent wakes it, and the served
+   responder answers on the message's own thread. `oneiron subscriptions put
+   --agent <agent> --channel slack` subscribes one, served at
+   `POST /v1/owner/connectors/subscriptions`; `oneiron subscriptions list
+   --agent <agent>` shows what the agent holds.
 
 ## When the check fails
 
