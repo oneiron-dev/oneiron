@@ -170,7 +170,8 @@ impl Vault {
         Ok(bound)
     }
 
-    /// The owner's dial on one binding. The CODE entity stays.
+    /// The owner's dial on one binding. The CODE entity stays; a hub
+    /// author's Grant settles to the reach its running hooks declare.
     pub fn set_pack_hook_enabled(
         &self,
         owner: &AuthenticatedOwner,
@@ -203,7 +204,9 @@ impl Vault {
                 Some(&previous),
                 &row,
             )?;
-            Ok(())
+            // A hub author's Grant follows its running hooks (FIX 1873).
+            let bindings = bindings_in_txn(&self.store, txn)?;
+            self.settle_hook_author_grants_in_txn(txn, owner, &bindings)
         })?;
         self.verb_hook_bindings_changed();
         Ok(())

@@ -91,6 +91,7 @@ mod history_repair;
 mod history_transfer;
 mod home_candidacy;
 mod home_pick;
+mod hook_author_grant;
 mod host_action;
 mod host_actor;
 mod host_re_root;
@@ -396,6 +397,7 @@ pub(crate) use handover_evidence::HandoverEvidence;
 pub(crate) use history_admission::{
     RowsBeside, preflight_authority_rows_beside_in_txn, preflight_authority_rows_in_txn,
 };
+pub(crate) use hook_author_grant::hook_declared_reads;
 pub(crate) use host_action::{HostActionGuard, host_action_refused};
 #[cfg(any(test, feature = "sync"))]
 pub(crate) use import_order::authority_stage_order;

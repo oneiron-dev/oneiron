@@ -267,8 +267,10 @@ pub struct PackHookQualification {
 impl Vault {
     /// The test a Candidate hub pack's hooks wait for (ARCH-0080 §9): each
     /// hook body replays over past entries and lands nothing. The replay
-    /// reads with the owner's reach, since only the owner sees what it
-    /// returns; live, the hook reads at its publisher's Grant. A fact hook
+    /// reads as the hook reads live (FIX 1873): a hub pack's hook as its
+    /// publisher, under its Grant, which reads nothing before the owner first
+    /// binds the pack's hooks, and only what the hook declares; the owner's
+    /// own pack with the owner's reach. A fact hook
     /// replays over past facts, a verb hook over its saved runs and the
     /// golden inputs its pack declares. With no entry failed, refused or out
     /// of time and every golden input met, the pack installs in one writer,
@@ -309,14 +311,8 @@ impl Vault {
         let mut replays = Vec::new();
         let mut passed = true;
         for hook in source.hooks() {
-            let (id, row) = PackHookBinding::for_hook(
-                pack,
-                source_id,
-                owner_id,
-                HookAuthor::Owner,
-                hook,
-                true,
-            )?;
+            let (id, row) =
+                PackHookBinding::for_hook(pack, source_id, owner_id, author.clone(), hook, true)?;
             let entries = self.hooks_replay_binding(runtime, None, id, &row, None, usize::MAX)?;
             passed &= entries.iter().all(|entry| {
                 !matches!(
@@ -449,14 +445,8 @@ impl Vault {
         let mut passed = true;
         let mut rows = Some(vec![source_id]);
         for hook in source.hooks() {
-            let (id, row) = PackHookBinding::for_hook(
-                pack,
-                source_id,
-                owner_id,
-                HookAuthor::Owner,
-                hook,
-                true,
-            )?;
+            let (id, row) =
+                PackHookBinding::for_hook(pack, source_id, owner_id, author.clone(), hook, true)?;
             let (entries, listed) =
                 self.hooks_replay_binding_listing(runtime, None, id, &row, None, usize::MAX)?;
             rows = rows.zip(listed).map(|(mut rows, listed)| {

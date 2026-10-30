@@ -24,7 +24,9 @@ use super::access_gate::HeldAuthority;
 use super::*;
 use crate::edge::EdgeActorClass;
 use crate::federation::Scope;
-use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_SECRET_CUSTODY};
+use crate::registry::{
+    ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SECRET_CUSTODY,
+};
 
 /// One reader's live Grants, each id with its Scope.
 type ReaderGrants = Rc<[(EntityId, Scope)]>;
@@ -229,8 +231,9 @@ impl<'v> ScopedRead<'v> {
 }
 
 /// Every live Grant `reader` reads under, each with its Scope: none unless it
-/// is a live agent definition or a base agent's MACHINE (its class taken from
-/// its own row) whose standing for "read" holds now
+/// is a live agent definition, a base agent's MACHINE or a PERSON acting as
+/// an agent, a hub hook's author (FIX 1873) (its class taken from its own
+/// row), whose standing for "read" holds now
 /// (`authority::principal_standing_in_txn`), and then each Grant that alone
 /// stands for it by that same rule (`AgentGrantStanding::stands_for`). A
 /// Grant row that does not decode stands for no one, and is counted.
@@ -241,7 +244,7 @@ fn reader_grants_in(
 ) -> Result<Vec<(EntityId, Scope)>> {
     let class = match crate::vault::live_entity_row_in_txn(&vault.store, txn, &reader)?.live_type()
     {
-        Some(ENTITY_TYPE_AGENT_DEF) => EdgeActorClass::Agent,
+        Some(ENTITY_TYPE_AGENT_DEF | ENTITY_TYPE_PERSON) => EdgeActorClass::Agent,
         Some(ENTITY_TYPE_MACHINE) => EdgeActorClass::System,
         _ => return Ok(Vec::new()),
     };

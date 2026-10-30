@@ -5,7 +5,6 @@
 
 use serde_json::{Value, json};
 
-use crate::claim::ClaimReadStatus;
 use crate::runtime_hooks::outcome::HookOutcome;
 use crate::runtime_hooks::runner::{bounded, judge};
 use crate::runtime_hooks::{
@@ -29,7 +28,8 @@ impl Vault {
     /// the gate runs it on a call its selector takes: the input in the
     /// gate's shape, as the reader the replay reads as, in the hook's own
     /// scope, with an empty receipt tail; each read live under the grant
-    /// [`Self::hooks_replay_binding`] reads with; the outcome judged against
+    /// [`Self::hooks_replay_binding`] reads with, a hub hook's under its
+    /// publisher's Grant (FIX 1873); the outcome judged against
     /// the binding and put to the gate's own checks, all but the verb's args
     /// check, which only its dispatcher holds. `None` for a call the
     /// selector does not take, as the gate runs no body on it. Beside the
@@ -57,10 +57,7 @@ impl Vault {
             }
         };
         let grant = grant::effective_grant(self, binding_id, row)?;
-        let memory = self.memory(grant.reader, filter::edge_class(grant.reader_class));
-        let lane = memory
-            .read_lane(ClaimReadStatus::Recorded)
-            .map_err(|error| Error::InvalidConfig(format!("{}: {}", error.code, error.message)))?;
+        let lane = grant::reader_lane(self, &grant)?;
         let body = self
             .pack_hook_body(row)
             .map_err(|error| error.to_string())

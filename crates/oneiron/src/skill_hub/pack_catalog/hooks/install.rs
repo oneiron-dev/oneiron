@@ -73,7 +73,9 @@ impl Vault {
     }
 
     /// Every enabled binding of `pack` stops, each under the owner's
-    /// envelope for its own source. The CODE entities stay.
+    /// envelope for its own source, and a hub author's Grant narrows to its
+    /// hooks still running, or is revoked with none left. The CODE entities
+    /// stay.
     pub(in crate::skill_hub::pack_catalog) fn disable_pack_hooks_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -103,14 +105,19 @@ impl Vault {
         for (id, previous, row) in transitions {
             crate::runtime_hooks::sync_binding_cursor_in_txn(self, txn, id, Some(&previous), &row)?;
         }
-        Ok(())
+        // A stopped hook's author keeps only the reach its running hooks
+        // declare (FIX 1873).
+        let bindings = bindings_in_txn(&self.store, txn)?;
+        self.settle_hook_author_grants_in_txn(txn, owner, &bindings)
     }
 
     /// Each hook of `source` becomes a CODE entity, derived from the pack
     /// source, plus its owner-approved binding. A binding the source no
     /// longer carries, or whose body moved, stops; a moved body's new binding
-    /// keeps its hook's dial and the owner's grant. The caller tells the verb
-    /// hooks once its write commits, so no reader caches the list before it.
+    /// keeps its hook's dial and the owner's grant. A hub author's Grant then
+    /// holds what its running hooks declare: kept when unchanged, minted
+    /// again when changed. The caller tells the verb hooks once its write
+    /// commits, so no reader caches the list before it.
     pub(in crate::skill_hub::pack_catalog) fn bind_pack_hooks_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -322,6 +329,12 @@ impl Vault {
                 previous.as_ref(),
                 &row,
             )?;
+        }
+        // The owner's bind settles each hub author's Grant to what its
+        // running hooks declare, in this writer (FIX 1873).
+        if let HookBinder::Owner(owner) = binder {
+            let bindings = bindings_in_txn(&self.store, txn)?;
+            self.settle_hook_author_grants_in_txn(txn, owner, &bindings)?;
         }
         Ok(bound)
     }
