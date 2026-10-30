@@ -194,15 +194,28 @@ pub fn preview_persona_snapshot_as(
     input: PersonaSnapshotPreviewRequest,
     destination: impl Into<ReadDestination>,
 ) -> MemoryResult<PersonaSnapshotPreview> {
+    preview_persona_snapshot_listing_as(vault, owner, input, destination)
+        .map(|(preview, _)| preview)
+}
+
+/// [`preview_persona_snapshot_as`], beside the rows the preview carries
+/// (FIX 6080): its subject, each row's person, the claims and relationship
+/// records its rows cite, and the claims a relationship row's label reads
+/// ([`Vault::persona_snapshot_compile_rows`]).
+pub fn preview_persona_snapshot_listing_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: PersonaSnapshotPreviewRequest,
+    destination: impl Into<ReadDestination>,
+) -> MemoryResult<(PersonaSnapshotPreview, Vec<EntityId>)> {
     owner.revalidate(vault)?;
-    let compile = vault.compile_persona_snapshot(
-        &input.subject,
-        &PersonaSnapshotCompileOptions {
-            destination: destination.into(),
-            ..Default::default()
-        },
-    )?;
-    Ok(PersonaSnapshotPreview {
+    let options = PersonaSnapshotCompileOptions {
+        destination: destination.into(),
+        ..Default::default()
+    };
+    let compile = vault.compile_persona_snapshot(&input.subject, &options)?;
+    let rows = vault.persona_snapshot_compile_rows(&compile, &options)?;
+    let preview = PersonaSnapshotPreview {
         subject: compile.subject_ref,
         stamp: compile.stamp.identity(),
         identity_line: compile.identity_line,
@@ -220,7 +233,8 @@ pub fn preview_persona_snapshot_as(
             .collect(),
         compiled_at: compiled_at(compile.compiled_at_secs)?,
         stale_after_secs: compile.stale_after_secs,
-    })
+    };
+    Ok((preview, rows))
 }
 
 fn exported_copy(

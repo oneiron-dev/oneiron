@@ -610,6 +610,64 @@ impl crate::Vault {
         })
     }
 
+    /// The rows `compile`, compiled under `options`, carries (FIX 6080):
+    /// its subject, each row's person, the claim or relationship record each
+    /// row cites, and for a relationship row the name and role claims its
+    /// coarse label may read, read again as the compile read them. An agent
+    /// take cites an actor, not a row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn persona_snapshot_compile_rows(
+        &self,
+        compile: &PersonaSnapshotCompile,
+        options: &PersonaSnapshotCompileOptions,
+    ) -> Result<Vec<EntityId>> {
+        let mut rows = vec![compile.subject_ref];
+        let mut related = BTreeSet::new();
+        for row in &compile.rows {
+            rows.push(row.subject_ref);
+            rows.extend(row.provenance_refs.iter().filter_map(|cited| {
+                match cited.split_once(':')? {
+                    ("claim" | "relationship", id) => EntityId::from_hex(id).ok(),
+                    _ => None,
+                }
+            }));
+            if row.kind == PersonaSnapshotRowKind::Relationship {
+                related.insert(row.subject_ref);
+            }
+        }
+        if !related.is_empty() {
+            let audience_read = options
+                .audience
+                .as_ref()
+                .map(|key| self.scoped_read(key.clone()));
+            let kept = {
+                let rtxn = self.store.env.read_txn()?;
+                crate::settings::device_local_worlds_for(self, &rtxn, &options.destination)?
+            };
+            let mut receipt = None;
+            for person in &related {
+                let claims = self.persona_snapshot_candidate_claims(
+                    person,
+                    audience_read.as_ref(),
+                    &kept,
+                    &mut receipt,
+                )?;
+                for predicate in [
+                    PERSONA_SNAPSHOT_NAME_PREDICATE,
+                    PERSONA_SNAPSHOT_ROLE_PREDICATE,
+                ] {
+                    rows.extend(top_claim_text(&claims, predicate).map(|(claim, _)| claim.id));
+                }
+            }
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        Ok(rows)
+    }
+
     /// Admissible claims about `person_ref`, none in a `kept` world; with an
     /// audience, only those the audience may read, the audience read folded
     /// into `receipt`.
