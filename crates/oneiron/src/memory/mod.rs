@@ -281,6 +281,7 @@ pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpt
 #[cfg(feature = "sync")]
 pub(crate) use recall::RecallKinds;
 pub(crate) use recall::check_recall_request;
+pub(crate) use recall::conversation_candidate_admits;
 pub use recall::{
     CONTAINER_KINDS, CitedMessage, DEFAULT_CALL_MODE_DEADLINE, Effort, HOME_RECALL_MERGE_ORDER,
     HomeRecallCaller, HomeRecallMergeOrder, MEMORY_PACK_VERSION, MemoryItem, MemoryPack,

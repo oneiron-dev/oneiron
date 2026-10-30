@@ -7,6 +7,7 @@ use super::*;
 use crate::ports::EntityStoreRead;
 
 mod call_mode;
+mod conversation;
 mod home;
 mod hyde_host;
 mod items;
@@ -20,6 +21,7 @@ mod stale;
 pub use stale::MemoryStaleStamp;
 
 pub use self::call_mode::{DEFAULT_CALL_MODE_DEADLINE, RecallEffort, resolve_recall_dial};
+pub(crate) use self::conversation::conversation_candidate_admits;
 pub use self::home::{
     HOME_RECALL_MERGE_ORDER, HomeRecallCaller, HomeRecallMergeOrder, RecallResidence,
     RecallResidenceHit, RecallResidenceSource,
@@ -149,6 +151,13 @@ pub struct RecallScope {
     /// Project audience ids. Empty requests add no narrowing to the credential.
     #[serde(default)]
     pub project_refs: Vec<String>,
+    /// Conversation entity refs. Empty adds no narrowing; with `person_ref`,
+    /// only conversations selected by both axes remain.
+    #[serde(default)]
+    pub conversation_refs: Vec<String>,
+    /// PERSON entity ref; selects conversations where they authored at least
+    /// one live MESSAGE, never conversations that merely mention them.
+    pub person_ref: Option<String>,
     /// Facet entity ref; strict facet narrowing when set.
     pub facet: Option<String>,
     /// Registry kinds to return (`MESSAGE`, `CLAIM`, `PERSON`, ...). Unset
@@ -782,6 +791,8 @@ impl Memory<'_> {
         // the kinds here, then the actor gate under one authority per snapshot
         // (FIX 11648).
         let gate = lane.recall_candidate_gate(&plan_policy, &plan_filter);
+        let conversation_gate =
+            conversation::ConversationGate::new(&gate, self.vault, &selection.conversations);
         let admitted =
             |store: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &EntityId| {
                 // Reject irrelevant kind/predicate rows before the actor gate.
@@ -917,7 +928,9 @@ impl Memory<'_> {
                 .retrieval_effort(effective, &seeds)
                 .authority_filter(plan_filter.clone())
                 .token_budget(budget);
-            builder = builder.filter_candidates(&admitted).gate_candidates(&gate);
+            builder = builder
+                .filter_candidates(&admitted)
+                .gate_candidates(&conversation_gate);
             // A facet narrows strictly inside this same builder (FIX 9961):
             // the pack it admits and pins is the one its items and its
             // rendering are read from, and it walks no edges, so nothing

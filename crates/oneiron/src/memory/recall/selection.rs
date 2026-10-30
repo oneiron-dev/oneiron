@@ -76,6 +76,9 @@ pub(crate) struct RecallSelection {
     asked: Option<WorldAuthoritySet>,
     /// The project audiences read.
     pub(crate) projects: CorpusScope,
+    /// The explicit/PERSON-authored conversations read; `None` adds no
+    /// conversation narrowing, and an empty set reads none.
+    pub(crate) conversations: Option<std::collections::BTreeSet<EntityId>>,
     /// The facet a strict facet narrowing keeps.
     pub(crate) facet: Option<EntityId>,
     /// The kinds returned.
@@ -111,6 +114,10 @@ impl RecallSelection {
                 }
             }),
             project_ids,
+            conversation_ids: self
+                .conversations
+                .as_ref()
+                .map(|conversations| conversations.iter().copied().collect()),
             facet: self.facet,
             kinds: self.kinds.listed().map(<[u8]>::to_vec),
         }
@@ -182,6 +189,7 @@ impl Memory<'_> {
             worlds: self.room_met(asked.clone())?,
             asked,
             projects: self.selected_projects(scope)?,
+            conversations: None,
             facet: None,
             kinds: RecallKinds::new(recall_kinds(scope)?),
         }))
@@ -205,6 +213,7 @@ impl Memory<'_> {
             .as_deref()
             .map(|facet| self.resolve_ref(facet))
             .transpose()?;
+        selection.conversations = self.selected_conversations(scope)?;
         if let Some(pin) = pin {
             let _ = pin.selection.set(selection.clone());
         }
