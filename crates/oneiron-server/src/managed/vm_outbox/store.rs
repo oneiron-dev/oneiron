@@ -116,8 +116,9 @@ pub(super) struct Diverged {
     /// The agreed version's digest the origin retired, when the retirement
     /// named one.
     pub(super) retired: Option<String>,
-    /// The owner's answer once given: kept, or removed and still being
-    /// carried.
+    /// The owner's answer once given: on `diverged`, a removal of the
+    /// host's copy still being carried; on `notice`, the answer the host is
+    /// told of.
     #[serde(default)]
     pub(super) answer: Option<DivergedAnswer>,
 }
