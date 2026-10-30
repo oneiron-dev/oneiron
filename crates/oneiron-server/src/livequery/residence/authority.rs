@@ -256,9 +256,11 @@ pub(super) fn authority_entry(
 
 /// One part of an authority entry the proved machine appends past one
 /// request frame (FIX 8246), held for this socket until it is whole, then
-/// imported as `authority_append` imports it. Answers how far the entry is
-/// staged while parts are to come, then the append's outcome. Only a machine
-/// of the owner's is heard; any other looks missing.
+/// imported as `authority_append` imports it. The staged bytes are charged
+/// to the retained-memory line as a countersign stage's are, and a part the
+/// line has no room for answers the memory floor (FIX 5111). Answers how far
+/// the entry is staged while parts are to come, then the append's outcome.
+/// Only a machine of the owner's is heard; any other looks missing.
 pub(super) fn authority_append_part(
     server: &SyncServer,
     peer: PeerMachine,
@@ -279,6 +281,7 @@ pub(super) fn authority_append_part(
         input.total,
         input.offset,
         &part,
+        || super::checkpoint_roots::stage_charge(server),
     )
     .map_err(|_| AppError::bad_request("authority entry part refused", Some("part")))?
     .ok_or_else(|| AppError::not_found("authority history", None))?;
@@ -288,5 +291,6 @@ pub(super) fn authority_append_part(
             Some(Vec::new()),
         ),
         AuthorityAppendPart::Whole(progress) => append_answer(&progress),
+        AuthorityAppendPart::NoRoom => return Err(AppError::memory_floor()),
     })
 }

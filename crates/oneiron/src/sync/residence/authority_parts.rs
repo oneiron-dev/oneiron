@@ -8,9 +8,12 @@
 //! reads a checkpoint image, and puts it back in its place. The other way, a
 //! machine appends an entry past one request frame a part at a time
 //! ([`authority_append_part_for`]); the home holds the parts for that socket
-//! alone and imports the entry once it is whole. Either side joins the parts
-//! and checks them against the entry's hash before the signed-history door
-//! reads them. No entry is clipped or refused for its length.
+//! alone and imports the entry once it is whole, the room they take charged
+//! as a countersign stage's is (FIX 5111). Either side joins the parts and
+//! checks them against the entry's hash before the signed-history door reads
+//! them. No entry is clipped or refused for its length.
+
+use std::sync::{Mutex, PoisonError};
 
 use super::authority_tail::{
     AuthorityAppendProgress, ITEM11_AUTHORITY_FILTER_SCOPE, authority_append_progress_for,
@@ -18,8 +21,9 @@ use super::authority_tail::{
 };
 use crate::Vault;
 use crate::authority::{
-    AuthorityEntryHash, PeerMachine, WorldPrivacyView, authority_entry_hash,
-    authority_log_entity_id_from_hash, decode_authority_log_entry_body, side_world,
+    AuthorityEntryHash, CountersignStageCharge, PeerMachine, WorldPrivacyView,
+    authority_entry_hash, authority_log_entity_id_from_hash, decode_authority_log_entry_body,
+    side_world,
 };
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::error::{Error, Result};
@@ -143,13 +147,27 @@ pub fn authority_entry_part_for(
 }
 
 /// The entry a machine appends a part at a time on one socket, held for that
-/// socket alone until it is whole ([`authority_append_part_for`]). It goes
-/// with the socket.
-#[derive(Debug)]
+/// socket alone until it is whole ([`authority_append_part_for`]), with the
+/// host's charge for the room it takes. It goes with the socket, and its
+/// charge with it.
 pub struct AuthorityAppendStage {
     hash: AuthorityEntryHash,
     total: u64,
     bytes: Vec<u8>,
+    /// Only the socket's loop takes it, through `&mut`; the mutex keeps the
+    /// stage `Sync`.
+    charge: Mutex<Box<dyn CountersignStageCharge>>,
+}
+
+impl std::fmt::Debug for AuthorityAppendStage {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthorityAppendStage")
+            .field("hash", &self.hash)
+            .field("total", &self.total)
+            .field("staged", &self.bytes.len())
+            .finish_non_exhaustive()
+    }
 }
 
 /// What one append part came to ([`authority_append_part_for`]).
@@ -159,19 +177,43 @@ pub enum AuthorityAppendPart {
     Held,
     /// The entry was whole and went through the signed-history door.
     Whole(AuthorityAppendProgress),
+    /// The host's line had no room for the part: the stage is dropped, and
+    /// its machine starts the entry again on a later pass.
+    NoRoom,
+}
+
+/// Charges room for `more` bytes past those `stage` holds, before they are
+/// allocated, as a countersign stage charges its own: the room grows by
+/// doubling, up to the entry's length. `false` when the host's line has none.
+fn reserve_charged(stage: &mut AuthorityAppendStage, more: usize) -> bool {
+    let want = stage.bytes.len().saturating_add(more);
+    let room = stage.bytes.capacity();
+    if want <= room {
+        return true;
+    }
+    let total = usize::try_from(stage.total).unwrap_or(usize::MAX);
+    let room = want.max(room.saturating_mul(2)).min(total.max(want));
+    let charge = stage.charge.get_mut().unwrap_or_else(PoisonError::into_inner);
+    if !charge.resize(room) {
+        return false;
+    }
+    stage.bytes.reserve_exact(room - stage.bytes.len());
+    true
 }
 
 /// Takes part `part` at `offset` of the entry `hash` names, `total` bytes
 /// long, that a linked machine appends on the socket whose stage is `stage`.
-/// A part at offset zero starts the entry again. Once whole, the bytes are
-/// checked against `hash` and imported as a one-entry append
-/// ([`authority_append_progress_for`]). `None` for a peer that is not a
-/// proven linked machine.
+/// A part at offset zero starts the entry again, under a new charge `charge`
+/// makes; the joined bytes stay charged until the entry is imported. Once
+/// whole, the bytes are checked against `hash` and imported as a one-entry
+/// append ([`authority_append_progress_for`]). `None` for a peer that is not
+/// a proven linked machine.
 ///
 /// # Errors
 ///
 /// A part that is not the next one or runs past its entry's length; joined
 /// bytes that are not the entry `hash` names; storage errors.
+#[allow(clippy::too_many_arguments)]
 pub fn authority_append_part_for(
     vault: &Vault,
     peer: PeerMachine,
@@ -180,6 +222,7 @@ pub fn authority_append_part_for(
     total: u64,
     offset: u64,
     part: &[u8],
+    charge: impl FnOnce() -> Box<dyn CountersignStageCharge>,
 ) -> Result<Option<AuthorityAppendPart>> {
     if !owner_machine(vault, peer)? {
         *stage = None;
@@ -195,6 +238,7 @@ pub fn authority_append_part_for(
             hash,
             total,
             bytes: Vec::new(),
+            charge: Mutex::new(charge()),
         });
     }
     let mut held = match stage.take() {
@@ -205,12 +249,19 @@ pub fn authority_append_part_for(
         }
         _ => return Err(refused("not the next part")),
     };
+    if !reserve_charged(&mut held, part.len()) {
+        return Ok(Some(AuthorityAppendPart::NoRoom));
+    }
     held.bytes.extend_from_slice(part);
     if end < total {
         *stage = Some(held);
         return Ok(Some(AuthorityAppendPart::Held));
     }
-    let entry = held.bytes;
+    let AuthorityAppendStage {
+        bytes: entry,
+        charge: _charge,
+        ..
+    } = held;
     if authority_entry_hash(&decode_authority_log_entry_body(&entry)?)? != hash {
         return Err(refused("the joined entry is not the one named"));
     }
