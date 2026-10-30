@@ -82,30 +82,35 @@ impl HomeSearch {
 
     /// [`Self::search`] for a caller narrower than this device's owner
     /// (FIX 2907): the home judges `caller`'s own holder proof, which this
-    /// install signs over with the request, and answers within the caller's
-    /// reach and this device's selector. No home, or a refusal, is no home
-    /// hits, never this device's own unscoped scan.
+    /// install signs over with the request and the caller's `locality` on
+    /// this device (FIX 3550), and answers within the caller's reach, at
+    /// that locality, and this device's selector. No home, or a refusal, is
+    /// no home hits, never this device's own unscoped scan.
     pub async fn search_for(
         &self,
         query: &str,
         limit: usize,
         caller: &crate::authority::ForwardedCallerProof,
+        locality: crate::claim::CallerLocality,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, Some(caller)).await
+        self.ask(query, limit, None, Some((caller, locality))).await
     }
 
     /// A recall's search (FIX 2905): the home narrows it by `scope`, the
     /// scope the device's recall resolved, before its candidate cut, and
     /// returns the unit recall returns. `caller` is a narrower caller's own
-    /// holder proof, as for [`Self::search_for`]; `None` asks as this
-    /// device's owner. No home, or a refusal, is no home hits: a scoped
-    /// search never falls back to this device's own scan.
+    /// holder proof and its locality, as for [`Self::search_for`]; `None`
+    /// asks as this device's owner. No home, or a refusal, is no home hits:
+    /// a scoped search never falls back to this device's own scan.
     pub async fn search_recall(
         &self,
         query: &str,
         limit: usize,
         scope: &crate::sync::residence::ResolvedRecallSelection,
-        caller: Option<&crate::authority::ForwardedCallerProof>,
+        caller: Option<(
+            &crate::authority::ForwardedCallerProof,
+            crate::claim::CallerLocality,
+        )>,
     ) -> Result<ResidenceSearch, TransportError> {
         self.ask(query, limit, Some(scope), caller).await
     }
@@ -115,7 +120,10 @@ impl HomeSearch {
         query: &str,
         limit: usize,
         scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
-        caller: Option<&crate::authority::ForwardedCallerProof>,
+        caller: Option<(
+            &crate::authority::ForwardedCallerProof,
+            crate::claim::CallerLocality,
+        )>,
     ) -> Result<ResidenceSearch, TransportError> {
         let mut config = self.config.clone();
         config.residence_mode = *self.mode.borrow();

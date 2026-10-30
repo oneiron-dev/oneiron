@@ -760,10 +760,11 @@ fn read_thin_item(
 /// a query door asks the home without a sync client.
 ///
 /// With `caller`, the search is that caller's (FIX 2907): its own holder
-/// proof goes to the home unchanged, with this install's forwarding proof
-/// over it and the request, and the home answers within the caller's reach
-/// and this device's selector. A forwarded search never falls back to this
-/// device's own scan: no home is no hits.
+/// proof goes to the home unchanged, with where the caller sits relative to
+/// this device (FIX 3550) and this install's forwarding proof over both and
+/// the request, and the home answers within the caller's reach, at that
+/// locality, and this device's selector. A forwarded search never falls
+/// back to this device's own scan: no home is no hits.
 ///
 /// With `scope`, the search is a recall's (FIX 2905): the home narrows it by
 /// the scope the device's recall resolved before its candidate cut, and a
@@ -775,7 +776,10 @@ pub(crate) async fn search_resident(
     query: &str,
     limit: usize,
     scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
-    caller: Option<&crate::authority::ForwardedCallerProof>,
+    caller: Option<(
+        &crate::authority::ForwardedCallerProof,
+        crate::claim::CallerLocality,
+    )>,
 ) -> Result<ResidenceSearch, TransportError> {
     if config.residence_mode != SyncResidenceMode::Opened {
         return Err(refused());
@@ -794,18 +798,20 @@ pub(crate) async fn search_resident(
     if let Some(scope) = scope {
         params["scope"] = serde_json::to_value(scope).map_err(|_| refused())?;
     }
-    if let Some(caller) = caller {
+    if let Some((caller, locality)) = caller {
         let machine = crate::sync::residence::with_forwarded_search(
             query,
             limit,
             &selector_wire,
             scope,
+            locality,
             |request| vault.forwarding_machine_proof(request, caller),
         )
         .map_err(|e| TransportError::Storage(e.to_string()))?
         .ok_or_else(refused)?;
         params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
         params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
+        params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
     }
     match ResidenceRpc::connect(vault, config, budgets).await? {
         // More hits than one page carries come a page at a time (FIX 8865).

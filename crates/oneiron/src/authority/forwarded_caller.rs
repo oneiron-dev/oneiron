@@ -18,6 +18,13 @@
 //! key, and the device's selector stays the second ceiling every hit must
 //! pass. Each refusal names its branch (mesh PR2-reasons) and never echoes a
 //! token or key.
+//!
+//! FIX 3550: the device also signs, with the request, where its caller sits
+//! relative to it. The home judges both hops: the carrier machine the
+//! connection proved, and for a caller off the carrier an unknown
+//! destination beside it, whose read key is placed off the device too. The
+//! call's receipt names the verified caller, its class and slip, and records
+//! the carrier machine.
 
 use ed25519_dalek::{Signature, Signer, VerifyingKey};
 use serde::{Deserialize, Serialize};
@@ -120,13 +127,16 @@ impl VerifiedForwardedCaller {
         &self.caller
     }
 
-    /// The caller's own read key ([`Vault::credential_read_key`]).
+    /// The caller's own read key ([`Vault::credential_read_key`]), on this
+    /// device: the home places it at the locality the carrier signed
+    /// (FIX 3550).
     #[must_use]
     pub const fn read_key(&self) -> &ScopedReadActorKey {
         &self.read_key
     }
 
-    /// The linked machine that forwarded the request.
+    /// The linked machine that forwarded the request: the carrier the
+    /// call's receipt records (FIX 3550).
     #[must_use]
     pub const fn machine(&self) -> EntityId {
         self.machine
