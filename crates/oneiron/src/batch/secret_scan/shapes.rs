@@ -1,5 +1,6 @@
 //! Credential-shape detection shared by write, serve, and export.
 
+mod blocklist_entries;
 // A recovery phrase's spans (FIX 1099).
 mod mnemonic_spans;
 pub(super) use mnemonic_spans::mnemonic_spans;
@@ -49,10 +50,7 @@ pub(super) fn blocklist_longest() -> usize {
 }
 
 fn blocklist() -> impl Iterator<Item = &'static str> {
-    BLOCKLIST
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    blocklist_entries::ENTRIES.iter().copied()
 }
 
 /// BIP39 phrase lengths: 128 to 256 bits of entropy in 32-bit steps.
