@@ -11,6 +11,7 @@
 //! content-free receipt.
 
 use std::cell::Cell;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -210,8 +211,10 @@ pub(crate) fn erase_retained_in_txn(
 
 /// Replays the retained op at `key` through the entity ladder in a savepoint,
 /// its share passed over; `true` when it landed. A refusal a later pass may
-/// lift leaves it waiting; any other refusal ends it as Rejected.
-fn replay(vault: &Vault, key: &str) -> Result<bool> {
+/// lift leaves it waiting; any other refusal ends it as Rejected. `windows`
+/// holds the tombstones of each window this pass loaded, so a window is
+/// loaded once per pass, however many of its ops the pass replays.
+fn replay(vault: &Vault, key: &str, windows: &mut HashMap<String, TombstoneIndex>) -> Result<bool> {
     // The window first, in a read of its own: the tombstone index below
     // loads the window document, which opens its own read transactions and
     // takes the materializer lock on a live window — neither crosses into
@@ -226,7 +229,9 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
         };
         work.window.clone()
     };
-    let tombstones = window_tombstones(vault, &window);
+    let tombstones = windows
+        .entry(window.clone())
+        .or_insert_with(|| window_tombstones(vault, &window));
     vault.with_write_txn_grouped(|wtxn| {
         let Some(work) = WORK.get(vault, wtxn, &key.to_owned())? else {
             return Ok(false);
@@ -240,7 +245,7 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
             return Ok(false);
         }
         let id = entity_of(key)?;
-        let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, &tombstones);
+        let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, tombstones);
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         let step = {
             REPLAYING.with(|replaying| replaying.set(true));
@@ -354,8 +359,10 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
     }
     let mut landed = 0;
     let mut served = None;
+    // Each window this pass replays into is loaded once (FIX 11185).
+    let mut windows = HashMap::new();
     for (caller, key) in turns.due.into_iter().take(MAINTENANCE_DRAIN_TURNS) {
-        if replay(vault, &key)? {
+        if replay(vault, &key, &mut windows)? {
             landed += 1;
         }
         served = Some(caller);
