@@ -15,6 +15,8 @@ sha=$1
 run=$2
 here=$(pwd)
 export PATH=$HOME/.cargo/bin:$PATH CARGO_TERM_COLOR=never CARGO_INCREMENTAL=0
+# The release engine build was OOM-killed at 20G with 8 jobs (FIX 10529).
+export CARGO_BUILD_JOBS=6 CARGO_PROFILE_RELEASE_OPT_LEVEL=1
 corpus=${DECK_GATE_CORPUS:-$here/../deck-gate-corpus}
 schemas=${DECK_GATE_SCHEMAS:-$here/../deck-gate-schemas}
 out=$here/out/$run
