@@ -602,8 +602,14 @@ fn fold_stored_tail_in_txn(
             &baseline.base,
         ) {
             // The base's first-seen seconds are every row's, the carried too.
-            let next_deadline_secs =
-                next_deadline(key, &fold, &base.projected_rows(), base.first_seen());
+            let next_deadline_secs = next_deadline(
+                &fold,
+                base.stale_roster_deadline(
+                    &fold,
+                    key.now_secs,
+                    key.policy.stale_roster_window_secs,
+                ),
+            );
             return Ok(AuthorityTailFold::Complete {
                 view: AuthorityView {
                     fold: Arc::new(fold),
@@ -646,7 +652,16 @@ fn fold_stored_tail_in_txn(
         },
         None,
     );
-    let next_deadline_secs = next_deadline(key, &fold, &entries, &first_seen_at_secs);
+    let next_deadline_secs = next_deadline(
+        &fold,
+        next_stale_roster_deadline(
+            &entries,
+            &fold,
+            &first_seen_at_secs,
+            key.now_secs,
+            key.policy.stale_roster_window_secs,
+        ),
+    );
     Ok(AuthorityTailFold::Complete {
         view: AuthorityView {
             fold: Arc::new(fold),
@@ -659,27 +674,16 @@ fn fold_stored_tail_in_txn(
     })
 }
 
-/// The next second `fold` changes on its own. The fold's only
-/// clock-sensitive transition is stale-roster approval expiry, here and in
-/// the fold with no vouch that bounds this install's view. Slip TTL is
-/// checked by each caller against its own snapshot clock, not frozen into
-/// this authority view.
-fn next_deadline<E: std::borrow::Borrow<AuthorityLogEntry>>(
-    key: AuthorityCacheKey,
-    fold: &AuthorityFold,
-    rows: &[E],
-    first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
-) -> Option<u64> {
-    next_stale_roster_deadline(
-        rows,
-        fold,
-        first_seen_at_secs,
-        key.now_secs,
-        key.policy.stale_roster_window_secs,
-    )
-    .into_iter()
-    .chain(fold.install.no_vouch_deadline)
-    .min()
+/// The next second `fold` changes on its own, with `stale_roster` the next
+/// stale-roster deadline of its rows. The fold's only clock-sensitive
+/// transition is stale-roster approval expiry, here and in the fold with no
+/// vouch that bounds this install's view. Slip TTL is checked by each caller
+/// against its own snapshot clock, not frozen into this authority view.
+fn next_deadline(fold: &AuthorityFold, stale_roster: Option<u64>) -> Option<u64> {
+    stale_roster
+        .into_iter()
+        .chain(fold.install.no_vouch_deadline)
+        .min()
 }
 
 /// First-seen seconds for ONE entry inside a readonly fold, reproducing the

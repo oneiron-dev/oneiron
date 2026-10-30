@@ -155,6 +155,10 @@ pub(in crate::authority) struct FoldBase {
     rows: BTreeMap<AuthorityEntryHash, RowSummary>,
     /// The rows a fold past the base reads whole: see [`is_projected`].
     projected: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    /// Whether a row read whole revokes a device, rotates a key or re-roots
+    /// the vault: only past one does the stale-roster window read any row
+    /// ([`stale_roster_rows`]).
+    revokes_roster_keys: bool,
     receipts: BaseReceipts,
     once: Once,
     /// The heads, scope heads and next sequences of the base's view, which
@@ -205,6 +209,9 @@ impl FoldBase {
                 .filter(|(_, entry)| is_projected(&entry.op))
                 .map(|(hash, entry)| (*hash, (*entry).clone()))
                 .collect(),
+            revokes_roster_keys: rows
+                .iter()
+                .any(|(_, entry)| super::stale_roster::revokes_roster_key(&entry.op)),
             receipts: BaseReceipts {
                 first_seen: first_seen.clone(),
                 floors: floors.clone(),
@@ -239,11 +246,6 @@ impl FoldBase {
         self
     }
 
-    /// The first-seen seconds the base folded each row under.
-    pub(in crate::authority) fn first_seen(&self) -> &BTreeMap<AuthorityEntryHash, u64> {
-        &self.receipts.first_seen
-    }
-
     /// Each row the base folded.
     pub(in crate::authority) fn hashes(&self) -> impl Iterator<Item = &AuthorityEntryHash> {
         self.rows.keys()
@@ -263,9 +265,22 @@ impl FoldBase {
         self.once.fold.vault_id
     }
 
-    /// The rows the next stale-roster deadline reads: see [`is_projected`].
-    pub(in crate::authority) fn projected_rows(&self) -> Vec<&AuthorityLogEntry> {
-        self.projected.values().collect()
+    /// The next stale-roster deadline past `now_secs` of `fold`, this
+    /// base's view: over the rows read whole, with the hashes and the
+    /// first-seen seconds the base holds (FIX 12309).
+    pub(in crate::authority) fn stale_roster_deadline(
+        &self,
+        fold: &AuthorityFold,
+        now_secs: u64,
+        window_secs: u64,
+    ) -> Option<u64> {
+        next_stale_roster_deadline(
+            &stale_roster_rows(&self.projected, self.revokes_roster_keys),
+            fold,
+            &self.receipts.first_seen,
+            now_secs,
+            window_secs,
+        )
     }
 
     /// The metadata of the base's rows and `tail`'s, in hash order: the
@@ -314,6 +329,24 @@ impl FoldBase {
         }
         rows.into_values().collect()
     }
+}
+
+/// The rows the stale-roster window reads of `projected`, the rows read
+/// whole, each with the hash the base holds (FIX 12309), where `revokes` says
+/// one of them revokes a device, rotates a key or re-roots the vault. Over
+/// rows with none of these the window expires no approval and finds no
+/// deadline, so then it reads none.
+fn stale_roster_rows(
+    projected: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    revokes: bool,
+) -> Vec<(AuthorityEntryHash, &AuthorityLogEntry)> {
+    if !revokes {
+        return Vec::new();
+    }
+    projected
+        .iter()
+        .map(|(hash, entry)| (*hash, entry))
+        .collect()
 }
 
 impl BaseReceipts {
@@ -645,9 +678,12 @@ impl FoldBase {
         // The install's own view, in its first and only round, over the
         // rows its stale-roster window reads.
         let receipts = self.receipts.past(&log, &self.rows, &new_rows);
-        let read_whole: Vec<&AuthorityLogEntry> = projected.values().collect();
+        let revokes_roster_keys = self.revokes_roster_keys
+            || tail_rows
+                .iter()
+                .any(|(_, entry)| super::stale_roster::revokes_roster_key(&entry.op));
         let (mut view, expired) = super::install_fold::install_view_expiring(
-            &read_whole,
+            &stale_roster_rows(&projected, revokes_roster_keys),
             fold.clone(),
             &receipts.first_seen,
             Some(now_secs),
@@ -680,6 +716,7 @@ impl FoldBase {
             inputs: self.inputs.clone(),
             rows,
             projected,
+            revokes_roster_keys,
             receipts,
             once: Once {
                 judged,

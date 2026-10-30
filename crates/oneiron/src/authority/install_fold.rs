@@ -130,7 +130,7 @@ pub(super) fn fold_as_install(
 
 /// A once fold as this install reads it: its stale-roster window, and the
 /// pin while the fold holds its root (the pinned anchor signed that id here).
-pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
+pub(super) fn install_view<E: super::stale_roster::LogRow>(
     entries: &[E],
     once: AuthorityFold,
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
@@ -151,7 +151,7 @@ pub(super) fn install_view<E: std::borrow::Borrow<AuthorityLogEntry>>(
 
 /// [`install_view`], and the approvals its stale-roster window expired: the
 /// valid entries of `once` the view does not hold.
-pub(super) fn install_view_expiring<E: std::borrow::Borrow<AuthorityLogEntry>>(
+pub(super) fn install_view_expiring<E: super::stale_roster::LogRow>(
     entries: &[E],
     once: AuthorityFold,
     first_seen_at_secs: &BTreeMap<AuthorityEntryHash, u64>,
