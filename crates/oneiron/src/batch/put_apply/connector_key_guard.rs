@@ -38,6 +38,7 @@ pub(super) fn validate_connector_manifest_put(
                 || incoming.protocol_revision != old.protocol_revision
                 || incoming.pending_manifest != old.pending_manifest
                 || incoming.slate_ref != old.slate_ref
+                || incoming.staged_slate_ref != old.staged_slate_ref
                 || incoming.slate_revision != old.slate_revision
                 || incoming.admission_epoch != old.admission_epoch
                 || incoming.consent_required != old.consent_required
