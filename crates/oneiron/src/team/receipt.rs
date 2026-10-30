@@ -337,7 +337,9 @@ pub fn record_team_receipt_sourced(
 }
 
 /// Settles a team run's anchored outcome and feeds its pattern skill's
-/// payoff. Settling again with the same receipt replaces the outcome.
+/// payoff. Settling again with the same receipt replaces the outcome. The
+/// outcome names and scores the critics of the team's bound deliverables,
+/// as [`settle_team_work_outcome`] does.
 ///
 /// # Errors
 ///
@@ -348,7 +350,60 @@ pub fn settle_team_outcome(
     team_ref: &str,
     outcome: &TeamOutcome,
 ) -> Result<TeamReceipt> {
-    vault.with_write_txn_grouped(|wtxn| settle_team_outcome_in_txn(vault, wtxn, team_ref, outcome))
+    settle_team_work_outcome(vault, team_ref, outcome, &[])
+}
+
+/// [`settle_team_outcome`] for an outcome that judged `work`, the claims the
+/// settler names as the team's result, beside its bound deliverables (FIX
+/// 12106). The stored outcome names the critics whose persisted reviews
+/// judged that work, read from the store in place of the caller's, and each
+/// critique's outcome is recorded on its critic's cell as the owner path
+/// records it, written as the review's own principal. Capture only: critics
+/// that do not read leave the outcome's critics unknown, and a critique's
+/// outcome that does not land never fails the settlement.
+///
+/// # Errors
+///
+/// As [`settle_team_outcome`].
+pub(crate) fn settle_team_work_outcome(
+    vault: &Vault,
+    team_ref: &str,
+    outcome: &TeamOutcome,
+    work: &[EntityId],
+) -> Result<TeamReceipt> {
+    vault.with_write_txn_grouped(|wtxn| {
+        let mut outcome = outcome.clone();
+        let reviews = match super::owner_outcome::team_deliverables_in_txn(vault, wtxn, team_ref) {
+            Ok(mut deliverables) => {
+                deliverables.extend_from_slice(work);
+                crate::critic::review::name_deliverable_critics_in_txn(
+                    vault,
+                    wtxn,
+                    &deliverables,
+                    &mut outcome,
+                )
+            }
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a team's deliverables did not read; its outcome names no critic"
+                );
+                outcome.critics = None;
+                None
+            }
+        };
+        let settled = settle_team_outcome_in_txn(vault, wtxn, team_ref, &outcome)?;
+        if let Some(reviews) = &reviews {
+            crate::critic::review::record_deliverable_outcomes_in_txn(
+                vault,
+                wtxn,
+                reviews,
+                &outcome,
+                None,
+            );
+        }
+        Ok(settled)
+    })
 }
 
 /// [`settle_team_outcome`] in the caller's transaction, so the source of the
