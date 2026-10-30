@@ -76,9 +76,10 @@ fn attachments_deleted(doc: &LoroDoc, notes: &[EntityId]) -> Result<bool> {
     }
     let proposals = doc.get_map("note_proposals");
     for (key, row) in &changes {
-        match row {
-            Some(row) => map_insert_bytes(&proposals, key, row)?,
-            None => map_delete(&proposals, key)?,
+        if let Some(row) = row {
+            map_insert_bytes(&proposals, key, row)?;
+        } else {
+            map_delete(&proposals, key)?;
         }
     }
     Ok(true)
