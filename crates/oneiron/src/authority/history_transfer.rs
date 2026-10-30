@@ -445,17 +445,22 @@ impl Vault {
     }
 
     /// The same move inside the caller's write transaction. `signer` runs
-    /// while that transaction is open, so it must not open another.
+    /// while that transaction is open, so it must not open another. A
+    /// frontier wider than one entry names is joined first by `joiner`, the
+    /// host signer the move retires, as its host-issued ops are (FIX 8498,
+    /// Engine 09:31 (3)); the move then names the join tips.
     pub(super) fn re_root_authority_in_txn<S>(
         &self,
         txn: &mut heed::RwTxn<'_>,
         new_device: DeviceAuthority,
-        signer_key: AuthorityKey,
+        (signer_key, joiner): (AuthorityKey, FrontierSigner<'_>),
         signer: S,
     ) -> Result<AuthorityLogEntry>
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        self.prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?;
         let mut entry = self.unsigned_re_root_in_txn(txn, new_device, signer_key)?;
         entry.signer.signature = signer(&authority_transcript(&entry)?)?;
         self.apply_signed_re_root_in_txn(txn, &entry)?;
