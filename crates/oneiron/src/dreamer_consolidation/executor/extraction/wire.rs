@@ -4,6 +4,13 @@
 //! shape fault refuses a reply as malformed hex did; a well-formed label or
 //! quote that binds nothing is a named result, filed where an unadmitted id
 //! or a bad range was filed before. No model-chosen id reaches a candidate.
+//!
+//! A deterministic fallback's reply is authored before any call (a
+//! resident's failure rules), so it cannot know a call's labels: its
+//! candidates may also name a subject by its 32-hex id and cite a source by
+//! its id with a byte range or a claim id (FIX 7577). Its sources bind
+//! through the call's map as a label does, and its subject id is the
+//! resident's own; a model's reply never reads these shapes.
 
 use super::ParsedCandidate;
 use super::quote_binding::{QuoteBinding, bind_quote};
@@ -161,8 +168,9 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
         ));
     }
     let reply = extraction_reply(response).map_err(|error| error.to_string())?;
+    let authored = authored_fallback(response);
     for (index, candidate) in reply.candidates.iter().enumerate() {
-        if let Some(field) = contract_fault(candidate) {
+        if let Some(field) = contract_fault(candidate, authored) {
             return Err(format!(
                 "extraction candidate {index} breaks its contract at {field}"
             ));
@@ -171,8 +179,19 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
     Ok(())
 }
 
-/// The first contract field `candidate` gets wrong, if any.
-fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
+/// Whether `response` is a deterministic fallback's reply, whose candidates
+/// were authored before its call (FIX 7577).
+pub(super) fn authored_fallback(response: &LlmResponse) -> bool {
+    matches!(
+        &response.finish_reason,
+        FinishReason::Other { name } if name.starts_with("fallback:")
+    )
+}
+
+/// The first contract field `candidate` gets wrong, if any. An `authored`
+/// fallback's candidate may also name its subject by id and cite in the
+/// authored ref shape (FIX 7577).
+fn contract_fault(candidate: &serde_json::Value, authored: bool) -> Option<&'static str> {
     let confidence = candidate
         .get("confidence")
         .and_then(serde_json::Value::as_f64);
@@ -185,8 +204,10 @@ fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
             candidate
                 .get("subject")
                 .and_then(serde_json::Value::as_str)
-                .and_then(SubjectLabel::parse)
-                .is_some(),
+                .is_some_and(|subject| {
+                    SubjectLabel::parse(subject).is_some()
+                        || (authored && entity_id_from_hex(subject).is_some())
+                }),
         ),
         (
             "predicate",
@@ -205,7 +226,10 @@ fn contract_fault(candidate: &serde_json::Value) -> Option<&'static str> {
         (
             "evidence_refs",
             refs.is_some_and(|refs| {
-                !refs.is_empty() && refs.iter().all(|cited| wire_ref(cited).is_ok())
+                !refs.is_empty()
+                    && refs.iter().all(|cited| {
+                        wire_ref(cited).is_ok() || (authored && authored_ref(cited).is_some())
+                    })
             }),
         ),
         (
@@ -333,6 +357,101 @@ fn wire_ref(value: &serde_json::Value) -> Result<WireRef<'_>> {
     }
 }
 
+/// An authored fallback's evidence ref (FIX 7577): `{"source_id": id,
+/// "byte_range": [start, end]}` or `{"source_id": id, "claim_id": id}`.
+enum AuthoredRef {
+    Range {
+        source: EntityId,
+        start: usize,
+        end: usize,
+    },
+    Claim {
+        source: EntityId,
+        claim: EntityId,
+    },
+}
+
+fn authored_ref(value: &serde_json::Value) -> Option<AuthoredRef> {
+    let object = value.as_object()?;
+    let id = |key: &str| {
+        object
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .and_then(entity_id_from_hex)
+    };
+    let source = id("source_id")?;
+    match (object.get("claim_id"), object.get("byte_range")) {
+        (Some(_), None) => Some(AuthoredRef::Claim {
+            source,
+            claim: id("claim_id")?,
+        }),
+        (None, Some(range)) => {
+            let [start, end] = range.as_array()?.as_slice() else {
+                return None;
+            };
+            Some(AuthoredRef::Range {
+                source,
+                start: usize::try_from(start.as_u64()?).ok()?,
+                end: usize::try_from(end.as_u64()?).ok()?,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// An authored ref bound through `sources`, as a label binds: a range's
+/// source must be a turn, note or other source its call labelled, the range
+/// a non-empty span of the text it showed, on character boundaries; a claim
+/// must be one its call listed. Anything else binds nothing, by name.
+fn bind_authored(cited: AuthoredRef, sources: &dyn CallSources) -> Result<BoundRef> {
+    let labels = sources.labels();
+    match cited {
+        // The claim is its own source, as on the label path; a cited
+        // source beside it is redundant (FIX 7577).
+        AuthoredRef::Claim { source: _, claim } => {
+            if labels.label(LabelKind::Claim, claim).is_none() {
+                return Ok(BoundRef {
+                    source: None,
+                    locator: Err(QuoteBinding::UnknownSourceLabel),
+                });
+            }
+            Ok(BoundRef {
+                source: Some(claim),
+                locator: Ok(EvidenceLocator::claim(claim, claim)?),
+            })
+        }
+        AuthoredRef::Range { source, start, end } => {
+            let labelled = [LabelKind::Turn, LabelKind::Note, LabelKind::Source]
+                .into_iter()
+                .any(|kind| labels.label(kind, source).is_some());
+            let shown = if labelled {
+                sources.shown(source)
+            } else {
+                None
+            };
+            let Some(shown) = shown else {
+                return Ok(BoundRef {
+                    source: None,
+                    locator: Err(QuoteBinding::UnknownSourceLabel),
+                });
+            };
+            let spans = start < end
+                && shown
+                    .text
+                    .is_some_and(|text| text.get(start..end).is_some());
+            let locator = if spans {
+                Ok(EvidenceLocator::turn_range(source, start, end)?)
+            } else {
+                Err(QuoteBinding::QuoteNotFound)
+            };
+            Ok(BoundRef {
+                source: Some(source),
+                locator,
+            })
+        }
+    }
+}
+
 /// `object`'s `key`, when present: a well-formed label, or a shape fault.
 fn label_field<'v>(
     object: &'v serde_json::Map<String, serde_json::Value>,
@@ -412,11 +531,13 @@ pub(in crate::dreamer_consolidation) fn resolve_subject(
 /// result of a ref that bound nothing. The candidate keeps only the refs
 /// that bound; the sources of those that did not still face the source and
 /// project admission, so a caller can tell whether it would build. An error
-/// is this candidate's alone.
+/// is this candidate's alone. An `authored` fallback's candidate may also
+/// name its subject by id and cite in the authored shape (FIX 7577).
 pub(in crate::dreamer_consolidation) fn read_candidate<'s>(
     item: &serde_json::Value,
     ctx: ReplyContext<'_>,
     scope: &'s Scope,
+    authored: bool,
 ) -> Result<(ParsedCandidate<'s>, Option<&'static str>)> {
     // A candidate that names no value carries no claim.
     let value = item
@@ -424,7 +545,16 @@ pub(in crate::dreamer_consolidation) fn read_candidate<'s>(
         .filter(|value| !value.is_null())
         .ok_or_else(|| invalid_consolidation("extracted candidate names no value"))?
         .clone();
-    let subject = resolve_subject(item, ctx.call.labels, ctx.people)?;
+    // An authored subject id is the resident's own, never a model's.
+    let authored_subject = item
+        .get("subject")
+        .and_then(serde_json::Value::as_str)
+        .and_then(entity_id_from_hex)
+        .filter(|_| authored);
+    let subject = match authored_subject {
+        Some(subject) => subject,
+        None => resolve_subject(item, ctx.call.labels, ctx.people)?,
+    };
     // The contract's predicate rule is the claim grammar's.
     let predicate = item
         .get("predicate")
@@ -443,7 +573,11 @@ pub(in crate::dreamer_consolidation) fn read_candidate<'s>(
     let mut sources = Vec::new();
     let mut fault = None;
     for cited in refs {
-        let bound = decode_ref(cited, &ctx.call)?;
+        let authored_cited = if authored { authored_ref(cited) } else { None };
+        let bound = match authored_cited {
+            Some(cited) => bind_authored(cited, &ctx.call)?,
+            None => decode_ref(cited, &ctx.call)?,
+        };
         sources.extend(bound.source);
         match bound.locator {
             Ok(locator) => locators.push(locator),
@@ -498,8 +632,9 @@ pub(in crate::dreamer_consolidation) fn parse_candidate<'s>(
     item: &serde_json::Value,
     ctx: ReplyContext<'_>,
     scope: &'s Scope,
+    authored: bool,
 ) -> Result<ParsedCandidate<'s>> {
-    let (parsed, fault) = read_candidate(item, ctx, scope)?;
+    let (parsed, fault) = read_candidate(item, ctx, scope, authored)?;
     match fault {
         Some(name) => Err(invalid_consolidation(name)),
         None => Ok(parsed),

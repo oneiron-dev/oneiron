@@ -160,7 +160,7 @@ pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<D
 /// beside its marks, past the owner's rulings in the record; `true` when
 /// one was added.
 fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) -> Result<bool> {
-    let Some(known) = KnownValues::load_in_writer(&vault.store, txn)? else {
+    let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)? else {
         return Ok(false);
     };
     let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;

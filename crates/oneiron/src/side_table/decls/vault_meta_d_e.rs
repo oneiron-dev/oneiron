@@ -63,6 +63,9 @@ side_tables! {
     /// Private binding proving an SDK-facing detached step (no engine-owned run) belongs to its
     /// actor/subject/step hash. Key: id16(attempt).
     DREAMER_DETACHED_STEP: VaultMeta b"dreamer.detached_step.v1/" Raw;
+    /// FIX 10766: every milestone claim by the attempt its value names, bound or not; written and
+    /// dropped beside the durable index. Key: id16(attempt) + id16(claim).
+    DREAMER_MILESTONE_INDEX_ATTEMPT_CLAIM: VaultMeta b"dreamer.milestone_index.v1.a:" Named Engine;
     /// Marker that the one-time durable-milestone-index backfill pass has run. Key: ().
     DREAMER_MILESTONE_INDEX_BACKFILLED: VaultMeta b"dreamer.milestone_index.v1.backfilled" Raw;
     /// Durable milestone-index candidate row (empty-value marker) for an attempt, ordered by (at,
@@ -72,6 +75,9 @@ side_tables! {
     /// Pointer from a milestone claim id back to its DREAMER_MILESTONE_INDEX_CANDIDATE row key. Key:
     /// id16.
     DREAMER_MILESTONE_INDEX_CLAIM: VaultMeta b"dreamer.milestone_index.v1.i:" Raw;
+    /// FIX 10766: the attempt each DREAMER_MILESTONE_INDEX_ATTEMPT_CLAIM row's claim names, for
+    /// the door that drops it. Key: id16(claim).
+    DREAMER_MILESTONE_INDEX_CLAIM_ATTEMPT: VaultMeta b"dreamer.milestone_index.v1.n:" Named Engine;
     /// Pointer to the single vault-owned Dreamer principal actor entity id. Key: ().
     DREAMER_AUTHORITY_ACTOR: VaultMeta b"dreamer:authority:v1:actor" Raw;
     /// Stamp binding one attempt id to the Dreamer principal, facet, and gate-decision receipt that
@@ -98,6 +104,10 @@ side_tables! {
     /// Owner-root reference pins and immutable child evidence accounting. Key: id16(root).
     DREAMER_CONSOLIDATION_ROOT: VaultMeta b"dreamer:consolidation:root:v1:" Named
         => crate::dreamer_consolidation::root_evidence::erase_actor_in_txn;
+    /// FIX 7729: the buckets a MACRO run its preparation narrowed holds, under its lease
+    /// generation; node-local lease state. Key: id16(attempt).
+    DREAMER_CONSOLIDATION_RUNNING_BUCKETS: VaultMeta b"dreamer:consolidation:running_buckets:v1:"
+        Named Engine;
     /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
     DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson;
     /// Parent-verified promotion evidence observations. Key: id16(claim).
@@ -115,6 +125,10 @@ side_tables! {
         => crate::learning::erase_review_scope_in_txn;
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw;
+    /// FIX 8531: the first frame after a follower session's keyframe that holds one chunk, and
+    /// the chunk's place in it, written with the frame. Key: hash32(session) + id16(turn) +
+    /// id16(source) + hash32(chunk words); value: (frame ordinal, chunk index).
+    DREAMER_FOLLOWER_CHUNK: VaultMeta b"dreamer:follower:chunk:v1:" Named;
     /// FIX 7510: one admitted source observation of a follower session, its exact rendered bytes
     /// and source pins. Key: hash32(session) + u64be(frame ordinal).
     DREAMER_FOLLOWER_FRAME: VaultMeta b"dreamer:follower:frame:v1:" Named Admitted;
@@ -184,12 +198,17 @@ side_tables! {
     /// The original mention and its resolving evidence, written with the link.
     /// Key: id16(turn) + hash32(message, span).
     DREAMER_IDENTITY_RESOLUTION: VaultMeta b"dreamer:identity:v1:resolution:" Named;
+    /// The first try of one Dreamer retry's lineage, pinned when the retry is minted (FIX 9350)
+    /// so a compaction that folds that try never moves the namespace its people mint under. Key:
+    /// id16(retry); value: the origin attempt id.
+    DREAMER_LINEAGE_ORIGIN: VaultMeta b"dreamer:lineage-origin:v1:" Named;
     /// OF-023: one Dreamer maintenance write applied at once: its kind, attempt, the finding's
     /// revision, the before-state its effect changed, its receipt and, once the owner reverts
     /// it, the revert. Key: id16 (finding).
     DREAMER_MAINTENANCE_APPLIED: VaultMeta b"dreamer:maintenance:applied:v1:" Named;
-    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, so a replay
-    /// lists the same ones. Ids only, never their text. Key: id16.
+    /// The entity and claim ids one Dreamer attempt's extraction listed for its model, or one
+    /// NOTE's within a NOTE review attempt (FIX 7578), so a replay lists the same ones. Ids only,
+    /// never their text. Key: id16(attempt), then id16(note) for a NOTE's listing.
     DREAMER_NEIGHBOURHOOD: VaultMeta b"dreamer:neighbourhood:v1:" LegacyJson;
     /// Atomic merge/narrative outputs for one nightly fan-in receipt. Key: id16.
     DREAMER_NIGHTLY_MERGED: VaultMeta b"dreamer:nightly:merged:v1:" Named;
@@ -201,6 +220,10 @@ side_tables! {
     /// unchanged NOTE is not read again, its verdict and importance, and a sealed pad's missed
     /// keep lines with the re-asks spent on them (FIX 2240). Key: id16.
     DREAMER_NOTE_REVIEW_SEEN: VaultMeta b"dreamer:note-review:seen:v1:" Named;
+    /// The NOTE review's topic index (FIX 7457): one row per reviewed NOTE under the topic
+    /// membership its review record keeps, written in that record's own write. Key: topic
+    /// digest(32) + id16(facet) + id16(project) + id16(note).
+    DREAMER_NOTE_REVIEW_TOPIC: VaultMeta b"dreamer:note-review:topic:v1:" Named;
     /// Due-time index of hinted provider-outage parks. Key: u64be(due at) + id16(attempt).
     DREAMER_OUTAGE_DUE: VaultMeta b"dreamer:outage_due:v1:" Named Engine;
     /// Parked (paused) attempt row (reason, park_owner, parked_at) keyed by attempt id. Key: id16.
@@ -321,6 +344,18 @@ side_tables! {
     /// store-minted order id, the row learned_at it was taken against and the scopes that consumed
     /// it. Key: id16(turn).
     DREAMER_TURN_REDIRTY: VaultMeta b"dreamer:turn-redirty:v1:" Named;
+    /// FIX 5735: each turn program admission by its waking actor, written with the admission.
+    /// Key: id16(actor) + hash32(admission).
+    DREAMER_TURN_PROGRAM_ACTOR_ADMISSION: VaultMeta b"dreamer:turn_program:actor_admission:v1:"
+        Named Engine;
+    /// FIX 5735: each turn program attempt by the actor its stamp names, written with the stamp.
+    /// Key: id16(actor) + id16(attempt).
+    DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT: VaultMeta b"dreamer:turn_program:actor_attempt:v1:"
+        Named Engine;
+    /// FIX 5774: each owed turn program wake by its waking actor, written and deleted with the
+    /// wake. Key: id16(actor) + id16(turn) + id16(registration).
+    DREAMER_TURN_PROGRAM_ACTOR_WAKE: VaultMeta b"dreamer:turn_program:actor_wake:v1:"
+        Named Engine;
     /// DOOR-141: one turn program admission: the sealed wake, its Gate receipt, and the attempt it
     /// queued or why it was refused. Key: hash32(actor, registration, revision, turn).
     DREAMER_TURN_PROGRAM_ADMISSION: VaultMeta b"dreamer:turn_program:admission:v1:" Named;
@@ -331,6 +366,9 @@ side_tables! {
     /// DOOR-141: the waking actor one turn program attempt runs as, never a base-agent stamp, and
     /// the admission that bound it. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_ATTEMPT: VaultMeta b"dreamer:turn_program:attempt:v1:" Named;
+    /// FIX 6062: each try the turn program runtime holds, by its hold's kind, written and deleted
+    /// beside its DREAMER_PARKED row. Key: u8(hold) + id16(attempt).
+    DREAMER_TURN_PROGRAM_HOLD: VaultMeta b"dreamer:turn_program:hold:v1:" Named Engine;
     /// DOOR-141 PR2: one turn program's code run: the try that entered it, the admission that
     /// fixed it, its lifecycle and result, and the checkpoint frontier it last committed.
     /// Key: id16(code run).
@@ -345,6 +383,10 @@ side_tables! {
     /// Abandoned: the abandon it still owes, retried by the program kind's admission chain and
     /// cleared once it lands. Key: id16(attempt).
     DREAMER_TURN_PROGRAM_STOP_OWED: VaultMeta b"dreamer:turn_program:stop_owed:v1:" Named;
+    /// FIX 5838: each turn program admission by the turn whose wake it admitted, written with the
+    /// admission. Key: id16(turn) + hash32(admission).
+    DREAMER_TURN_PROGRAM_TURN_ADMISSION: VaultMeta b"dreamer:turn_program:turn_admission:v1:"
+        Named Engine;
     /// DOOR-141: a wake a landed turn owes an armed program, recorded in that turn's own commit and
     /// consumed by its admission. Key: id16(turn) + id16(registration).
     DREAMER_TURN_PROGRAM_WAKE: VaultMeta b"dreamer:turn_program:wake:v1:" Named;

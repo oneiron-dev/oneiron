@@ -474,23 +474,28 @@ fn sight_blocker(
     leaf: &PinnedLeaf,
     sight: SecretSight,
 ) -> MemoryResult<Option<CodeExportPreviewBlocker>> {
-    let (reason, message, way_out) =
-        match sighted_bytes_in_txn(&vault.store, txn, leaf.bytes.clone(), sight) {
-            Ok(copy) if copy == leaf.bytes => return Ok(None),
-            Ok(_) => (
-                CodeExportPreviewBlockReason::Masked,
-                "your credential reads a masked copy of this file, not its exact bytes",
-                "Have an Owner read this preview, or obtain a secret read grant covering this \
-                 file's keys; a masked copy is never released as exact.",
-            ),
-            Err(crate::Error::Secret(_) | crate::Error::InvariantViolation(_)) => (
-                CodeExportPreviewBlockReason::Withheld,
-                "the release withholds this file from your credential",
-                "Have an Owner read this preview; a sealed or unreadable file is released to \
-                 an Owner or a granted reader only.",
-            ),
-            Err(error) => return Err(error.into()),
-        };
+    let (reason, message, way_out) = match sighted_bytes_in_txn(
+        &vault.store,
+        txn,
+        leaf.bytes.clone(),
+        Some(&leaf.blob.content_hash),
+        sight,
+    ) {
+        Ok(copy) if copy == leaf.bytes => return Ok(None),
+        Ok(_) => (
+            CodeExportPreviewBlockReason::Masked,
+            "your credential reads a masked copy of this file, not its exact bytes",
+            "Have an Owner read this preview, or obtain a secret read grant covering this \
+             file's keys; a masked copy is never released as exact.",
+        ),
+        Err(crate::Error::Secret(_) | crate::Error::InvariantViolation(_)) => (
+            CodeExportPreviewBlockReason::Withheld,
+            "the release withholds this file from your credential",
+            "Have an Owner read this preview; a sealed or unreadable file is released to \
+             an Owner or a granted reader only.",
+        ),
+        Err(error) => return Err(error.into()),
+    };
     Ok(Some(CodeExportPreviewBlocker::new(
         CodeExportBlockingSource::File {
             side,

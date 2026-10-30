@@ -12,6 +12,8 @@
 //! does, but for a born row a legal hold keeps (FIX 6279, 6280).
 
 use loro::LoroDoc;
+#[cfg(feature = "sync")]
+use loro::{LoroValue, ValueOrContainer};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "sync")]
@@ -43,12 +45,33 @@ pub(super) fn capture(
     snapshot: &mut CanonicalSnapshot,
     budget: &mut ByteBudget,
 ) -> Result<()> {
-    let carried = super::binary_rows(doc, ROW_BIRTHS)?;
+    // FIX 10319: each birth is read straight from the window map for its
+    // own row and measured as it is kept, so no whole-map copy rides
+    // outside the budget. The root resolves as in `binary_rows`, without
+    // creating it.
+    let LoroValue::Map(containers) = doc.get_value() else {
+        return Err(super::invalid("window root"));
+    };
+    let map = match containers.get(ROW_BIRTHS) {
+        None => None,
+        Some(LoroValue::Container(id)) => {
+            Some(doc.try_get_map(id).ok_or(super::invalid("nonmap Layer-1 carrier"))?)
+        }
+        Some(_) => return Err(super::invalid("nonmap Layer-1 carrier")),
+    };
     let mut overrun = None;
     for entity in &snapshot.entity_blobs {
         let row = id(entity.id)?;
-        let value = match carried.get(&row.to_hex()) {
-            Some(bytes) => bytes.clone(),
+        let carried = match &map {
+            None => None,
+            Some(map) => match map.get(&row.to_hex()) {
+                None => None,
+                Some(ValueOrContainer::Value(LoroValue::Binary(bytes))) => Some(bytes.to_vec()),
+                Some(_) => return Err(super::invalid("nonbinary Layer-1 carrier")),
+            },
+        };
+        let value = match carried {
+            Some(bytes) => bytes,
             None => match crate::provenance::birth::row_birth_in_txn(&vault.store, txn, &row)? {
                 Some(birth) => rmp_serde::to_vec_named(&birth)
                     .map_err(|_| super::invalid("row birth encoding"))?,

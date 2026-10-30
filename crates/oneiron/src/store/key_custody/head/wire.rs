@@ -20,17 +20,19 @@ use crate::error::Result;
 use super::super::body_history::HistoryRows;
 use super::super::log::{CustodyPosition, POSITION_LEN};
 use super::super::recipients::RecipientRetirement;
+use super::holder_debts::HolderDebtWire;
 use super::{CompartmentScope, carried_pads, head_corrupt};
 
 pub(super) const HEAD_MAGIC: &[u8; 4] = b"OCHD";
-/// Version 3 frames a head by bytes (FIX 5800): compartments bounded by
-/// their plaintext, history rows in fragments, paged recipients and one
-/// fixed control root. It keeps version 2's erased credentials' evidence
-/// (FIX 10584 item 3), one pad per world compartment, each compartment's
-/// whole wire committed, and the carried world compartments (PAD-3). An
-/// older head reads as invalid until the next publication pass seals it
-/// again (FIX 10469): no old-head reader.
-pub(super) const HEAD_VERSION: u16 = 3;
+/// Version 4 carries the holder debts in the host-readable compartments
+/// (FIX 11206). It keeps version 3's framing by bytes (FIX 5800):
+/// compartments bounded by their plaintext, history rows in fragments,
+/// paged recipients and one fixed control root; and version 2's erased
+/// credentials' evidence (FIX 10584 item 3), one pad per world compartment,
+/// each compartment's whole wire committed, and the carried world
+/// compartments (PAD-3). An older head reads as invalid until the next
+/// publication pass seals it again (FIX 10469): no old-head reader.
+pub(super) const HEAD_VERSION: u16 = 4;
 /// The most plaintext bytes one compartment's rows are counted at: a pacing
 /// bound far inside one E0 envelope, never a cap on the head; a scope with
 /// more takes more compartments (Rule 5).
@@ -107,6 +109,9 @@ pub(super) struct BodyWire {
     /// A host-readable compartment's: each erased credential's fact (FIX
     /// 10584 item 3), value-free, whatever key eligibility keeps local.
     pub(super) evidence: Vec<EvidenceWire>,
+    /// A host-readable compartment's: each holder debt (FIX 11206), a key's
+    /// ref and its holder machine, never a key.
+    pub(super) holders: Vec<HolderDebtWire>,
 }
 
 /// What a control compartment commits to (FIX 5800): how many compartments

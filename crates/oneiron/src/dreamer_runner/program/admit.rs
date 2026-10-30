@@ -74,6 +74,7 @@ fn admit_in_txn(
             ));
         }
         WAKE.delete(vault, txn, &wake.key())?;
+        super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(existing.receipt(false));
     }
     let judged = judge_in_txn(vault, &*txn, wake)?;
@@ -90,12 +91,14 @@ fn admit_in_txn(
     };
     // The stamp the queue row takes reads this row, so it lands first.
     ADMISSION.put(vault, txn, &admission, &record)?;
+    super::index::index_admission_in_txn(vault, txn, wake, &admission)?;
     if refused.is_none() {
         let attempt = queue_in_txn(vault, txn, &admission, now)?;
         record.attempt = Some(attempt);
         ADMISSION.put(vault, txn, &admission, &record)?;
     }
     WAKE.delete(vault, txn, &wake.key())?;
+    super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
     Ok(record.receipt(true))
 }
 

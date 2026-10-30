@@ -767,7 +767,11 @@ impl Store {
         E: From<Error>,
     {
         let mut txn = self.env.write_txn()?;
-        match write(&mut txn) {
+        let rows = {
+            let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
+            write(&mut txn)
+        };
+        match rows {
             Rows::Commit(value) => {
                 txn.commit().map_err(Error::from)?;
                 Ok(value)
@@ -922,6 +926,7 @@ impl Store {
         E: From<Error>,
     {
         let attempt = self.begin_refusal_attempt();
+        let _known_index = crate::secret_custody::known_index_scope(); // (FIX 12210)
         let staged = match self.env.nested_write_txn(parent) {
             Err(err) => Staged::Dropped(Err(E::from(Error::from(err)))),
             Ok(mut child) => match catch_unwind(AssertUnwindSafe(|| write(&mut child))) {

@@ -7,9 +7,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use oneiron::recovery::checkpoint::{CheckpointKey, CheckpointSigner};
-use oneiron::world_keys::{
-    HybridSecretKey, VaultKeyUnlock, VaultKeyWrapInfo, existing_machine_secret,
-};
+use oneiron::world_keys::{HybridSecretKey, VaultKeyWrapInfo, existing_machine_secret};
 use oneiron_keystore::DeviceKeystore;
 use rand_core::RngCore as _;
 use serde::Serialize;
@@ -191,14 +189,11 @@ pub(in crate::commands::owner) fn restore_fresh(
     oneiron::world_keys::remove_unfinished_sealed_creation(&config.vault_path)?;
     let key = match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
         Some(key) => key,
-        None => match keystore {
-            Some(keystore) => {
-                CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-                    .map(|key| key.trusting_device(keystore))
-            }
-            None => CheckpointKey::unlock_on_this_device(backup, &config.vault_path),
-        }
-        .map_err(|error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()))?,
+        // With no keystore this device unlock refuses, naming the platform
+        // backend (FIX 12225): this host holds no device keys.
+        None => CheckpointKey::unlock_on_this_device(backup, keystore.as_ref()).map_err(|error| {
+            anyhow::anyhow!("backup {} does not open: {error}", backup.display())
+        })?,
     };
     let mut target = base_vault_config(config);
     target.page_seal = backup::restore_target_seal(RestoreTarget::Fresh {
@@ -220,11 +215,11 @@ pub(in crate::commands::owner) fn restore_fresh(
             let vault_id = CheckpointKey::unlocks(backup)
                 .map_err(|error| anyhow::anyhow!("read backup {}: {error}", backup.display()))?
                 .vault_id;
+            // With no keystore `--pad-machine` refuses (FIX 12225): this host
+            // holds no machine key.
             let keystore = match &machine_keystore {
                 Some(keystore) => Arc::clone(keystore),
-                None => {
-                    oneiron_keystore::default_platform_keystore(&[config.vault_path.as_path()])?
-                }
+                None => return Err(super::no_keystore_for_pad_machine().into()),
             };
             let secret = existing_machine_secret(keystore.as_ref(), vault_id, *machine.as_bytes())?;
             if secret.is_none() {
