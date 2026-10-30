@@ -112,10 +112,18 @@ pub(super) fn native(
     op: &NativeEdit<'_>,
 ) -> Result<StepReport, StepRefusal> {
     let report = native_patch::native_patch(deck, op)?;
+    let mut effects = Vec::new();
+    // A table-cell write that cut fields whole (FIX 12227) names them, so
+    // the receipt says each dynamic field became static text.
+    if !report.cut_fields.is_empty() {
+        effects.push(Effect::TableFieldsCut {
+            fields: report.cut_fields,
+        });
+    }
     Ok(StepReport {
         verb: verb.to_owned(),
         changed_parts: report.changed_parts,
-        effects: Vec::new(),
+        effects,
         fit: None,
     })
 }

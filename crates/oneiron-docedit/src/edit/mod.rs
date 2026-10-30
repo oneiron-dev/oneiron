@@ -30,7 +30,7 @@ pub use structure::{
     ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, ShapeId, StructureEdit,
     StructureReport, structure_patch,
 };
-pub(crate) use text::{BREAK, cell_text};
+pub(crate) use text::{BREAK, cell_text, cell_text_cut};
 pub use transaction::{
     AssetRef, Assets, DeckStep, DeckTransaction, DeckTransactionReport, Digest, IdMarks, NoAssets,
     PartChange, StepRefusal, TransactionError, run_transaction,
@@ -233,6 +233,9 @@ pub enum Effect {
         node: crate::live::NodeId,
         conversion: crate::live::Conversion,
     },
+    /// A table-cell write cut these `a:fld` fields whole (FIX 12227): each
+    /// named dynamic field, by its `type` attribute, became static text.
+    TableFieldsCut { fields: Vec<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

@@ -275,7 +275,9 @@ fn span(node: &Node, name: &str) -> Result<usize, NativeRefusal> {
 }
 
 /// Replace one cell's text, keeping what the text does not change. A cell
-/// a merge covers takes its own text under the merge.
+/// a merge covers takes its own text under the merge. The `a:fld` types a
+/// field-aware cut removed whole (FIX 12227), if it did, ride back for the
+/// outcome.
 pub(super) fn set_cell(
     package: &mut Package,
     slide: &str,
@@ -283,7 +285,7 @@ pub(super) fn set_cell(
     (row, col): (usize, usize),
     expected: &str,
     value: &str,
-) -> Result<(), NativeRefusal> {
+) -> Result<Vec<String>, NativeRefusal> {
     let bytes = package
         .part(slide)?
         .ok_or(NativeRefusal::Stale("slide part missing"))?;
@@ -401,16 +403,20 @@ pub(super) fn set_cell(
     // The cell's text through the deck's retained text mapping (FIX 8595):
     // its paragraphs' and runs' properties, attributes, namespace bindings,
     // `a:endParaRPr` and the bytes between paragraphs are kept, and only the
-    // changed text is written. Where that mapping refuses (a change cutting
-    // into a field, content holding text it does not know), the cell is
-    // rebuilt from its first paragraph's and first run's properties, as it
-    // was before.
-    let out = match crate::edit::cell_text(&bytes, &tree, body, value) {
-        Some(out) => out,
-        None => rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
+    // changed text is written. Where that mapping refuses, a field-aware cut
+    // is tried first (FIX 12227): each field the change covers whole goes,
+    // the new text written into an adjacent run, only when the cell then
+    // reads exactly the requested text. Otherwise the cell is rebuilt from
+    // its first paragraph's and first run's properties, as it was before.
+    let (out, cut_fields) = match crate::edit::cell_text_cut(&bytes, &tree, body, value) {
+        Some((out, cut_fields)) => (out, cut_fields),
+        None => (
+            rebuilt(&bytes, &tree, body, (first, first_node), last_node, value)?,
+            Vec::new(),
+        ),
     };
     package.replace_xml_part(slide, out)?;
-    Ok(())
+    Ok(cut_fields)
 }
 
 /// The cell's paragraphs replaced by `value`'s lines, each with the first
