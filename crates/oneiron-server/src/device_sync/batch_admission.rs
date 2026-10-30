@@ -5,41 +5,27 @@
 //! flight at the freeze holds its admission and finishes.
 #![cfg(feature = "mesh")]
 
-use std::time::Duration;
-
 use oneiron::sync::connection::{
     SyncBatchAdmission, SyncBatchAdmit, SyncBatchThaw, SyncBatchVerdict,
 };
 
-use crate::server::HousekeepingAdmission;
+use super::ReapFreeze;
 
-/// How often a paused connection asks the freeze again: the admission it
-/// holds names no thaw of its own.
-const THAW_POLL: Duration = Duration::from_secs(1);
-
-/// The host's admission as the connection asks it per batch: `Pause` while
-/// it refuses.
-pub(super) struct FreezeAdmission(pub(super) HousekeepingAdmission);
+/// The reap freeze as the connection asks it per batch: `Pause` while the
+/// vault is frozen, until the freeze's own thaw.
+pub(super) struct FreezeAdmission(pub(super) ReapFreeze);
 
 impl SyncBatchAdmission for FreezeAdmission {
     fn admit(&self) -> SyncBatchAdmit<'_> {
-        let verdict = match (self.0)() {
+        let verdict = match self.0.admit() {
             Some(admitted) => SyncBatchVerdict::Admitted(admitted),
             None => SyncBatchVerdict::Pause,
         };
         Box::pin(std::future::ready(verdict))
     }
 
-    /// Resolves once the freeze admits again; that probe's admission goes
-    /// at once, and the next batch asks for its own.
     fn thawed(&self) -> SyncBatchThaw<'_> {
-        Box::pin(async move {
-            loop {
-                tokio::time::sleep(THAW_POLL).await;
-                if (self.0)().is_some() {
-                    return;
-                }
-            }
-        })
+        let mut freeze = self.0.clone();
+        Box::pin(async move { freeze.thawed().await })
     }
 }
