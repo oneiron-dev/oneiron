@@ -348,6 +348,7 @@ identity_decision_state_bytes = 65536 # whole encoded identity-decision state; p
 identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
 community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
 connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
+tournament_lineage_rows = 4096 # ancestor rows one tournament-start check walks, resumed across calls; past it the check still completes one hop budget at a time and the row asks
 ```
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
