@@ -652,6 +652,7 @@ impl Vault {
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::comm::seed_claim_class_descriptors(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;

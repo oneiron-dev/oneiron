@@ -151,6 +151,8 @@ pub(crate) fn deindex_entity(
     crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
     crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
     crate::skill_hub::remove_refinement_carrier_in_txn(store, wtxn, id)?;
+    // OF-272: the write unit re-keys the identity a deleted head leaves.
+    crate::channel_identity::note_claim_delete_for_rekey(store, wtxn, id, None)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 
