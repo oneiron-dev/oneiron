@@ -12,7 +12,10 @@ use std::collections::HashMap;
 use rmpv::Value;
 use zeroize::Zeroizing;
 
-use super::{Door, byte_values, detect, detect_bytes, sanitize_messagepack};
+use super::{
+    Door, byte_values, credential_field, detect, detect_bytes, joined_messagepack,
+    sanitize_messagepack,
+};
 
 /// The release doors' reading of a whole decoded value once its parts are
 /// judged: every text it carries, one per line in order, at any depth (each
@@ -55,24 +58,118 @@ pub(crate) fn release_reads_json_text(value: &serde_json::Value) -> bool {
 /// it is or not at all, never with a part of it nulled, so it is read as it
 /// is, alone and in the joint read.
 pub(crate) fn release_parts_read_whole(verbatim: &[&rmpv::Value], parts: &[&rmpv::Value]) -> bool {
-    let mut judged = Vec::with_capacity(verbatim.len() + parts.len());
+    // A part none of whose parts reads as a secret is its own judged copy:
+    // it is read in place and joined by reference, never copied (speed).
     for part in verbatim {
-        if sanitize_messagepack(&mut (*part).clone(), true, Door::Release)
-            || release_reads_whole(part)
+        // The joined text is wiped on drop (FIX 12047).
+        let mut leaves = Zeroizing::new(String::new());
+        if part_reads_as_secret(part, &mut leaves)
+            || detect(&leaves, Door::Release).is_some()
+            || write_door_refuses_encoding(part)
         {
             return true;
         }
-        judged.push((*part).clone());
     }
+    let mut copies: Vec<Option<Value>> = Vec::with_capacity(parts.len());
     for part in parts {
-        let mut part = (*part).clone();
-        sanitize_messagepack(&mut part, true, Door::Release);
-        if release_reads_whole(&part) {
-            return true;
+        let mut leaves = Zeroizing::new(String::new());
+        if part_reads_as_secret(part, &mut leaves) {
+            let mut copy = (*part).clone();
+            sanitize_messagepack(&mut copy, true, Door::Release);
+            if release_reads_whole(&copy) {
+                return true;
+            }
+            copies.push(Some(copy));
+        } else {
+            if detect(&leaves, Door::Release).is_some() || write_door_refuses_encoding(part) {
+                return true;
+            }
+            copies.push(None);
         }
-        judged.push(part);
     }
-    release_reads_whole(&rmpv::Value::Array(judged))
+    let judged: Vec<&Value> = verbatim
+        .iter()
+        .copied()
+        .chain(
+            parts
+                .iter()
+                .zip(&copies)
+                .map(|(part, copy)| copy.as_ref().unwrap_or(*part)),
+        )
+        .collect();
+    array_reads_whole(&judged)
+}
+
+/// [`release_reads_whole`] over the array `items` make, read in place: its
+/// leaves, and its encoding as `rmpv` writes an array of them.
+fn array_reads_whole(items: &[&Value]) -> bool {
+    // The joined text is wiped on drop (FIX 12047).
+    let mut text = Zeroizing::new(String::new());
+    match byte_values(items.iter().copied().map(Value::as_u64)) {
+        Some(bytes) if !bytes.is_empty() => push_line(&mut text, &Zeroizing::new(bytes)),
+        _ => items
+            .iter()
+            .for_each(|item| messagepack_leaves(item, &mut text)),
+    }
+    if detect(&text, Door::Release).is_some() {
+        return true;
+    }
+    let mut bytes = Vec::new();
+    write_array_len(&mut bytes, items.len());
+    items
+        .iter()
+        .any(|item| rmpv::encode::write_value(&mut bytes, item).is_err())
+        || write_door_refuses_raw(&bytes)
+}
+
+/// Whether a part of `value` reads as a secret as the release door's walk
+/// judges its parts, read in place: what [`sanitize_messagepack`] returns
+/// (`messagepack_has_secret`). While none does, each leaf is pushed to
+/// `leaves` as [`messagepack_leaves`] pushes it, in its order, so one walk
+/// gives both: a value no part of which reads as a secret is its own judged
+/// copy, and `leaves` is that copy's joined text.
+fn part_reads_as_secret(value: &Value, leaves: &mut Zeroizing<String>) -> bool {
+    match value {
+        Value::String(text) => leaf_reads_as_secret(text.as_bytes(), leaves),
+        Value::Binary(bytes) | Value::Ext(_, bytes) => leaf_reads_as_secret(bytes, leaves),
+        Value::Array(values) => {
+            let bytes = byte_values(values.iter().map(Value::as_u64)).map(Zeroizing::new);
+            if bytes
+                .as_ref()
+                .is_some_and(|bytes| detect_bytes(bytes, Door::Release))
+                || joined_messagepack(values, Door::Release)
+            {
+                return true;
+            }
+            // An array of byte values holds no part the walk judges apart.
+            match bytes {
+                Some(bytes) if !bytes.is_empty() => {
+                    push_line(leaves, &bytes);
+                    false
+                }
+                _ => values
+                    .iter()
+                    .any(|value| part_reads_as_secret(value, leaves)),
+            }
+        }
+        Value::Map(entries) => entries.iter().any(|(key, value)| {
+            part_reads_as_secret(key, leaves)
+                || key.as_str().is_some_and(|key| {
+                    credential_field(key, value.is_nil(), value.as_str(), Door::Release)
+                })
+                || part_reads_as_secret(value, leaves)
+        }),
+        _ => false,
+    }
+}
+
+/// [`part_reads_as_secret`] over one leaf's bytes.
+fn leaf_reads_as_secret(bytes: &[u8], leaves: &mut Zeroizing<String>) -> bool {
+    if detect_bytes(bytes, Door::Release) {
+        return true;
+    }
+    push_line(leaves, bytes);
+    false
 }
 
 /// The write door's text rules over bytes a release door returns as they are
@@ -224,15 +321,47 @@ pub(crate) fn sanitize_messagepack_credentials_in(
 
 /// [`release_parts_read_whole`] for one body decoded from `bytes`.
 pub(crate) fn release_body_reads_whole_as_stored(value: &Value, bytes: &[u8]) -> bool {
-    let mut judged = value.clone();
-    sanitize_messagepack(&mut judged, true, Door::Release);
-    release_reads_whole_in(
-        &judged,
-        Encoding::Stored {
-            original: value,
-            bytes,
-        },
-    )
+    body_reads_whole_as_stored(value, bytes, false)
+}
+
+/// [`release_body_reads_whole_as_stored`] for a body whose bytes the write
+/// door's scan has read and accepted (`scan_write_payload(bytes)` is `Ok`).
+/// When no part of the body reads as a secret and it is one whole value, the
+/// encoding the whole read takes is `bytes` itself, whose text that door's
+/// rules have read already: that read is not repeated.
+pub(crate) fn release_accepted_body_reads_whole_as_stored(value: &Value, bytes: &[u8]) -> bool {
+    body_reads_whole_as_stored(value, bytes, true)
+}
+
+/// One walk judges the body's parts in place and joins its text. A body
+/// no part of which reads as a secret is its own judged copy, so it is not
+/// copied, and as it is still as it was decoded, its encoding as stored is
+/// the stored bytes of its value, read where they lie (speed). A body
+/// with a part that reads as a secret is judged on a copy, as before.
+fn body_reads_whole_as_stored(value: &Value, bytes: &[u8], write_accepted: bool) -> bool {
+    // The joined text is wiped on drop (FIX 12047).
+    let mut leaves = Zeroizing::new(String::new());
+    if part_reads_as_secret(value, &mut leaves) {
+        let mut judged = value.clone();
+        sanitize_messagepack(&mut judged, true, Door::Release);
+        return release_reads_whole_in(
+            &judged,
+            Encoding::Stored {
+                original: value,
+                bytes,
+            },
+        );
+    }
+    if detect(&leaves, Door::Release).is_some() {
+        return true;
+    }
+    match skip(bytes, 0).and_then(|end| bytes.get(..end)) {
+        Some(stored) if write_accepted && stored.len() == bytes.len() => false,
+        Some(stored) => write_door_refuses_raw(stored),
+        None => {
+            encode_as_stored(value, value, bytes).is_none_or(|bytes| write_door_refuses_raw(&bytes))
+        }
+    }
 }
 
 /// `value` as MessagePack, each part of it that is as `original` decoded it
@@ -345,6 +474,23 @@ fn write_map_len(out: &mut Vec<u8>, len: usize) -> Option<()> {
         }
     }
     Some(())
+}
+
+/// An array header at its narrowest width, as `rmpv` writes one: its length
+/// taken as 32 bits.
+fn write_array_len(out: &mut Vec<u8>, len: usize) {
+    let len = len as u32;
+    match len {
+        0..16 => out.push(0x90 | len as u8),
+        16..=0xffff => {
+            out.push(0xdc);
+            out.extend_from_slice(&(len as u16).to_be_bytes());
+        }
+        _ => {
+            out.push(0xdd);
+            out.extend_from_slice(&len.to_be_bytes());
+        }
+    }
 }
 
 /// One stored value's leading node.

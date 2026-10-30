@@ -14,7 +14,7 @@ use crate::error::{Error, Result};
 use crate::{ClaimSubject, EdgeActorClass, EdgeKind, EntityId, ScoredEntity, Vault};
 
 use super::envelope::edge_operation_gate_id;
-use super::read_worlds::{ServedWorlds, served_world_in};
+use super::read_worlds::{ServedRows, served_row_in};
 use super::{ExecutorCallSite, HostSelfDispatcher};
 use crate::error::{CodeError, OffRecordError};
 
@@ -209,21 +209,21 @@ impl HostSelfDispatcher<'_> {
         limit: usize,
         read_as: Option<ScopedReadActorKey>,
     ) -> Result<Vec<ScoredEntity>> {
-        let mut scored = ServedWorlds::new();
+        let mut scored = ServedRows::new();
         let hits = vault.search_text_observed(query, limit, |txn, hits| {
             scored = hits
                 .iter()
-                .map(|hit| (hit.id, served_world_in(vault, txn, hit.id)))
+                .map(|hit| (hit.id, served_row_in(vault, txn, hit.id)))
                 .collect();
         })?;
         let (hits, admitted) = match read_as {
             Some(reader) => {
-                let mut admitted = ServedWorlds::new();
+                let mut admitted = ServedRows::new();
                 let hits = vault
                     .scoped_read(reader)
                     .with_claim_status(self.keyed_claims())
                     .filter_scored_entities_observed(hits, None, |txn, id| {
-                        admitted.insert(id, served_world_in(vault, txn, id));
+                        admitted.insert(id, served_row_in(vault, txn, id));
                     })?
                     .value;
                 (hits, Some(admitted))

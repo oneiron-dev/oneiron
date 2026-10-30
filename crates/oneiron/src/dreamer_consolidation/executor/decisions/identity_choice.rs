@@ -25,14 +25,14 @@ use crate::llm::decision::catalogue::QuestionFamily;
 use crate::llm::decision::{AnswerContract, AskTo, DecisionAnswer, DecisionQuestion};
 use crate::llm::{DurableStepContext, DurableStepResult};
 
-/// The ids `decisions` name, in order and each once: every read choice
-/// answer that is an id, never [`NONE`]. A probability only says the answer
-/// was read, as before; no decision's probability ranks them.
+/// The ids `decisions` name, in order and each once: every choice answer
+/// that is an id, never [`NONE`]. An answer with no probability (a rule
+/// rung's) names its id too (FIX 10522); no decision's probability ranks
+/// them.
 fn named_ids(decisions: &[KeptDecision]) -> Vec<EntityId> {
     let mut named = Vec::new();
     for decision in decisions {
         if let Some(DecisionAnswer::Choice(label)) = decision.answer()
-            && decision.probability().is_some()
             && label != NONE
             && let Ok(id) = EntityId::from_hex(label)
             && !named.contains(&id)

@@ -77,7 +77,10 @@ impl Memory<'_> {
                 Some(world) => crate::federation::stale_stamped_worlds(&self.vault.store, txn)?
                     .get(&world)
                     .copied()
-                    .map(|stamp| MemoryStaleStamp::from_stamp(stamp, self.vault.now_recorded_at())),
+                    .map(|stamp| {
+                        let at = lane.judged_at().unwrap_or_else(|| self.vault.now_recorded_at());
+                        MemoryStaleStamp::from_stamp(stamp, at)
+                    }),
                 None => None,
             };
             let handle = if entity_type == ENTITY_TYPE_CLAIM {

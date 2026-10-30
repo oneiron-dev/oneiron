@@ -706,6 +706,18 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "prepared branch scope changed after the wake pin",
             ));
         }
+        // FIX 7729: a child its preparation narrowed holds only what it runs.
+        let narrowed = plan.branch().bucket_set();
+        if decode_partition_payload(&attempt.status.payload.input)
+            .is_ok_and(|queued| queued.bucket_set() != narrowed)
+        {
+            super::running_buckets::record_running_buckets(
+                ctx.vault,
+                attempt.status.attempt.id,
+                attempt.status.attempt.attempt_count,
+                &narrowed,
+            )?;
+        }
         self.execute_prepared_partition(attempt, ctx, plan, wake)
             .await
     }

@@ -19,6 +19,8 @@ use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
 
 use super::*;
 
+mod policy_fold;
+
 pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
 
 pub struct RawDatabases {
@@ -240,6 +242,8 @@ pub struct StoreCore {
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
+    /// The policy manifest's fold of the last committed snapshot. Never persisted.
+    pub(crate) policy_fold_cache: policy_fold::PolicyFoldCache,
     /// Opt-in host root for signing scoped MACHINE history. Never populated
     /// from a transport key, peer assertion, or relay-mode vault.
     pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
@@ -641,7 +645,7 @@ macro_rules! manifest_dbs {
                       attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
                       after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
         )]
-        pub(crate) trait ManifestDbs {
+        pub(crate) trait ManifestDbs: policy_fold::PolicyFoldSource {
             $(fn $name(&self) -> &$ty;)+
 
             /// The diagnostic counters of the vault this write target belongs
