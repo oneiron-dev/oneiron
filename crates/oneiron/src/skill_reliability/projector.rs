@@ -352,6 +352,31 @@ pub(super) fn project_in_txn(
             }
         }
     }
+    // The flipped-loss corner (FIX 11676): an amendment landing after its
+    // attempt's standing credit moved to nothing has no anchored row to flip
+    // and no desired row, so mint the flipped row from the sealed credit.
+    {
+        let desired_attempts: BTreeSet<&str> = desired
+            .values()
+            .flat_map(|(_, rows)| rows.iter().map(|row| row.receipt.as_str()))
+            .collect();
+        for (attempt, share) in &amended {
+            if native_attempts.contains(attempt.as_str())
+                || desired_attempts.contains(attempt.as_str())
+            {
+                continue;
+            }
+            let Some((cell, evidence)) =
+                super::anchored_amendment::mint_flipped_from_credit_in_txn(
+                    vault, txn, skill, executor, attempt, *share,
+                )?
+            else {
+                continue;
+            };
+            crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, at)?;
+            changed.remove(&cell.digest());
+        }
+    }
     for (cell, (query, evidence)) in desired {
         ensure_prior_in_txn(vault, txn, &cell, &query.type_parents)?;
         for row in evidence {
