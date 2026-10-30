@@ -62,6 +62,7 @@ pub(super) fn loop_findings(
                 signal: AgentHealthSignal::Loop,
                 task,
                 attempt,
+                generation: stream.witness.map(|witness| witness.generation),
                 evidence: run.iter().map(|(id, _)| *id).collect(),
                 window: (run[0].1.at, run[run.len() - 1].1.at),
                 actual: count,

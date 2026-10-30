@@ -93,6 +93,7 @@ pub(super) fn long_wait_findings(
             signal: AgentHealthSignal::LongWait,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence,
             window: (record.created_at, end),
             // A live share moves on every review; the DIAGNOSTIC carries it in
@@ -226,6 +227,7 @@ pub(super) fn cost_spike_findings(
             signal: AgentHealthSignal::CostSpike,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence: vec![attempt],
             window: (
                 record.created_at,
@@ -421,6 +423,7 @@ fn dup_finding(record: &AttemptRecord, dispatch: &Dispatched, evidence: Vec<Enti
         signal: AgentHealthSignal::DuplicateWork,
         task: task_of(record),
         attempt: Some(record.id),
+        generation: Some(record.attempt_count),
         evidence,
         window: (record.created_at, record.updated_at),
         actual: 1,
@@ -489,6 +492,7 @@ pub(super) fn misalignment_findings(
             signal: AgentHealthSignal::Misalignment,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence,
             window: (sealed.sealed_at, checked_at),
             actual: count,
@@ -535,6 +539,7 @@ pub(super) fn widen_denial_findings(
             signal: AgentHealthSignal::Misalignment,
             task: task_of(record),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence: vec![attempt],
             window: (
                 record.claimed_at.unwrap_or(record.created_at),
@@ -595,6 +600,7 @@ pub(super) fn unsupported_done_findings(
             signal: AgentHealthSignal::UnsupportedDone,
             task: Some(task),
             attempt: Some(record.id),
+            generation: Some(record.attempt_count),
             evidence: vec![attempt, task],
             window: (
                 record.claimed_at.unwrap_or(record.created_at),

@@ -79,6 +79,7 @@ pub(super) fn run_loop_findings(
                 signal: AgentHealthSignal::Loop,
                 task: task_of(record),
                 attempt: Some(record.id),
+                generation: Some(record.attempt_count),
                 evidence: vec![attempt],
                 window: (
                     first.started_at_ms / 1000,
