@@ -254,7 +254,8 @@ impl SyncClient {
     /// here, judged as it is released: a window UPDATE by the raw verdict on
     /// its envelope's payload, its parts with it (a frame that cannot be read
     /// stays), a document frame, a NOTE command included, by its text
-    /// ([`crate::sync::documents::document_frame_withheld`]).
+    /// ([`crate::sync::documents::document_frame_withheld`]), and on a
+    /// federation lane by whether the peer may read that text now (FIX 8861).
     pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
         if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
             return frame
@@ -265,6 +266,11 @@ impl SyncClient {
                 });
         }
         crate::sync::documents::document_frame_withheld_for(&self.vault, self.home_peer, frame)
+            || self
+                .config
+                .federation_peer
+                .as_ref()
+                .is_some_and(|peer| peer.document_frame_withheld(&self.vault, frame))
     }
 
     /// Whether a vector request may name window `key` to the home this

@@ -92,7 +92,9 @@ impl MemberBoard {
             )
         });
         if !shown {
-            return Err("the carrier keeps no diverged copy of that member with that digest".into());
+            return Err(
+                "the carrier keeps no diverged copy of that member with that digest".into(),
+            );
         }
         self.answers.push(answer);
         Ok(())
@@ -112,7 +114,10 @@ impl Carrier {
             self.take_owner_answer(answer);
         }
         let statuses = self.member_statuses();
-        board.lock().unwrap_or_else(PoisonError::into_inner).statuses = statuses;
+        board
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .statuses = statuses;
     }
 
     /// Every member's status worth an owner's look.
@@ -130,7 +135,8 @@ impl Carrier {
                     answer: diverged.answer,
                 });
             }
-            if let Some(SourceStatus::SourceDigestMismatch { recorded, read, .. }) = &record.source {
+            if let Some(SourceStatus::SourceDigestMismatch { recorded, read, .. }) = &record.source
+            {
                 statuses.push(VmOutboxMemberStatus::SourceDigestMismatch {
                     kind,
                     member: member.to_owned(),
@@ -177,7 +183,11 @@ impl Carrier {
                 match self.remove_own_copy(kind, member, &diverged.held.blake3) {
                     Ok(()) => None,
                     Err(error) => {
-                        self.say(kind, member, &format!("its kept copy was not removed: {error}"));
+                        self.say(
+                            kind,
+                            member,
+                            &format!("its kept copy was not removed: {error}"),
+                        );
                         return;
                     }
                 }
@@ -217,7 +227,9 @@ impl Carrier {
         blake3: &str,
     ) -> std::io::Result<()> {
         let Some(root) = self.roots.open(kind)? else {
-            return Err(std::io::Error::other("this end has no root for the kind now"));
+            return Err(std::io::Error::other(
+                "this end has no root for the kind now",
+            ));
         };
         let Some((file, _)) = local::open_member(&root, member, None)? else {
             return Ok(());

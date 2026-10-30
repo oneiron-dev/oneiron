@@ -305,8 +305,13 @@ fn verb_ask_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAs
 /// is never compared. Settlement runs his call again only while the vault
 /// records him as its live owner then, and work his call queues runs only
 /// while it does when it runs (FIX 11090). `None` for any other caller, and
-/// for him while the vault's authority does not read: his call resumes on
-/// his retry and queues no work, never as the host's own.
+/// for him while the vault has no authority id or it does not read: a
+/// hook's ask on his call then saves no reference and resumes on his retry,
+/// never as the host's own. He is still bound apart from it
+/// ([`attested_owner_holder`], FIX 11129), so his Continue, Retry, armed
+/// program and owed wake stand on his person, and a live-owner check that
+/// cannot read answers its typed unavailable error, never a refusal of his
+/// (FIX 11132).
 fn attested_owner_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<VerbAskInstrument> {
     let holder = attested_owner_holder(auth)?;
     let authority = match vault.authority_vault_id() {
@@ -314,7 +319,7 @@ fn attested_owner_instrument(vault: &oneiron::Vault, auth: &CoreAuth) -> Option<
         Err(error) => {
             tracing::warn!(
                 kind = ?error.kind(),
-                "the attested owner's vault authority did not read; his call names no source and queues no work"
+                "the attested owner's vault authority did not read; a hook's ask on his call saves no reference and resumes on his retry"
             );
             return None;
         }

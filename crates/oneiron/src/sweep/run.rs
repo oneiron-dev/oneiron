@@ -9,7 +9,7 @@ use super::finalize::{
 };
 use crate::Vault;
 use crate::deletion::{
-    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WITHDRAWN_GENERATION_SWEEP_PREFIX,
+    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WITHDRAWN_GENERATION_SWEEP_PREFIX, WithdrawnCutoff,
     WithdrawnGenerationSweepJob, decode_hard_erase_sweep_job, decode_hard_erase_sweep_seq,
     decode_withdrawn_generation_row, withdrawn_generation_cutoffs_in_txn,
 };
@@ -126,14 +126,16 @@ thread_local! {
 /// The withdrawn generations one pass rewrites (OF-013), beside the
 /// erased-id authority. Unlike an erased id, a withdrawn artifact keeps its
 /// row and every newer generation: only its carriers of the withdrawn
-/// generation or older change, to the content-free keyframe.
+/// generation or older change, to the content-free form its cutoff names, a
+/// keyframe or a Shell (FIX 931).
 #[derive(Debug, Default)]
 pub(super) struct WithdrawnSweep {
-    /// Each artifact's newest withdrawn generation, from every `hw:` row and
-    /// every fence. A fenced artifact's carriers are rewritten on every pass,
-    /// as a `dt:` id's are scrubbed: a late re-put goes with the next one.
+    /// Each artifact's newest withdrawn generation and its replacement, from
+    /// every `hw:` row and every fence. A fenced artifact's carriers are
+    /// rewritten on every pass, as a `dt:` id's are scrubbed: a late re-put
+    /// goes with the next one.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(super) cutoffs: BTreeMap<EntityId, u64>,
+    pub(super) cutoffs: BTreeMap<EntityId, WithdrawnCutoff>,
     /// Artifacts with a due `hw:` row: their document outbox goes with this
     /// pass, and every compacted window's queued sends with it.
     pub(super) due: BTreeSet<EntityId>,

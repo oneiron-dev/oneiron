@@ -18,6 +18,7 @@ use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND,
     TASK_REALIZE_ATTEMPT_KIND, TASK_SETTLE_ID_DOMAIN,
 };
+use super::consult_assignee_wait::{CONSULT_ASSIGNEE_FACT_WAIT, waits_for_assignee_fact_in};
 use super::create_validation::task_route_dedupe_key;
 use super::highway::{attempt_hex, lease_owner_for, not_found, phase_of};
 use super::highway_accept::{Lane, lane_of};
@@ -159,6 +160,7 @@ impl Memory<'_> {
                 asks: Vec::new(),
                 last_receipt: None,
                 workflow: None,
+                waiting: None,
                 observed: [0; 32],
             },
             Vec::new(),
@@ -186,7 +188,7 @@ impl Memory<'_> {
         if self.credential_withholds(task_ref)? {
             return Err(not_found());
         }
-        let (body, generation, last_receipt) = {
+        let (body, generation, last_receipt, waiting) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let Some(body) = task_verb_body_in(self.vault(), &txn, task_ref)? else {
                 return Err(not_found());
@@ -203,7 +205,9 @@ impl Memory<'_> {
             // index, in the read that admitted the reader.
             let last_receipt =
                 super::lifecycle_receipt::newest_for_task_in(self.vault(), &txn, task_ref)?;
-            (body, generation, last_receipt)
+            let waiting = waits_for_assignee_fact_in(self.vault(), &txn, task_ref, &body)?
+                .then(|| CONSULT_ASSIGNEE_FACT_WAIT.to_owned());
+            (body, generation, last_receipt, waiting)
         };
         let queue = AttemptQueue::new(self.vault());
         let live: Option<AttemptRecord> = match attempt {
@@ -281,6 +285,7 @@ impl Memory<'_> {
                 asks,
                 last_receipt,
                 workflow,
+                waiting,
                 observed: [0; 32],
             },
             Vec::new(),
@@ -308,6 +313,7 @@ impl Memory<'_> {
                 asks: vec![(group, status)],
                 last_receipt: None,
                 workflow: None,
+                waiting: None,
                 observed: [0; 32],
             },
             Vec::new(),
