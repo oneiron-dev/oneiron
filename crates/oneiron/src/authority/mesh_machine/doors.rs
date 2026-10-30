@@ -23,6 +23,9 @@ pub struct MeshMachineBinding {
     pub transport_proof: Vec<u8>,
 }
 
+/// The longest a mesh ALPN grant runs; it never outlives its pairing either.
+pub(super) const MESH_GRANT_MAX_SECS: u64 = 365 * 24 * 60 * 60;
+
 /// Allow or revoke exactly one ALPN for a bound MACHINE and endpoint key.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -130,6 +133,29 @@ impl Vault {
         owner: Option<&AuthenticatedOwner>,
         input: MeshMachineBinding,
     ) -> Result<()> {
+        // Every direct address is kept (FIX 7922): measured, and paced only
+        // before the writer opens.
+        let machine = input.machine;
+        let _turn =
+            self.admit_authority_work(input.address.direct_addrs.len(), None, || Ok(machine))?;
+        let mut txn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &txn)?;
+        }
+        let count = self.bind_mesh_machine_in_txn(&mut txn, issuer, input)?;
+        txn.commit()?;
+        count.finish(self);
+        Ok(())
+    }
+
+    /// [`Self::bind_mesh_machine`]'s writes in the caller's transaction; the
+    /// caller commits, then finishes the returned MACHINE row count.
+    pub(super) fn bind_mesh_machine_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        input: MeshMachineBinding,
+    ) -> Result<ScanCount> {
         let MeshMachineBinding {
             machine,
             address,
@@ -138,13 +164,6 @@ impl Vault {
             device_proof,
             transport_proof,
         } = input;
-        // Every direct address is kept (FIX 7922): measured, and paced only
-        // before the writer opens.
-        let _turn = self.admit_authority_work(address.direct_addrs.len(), None, || Ok(machine))?;
-        let mut txn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &txn)?;
-        }
         let transcript = binding_transcript(machine, address.endpoint_key);
         for (key, proof) in [
             (device_key, device_proof.as_slice()),
@@ -160,7 +179,7 @@ impl Vault {
         let encoded = rmp_serde::to_vec_named(&MeshMachineAddressEnvelope::new(address.clone()))
             .map_err(|_| invalid_authority())?;
         parse_address(&encoded).ok_or_else(invalid_authority)?;
-        let fold = self.authority_fold_readonly_in_txn(&txn)?;
+        let fold = self.authority_fold_readonly_in_txn(txn)?;
         require_host(&fold, issuer)?;
         let claims = MeshAuthorityClaims {
             version: 1,
@@ -172,12 +191,12 @@ impl Vault {
             revoked: false,
             host_key: issuer.binding_key(),
         };
-        if !self.mesh_pairing_live(&fold, &txn, &claims)?
-            || MESH_AUTHORITY.contains(&self.store, &txn, &HexId(machine))?
+        if !self.mesh_pairing_live(&fold, txn, &claims)?
+            || MESH_AUTHORITY.contains(&self.store, txn, &HexId(machine))?
         {
             return Err(invalid_authority());
         }
-        let visibility = TombstoneStoreRead::port_deletion_state(&self.store, &txn, &machine)?;
+        let visibility = TombstoneStoreRead::port_deletion_state(&self.store, txn, &machine)?;
         if visibility.deleted || visibility.archived || visibility.stale {
             return Err(invalid_authority());
         }
@@ -185,9 +204,9 @@ impl Vault {
         // binding replaces the prior MACHINE body with the typed address envelope.
         // Never overwrite another kind, a deleted/stale holder, or a different
         // endpoint already tagged as this MACHINE's mesh identity.
-        if let Some(existing) = EntityStoreRead::port_entity_record(&self.store, &txn, &machine)? {
+        if let Some(existing) = EntityStoreRead::port_entity_record(&self.store, txn, &machine)? {
             if existing.entity_type != ENTITY_TYPE_MACHINE
-                || EntityStore::port_entity_get(self, &txn, &machine)?.is_none()
+                || EntityStore::port_entity_get(self, txn, &machine)?.is_none()
             {
                 return Err(invalid_authority());
             }
@@ -200,17 +219,17 @@ impl Vault {
                 return Err(invalid_authority());
             }
         }
-        let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
+        let mut count = ScanCount::start(&self.store, txn, EngineScan::MachineRows, &[])?;
         if self
-            .mesh_machine_by_endpoint_in_txn(&txn, address.endpoint_key, Some(&mut count))?
+            .mesh_machine_by_endpoint_in_txn(txn, address.endpoint_key, Some(&mut count))?
             .is_some_and(|(id, _)| id != machine)
         {
             return Err(invalid_authority());
         }
-        let now = self.instant_in_txn(&txn)?.secs();
+        let now = self.instant_in_txn(txn)?.secs();
         EntityStore::port_entity_put(
             self,
-            &mut txn,
+            txn,
             &machine,
             &EntityRecord {
                 entity_type: ENTITY_TYPE_MACHINE,
@@ -222,10 +241,8 @@ impl Vault {
                 body: encoded,
             },
         )?;
-        self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
-        txn.commit()?;
-        count.finish(self);
-        Ok(())
+        self.write_mesh_authority_in_txn(txn, issuer, claims)?;
+        Ok(count)
     }
 
     /// Authorized ALPN grant or revocation. A revoked MACHINE stays revoked.
@@ -265,6 +282,27 @@ impl Vault {
         owner: Option<&AuthenticatedOwner>,
         input: MeshAlpnGrant,
     ) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            owner.revalidate_in_txn(self, &txn)?;
+        }
+        let revoked = self.set_mesh_alpn_grant_in_txn(&mut txn, issuer, input)?;
+        txn.commit()?;
+        if revoked {
+            self.store.notify_credential_revocations();
+        }
+        Ok(())
+    }
+
+    /// [`Self::set_mesh_alpn_grant`]'s writes in the caller's transaction;
+    /// `true` when it revoked a grant, so the caller notifies once it
+    /// commits.
+    pub(super) fn set_mesh_alpn_grant_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        input: MeshAlpnGrant,
+    ) -> Result<bool> {
         let MeshAlpnGrant {
             machine,
             endpoint_key,
@@ -272,36 +310,28 @@ impl Vault {
             allow,
         } = input;
         let alpn = alpn.as_slice();
-        let mut txn = self.store.env.write_txn()?;
-        if let Some(owner) = owner {
-            owner.revalidate_in_txn(self, &txn)?;
-        }
         if !valid_alpn(alpn) {
             return Err(invalid_authority());
         }
-        require_host(&self.authority_fold_readonly_in_txn(&txn)?, issuer)?;
+        require_host(&self.authority_fold_readonly_in_txn(txn)?, issuer)?;
         let mut claims = self
-            .mesh_authority_in_txn(&txn, machine)?
+            .mesh_authority_in_txn(txn, machine)?
             .ok_or_else(invalid_authority)?;
         if claims.revoked
             || claims.host_key != issuer.binding_key()
             || claims.endpoint_key != endpoint_key
             || self
-                .mesh_machine_in_txn(&txn, machine)?
+                .mesh_machine_in_txn(txn, machine)?
                 .is_none_or(|row| row.endpoint_key != endpoint_key)
         {
             return Err(invalid_authority());
         }
         let previous = claims.alpns.remove(alpn);
         if let Some(previous) = previous {
-            self.append_slip_op_in_txn(
-                &mut txn,
-                issuer,
-                AuthorityOp::SlipRevoke { slip_id: previous },
-            )?;
+            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipRevoke { slip_id: previous })?;
         }
         if allow {
-            let fold = self.authority_fold_readonly_in_txn(&txn)?;
+            let fold = self.authority_fold_readonly_in_txn(txn)?;
             let pair = &fold
                 .slips
                 .mints
@@ -309,8 +339,8 @@ impl Vault {
                 .ok_or_else(invalid_authority)?
                 .action
                 .claims;
-            let now = self.instant_in_txn(&txn)?.secs();
-            let expires_at = pair.expires_at.min(now.saturating_add(365 * 24 * 60 * 60));
+            let now = self.instant_in_txn(txn)?.secs();
+            let expires_at = pair.expires_at.min(now.saturating_add(MESH_GRANT_MAX_SECS));
             if expires_at <= now {
                 return Err(invalid_authority());
             }
@@ -339,17 +369,13 @@ impl Vault {
                 delegation: None,
                 comm: None,
             };
-            let slip = self.mint_slip_in_txn(&mut txn, issuer, grant)?;
+            let slip = self.mint_slip_in_txn(txn, issuer, grant)?;
             claims.alpns.insert(alpn.to_vec(), slip.claims.slip_id);
         }
         // Every grant is kept (FIX 7921): the count is measured, never refused.
         super::super::measure_authority_work(&self.store.limit_watch, claims.alpns.len());
-        self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
-        txn.commit()?;
-        if previous.is_some() {
-            self.store.notify_credential_revocations();
-        }
-        Ok(())
+        self.write_mesh_authority_in_txn(txn, issuer, claims)?;
+        Ok(previous.is_some())
     }
 
     /// Irreversible local revoke. Reenrollment needs a new MACHINE/pairing.

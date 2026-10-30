@@ -36,9 +36,9 @@ use super::{ResidenceRpc, SyncClient, refused, residence_budgets};
 use crate::Vault;
 use crate::authority::{
     AUTHORITY_CHECKPOINT_V2_MAX_BYTES, AUTHORITY_HISTORY_PAGE_MAX, AuthorityCheckpointAttestation,
-    AuthorityCheckpointPin, AuthorityEntryHash, AuthorityHistoryFetch, AuthorityHistoryRequest,
-    AuthorityHistorySelection, AuthorityRepairOutcome, authority_entry_hash,
-    decode_authority_log_entry_body, side_world,
+    AuthorityCheckpointPin, AuthorityCheckpointV2, AuthorityEntryHash, AuthorityHistoryFetch,
+    AuthorityHistoryRequest, AuthorityHistorySelection, AuthorityRepairOutcome,
+    authority_entry_hash, decode_authority_log_entry_body, side_world,
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
@@ -220,11 +220,36 @@ async fn adopt_pinned_checkpoint(
     };
     attestations
         .retain(|attestation| pin.binding(&attestation.binding.root) == Some(&attestation.binding));
-    match vault.adopt_authority_checkpoint(pin, &image, &attestations) {
+    match adopt(vault, pin, &image, &attestations) {
         Ok(_) => tracing::info!("pinned authority checkpoint adopted"),
         Err(error) => tracing::warn!(%error, "pinned authority checkpoint refused"),
     }
     Ok(())
+}
+
+/// Adopts `image` under `pin`. A vault that joins from empty (FIX 3375),
+/// with no Genesis and no owner-root pin yet, first pins the root the image
+/// was built under, as a kit restore does
+/// ([`Vault::adopt_recovered_authority_checkpoint`]): the image stands only
+/// under that pin, the pin's digest is the one the owner's link named, and
+/// the root pins only once the image verifies under the pin's roots. A vault
+/// that holds either adopts as before.
+fn adopt(
+    vault: &Vault,
+    pin: &AuthorityCheckpointPin,
+    image: &[u8],
+    attestations: &[AuthorityCheckpointAttestation],
+) -> crate::Result<[u8; 32]> {
+    match AuthorityCheckpointV2::decode(image)?.building_pin {
+        Some(root) => vault.adopt_recovered_authority_checkpoint(
+            pin,
+            image,
+            attestations,
+            pin.digest()?,
+            root,
+        ),
+        None => vault.adopt_authority_checkpoint(pin, image, attestations),
+    }
 }
 
 /// The checkpoint image the home keeps at `checkpoint` and the attestations

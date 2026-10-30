@@ -172,6 +172,8 @@ pub(super) async fn oauth_exchange(
         home: None,
         re_paired: false,
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
+        mesh: None,
+        mesh_bind: None,
     }))
 }
 
@@ -192,6 +194,12 @@ pub(super) struct RedeemLink {
     /// and class, credential only (FIX 8636). Read only beside `machine`.
     #[serde(default)]
     machine_possession: Option<String>,
+    /// The joining machine's mesh endpoint key and the two proofs that bind
+    /// it, a `MeshBindingIdentity` (FIX 3374): with them the home binds that
+    /// endpoint and grants it the sync ALPN. Read only beside `machine`, and
+    /// read apart from the rest, so a bad one never breaks the pairing.
+    #[serde(default)]
+    mesh: Option<serde_json::Value>,
 }
 /// [`MachineEnrolmentRequest`] on the wire: hex ids and keys, base64 for the
 /// 1600-byte encryption key.
@@ -249,6 +257,14 @@ pub(super) struct Paired {
     /// Whom the paired slip may message (FIX 3899): the reach the owner set
     /// on the link, `vault` when he set none.
     comm: oneiron::authority::CommReach,
+    /// This home's own mesh address, for the machine a machine link just
+    /// added, once its endpoint is bound and its listener runs (FIX 3374).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mesh: Option<oneiron::authority::MeshMachineAddress>,
+    /// The mesh binding this pairing made for that machine, or why it made
+    /// none (L02 04:5x); absent when the machine sent no mesh identity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mesh_bind: Option<crate::device_sync::home_bind::MeshBindReceipt>,
 }
 #[derive(Serialize)]
 pub(super) struct PairedHome {
@@ -300,8 +316,26 @@ pub(super) async fn redeem(
         .transpose()?
         .map(|proof| <[u8; 64]>::try_from(proof).map_err(|_| ApiError::unauthorized()))
         .transpose()?;
-    let redeemed = with_issuer(&server, |issuer| {
-        server.vault().redeem_pairing_link_with_possession(
+    // The joining machine's mesh identity, beside a machine link's request
+    // only (FIX 3374, L02 04:5x).
+    let mesh = machine
+        .as_ref()
+        .and(request.mesh.as_ref())
+        .map(crate::device_sync::home_bind::read_mesh_identity);
+    let redeemed = with_issuer(&server, |issuer| match (machine.as_ref(), &mesh) {
+        (Some(machine), Some(Ok((identity, alpn)))) => {
+            server.vault().redeem_pairing_link_with_mesh(
+                issuer,
+                &request.code,
+                &request.holder_ref,
+                binding_key,
+                &signature,
+                machine,
+                possession.as_ref(),
+                (identity, *alpn),
+            )
+        }
+        _ => server.vault().redeem_pairing_link_with_possession(
             issuer,
             &request.code,
             &request.holder_ref,
@@ -309,7 +343,7 @@ pub(super) async fn redeem(
             &signature,
             machine.as_ref(),
             possession.as_ref(),
-        )
+        ),
     })?;
     let slip = &redeemed.slip;
     let token = slip.to_token().map_err(|_| ApiError::unauthorized())?;
@@ -339,13 +373,54 @@ pub(super) async fn redeem(
         .is_some()
         .then(|| paired_home(server.vault()))
         .flatten();
+    // The receipt names the mesh binding the pairing made, or why it made
+    // none; the home's address goes with a bound endpoint only.
+    let mesh_bind = mesh.map(|read| {
+        crate::device_sync::home_bind::MeshBindReceipt::read(read, redeemed.mesh.as_ref())
+    });
+    if let Some(receipt) = mesh_bind.as_ref().filter(|receipt| !receipt.bound()) {
+        tracing::warn!(?receipt, "pairing: the enrolled machine's mesh endpoint was not bound");
+    }
+    let mesh = mesh_bind
+        .as_ref()
+        .filter(|receipt| receipt.bound())
+        .and_then(|_| crate::device_sync::home_bind::home_mesh_address(&server));
     Ok(Json(Paired {
         token,
         pin: redeemed.pin,
         home,
         re_paired: redeemed.re_paired,
         comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
+        mesh,
+        mesh_bind,
     }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PendingPinRequest {
+    code: String,
+}
+#[derive(Serialize)]
+pub(super) struct PendingPin {
+    pin: oneiron::authority::AuthorityCheckpointPin,
+}
+/// The checkpoint pin an outstanding link keeps, by its code, read only (FIX
+/// 3375, L02 04:5x): a device joining from an empty vault checks it against
+/// its link's digest before it redeems, and takes the home's storage id and
+/// genesis from its root-signed key bindings. It is what redeem gives the
+/// code's holder. A code redeem refuses (unknown, spent, expired), or a link
+/// that keeps no pin, gets redeem's own refusal; redeem counts no attempts
+/// and locks out none, so neither does this. The link and its lifetime stay
+/// as they are.
+pub(super) async fn pending_pin(
+    State(server): State<Arc<SyncServer>>,
+    Json(request): Json<PendingPinRequest>,
+) -> Result<Json<PendingPin>, EnvelopedApiError> {
+    let pin = with_issuer(&server, |issuer| {
+        server.vault().pending_pairing_pin(issuer, &request.code)
+    })?;
+    Ok(Json(PendingPin { pin }))
 }
 
 /// Whether a paired slip proposes or writes: the OpenAI proxy's write leg.
