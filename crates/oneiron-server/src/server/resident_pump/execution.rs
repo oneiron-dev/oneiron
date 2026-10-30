@@ -16,6 +16,7 @@ use super::{
     note_stale_listed_models, note_unbound_listed_run, pattern_launch, pump_caller,
     run_continuation, scope_funding, task_engine_run_seat, task_run_seat, text, unix_now,
 };
+use crate::mcp::LiveLeaseRunner;
 
 /// Runs the leased attempt until it ends, waits, or fails: a yielded slice
 /// enters again at once, a full window once its compaction can land.
@@ -108,6 +109,7 @@ pub(super) fn run_bound(
             definition.models.clone(),
         )?
     } else {
+        // No read scope is threaded here: the birth inherits (FIX 11768).
         task_engine_run_seat(
             vault,
             provider,
@@ -116,6 +118,7 @@ pub(super) fn run_bound(
             type_ref,
             status.input.plan.as_ref(),
             definition.models.clone(),
+            Vec::new(),
         )?
     };
     // FIX 2310 (OF-541 PR H): a planned child no seat binds runs its plan's
@@ -420,21 +423,30 @@ fn continued_seat(
     type_ref: &TaskTypeRef,
     listed: Vec<AgentModel>,
 ) -> Result<Option<ModelSeat>, String> {
-    task_run_seat(vault, provider, config.run_id, type_ref, |facet| SeatTask {
-        kind: SeatKind::Attempt,
-        warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
-        task: config.task.clone(),
-        purpose: oneiron::CallPurpose::Other {
-            name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+    // No read scope is threaded here: the birth inherits (FIX 11768).
+    task_run_seat(
+        vault,
+        provider,
+        config.run_id,
+        type_ref,
+        Vec::new(),
+        |facet| SeatTask {
+            kind: SeatKind::Attempt,
+            warm_scope: format!("agent-run:{}", config.run_id.to_hex()),
+            task: config.task.clone(),
+            purpose: oneiron::CallPurpose::Other {
+                name: oneiron::engine_executor::ENGINE_EXECUTOR_PURPOSE_NAME.into(),
+            },
+            facet: facet.to_owned(),
+            required: Vec::new(),
+            min_context_tokens: 1,
+            locality: config.model_locality,
+            override_model: Some(config.model.clone()),
+            override_effort: config.seat_effort,
+            listed,
+            worlds: Vec::new(),
         },
-        facet: facet.to_owned(),
-        required: Vec::new(),
-        min_context_tokens: 1,
-        locality: config.model_locality,
-        override_model: Some(config.model.clone()),
-        override_effort: config.seat_effort,
-        listed,
-    })
+    )
 }
 
 /// FIX 6030: with no seat the run is still held to its list; a configured
@@ -515,6 +527,9 @@ fn enter_run(
         Some(meter) => Some((meter.guard.clone(), meter.payer.clone())),
         None => provider.host_meter().map(|guard| (guard, None)),
     };
+    // The entry's one live lease, which its door's speech and its planner
+    // runner's start look on too, and book on once (FIX 11747).
+    let lease = meter.as_ref().map(|meter| meter.lease.clone());
     let planner = decisions.host_planner_decisions(actor.entity_ref());
     if let Some(mut planner) = planner_binding(vault, provider, config, planner)? {
         planner.pattern_runner = pattern_launch::agent_runner(
@@ -525,7 +540,8 @@ fn enter_run(
             actor,
             model_seat,
             line.clone(),
-        );
+        )
+        .map(|runner| LiveLeaseRunner::lend(runner, vault, lease.as_ref()));
         bound = bound.with_planner(planner);
     }
     if let Some(issuer) = issuer {
@@ -551,6 +567,7 @@ fn enter_run(
         .map_err(text)?
         .enter();
     door.bind_meter(line);
+    door.bind_lease(lease);
     door.bind_attempt(Some(oneiron_contracts::entity_id::bytes_to_hex_lower(
         status.attempt.id.as_bytes(),
     )));
@@ -558,6 +575,7 @@ fn enter_run(
         vault, provider, &bound, config, compaction, reactor, meter, model_seat, planned,
     );
     door.bind_meter(None);
+    door.bind_lease(None);
     door.bind_attempt(None);
     entered
 }

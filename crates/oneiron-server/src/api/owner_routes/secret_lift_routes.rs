@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -17,16 +16,33 @@ use oneiron::policy_model::{
     secret_lift_as_owner_toward,
 };
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/lift", get(status))
-        .route("/secrets/lift/close", post(close))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/lift",
+                summary: "The run in progress, the last run's receipt and the open proposals, counted by cause.",
+                row: None,
+            },
+            get(status),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/lift/close",
+                summary: "Closes one open proposal, by its id, and returns it as it now stands.",
+                row: None,
+            },
+            post(close),
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/secrets/lift/close`'s body (FIX 11611):

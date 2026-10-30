@@ -448,6 +448,11 @@ side_tables! {
     /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
     SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
         => crate::skill_attribution::erase_positive_proposals_in_txn;
+    /// One skill's site knowledge a run's browser was shown (FIX 11436): the run, the scope and
+    /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
+    /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).
+    SKILL_ATTRIBUTION_SITE_EXPOSURE: VaultMeta b"skill_attribution:site_exposure:v1:" Named Engine
+        => crate::skill_attribution::erase_site_exposure_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;

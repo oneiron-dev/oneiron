@@ -7,7 +7,7 @@ use super::document_store::{
 use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
-use super::{NoteEdit, NoteEditOutcome, NotePin};
+use super::{NotePin, NoteScalarEdit, NoteScalarEditOutcome};
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
@@ -30,9 +30,16 @@ pub struct NoteOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NoteChange {
-    Edit { base: Vec<u8>, edits: Vec<NoteEdit> },
-    Cite { pin: NotePin },
-    SetTitle { title: String },
+    Edit {
+        base: Vec<u8>,
+        edits: Vec<NoteScalarEdit>,
+    },
+    Cite {
+        pin: NotePin,
+    },
+    SetTitle {
+        title: String,
+    },
 }
 
 /// Durable provenance authored only by the admission door. Commit messages
@@ -74,7 +81,7 @@ pub struct NoteOperationReceipt {
     #[serde(with = "super::id_codec")]
     pub request_id: EntityId,
     pub command_hash: [u8; 32],
-    pub outcome: NoteEditOutcome,
+    pub outcome: NoteScalarEditOutcome,
 }
 
 impl NoteOperation {
@@ -294,7 +301,7 @@ impl Memory<'_> {
                             invalid("reviewed NOTE edit requires an active gate policy").into()
                         );
                     }
-                    Some(NoteEditOutcome::Proposed(propose_claim(
+                    Some(NoteScalarEditOutcome::Proposed(propose_claim(
                         self, txn, note, operation,
                     )?))
                 }
@@ -331,7 +338,7 @@ impl Memory<'_> {
                     },
                 )?;
                 persist_authoritative(self.vault(), txn, &doc)?;
-                NoteEditOutcome::Applied(doc.view()?)
+                NoteScalarEditOutcome::Applied(doc.view()?)
             }
         };
         let receipt = NoteOperationReceipt {
