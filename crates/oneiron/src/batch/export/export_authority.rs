@@ -266,8 +266,9 @@ fn authority_identity_of_fold(fold: AuthorityFold) -> Option<AuthorityChainIdent
 /// Commits an authority chain's whole valid-entry set to one digest.
 ///
 /// The vault id is bound in so the digest cannot be replayed under a different
-/// root, and the entries hash in ascending order, as a `BTreeSet` and the
-/// fold's `ValidEntries` iterate, so two devices that folded the same chain
+/// root, and the entries hash in ascending order, each once: every caller
+/// passes an ordered set (a `BTreeSet` or the fold's `ValidEntries`), never a
+/// list or a hash set's iterator, so two devices that folded the same chain
 /// agree byte-for-byte regardless of arrival order.
 pub(super) fn authority_valid_entries_digest<'a>(
     vault_id: &AuthorityVaultId,
