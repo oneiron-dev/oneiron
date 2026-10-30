@@ -20701,6 +20701,8 @@ pub enum OutboxCardKind {
     OutboxDiverged,
     #[serde(rename = "outbox_source_damaged")]
     OutboxSourceDamaged,
+    #[serde(rename = "outbox_kept_aside")]
+    OutboxKeptAside,
 }
 
 /// `oneiron::verbs::outbox_diverged::OutboxDivergedAnswer`.
@@ -20797,6 +20799,27 @@ pub enum OutboxMemberStatus {
         recorded: String,
         #[serde(rename = "read")]
         read: String,
+    },
+    #[serde(rename = "kept_aside")]
+    KeptAside {
+        #[serde(rename = "kind")]
+        kind: VmOutboxKind,
+        #[serde(rename = "member")]
+        member: String,
+        #[serde(rename = "held_by")]
+        held_by: VmOutboxSide,
+        #[serde(rename = "held")]
+        held: String,
+        #[serde(rename = "length")]
+        length: u64,
+        #[serde(rename = "aside")]
+        aside: String,
+        #[serde(rename = "kept_at_ms")]
+        kept_at_ms: u64,
+        #[serde(rename = "removing")]
+        removing: bool,
+        #[serde(rename = "failed", default, skip_serializing_if = "Option::is_none")]
+        failed: Option<String>,
     },
 }
 

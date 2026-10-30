@@ -1326,8 +1326,8 @@ declare namespace Sdk {
   type VmOutboxKind = "escrow" | "custody" | "esign" | "training" | "recipients" | "backup" | "backup_stage_ack";
   type VmOutboxSide = "guest" | "host";
   type OutboxDivergedAnswer = "keep" | "remove";
-  type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string };
-  type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged";
+  type OutboxMemberStatus = { status: "diverged_unagreed"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; retired?: string | null; answer?: OutboxDivergedAnswer | null } | { status: "source_digest_mismatch"; kind: VmOutboxKind; member: string; recorded: string; read: string } | { status: "kept_aside"; kind: VmOutboxKind; member: string; held_by: VmOutboxSide; held: string; length: number; aside: string; kept_at_ms: number; removing: boolean; failed?: string | null };
+  type OutboxCardKind = "outbox_diverged" | "outbox_source_damaged" | "outbox_kept_aside";
   type OutboxCardAction = { label: string; answer: OutboxDivergedAnswer; route: string };
   type OutboxOwnerCard = { kind: OutboxCardKind; headline: string; body: string; actions: OutboxCardAction[] };
   type OutboxDivergedMember = OutboxMemberStatus & { card: OutboxOwnerCard };
