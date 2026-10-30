@@ -57,7 +57,8 @@ pub(crate) async fn vault_export_transfer_read(
         .unwrap_or(EXPORT_TRANSFER_READ_BYTES)
         .min(total - offset);
     let digest = kept.receipt.digest.clone();
-    let read = tokio::task::spawn_blocking(move || kept.piece(offset, length)).await;
+    let read =
+        crate::api::facade::clock_ingress::run_blocking(move || kept.piece(offset, length)).await;
     let Ok(Ok(piece)) = read else {
         return (Err(internal(READ_VERB)), rows);
     };

@@ -20,11 +20,12 @@ async fn owned<T: Send + 'static>(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer: MemoryResult<T> =
-        tokio::task::spawn_blocking(move || act(server.vault(), &owner).map_err(MemoryError::from))
-            .await
-            .map_err(|_| internal(verb))
-            .and_then(|answer| answer);
+    let answer: MemoryResult<T> = super::clock_ingress::run_blocking(move || {
+        act(server.vault(), &owner).map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal(verb))
+    .and_then(|answer| answer);
     // These are local ledger rows and receipt refs, not core row content.
     (answer, Vec::new())
 }

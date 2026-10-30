@@ -104,20 +104,14 @@ pub(crate) fn answers_as_before(reply: &ConnectorCallReply) -> bool {
             && matches!(reply, ConnectorCallReply::AwaitingInput { .. }))
 }
 
-/// Whether an `ai.voice.tool` call's connector `reply` answers as before,
-/// unjudged: as [`answers_as_before`], and its questions keep their answer
-/// path whole, since the voice tool's reply has no narrowed questions form.
-pub(crate) fn voice_answers_as_before(reply: &ConnectorCallReply) -> bool {
-    reply.wait_ref().is_some() || matches!(reply, ConnectorCallReply::AwaitingInput { .. })
-}
-
 /// A connector's `awaiting_input` `reply` for a caller toward `destination`
 /// (FIX 5824). A reply that may leave, or whose rows are not known, answers
 /// whole beside its rows, as [`crate::device_local::act_answer_maybe`]
 /// answers it. One that names or lists a row a world withheld from that
 /// destination keeps (or whose check fails) keeps its answer path whole and
 /// leaves the text of each question naming such a row here, beside no rows.
-fn narrowed_questions(
+/// `ai.voice.tool` narrows its connector reply by it too (FIX 11725).
+pub(super) fn narrowed_questions(
     vault: &oneiron::Vault,
     destination: &ReadDestination,
     reply: ConnectorCallReply,

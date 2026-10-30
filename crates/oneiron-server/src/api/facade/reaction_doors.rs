@@ -93,7 +93,7 @@ pub(crate) async fn react_message(
             ));
         }
         let ingress = input.ingress()?;
-        return tokio::task::spawn_blocking(move || vault.ingest_reaction(ingress))
+        return super::clock_ingress::run_blocking(move || vault.ingest_reaction(ingress))
             .await
             .map_err(|_| internal("vault.messages.react"))?
             .map(MessageReactionReceipt::from)
@@ -106,7 +106,7 @@ pub(crate) async fn react_message(
             &[],
         )
     })?;
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         input
             .apply_as(&vault, actor)
             .map(MessageReactionReceipt::from)

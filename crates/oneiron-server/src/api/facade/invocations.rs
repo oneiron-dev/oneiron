@@ -129,7 +129,7 @@ pub(crate) async fn claim_door_invocation(
         InvocationEntry::Claimed(claim) => DoorClaim::Run(claim),
         InvocationEntry::Conflict => DoorClaim::Conflict,
         InvocationEntry::Busy(wait) => {
-            match tokio::task::spawn_blocking(move || wait.outcome(INVOCATION_WAIT)).await {
+            match super::clock_ingress::run_blocking(move || wait.outcome(INVOCATION_WAIT)).await {
                 Ok(Some(outcome)) => DoorClaim::Answered(outcome),
                 _ => DoorClaim::InFlight,
             }

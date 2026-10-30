@@ -235,6 +235,7 @@ impl<'v> Memory<'v> {
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
                 task_grant: self.task_grant,
+                kept_requester: self.kept_requester.clone(),
                 origin_conversation: self.origin_conversation,
                 task_host: None,
                 task_decisions: self.task_decisions.clone(),

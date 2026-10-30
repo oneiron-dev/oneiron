@@ -187,9 +187,7 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         // rows 01 and 03): its state, and the message naming its bound.
         ErrorKind::LegalHold => {
             let (state, legal_hold) = match &error {
-                oneiron::Error::LegalHold(notice) => {
-                    (notice.state.as_str(), Some(notice.clone()))
-                }
+                oneiron::Error::LegalHold(notice) => (notice.state.as_str(), Some(notice.clone())),
                 _ => ("legal_hold", None),
             };
             let refusal = ApiError::new(

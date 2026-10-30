@@ -1,14 +1,17 @@
 //! Who queued an agent dispatch, and what his request stood on (FIX 11592,
 //! ruling 4624(a)). A dispatch a credential caller's request queued keeps
 //! the instrument that request was admitted on, as a queued turn action
-//! does: the slip, or a managed vault's attested owner. A child with none
-//! of its own keeps its parent's, and a retry keeps the payload it clones.
-//! The in-process host's own work, and maintenance, keeps none and runs as
-//! before.
+//! does: the slip, an ask guest's admitted grant (FIX 11688), or a managed
+//! vault's attested owner. A child with none of its own keeps its parent's,
+//! and a retry keeps the payload it clones. A held request released later
+//! keeps the requester it was admitted under (FIX 11691). The in-process
+//! host's own work, and maintenance, keeps none and runs as before.
 //!
 //! Each agent pump checks it again in the write it would claim the try in.
 //! Only a positive withdrawal ends the work: the slip, or an ancestor,
-//! revoked, or the attested owner no longer the vault's live owner. The
+//! revoked, the guest's grant withdrawn, the attested owner no longer the
+//! vault's live owner, or the requester hard-erased, which leaves an erased
+//! marker in place of its standing (FIX 11689). The
 //! pump then claims nothing and hands the try to
 //! [`AgentDispatcher::end_withdrawn`], which takes the TASK runner's turn
 //! first and fails the try for good with that typed reason, through the
@@ -22,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::attempt_queue::{
     AttemptId, AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, FailAttempt,
 };
-use crate::authority::{InvocationSlipBinding, ManagedOwnerCheckError};
+use crate::authority::{AdmittedTaskGrant, InvocationSlipBinding, ManagedOwnerCheckError};
 use crate::error::Result;
 use crate::memory::Memory;
 use crate::task_verb::highway_runner::{
@@ -42,6 +45,12 @@ pub enum RequesterStanding {
     /// The vault's owner `holder`, whom its supervisor attested with no
     /// slip: the work stands while the vault records him as its live owner.
     AttestedOwner { holder: EntityId },
+    /// An ask guest's grant, admitted for the companion it names (FIX
+    /// 11688): the work stands until the owner withdraws the grant.
+    TaskGrant { grant: AdmittedTaskGrant },
+    /// The requester was hard-erased, and its standing with it (FIX 11689):
+    /// the work no longer stands.
+    Erased,
 }
 
 /// Who queued a dispatch, and what his request stood on.
@@ -61,6 +70,10 @@ pub enum RequesterWithdrawn {
     SlipRevoked,
     /// The attested owner is no longer the vault's live owner.
     OwnerNotLive,
+    /// The owner withdrew the ask guest's grant the request stood on.
+    GrantWithdrawn,
+    /// The requester was hard-erased.
+    RequesterErased,
 }
 
 impl RequesterWithdrawn {
@@ -70,22 +83,34 @@ impl RequesterWithdrawn {
         match self {
             Self::SlipRevoked => "requester_withdrawn:slip_revoked",
             Self::OwnerNotLive => "requester_withdrawn:owner_not_live",
+            Self::GrantWithdrawn => "requester_withdrawn:grant_withdrawn",
+            Self::RequesterErased => "requester_withdrawn:requester_erased",
         }
     }
 }
 
 impl QueuedRequester {
-    /// The requester `memory`'s request queues work under: the slip its host
-    /// bound, or the managed vault's attested owner. `None` for the
-    /// in-process host's own surface and any other caller, whose work stays
-    /// unmarked.
+    /// The requester `memory`'s request queues work under: the one a host
+    /// kept for a held request it releases, else the slip its host bound,
+    /// the ask guest's grant, or the managed vault's attested owner. `None`
+    /// for the in-process host's own surface and any other caller, whose
+    /// work stays unmarked.
     pub(crate) fn of_memory(memory: &Memory<'_>) -> Option<Self> {
+        if let Some(kept) = memory.kept_requester() {
+            return Some(kept.clone());
+        }
         if let Some(binding) = memory.invocation_slip() {
             return Some(Self {
                 actor: memory.actor(),
                 standing: RequesterStanding::Slip {
                     binding: binding.clone(),
                 },
+            });
+        }
+        if let Some(grant) = memory.admitted_task_grant() {
+            return Some(Self {
+                actor: memory.actor(),
+                standing: RequesterStanding::TaskGrant { grant },
             });
         }
         memory.attested_owner_holder().map(|holder| Self {
@@ -121,7 +146,30 @@ impl QueuedRequester {
                     Ok(()) | Err(ManagedOwnerCheckError::Unavailable) => None,
                 }
             }
+            RequesterStanding::TaskGrant { grant } => {
+                match vault.guest_grant_withdrawn_in_txn(txn, &grant.grant()) {
+                    Ok(true) => Some(RequesterWithdrawn::GrantWithdrawn),
+                    Ok(false) => None,
+                    Err(error) => {
+                        tracing::warn!(%error, "queued requester's grant unread; the try runs");
+                        None
+                    }
+                }
+            }
+            RequesterStanding::Erased => Some(RequesterWithdrawn::RequesterErased),
         }
+    }
+
+    /// Leaves this requester's standing as the erased marker when `actor`,
+    /// hard-erased, is the requester (FIX 11689): the work reads as
+    /// withdrawn, by its typed reason. Whether it changed; a marker already
+    /// in place changes nothing.
+    pub(crate) fn erase_standing_of(&mut self, actor: &EntityId) -> bool {
+        if self.actor != *actor || self.standing == RequesterStanding::Erased {
+            return false;
+        }
+        self.standing = RequesterStanding::Erased;
+        true
     }
 }
 

@@ -1091,7 +1091,24 @@ async fn execute_agent_verb_listing(
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
 /// on `memory`, the caller's surface `surface` built. A task row that may ask
 /// the host's decision ladder builds its own from `surface`, off the runtime.
+/// A code-mode call's engine call writes for the leased run its origin seals
+/// in every poll of the row, as a blocking hop writes for it (FIX 11698).
 async fn execute_agent_verb_row(
+        server: &Arc<SyncServer>,
+        tool: &str,
+        input: Value,
+        actor: &McpCallContext,
+        memory: oneiron::Memory<'_>,
+        surface: McpRowSurface,
+        served: &mut McpServed,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
+    }
+
+/// [`execute_agent_verb_row`]'s row, inside the run's write envelope.
+async fn execute_agent_verb_row_on(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
@@ -1636,10 +1653,12 @@ def facade_dispatch(facade_rows):
             # OF-533: after the call's own refusals, the whole invoke runs on a
             # blocking thread, its surface, rewrite admission, drain, room turn
             # and hooks with it as one row, since a model rung of the decision
-            # ladder its surface binds may block on the server's runtime.
+            # ladder its surface binds may block on the server's runtime. It
+            # goes through run_blocking, so a code run's write token rides
+            # with it (FIX 11698).
             dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
         let (server, owned) = (Arc::clone(server), call.owned());
-        tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
+        super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
