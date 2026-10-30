@@ -441,7 +441,7 @@ impl Vault {
                         &doc,
                         &super::NoteAuthorship {
                             operation: self.new_entity_id()?,
-                            actor: super::NoteActor::Actor(author),
+                            actor: super::NoteActor::Actor(stamp.token),
                             actor_class: EdgeActorClass::System.gate_actor_class().to_owned(),
                             grant: None,
                             command_hash: *blake3::hash(title.as_bytes()).as_bytes(),

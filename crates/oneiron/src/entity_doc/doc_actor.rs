@@ -49,6 +49,25 @@ impl DocActor {
         }
         named
     }
+
+    /// The actor a stored stamp token names (FIX 11964): this, read as a
+    /// token, resolved through its live claim as `store` holds it; no one
+    /// once the token is forgotten or its actor erased here.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or a stored token claim that does not decode.
+    pub(crate) fn token_actor_in(
+        self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Self> {
+        let Self::Actor(token) = self else {
+            return Ok(Self::Erased);
+        };
+        Ok(crate::provenance::resolve_actor_stamp_in(store, txn, &token)?
+            .map_or(Self::Erased, |actor| Self::Actor(actor.entity_ref())))
+    }
 }
 
 impl Serialize for DocActor {
