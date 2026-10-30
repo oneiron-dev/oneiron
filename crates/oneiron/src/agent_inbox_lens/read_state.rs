@@ -37,6 +37,19 @@ pub enum AgentInboxReadState {
     Done,
 }
 
+impl AgentInboxReadState {
+    /// Canonical wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Open => "open",
+            Self::Later => "later",
+            Self::Done => "done",
+        }
+    }
+}
+
 /// What the agent wrote of one row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 struct AgentInboxReadMark {
