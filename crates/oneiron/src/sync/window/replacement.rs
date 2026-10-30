@@ -61,7 +61,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncError, SyncProtocolValidation};
 use crate::ports::{DeletionMarker, TombstoneStoreRead, WindowAddress, WindowDeletionRows};
 use crate::sync::bridge::Materializer;
-use crate::sync::transport::{MAX_DECODED_PAYLOAD_BYTES, is_window_admission_read_fault};
+use crate::sync::transport::{MAX_WINDOW_PAD_PAYLOAD_BYTES, is_window_admission_read_fault};
 use crate::sync::window_rows::{OFF_RECORD_PROMOTE_PICKUP, WINDOW_UPDATE};
 
 fn rejected() -> Error {
@@ -98,7 +98,9 @@ pub fn prepare_replacement(
 /// How long a replacement snapshot may be.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::sync) enum ReplacementByteBound {
-    /// A peer's: one network frame's decoded payload, [`MAX_DECODED_PAYLOAD_BYTES`].
+    /// A peer's: its window pad envelope's payload, joined from frames each
+    /// within the frame floor and checked whole against its digest, up to
+    /// [`MAX_WINDOW_PAD_PAYLOAD_BYTES`] (FIX 8247).
     NetworkFrame,
     /// A base window of a sealed bundle a kit restore opened: the authenticated
     /// section that carried it, opened and decoded whole once its signer and
@@ -118,7 +120,8 @@ pub(in crate::sync) fn prepare_bounded_replacement(
     evidence: &HashMap<EntityId, (WindowKey, Vec<u8>)>,
     bound: ReplacementByteBound,
 ) -> Result<PreparedReplacement> {
-    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_DECODED_PAYLOAD_BYTES {
+    if bound == ReplacementByteBound::NetworkFrame && snapshot.len() > MAX_WINDOW_PAD_PAYLOAD_BYTES
+    {
         return Err(rejected());
     }
     let meta = LoroDoc::decode_import_blob_meta(snapshot, true).map_err(|_| rejected())?;

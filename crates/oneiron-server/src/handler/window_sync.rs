@@ -580,9 +580,10 @@ fn export_frame(
         }
         WindowExport::Replacement(_) => return Err(ProtocolError::ReplacementUnsupported),
     };
-    protocol::encode_window_sync(key.as_str(), sub_tag, &bytes)
-        .into_result()
-        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
+    // A catch-up past one frame goes whole to the release door, which sends it
+    // as its envelope's bounded parts (FIX 8247).
+    oneiron::sync::transport::encode_unsplit_window_sync(key.as_str(), sub_tag, &bytes)
+        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
 }
 
 /// The `REPLACEMENT` frame for a peer that must install this window whole: the history-free
@@ -607,9 +608,14 @@ fn replacement_frame(
     )
     .map_err(map_delta_export_err)?
     .map(|snapshot| {
-        protocol::encode_window_sync(key.as_str(), window_sub_tags::REPLACEMENT, &snapshot)
-            .into_result()
-            .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
+        // A snapshot past one frame goes whole to the release door, which
+        // sends it as its envelope's bounded parts (FIX 8247).
+        oneiron::sync::transport::encode_unsplit_window_sync(
+            key.as_str(),
+            window_sub_tags::REPLACEMENT,
+            &snapshot,
+        )
+        .map_err(|e| ProtocolError::ExportFailed(e.to_string()))
     })
     .transpose()
 }
