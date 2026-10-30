@@ -136,19 +136,24 @@ pub(super) fn run_trigger_in(
     Ok(crate::provenance::birth::trigger_is_live_in_txn(store, txn, &trigger)?.then_some(trigger))
 }
 
-/// Whether any of `sources` was erased or withdrawn, as `store` reads it.
-pub(super) fn any_withdrawn_in(
+/// Those of `sources` that still stand as `store` reads them: their row
+/// present, neither erased nor withdrawn. A purged one has no row (FIX 3448).
+pub(super) fn standing_in(
     store: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     sources: &[EntityId],
-) -> Result<bool> {
+) -> Result<Vec<EntityId>> {
+    let mut standing = Vec::with_capacity(sources.len());
     for source in sources {
+        if store.entities().get(txn, source.as_bytes())?.is_none() {
+            continue;
+        }
         let state = crate::ports::TombstoneStoreRead::port_deletion_state(store, txn, source)?;
-        if state.deleted || state.stale {
-            return Ok(true);
+        if !(state.deleted || state.stale) {
+            standing.push(*source);
         }
     }
-    Ok(false)
+    Ok(standing)
 }
 
 /// The intent NOTE `intent`'s rows beside summary `summary`, for a room's
