@@ -9,8 +9,9 @@
 //! is verified. A retired key whose debt stands reads
 //! `custody_remote_retirement_pending(<holder>)`, never complete.
 //!
-//! Each debt recorded or cleared is journaled once its file is written or
-//! removed (FIX 11206), so every member's custody head is sealed again
+//! Each debt recorded or cleared is journaled after its file is written or
+//! removed (FIX 11206), again on a retry after a failed append (FIX 12191),
+//! so every member's custody head is sealed again
 //! carrying the debts that stand (`head::holder_debts`), and a disaster
 //! recovery's landing keeps them.
 
@@ -79,17 +80,18 @@ impl LocalCustody<'_> {
     }
 
     /// Records that `holder` holds a copy of the key `key_ref`, synced
-    /// before this returns: before the export that sends it releases it. A
-    /// new debt is journaled after its file (FIX 11206), so every head
-    /// sealed at the position it moves the log to carries it.
+    /// before this returns: before the export that sends it releases it.
+    /// Every record is journaled after its file (FIX 11206), so every head
+    /// sealed at the position it moves the log to carries it; a retry
+    /// after a failed append journals its frame again (FIX 12191), and a
+    /// repeated frame replays as one insert.
     pub(crate) fn record_holder(&self, key_ref: &[u8; 32], holder: &EntityId) -> Result<()> {
         let debt = (*key_ref, *holder);
-        if self.put_holder_debt(&debt)? {
-            self.journal_entry(&LogEntry::HolderDebt {
-                debt,
-                standing: true,
-            })?;
-        }
+        self.put_holder_debt(&debt)?;
+        self.journal_entry(&LogEntry::HolderDebt {
+            debt,
+            standing: true,
+        })?;
         Ok(())
     }
 
@@ -131,14 +133,16 @@ impl LocalCustody<'_> {
     }
 
     /// Clears `holder`'s debt for the key `key_ref`, the directory synced:
-    /// its retirement of the copy was verified. None standing is fine. A
-    /// debt removed is journaled after its file (FIX 11206), so no head
-    /// sealed at the position it moves the log to carries it.
+    /// its retirement of the copy was verified. None standing journals a
+    /// removal all the same: a retry after a failed append is no
+    /// different from a clear that finds none (FIX 12191), and a repeated
+    /// frame replays as one removal. No head sealed at the position the
+    /// frame moves the log to carries the debt.
     pub(crate) fn clear_holder(&self, key_ref: &[u8; 32], holder: &EntityId) -> Result<()> {
         let dir = self.holders_dir()?;
         match fs::remove_file(dir.join(debt_name(key_ref, holder))) {
             Ok(()) => platform::sync_dir(&dir)?,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
         self.journal_entry(&LogEntry::HolderDebt {
