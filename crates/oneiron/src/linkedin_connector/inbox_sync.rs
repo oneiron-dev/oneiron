@@ -581,7 +581,7 @@ fn load_linkedin_inbox_sync_cursor(
     let rtxn = vault.store.env.read_txn()?;
     Ok(INBOX_SYNC_SEEN
         .get(&vault.store, &rtxn, &linkedin_inbox_sync_cursor_key(config))?
-        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .and_then(|bytes| serde_json::from_slice::<LinkedInInboxSyncCursor>(&bytes).ok())
         .unwrap_or_default())
 }
 
