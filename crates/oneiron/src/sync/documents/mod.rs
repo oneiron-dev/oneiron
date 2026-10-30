@@ -6,6 +6,7 @@
 
 mod destination;
 mod note_requests;
+pub(crate) mod note_state;
 pub(crate) use destination::text_withheld;
 pub use destination::{
     admit_document_destination_in_txn, document_frame_withheld, document_frame_withheld_for,
@@ -622,11 +623,9 @@ impl EntityDocument {
                         .map_err(|e| Error::sync_engine(SyncEngineContext::LoroExportUpdates, e))?,
                 )
             };
-            // A NOTE's frames name their head and head sequence.
+            // A NOTE's frames name their head, head sequence and seal.
             let payload = match note_head {
-                Some((head, seq)) => {
-                    [head.as_bytes().as_slice(), &seq.to_be_bytes(), &bytes].concat()
-                }
+                Some(head) => note_state::payload(&self.vault, txn, self.id, head, &bytes)?,
                 None => bytes,
             };
             encode_document(
