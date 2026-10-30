@@ -336,6 +336,16 @@ impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
     fn provider_wait(&self) -> Option<ProviderWait> {
         self.0.provider_wait()
     }
+
+    /// The leg holds a paced send and brings it back at its `paced_until`
+    /// (FIX 12156), as the dispatch pipeline's transport does.
+    fn waits_for_paced_window(&self) -> bool {
+        true
+    }
+
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        self.0.reported_cost()
+    }
 }
 
 /// FIX 6424 part 2a (Engine 10-20 21:0x ruling 1): the approve-once digest
