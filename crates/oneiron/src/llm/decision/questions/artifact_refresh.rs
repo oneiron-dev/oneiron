@@ -367,7 +367,8 @@ impl Asking<'_> {
                 only = self.changed_units(artifact, &selection, &baseline, &observed)?;
                 // An edit to a live body never exported moves no version (FIX 2115).
                 if let Some(only) = only.as_mut()
-                    && let Some(live) = self.live_changed_units(artifact, &selection, &stamp.live)?
+                    && let Some(live) =
+                        self.live_changed_units(artifact, &selection, &stamp.live)?
                 {
                     only.merge(live);
                 }

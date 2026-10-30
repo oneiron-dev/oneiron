@@ -65,7 +65,10 @@ impl std::fmt::Display for ServerClose {
                  and it is sent again on reconnect"
             ),
             Self::Refused { code, reason } => {
-                write!(f, "server refused a frame this device sent (close {code}: {reason})")
+                write!(
+                    f,
+                    "server refused a frame this device sent (close {code}: {reason})"
+                )
             }
             Self::Other {
                 code: Some(code),
