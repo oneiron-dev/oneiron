@@ -4,17 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::llm::decision::{DecisionBand, DecisionRung, SlideReviewLimits};
-
-/// [`crate::llm::decision::DecisionDial`]'s wire shape, for the schema of a
-/// field that carries one.
-#[derive(schemars::JsonSchema)]
-#[allow(dead_code, reason = "a schema mirror: only its derived schema is read")]
-pub(super) struct DecisionDialSchema {
-    first: DecisionRung,
-    ceiling: DecisionRung,
-    band: DecisionBand,
-}
+use crate::llm::decision::SlideReviewLimits;
 
 /// A slide review's own pacing, each field narrowing the vault's policy
 /// row (FIX 9336): units per batch, units, text bytes and image bytes of

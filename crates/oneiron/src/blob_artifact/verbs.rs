@@ -7,7 +7,7 @@
 use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 
-use super::review_request::{DecisionDialSchema, SlideReviewLimitsInput};
+use super::review_request::SlideReviewLimitsInput;
 use super::{
     ArtifactKind, ArtifactVersionView, ArtifactView, BornFromArtifact, BornFromSource,
     VersionReconciliation,
@@ -203,7 +203,6 @@ pub struct SlideReviewSubmit {
     /// inside the host's, which it narrows and never widens. Absent, the
     /// host's dial runs.
     #[serde(default)]
-    #[schemars(with = "Option<DecisionDialSchema>")]
     pub resident_dial: Option<DecisionDial>,
     /// The caller's own pacing (FIX 9336), each narrowing the vault's
     /// policy row and never widening it; absent, the vault's row runs.
@@ -314,8 +313,8 @@ pub enum ArtifactAskUnits {
         blocks: Vec<String>,
         /// The comments' author name.
         author: String,
-        /// The display words, severity words included (`SlideReviewLabels`), as JSON.
-        labels: serde_json::Value,
+        /// The display words, severity words included.
+        labels: SlideReviewLabels,
     },
     /// Each file is one unit, read whole at its head; its answer fills
     /// column `answer_column` of its row on `sheet`.
@@ -436,20 +435,6 @@ impl UnitDecider for AdmittedDecider {
 
 fn entity(text: &str) -> MemoryResult<EntityId> {
     Ok(EntityId::from_hex(text)?)
-}
-
-fn json_field<T: serde::de::DeserializeOwned>(
-    value: Option<serde_json::Value>,
-    field: &str,
-) -> MemoryResult<Option<T>> {
-    match value {
-        None | Some(serde_json::Value::Null) => Ok(None),
-        Some(value) => {
-            Ok(Some(serde_json::from_value(value).map_err(|_| {
-                invalid(&format!("{field} is not a valid value"))
-            })?))
-        }
-    }
 }
 
 impl Memory<'_> {
@@ -936,19 +921,15 @@ impl Memory<'_> {
                 blocks,
                 author,
                 labels,
-            } => {
-                let labels: SlideReviewLabels = json_field(Some(labels.clone()), "labels")?
-                    .ok_or_else(|| invalid("a paragraph ask names its labels"))?;
-                vault.ask_blob_artifact_paragraphs(
-                    &artifact,
-                    &ParagraphAsk {
-                        ask,
-                        blocks,
-                        author,
-                        labels: &labels,
-                    },
-                )?
-            }
+            } => vault.ask_blob_artifact_paragraphs(
+                &artifact,
+                &ParagraphAsk {
+                    ask,
+                    blocks,
+                    author,
+                    labels,
+                },
+            )?,
             ArtifactAskUnits::FolderItems {
                 sheet,
                 answer_column,
