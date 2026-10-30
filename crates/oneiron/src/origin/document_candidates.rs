@@ -416,6 +416,7 @@ impl Vault {
                 })
                 .collect(),
             created_at: row.received_at,
+            original_spans: std::collections::BTreeMap::new(),
         };
         let prepared = match self.prepare_received_files_proposal(repo, input)? {
             Ok(prepared) => prepared,
