@@ -64,7 +64,7 @@ pub(super) async fn run_booking_verb(
                 )
             })?;
             let (calendars, claims) = page_calendar_bindings(vault, page_ref)?;
-            binding_claims.replace(claims.clone());
+            *binding_claims.borrow_mut() = claims.clone();
             Ok(ServerBookingOracle {
                 vault,
                 page_ref,
