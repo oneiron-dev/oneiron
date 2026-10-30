@@ -137,6 +137,9 @@ pub struct Vault {
     /// debts and settled none, `0` when none stalled (FIX 11923): while the
     /// count stands, writes skip that drain.
     pub(crate) owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64,
+    /// The claim VAD payment worker's wake and the claims the write door
+    /// handed it (FIX 11702). In memory only: the debt rows are the debt.
+    pub(crate) claim_vad_payment: crate::housekeeping::ClaimVadPayment,
     /// SLIM residency controller (ONE-1933 / OF-447). Holds the shed/resume
     /// state mutex and nothing else: the fixed-order drop transaction and the
     /// lazy resume hook are `impl Vault` blocks in [`crate::slim`]. It adds no

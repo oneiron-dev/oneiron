@@ -1,10 +1,12 @@
 //! Owed claim VAD consolidation (FIX 9598). An approval that owes a Dreamer
 //! claim's VAD consolidation writes the debt in its own commit, and the
-//! consolidation clears it in its own. The writer that approved still runs
-//! the consolidation right after its commit, as before; a process that stops
-//! between the two commits, or a consolidation that fails, leaves the debt,
-//! and the housekeeping pass finishes it later. The in-memory queue a batch
-//! carries to its commit stays a hint; this row is the debt.
+//! consolidation clears it in its own. The writer that approved runs the
+//! consolidation right after its commit, or, through the write door with a
+//! payment worker attached, hands it to that worker and answers first (FIX
+//! 11702); a process that stops between the two commits, or a consolidation
+//! that fails, leaves the debt, and the housekeeping pass finishes it later.
+//! The in-memory queue a batch carries to its commit, and the worker's handed
+//! claims, stay hints; this row is the debt.
 
 use heed::{RoTxn, RwTxn};
 
@@ -50,6 +52,20 @@ pub(crate) fn settle_claim_vad_in_txn(
 ) -> Result<()> {
     OWED.delete(store, wtxn, id)?;
     Ok(())
+}
+
+/// Whether `id`'s consolidation is still owed, for the payment worker's
+/// handed claims (FIX 11702).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn claim_vad_owed_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    OWED.contains(store, txn, id)
 }
 
 /// Every owed claim, in id order.
