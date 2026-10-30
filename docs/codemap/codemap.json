@@ -77890,7 +77890,7 @@
      "path": "src/vault_shape/outbound_reach.rs",
      "purpose": "The reach's standing outbound grant rows (ARCH-0070 `shape:reach-line`, FIX 2801)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -109082,7 +109082,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
