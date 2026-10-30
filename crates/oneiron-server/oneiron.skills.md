@@ -514,7 +514,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 
 #### recovery-custody-page - `POST /v1/recovery/custody/page`
 
-- when-to-use: Read one page of a custody lineage's sealed head and log frames from the residence home with the recovery kit alone, to restore on a new host. Page from head offset 0 and sequence 0 until the reply carries no next cursor.
+- when-to-use: Read one page of a custody lineage's sealed head and log frames from the residence home with the recovery kit alone, to restore on a new host. Page from head offset 0 and sequence 0 until the reply carries no next cursor; `fromSeq` names the first log frame the restore needs (the home starts its frames there, or right after the head), and stays the same on every page.
 - trigger phrases:
   - "fetch key custody with the kit"
   - "read a custody page from the home"
