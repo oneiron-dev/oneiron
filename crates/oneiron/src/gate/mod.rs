@@ -183,6 +183,7 @@ pub(crate) use self::effect::{
     native_mail_cold_approval_digest, record_external_effect_policy,
     record_held_external_effect_policy,
 };
+pub(crate) use self::effect::{ExternalEffectCheck, check_external_effect_policy_paced};
 pub(crate) use self::grants::{
     ClaimReadView, PolicyScopedGrant, companion_profile_access_grant, scoped_read_claim_allowed,
     scoped_read_claim_allowed_with_scope, scoped_read_claim_view_allowed,

@@ -1,9 +1,10 @@
 //! What a ledger row's send came to beside its state (FIX 7960, 7964,
-//! 8818): the remote task a provider accepted it as, the wait a provider
-//! asked for after a rate or quota refusal, and the budget its admission
-//! reserved. One row per intent id, in its own table beside the ledger row,
-//! written in the same writer as the ledger change it records; the ledger
-//! row's own fields stay as they are.
+//! 8818, 11662): the remote task a provider accepted it as, the wait a
+//! provider asked for after a rate or quota refusal, the budget its
+//! admission reserved, and the actual cost its provider reported. One row
+//! per intent id, in its own table beside the ledger row, written in the
+//! same writer as the ledger change it records; the ledger row's own fields
+//! stay as they are.
 
 use std::fmt;
 
@@ -11,7 +12,9 @@ use serde::{Deserialize, Serialize};
 
 use super::types::{IntentId, IntentLedgerRecord, IntentLedgerResult, IntentState};
 use crate::Vault;
-use crate::connector_key::EffectorBudgetDebit;
+use crate::connector_key::{
+    ConnectorSpendBasis, ConnectorSpendEstimate, EffectorBudgetDebit, EffectorBudgetLocation,
+};
 use crate::side_table::{self, Named, SideTable};
 
 /// Intent id -> what its send came to beside its state. Key: hash32.
@@ -138,10 +141,15 @@ pub struct BudgetReservation {
     pub status: ReservationStatus,
     /// What a preauthorizing Spend row reserved for this send stood on (FIX
     /// 8689): the verb's declared price, whose debit is among `debits` and
-    /// stays the send's charge once it is delivered, or no price in the
-    /// row's unit. `None` when no row preauthorized.
+    /// stays the send's charge once it is delivered unless its provider
+    /// reports the actual cost (FIX 11662), or no price in the row's unit.
+    /// `None` when no row preauthorized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub spend: Option<crate::connector_key::ConnectorSpendBasis>,
+    pub spend: Option<ConnectorSpendBasis>,
+    /// Every preauthorizing Spend row the send met, priced or not: where a
+    /// reported actual cost is reconciled (FIX 11662).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub spend_rows: Vec<EffectorBudgetLocation>,
 }
 
 /// One intent's row in [`SETTLEMENT`].
@@ -150,6 +158,10 @@ pub(crate) struct IntentSettlement {
     pub(crate) remote_task: Option<RemoteTaskHandle>,
     pub(crate) provider_wait: Option<ProviderRetryDirective>,
     pub(crate) reservation: Option<BudgetReservation>,
+    /// The actual cost the send's provider reported for it (FIX 11662),
+    /// kept before its Done, which reconciles the reservation to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) reported_cost: Option<ConnectorSpendEstimate>,
 }
 
 /// Row `id`'s settlement as `txn` reads it; an empty one when none was
@@ -201,8 +213,8 @@ fn update_settlement_in_txn(
 
 /// Keeps the budget admission reserved for row `id`, in the admission's
 /// writer (FIX 7964), with what its preauthorized spend stood on (FIX
-/// 8689). A charge that wrote no usage entry and met no preauthorizing row
-/// reserves nothing.
+/// 8689) and the preauthorizing rows it met (FIX 11662). A charge that
+/// wrote no usage entry and met no preauthorizing row reserves nothing.
 ///
 /// # Errors
 /// Storage faults.
@@ -211,26 +223,62 @@ pub(crate) fn reserve_budget_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     id: &IntentId,
     debits: Vec<EffectorBudgetDebit>,
-    spend: Option<crate::connector_key::ConnectorSpendBasis>,
+    spend: Option<(ConnectorSpendBasis, Vec<EffectorBudgetLocation>)>,
 ) -> IntentLedgerResult<()> {
     if debits.is_empty() && spend.is_none() {
         return Ok(());
     }
+    let (spend, spend_rows) = spend.map_or((None, Vec::new()), |(basis, rows)| (Some(basis), rows));
     update_settlement_in_txn(vault, wtxn, id, |settlement| {
         settlement.reservation = Some(BudgetReservation {
             debits,
             status: ReservationStatus::Reserved,
             spend,
+            spend_rows,
         });
     })
 }
 
+/// Keeps the actual cost the provider reported for row `id`'s send, in a
+/// writer of its own before its Done commits (FIX 11662), when its
+/// admission reserved a preauthorized spend that is not settled yet: that
+/// Done reconciles the reservation to it. Any other send keeps nothing.
+///
+/// # Errors
+/// Storage and row-codec faults.
+pub(crate) fn keep_reported_cost(
+    vault: &Vault,
+    id: &IntentId,
+    cost: ConnectorSpendEstimate,
+) -> IntentLedgerResult<()> {
+    let mut wtxn = vault
+        .store
+        .env
+        .write_txn()
+        .map_err(crate::error::Error::from)?;
+    let reserved = intent_settlement_in_txn(vault, &wtxn, id)?
+        .reservation
+        .is_some_and(|reservation| {
+            reservation.status == ReservationStatus::Reserved && reservation.spend.is_some()
+        });
+    if !reserved {
+        return Ok(());
+    }
+    update_settlement_in_txn(vault, &mut wtxn, id, |settlement| {
+        settlement.reported_cost = Some(cost);
+    })?;
+    wtxn.commit().map_err(crate::error::Error::from)?;
+    Ok(())
+}
+
 /// Settles `record`'s reserved budget by the state it now stands in, in the
 /// writer that moved it (FIX 7964): a delivered send's reservation is its
-/// charge; a send that stopped and certainly never went gives its debit
-/// back, in the window it was taken in. A send that may have gone, waits on
-/// a provider or a remote task, or may still be retried keeps its
-/// reservation. A reservation settles or releases once.
+/// charge, its preauthorized spend reconciled to the actual cost its
+/// provider reported when it reported one (FIX 11662); a send that stopped
+/// and certainly never went gives its debit back, in the window it was
+/// taken in. A send that may have gone, waits on a provider or a remote
+/// task, or may still be retried keeps its reservation. A reservation
+/// settles or releases once.
 ///
 /// # Errors
 /// Storage faults.
@@ -244,7 +292,8 @@ pub(super) fn settle_reservation_in_txn(
         IntentState::Abandoned if !record.delivery_uncertain => ReservationStatus::Released,
         IntentState::Abandoned | IntentState::Pending | IntentState::Deferred => return Ok(()),
     };
-    let Some(reservation) = intent_settlement_in_txn(vault, wtxn, &record.id)?.reservation else {
+    let settlement = intent_settlement_in_txn(vault, wtxn, &record.id)?;
+    let Some(reservation) = settlement.reservation else {
         return Ok(());
     };
     if reservation.status != ReservationStatus::Reserved {
@@ -257,11 +306,68 @@ pub(super) fn settle_reservation_in_txn(
             &reservation.debits,
         )?;
     }
+    let reconciled = match (next, settlement.reported_cost.as_ref()) {
+        (ReservationStatus::Settled, Some(actual)) => {
+            reconcile_spend_in_txn(vault, wtxn, &reservation, actual)?
+        }
+        _ => None,
+    };
     update_settlement_in_txn(vault, wtxn, &record.id, |settlement| {
         if let Some(reservation) = settlement.reservation.as_mut() {
             reservation.status = next;
+            if let Some((debits, basis)) = reconciled {
+                reservation.debits = debits;
+                reservation.spend = Some(basis);
+            }
         }
     })
+}
+
+/// FIX 11662: `reservation`'s preauthorized spend reconciled to `actual`,
+/// in `wtxn`: its debits with the estimate's entries swapped for the
+/// actual's, and the basis that records both. `None` when it reserved no
+/// spend, was reconciled already, or none of its rows is a preauthorizing
+/// row in `actual`'s unit: the estimate then stays the charge, with the
+/// reported cost kept beside it.
+fn reconcile_spend_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    reservation: &BudgetReservation,
+    actual: &ConnectorSpendEstimate,
+) -> IntentLedgerResult<Option<(Vec<EffectorBudgetDebit>, ConnectorSpendBasis)>> {
+    let estimated = match &reservation.spend {
+        Some(ConnectorSpendBasis::Estimated(estimate)) => Some(estimate.clone()),
+        Some(ConnectorSpendBasis::Unpriced) => None,
+        Some(ConnectorSpendBasis::Reconciled { .. }) | None => return Ok(None),
+    };
+    // The meter's own trusted clock: the ledger says when it learned the
+    // cost, as a settlement does.
+    let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+    let reconciliation = crate::connector_key::reconcile_connector_spend_in_txn(
+        &vault.store,
+        wtxn,
+        &reservation.spend_rows,
+        &reservation.debits,
+        actual,
+        now,
+    )?;
+    if reconciliation.released.is_empty() && reconciliation.written.is_empty() {
+        return Ok(None);
+    }
+    let mut debits = reservation.debits.clone();
+    for released in &reconciliation.released {
+        if let Some(position) = debits.iter().position(|debit| debit == released) {
+            debits.remove(position);
+        }
+    }
+    debits.extend(reconciliation.written);
+    Ok(Some((
+        debits,
+        ConnectorSpendBasis::Reconciled {
+            estimated,
+            actual: actual.clone(),
+        },
+    )))
 }
 
 /// Keeps the provider's wait with row `id`'s definite non-delivery, in the
