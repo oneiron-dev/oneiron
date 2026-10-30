@@ -22,6 +22,9 @@ struct Enrolled {
     /// Whether the home paired again a machine it already held, credential
     /// only (FIX 8636): its identity and class stand as they were.
     re_paired: bool,
+    /// Whether the home named its mesh address (FIX 3374): serve dials it
+    /// there first, and at `home_url` when that fails.
+    home_mesh: bool,
     record: String,
     credential_file: String,
     /// The code this machine shows the owner, 26 characters: he types it
@@ -63,6 +66,7 @@ pub fn device_enrol(args: DeviceEnrolArgs) -> anyhow::Result<()> {
         home_url: record.home_url,
         checkpoint_pinned: record.authority_checkpoint_pin.is_some(),
         re_paired,
+        home_mesh: record.home_mesh.is_some(),
         record: files.record.display().to_string(),
         credential_file: files.credential.display().to_string(),
         request_code,
