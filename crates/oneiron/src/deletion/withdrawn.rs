@@ -73,6 +73,7 @@ pub(crate) fn scrub_withdrawn_record_in_txn(
 /// Whether `id` still holds words here of a generation at or below `cutoff`,
 /// a Shell cutoff another machine of this vault carries. A SUMMARY never
 /// takes a Shell.
+#[cfg(feature = "sync")]
 pub(crate) fn holds_withdrawn_record_in(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -90,6 +91,7 @@ pub(crate) fn holds_withdrawn_record_in(
 /// leaves every projection of its words, then takes
 /// [`scrub_withdrawn_record_in_txn`]. Whether it withdrew; a repeat finds the
 /// Shell and changes nothing.
+#[cfg(feature = "sync")]
 pub(crate) fn withdraw_received_record_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
