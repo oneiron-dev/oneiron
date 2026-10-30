@@ -4,8 +4,9 @@
 //! dials its hooks. Hub refs sync at their stored policy, and hub skills
 //! import, sync, restore and read their receipts here (OF-213). The organ
 //! inventory and the owner's organ build upload live here too (OF-575), and
-//! so do the Slack app's manifest and install link (OF-519) and the owner's
-//! shared-skill merges (FIX 952).
+//! so do the Slack app's manifest and install link (OF-519), the owner's
+//! shared-skill merges (FIX 952) and the owner's answer to an agent's wider
+//! hook (ARCH-0080 §10).
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -30,6 +31,7 @@ use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
+pub(crate) mod hook_proposals;
 mod line_chats;
 mod native_mail_identities;
 pub(crate) mod schema;

@@ -27,11 +27,13 @@ use crate::{
 mod author;
 mod bindings;
 mod install;
+mod proposal;
 
 pub use self::author::{FOREIGN_SKILL_PUBLISHER, HookAuthor};
 pub use self::bindings::PackHookBinding;
 pub(crate) use self::bindings::is_hook_binding;
 pub(super) use self::install::HookBinder;
+pub use self::proposal::{HookWidening, PackHookProposal, PackHookProposalStatus};
 
 /// The binding's predicate: the same row kind a pack's `wakes` write.
 const PREDICATE: &str = "agent.connector_subscription";
