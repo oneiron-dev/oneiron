@@ -357,7 +357,7 @@ def parse_type(text):
 # ---------------------------------------------------------------- the index
 
 class Item:
-    __slots__ = ('crate', 'file', 'module', 'name', 'kind', 'top', 'attrs', 'generics', 'body', 'shape', 'uses')
+    __slots__ = ('crate', 'file', 'module', 'name', 'kind', 'top', 'public', 'attrs', 'generics', 'body', 'shape', 'uses')
 
     def key(self):
         return (self.crate, self.file, self.name, self.module)
@@ -416,9 +416,11 @@ class Index:
                     self.macros[match.group(1)] = text[match.start():close_of(text, match.end() - 1)]
 
     def read_item(self, crate, file, module, text, match):
-        indent, _, kind, name = match.groups()
+        indent, public, kind, name = match.groups()
         item = Item()
         item.crate, item.file, item.module, item.name, item.kind, item.top = crate, file, module, name, kind, not indent
+        # Nameable outside its crate: a bare `pub`, never `pub(crate)` and the like.
+        item.public = public is not None and public.strip() == 'pub'
         # The attributes: the lines above the header back to the previous item.
         lines, start = [], match.start()
         while start > 0:
@@ -854,11 +856,19 @@ class Inventory:
         serde = attr_args(item.attrs, 'serde')
         derived = derives(item.attrs)
         # What the type writes: its `into` type, else its own derive; a type
-        # that only reads takes the shape it reads `from`.
+        # that only reads takes the shape it reads `from`. A wire no caller
+        # can name is written under this type's own name, never its own
+        # (FIX 11203: `SensitivityCeiling`, not `SensitivityCeilingWire`).
         conversions = ('into',) if 'Serialize' in derived else ('into', 'try_from', 'from')
         for key in conversions:
             if isinstance(serde.get(key), str):
-                return self.ir(parse_type(serde[key]), context, params, where)
+                target = parse_type(serde[key])
+                wire = self.private_wire(target, item)
+                if wire is None:
+                    return self.ir(target, context, params, where)
+                value = self.item_ir(wire, decl)
+                if item.kind == 'struct' and 'Debug' not in derived: self.redacted.add(where)
+                return value
         if not derived & {'Serialize', 'Deserialize'}:
             return self.manual(item, context, params, where)
         if derived & {'Serialize_repr', 'Deserialize_repr'}:
@@ -881,6 +891,14 @@ class Inventory:
             extra = [(tag, ('lit', serialize_case(serde.get('rename')) or item.name), False)] if isinstance(tag, str) else []
             return self.object(item.body, case, default, context, params, where, extra=extra)
         return self.enum(item, serde, case, context, params, where)
+
+    def private_wire(self, ast, item):
+        'The type a conversion of `item` names, when it is a non-generic one of its own file that is not `pub`; else None.'
+        if ast[0] != 'path' or ast[2]: return None
+        found = self.index.resolve(ast[1], item.crate, item.file, item.module)
+        if not isinstance(found, Item) or found is item or found.public or found.generics or found.kind == 'type': return None
+        if (found.crate, found.file) != (item.crate, item.file): return None
+        return found
 
     def enum(self, item, serde, case, context, params, where):
         tag, content = serde.get('tag'), serde.get('content')
