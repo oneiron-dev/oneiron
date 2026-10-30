@@ -583,6 +583,20 @@ pub(crate) fn settle_code_owned_call_in_txn(
     PENDING_CALLS.put(&vault.store, txn, call_ref, &row)
 }
 
+/// The rows the held call `call_ref`'s passes picked (FIX 5455), read in
+/// the caller's transaction: what its code consent wait's refusal delivers
+/// beside its reply (FIX 5818), as an approved or expired call's does.
+/// `None` for a call with no row, and for one whose rows are not known.
+pub(crate) fn code_owned_call_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    call_ref: &EntityId,
+) -> crate::Result<Option<Vec<EntityId>>> {
+    Ok(PENDING_CALLS
+        .get(&vault.store, txn, call_ref)?
+        .and_then(|row| row.source_rows))
+}
+
 /// The code-bound approval context a scoped connector effect's admission
 /// writer proves from the rows (DOOR-079 1a): the wait that owns the held
 /// call this effect's attempt and sequence name, and its binding digest, once
