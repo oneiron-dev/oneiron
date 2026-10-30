@@ -51,8 +51,9 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{
-    InputBinding, LeafSource, RelayedInput, SealedFrame, input_digest, keep_witnessed_input_in_txn,
-    leaf_input_retries_in_txn, request_witness_in_txn, seal_leaf_input_in_txn, surface_leaf_input,
+    InputBinding, LeafSource, RelayedInput, SealedFrame, SurfaceLeaf, keep_witnessed_input_in_txn,
+    leaf_input_retries_in_txn, request_witness_in_txn, seal_leaf_input_in_txn,
+    seal_leaf_parts_in_txn, surface_leaf_input,
 };
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
@@ -459,8 +460,9 @@ impl Vault {
         // key while the carrier wire is on (FIX 7402); one the holder's own
         // door executes from in this commit is never kept.
         let leafed = CUSTODY_CARRIER_LEAF_WIRE && (holder != machine || change.sealed.is_some());
-        // A surface's input is sealed under the key joined, so only while it
-        // fits one row (FIX 11140); one past it is kept as it lies.
+        // A surface's input is sealed under the key whole while it fits one
+        // row, joined; one past it is never joined (FIX 11140), and is sealed
+        // in numbered parts as it is read (FIX 12148).
         let surface_input = match change.sealed {
             Some(frame) if leafed => surface_leaf_input(&frame)?,
             _ => None,
@@ -468,8 +470,8 @@ impl Vault {
         // CALLS CUSTODY_RETRY under the carrier wire: a surface's same input
         // again is the request whose kept input sealed it, never a second
         // change.
-        if let Some(joined) = &surface_input {
-            let retry = input_digest(joined);
+        if let Some(surface) = &surface_input {
+            let retry = surface.retry();
             for (hash, live) in fold.custody_heads(change.id) {
                 if let OwnerWorkBody::Custody {
                     input: Some(named), ..
@@ -489,11 +491,12 @@ impl Vault {
         // CUSTODY_BIND_TRAVEL); a revoke never does. One the owner's surface
         // sealed is read where it lies, its digest part by part (FIX 11140).
         let sealed_here;
+        let leaf_parts;
         let frame = match (change.change, &change.material, change.sealed) {
             (CustodyChange::Revoke, ..)
             | (CustodyChange::Rewrap, Material::Held | Material::Input(_), _) => None,
             (_, _, Some(sealed)) => match &surface_input {
-                Some(joined) => {
+                Some(SurfaceLeaf::Joined(joined)) => {
                     sealed_here = seal_leaf_input_in_txn(
                         self,
                         txn,
@@ -502,6 +505,10 @@ impl Vault {
                         LeafSource::Sealed(joined),
                     )?;
                     Some(SealedFrame::whole(&sealed_here))
+                }
+                Some(SurfaceLeaf::Parts(retry)) => {
+                    leaf_parts = seal_leaf_parts_in_txn(self, txn, &binding, &sealed, retry)?;
+                    Some(sealed.under_leaf_parts(&leaf_parts))
                 }
                 None => Some(sealed),
             },

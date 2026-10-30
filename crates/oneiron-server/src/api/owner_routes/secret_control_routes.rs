@@ -333,8 +333,8 @@ struct PermitBody {
 /// then its index and the count, each a big-endian `u32`
 /// (`secret_custody::control::input::envelopes`). No member carries a
 /// carrier key (FIX 7402): while the carrier wire is on, this install seals
-/// an input that fits one row under one it mints, and the relayed input
-/// names its reference.
+/// the input under one it mints, whole when it fits one row and in numbered
+/// parts past it (FIX 12148), and the relayed input names its reference.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SealedHead {
