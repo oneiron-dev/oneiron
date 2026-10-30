@@ -165,8 +165,9 @@ pub struct JudgeLabelRecheckRequest<'a> {
     pub label: &'a JudgeLabel,
     pub rubric: &'a JudgeRubric,
     /// The rows the pick and rubric were read from (FIX 7102), for the
-    /// checker's call to carry. `None`: label rows are keyed by their ask id,
-    /// not by an `EntityId`, so the set is unknown; calls never refuse for it.
+    /// checker's call to carry: the label's own row (FIX 12088) and the judge
+    /// skill revision the rubric text was read from. `None` is unknown; calls
+    /// never refuse for it.
     pub sources: Option<&'a [EntityId]>,
 }
 
@@ -188,6 +189,13 @@ pub struct JudgeLabelRecheckReport {
     pub waiting: u32,
     /// Picks left pending: past the pass's limit, unasked, or moved meanwhile.
     pub pending: u32,
+}
+
+/// The rows a re-check was read from (FIX 12088): the label's own row and
+/// the judge skill revision the rubric text was read from. The checker's call
+/// carries them; capture only, never a refusal.
+fn recheck_source_rows(label: &JudgeLabel, rubric: &JudgeRubric) -> [EntityId; 2] {
+    [label.row_id, rubric.skill]
 }
 
 /// The Coach's re-check pass: re-pin the judge on its rubric's current text,
@@ -233,10 +241,11 @@ pub(crate) fn recheck_judge_labels(
             report.pending += 1;
             continue;
         }
+        let sources = recheck_source_rows(&label, &rubric);
         let fit = checker.check(&JudgeLabelRecheckRequest {
             label: &label,
             rubric: &rubric,
-            sources: None,
+            sources: Some(&sources),
         })?;
         if fit == JudgeLabelFit::Unavailable {
             report.pending += 1;

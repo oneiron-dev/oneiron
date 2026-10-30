@@ -274,12 +274,13 @@ fn draft_with(
     brief: &SkillOptimizeBrief,
 ) -> oneiron::Result<SkillEditDraft> {
     let text = models
-        .generate(
+        .generate_sourced(
             models.coach(),
             vec![
                 message(LlmMessageRole::System, system),
                 message(LlmMessageRole::User, brief_data(vault, brief).to_string()),
             ],
+            brief.source_rows.clone(),
         )?
         .ok_or_else(|| failed("no seat served the Coach"))?;
     parse_draft(&text).ok_or_else(|| failed("the answer is not a draft"))
@@ -299,7 +300,7 @@ fn draft_with_cause(
         "untrusted_cause_context": cause.value(),
     });
     let text = models
-        .generate(
+        .generate_sourced(
             models.coach(),
             vec![
                 message(
@@ -308,6 +309,7 @@ fn draft_with_cause(
                 ),
                 message(LlmMessageRole::User, data.to_string()),
             ],
+            brief.source_rows.clone(),
         )?
         .ok_or_else(|| failed("no seat served the Coach"))?;
     parse_draft(&text).ok_or_else(|| failed("the answer is not a draft"))
