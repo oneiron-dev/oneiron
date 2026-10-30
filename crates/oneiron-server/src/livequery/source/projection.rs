@@ -433,6 +433,13 @@ impl LiveQuerySource for BoundSource {
         self.readmitted(pushes)
     }
 
+    fn readable_rows(
+        &self,
+        rows: Vec<oneiron::EntityId>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        self.reading_rows(rows)
+    }
+
     fn withholds(&self, pushes: &[subscriptions::Push]) -> Result<bool, AppError> {
         let destination = self.auth.destination();
         if !destination.is_off_device() {
