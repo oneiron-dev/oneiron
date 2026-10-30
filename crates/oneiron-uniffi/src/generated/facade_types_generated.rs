@@ -18228,6 +18228,8 @@ pub struct ConnectorPackView {
     pub consent_required: bool,
     #[serde(rename = "stamped")]
     pub stamped: bool,
+    #[serde(rename = "staged")]
+    pub staged: bool,
     #[serde(rename = "manifest")]
     pub manifest: SlateManifest,
     #[serde(rename = "rows")]

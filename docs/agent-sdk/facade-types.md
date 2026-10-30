@@ -2304,7 +2304,7 @@ export type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverri
 /** `oneiron::verbs::connector_pack::ConnectorPackAdvisory` */
 export type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null }
 /** `oneiron::verbs::connector_pack::ConnectorPackView` */
-export type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] }
+export type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; staged: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] }
 /** `oneiron::verbs::connector_pack::ConnectorPackGetRequest` */
 export type ConnectorPackGetRequest = { connector: string }
 /** `oneiron::connector_key::qualification::ProbeRequest` */
