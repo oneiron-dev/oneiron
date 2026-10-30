@@ -81,8 +81,9 @@ pub(super) async fn layout(
 
 /// `POST /sign/preview`: the item's fields laid out on its pinned PDF's
 /// pages. The PDF is inspected as the editor's geometry door inspects its
-/// own (FIX 12230): its bytes leased from this machine's memory and the lease
-/// grown for its parse, on a blocking worker.
+/// own (FIX 12230), on a blocking worker: its bytes, measured unread, leased
+/// from this machine's memory before the vault reads them (FIX 12304), and
+/// the lease grown for its parse.
 pub(super) async fn preview(
     State(server): State<Arc<SyncServer>>,
     SigningIngress { token, admitted }: SigningIngress,
@@ -103,16 +104,20 @@ pub(super) async fn preview(
             Ok(request) => request,
             Err(response) => return response,
         };
+    let item = request.item;
     let Ok((page, bytes)) = server
         .vault
-        .esign_preview_for_capability(&token, request.item, ip, ua)
+        .esign_preview_page_for_capability(&token, item, ip, ua)
     else {
         return refused();
     };
+    let vault = Arc::clone(&server.vault);
     let memory = server.memory.clone();
     let stream_decode_bytes = server.vault.esign_stream_decode_bytes();
     let pages = match tokio::task::spawn_blocking(move || {
-        parse_lease::inspected_in_memory(&memory, &bytes, stream_decode_bytes)
+        parse_lease::inspected_from_vault(&memory, bytes, stream_decode_bytes, |admitted| {
+            vault.esign_preview_pdf_within(&token, item, admitted)
+        })
     })
     .await
     {
@@ -163,13 +168,21 @@ pub(super) async fn editor_script() -> Response {
     )
         .into_response()
 }
+/// `POST /sign/geometry`'s body limit with no editor header: the route's
+/// `DefaultBodyLimit`, which the capability-free door also reads its body
+/// within (FIX 12304).
+pub(super) const GEOMETRY_BODY_BYTES: usize = 16 * 1024 * 1024;
+
 /// `POST /sign/geometry`: byte-only inspection, no template parse, blob
 /// write, or outbound effects. With no editor header it is the door it was:
-/// the PDF under the route's 16 MiB body limit and `EditorBudget`'s window,
-/// inspected as an admitted editor's is (FIX 12230). An admitted editor's
-/// PDF (FIX 5618) spools whole and is inspected on the worker that holds its
-/// slot; its size is the `[limits] esign_geometry_body_bytes` row, which asks
-/// the vault owner past it and never refuses the PDF. The PDF's bytes are
+/// the PDF under the route's 16 MiB body limit ([`GEOMETRY_BODY_BYTES`]) and
+/// `EditorBudget`'s window, inspected as an admitted editor's is (FIX
+/// 12230); the length it declares, or that limit when it declares none, is
+/// leased before its body is read into it (FIX 12304), and its parse waits
+/// for memory from when the body is read. An admitted editor's PDF (FIX
+/// 5618) spools whole and is inspected on the worker that holds its slot;
+/// its size is the `[limits] esign_geometry_body_bytes` row, which asks the
+/// vault owner past it and never refuses the PDF. The PDF's bytes are
 /// leased from this machine's memory before it is read into memory (FIX
 /// 7649), and the lease grows for its parse's own memory as the parse
 /// proceeds (FIX 8065, `parse_lease`).
@@ -183,17 +196,29 @@ pub(super) async fn upload_geometry(
     let memory = server.memory.clone();
     let slot = match ingress {
         EditorIngress::Anonymous => {
-            let permit = request
-                .extensions()
-                .get::<Arc<OwnedSemaphorePermit>>()
-                .cloned();
-            let body = match axum::body::Bytes::from_request(request, &server).await {
-                Ok(body) => body,
-                Err(rejection) => return rejection.into_response(),
+            let (parts, body) = request.into_parts();
+            let permit = parts.extensions.get::<Arc<OwnedSemaphorePermit>>().cloned();
+            let limit = GEOMETRY_BODY_BYTES as u64;
+            let leased = match super::ingress::declared_length(&parts.headers) {
+                Some(declared) if declared > limit => return super::ingress::body_past_limit(),
+                Some(declared) => declared,
+                None => limit,
             };
+            let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
+            let lease =
+                match tokio::task::spawn_blocking(move || memory.lease(leased, deadline)).await {
+                    Ok(Ok(lease)) => lease,
+                    Ok(Err(refusal)) => return super::ingress::memory_refused(refusal),
+                    Err(_) => return refused(),
+                };
+            let pdf = match super::ingress::leased_body(body, lease.bytes(), limit).await {
+                Ok(pdf) => pdf,
+                Err(response) => return response,
+            };
+            let deadline = std::time::Instant::now() + super::ingress::MEMORY_WAIT;
             return match tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                parse_lease::inspected_in_memory(&memory, &body, stream_decode_bytes)
+                parse_lease::inspected(lease, deadline, &pdf, stream_decode_bytes)
             })
             .await
             {
