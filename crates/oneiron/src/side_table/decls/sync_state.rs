@@ -70,6 +70,9 @@ side_tables! {
     /// Device-only in-progress marker between a received BulkTransfer chunk and its BulkTransferDone.
     /// Key: yyyy-mm.
     SYNC_BULK_TRANSFER_MARKER: SyncState b"bulk:w:" Raw;
+    /// Stored-review keys already reported unreadable (FIX 5251): each
+    /// unreadable review is named once. Presence-only, empty value. Key: bytes.
+    CRITIC_UNREADABLE_REPORTED: SyncState b"critic:unreadable_reported:v1:" Raw;
     /// An entity document's snapshot (document family). Key: hex32.
     DOCUMENT_SNAPSHOT: SyncState b"d:e:" Raw;
     /// ARCH-0023b document family: the root document's full CRDT snapshot (server-write-only
