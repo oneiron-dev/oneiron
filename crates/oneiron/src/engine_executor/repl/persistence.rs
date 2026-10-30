@@ -105,6 +105,7 @@ impl EngineNativeExecutor<'_> {
         bridge_start: usize,
         bridge_calls: Vec<CodeRunBridgeCall>,
         captured: Vec<CodeRunRawOutput>,
+        callable_rows: Option<Vec<EntityId>>,
         durable_wait: Option<SelfDurableWait>,
         observation: String,
         healed: bool,
@@ -115,6 +116,7 @@ impl EngineNativeExecutor<'_> {
             bridge_start as u64,
             &bridge_calls,
         )?;
+        record.record_callable_rows(callable_rows);
         record.bridge_calls.extend(bridge_calls);
         record.outputs.extend(captured);
         super::super::board_frames::record_step_board_frames(
