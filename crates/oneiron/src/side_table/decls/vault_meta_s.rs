@@ -544,7 +544,7 @@ side_tables! {
     SKILL_OPTIMIZE_GOAL: VaultMeta b"skill_optimize/goal/v1\0" Raw;
     /// A proposal's live goal-axis report, bound to its bodies, evidence and plan (MessagePack
     /// named map). Key: id16 (proposal).
-    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v1\0" Raw;
+    SKILL_OPTIMIZE_LIVE_AXES: VaultMeta b"skill_optimize/live_axes/v2\0" Raw;
     /// Optimizer-birth marker. Key: id16.
     SKILL_OPTIMIZE_ORIGIN_MARKER: VaultMeta b"skill_optimize/origin/v1\0" Raw;
     /// A proposal's offline preflight: its floor and cost axes and the honesty floor scored on the
