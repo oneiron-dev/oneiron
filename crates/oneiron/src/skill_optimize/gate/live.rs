@@ -20,11 +20,47 @@ use crate::skill_optimize::{
 };
 use serde::{Deserialize, Serialize};
 
-const LIVE_PREFIX: &[u8] = b"skill_optimize/live_axes/v1\0";
+const LIVE_PREFIX: &[u8] = b"skill_optimize/live_axes/v2\0";
 const PLAN_DOMAIN: &[u8] = b"skill_optimize:live_axis_plan:v1\0";
 const LABEL: &str = "skill live goal-axis row";
 /// The mandatory cost axis the scorer reports in minutes on every case.
 const HUMAN_MINUTES: &str = "human_minutes";
+
+/// Dreamer re-measure passes after which an inconclusive primary axis closes
+/// its proposal as Inconclusive (Engine 00:26 measured give-up).
+const INCONCLUSIVE_GIVE_UP_PASSES: u32 = 5;
+/// Passes over which a non-shrinking interval width closes early (Engine 00:26).
+const INCONCLUSIVE_STALL_PASSES: u32 = 2;
+
+/// Policy hook for the give-up pass limit: the ruled 5 today, a vault dial later.
+pub(super) fn inconclusive_give_up_passes() -> u32 {
+    INCONCLUSIVE_GIVE_UP_PASSES
+}
+
+/// Policy hook for the stall window: the ruled 2 today, a vault dial later.
+pub(super) fn inconclusive_stall_passes() -> u32 {
+    INCONCLUSIVE_STALL_PASSES
+}
+
+/// Which measured give-up fired (Engine 00:26): the pass limit or the stalled
+/// width. The disposition string on the verdict row records it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum InconclusiveTrigger {
+    /// The 5th re-measure pass still left a primary axis inconclusive.
+    PassLimit,
+    /// The interval width stopped shrinking over 2 passes.
+    WidthStall,
+}
+
+impl InconclusiveTrigger {
+    /// The terminal arm this trigger closes with.
+    pub(super) fn disposition(self) -> SkillEditDisposition {
+        match self {
+            Self::PassLimit => SkillEditDisposition::InconclusiveExhausted,
+            Self::WidthStall => SkillEditDisposition::InconclusiveStalled,
+        }
+    }
+}
 
 const fn retry(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::SkillEditGateRetry(reason))
@@ -44,6 +80,12 @@ struct LiveAxesRow {
     /// The judge and rubric the report was measured by (FIX 8846).
     judge: JudgeBinding,
     report: GoalAxisReport,
+    /// Per-axis interval widths of this pass: axis -> (before, after). The
+    /// next pass compares against them; a row without them is a row from
+    /// another contract and decodes as one (no serde defaults).
+    prev_widths: BTreeMap<String, (f64, f64)>,
+    /// Consecutive non-shrinking width comparisons over the inconclusive set.
+    stall_streak: u32,
 }
 
 /// The axes a bound live report measured, and the primary axes it left
@@ -204,6 +246,27 @@ fn measure_with_owner(
                 "the judge or its rubric moved while the goal axes were measured",
             ));
         }
+        let widths = report_widths(&report);
+        let unknown = report_inconclusive(&report);
+        // The stall streak over the previous pass: a changed inconclusive set
+        // is a new question, and an axis stalled only when NEITHER arm's
+        // interval strictly shrank (separation needs the wider one to shrink).
+        let stall_streak = match load(vault, &*txn, proposal)? {
+            Some(prev)
+                if !unknown.is_empty()
+                    && report_inconclusive(&prev.report) == unknown
+                    && unknown.iter().all(|axis| {
+                        prev.prev_widths.get(axis).is_some_and(|(before, after)| {
+                            widths.get(axis).is_some_and(|(cur_before, cur_after)| {
+                                *cur_before >= *before && *cur_after >= *after
+                            })
+                        })
+                    }) =>
+            {
+                prev.stall_streak.saturating_add(1)
+            }
+            _ => 0,
+        };
         let row = LiveAxesRow {
             plan_digest: plan_digest(&plan),
             goal_revision,
@@ -212,6 +275,8 @@ fn measure_with_owner(
             evidence_digest: evidence_identity(&held_out).1,
             judge,
             report: report.clone(),
+            prev_widths: widths,
+            stall_streak,
         };
         let bytes = rmp_serde::to_vec_named(&row)
             .map_err(|_| invalid("live goal-axis row encoding failed"))?;
@@ -288,11 +353,33 @@ fn binds(
 
 /// The primary axes `row` measured online with no conclusive interval.
 fn inconclusive(row: &LiveAxesRow) -> BTreeSet<String> {
-    row.report
+    report_inconclusive(&row.report)
+}
+
+/// The primary axes a report measured online with no conclusive interval.
+fn report_inconclusive(report: &GoalAxisReport) -> BTreeSet<String> {
+    report
         .online
         .iter()
         .filter(|axis| axis.outcome == OnlineAxisOutcome::Inconclusive)
         .map(|axis| axis.axis.clone())
+        .collect()
+}
+
+/// Per-axis interval widths of a report: axis -> (before, after).
+fn report_widths(report: &GoalAxisReport) -> BTreeMap<String, (f64, f64)> {
+    report
+        .online
+        .iter()
+        .map(|axis| {
+            (
+                axis.axis.clone(),
+                (
+                    axis.before.upper - axis.before.lower,
+                    axis.after.upper - axis.after.lower,
+                ),
+            )
+        })
         .collect()
 }
 
@@ -314,6 +401,27 @@ fn load(vault: &Vault, txn: &heed::RoTxn<'_>, proposal: &EntityId) -> Result<Opt
         .get(txn, &key(proposal))?
         .map(|raw| rmp_serde::from_slice(&raw).map_err(|_| Error::CorruptedIndex(LABEL)))
         .transpose()
+}
+
+/// The measured give-up for `proposal`, if it fired (Engine 00:26): the 5th
+/// re-measure pass, or a width stalled over 2. The pass limit wins when both
+/// fire. `None` while the proposal still has passes to spend.
+pub(super) fn inconclusive_give_up_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<Option<InconclusiveTrigger>> {
+    let prior = decision::inconclusive_passes_in_txn(vault, rtxn, proposal)?;
+    let limit = prior.saturating_add(1) >= inconclusive_give_up_passes();
+    let stalled = load(vault, rtxn, proposal)?
+        .is_some_and(|row| row.stall_streak.saturating_add(1) >= inconclusive_stall_passes());
+    if limit {
+        Ok(Some(InconclusiveTrigger::PassLimit))
+    } else if stalled {
+        Ok(Some(InconclusiveTrigger::WidthStall))
+    } else {
+        Ok(None)
+    }
 }
 
 /// A score validated into 0..=1, which an f32 holds.

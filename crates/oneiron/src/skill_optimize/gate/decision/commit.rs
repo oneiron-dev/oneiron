@@ -6,6 +6,8 @@ use super::*;
 
 /// The decision itself, over the committing snapshot. `primary_unknown`: a
 /// primary axis was measured inconclusive, so non-regression is unknown.
+/// `give_up`: the measured give-up that fired, if any, closing the unknown
+/// primary instead of deferring it again.
 #[expect(
     clippy::too_many_arguments,
     reason = "the decision names every input it rests on, and hiding them in a struct would only move the list"
@@ -20,6 +22,7 @@ pub(super) fn decide_in_txn(
     basis: &ScoredBasis,
     goal_axes: &BTreeMap<String, GoalAxisScore>,
     primary_unknown: bool,
+    give_up: Option<live::InconclusiveTrigger>,
 ) -> Result<SkillEditDisposition> {
     require_open_optimizer_proposal(staged)?;
     // The predecessor was readable when the basis was taken; if it is not
@@ -139,8 +142,12 @@ pub(super) fn decide_in_txn(
     }
     // The full vector's non-regression is not established while a primary
     // axis is unknown: no automatic admission and no ask on a partial vector.
-    // The proposal stays open, and the next pass measures it again.
+    // The proposal stays open, and the next pass measures it again — unless
+    // the measured give-up fired, closing it as Inconclusive (Engine 00:26).
     if primary_unknown {
+        if let Some(trigger) = give_up {
+            return Ok(trigger.disposition());
+        }
         return Ok(SkillEditDisposition::DeferredInconclusive);
     }
     // A mixed vector may reach the preference ladder only after both tier

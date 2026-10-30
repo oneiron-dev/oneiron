@@ -337,6 +337,16 @@ fn rule_on_proposal(
     let basis = inputs.basis;
     let target = inputs.target;
 
+    // The measured give-up, read over the pre-score snapshot like the report
+    // it rests on: 5 passes or a stalled width closes an unknown primary
+    // instead of deferring it again (Engine 00:26).
+    let give_up = if primary_unknown {
+        let txn = vault.store.env.read_txn()?;
+        live::inconclusive_give_up_in_txn(vault, &txn, proposal)?
+    } else {
+        None
+    };
+
     let verdict = vault.with_write_txn_grouped(|wtxn| {
         if let Some(owner) = owner {
             owner.revalidate_in_txn(vault, wtxn)?;
@@ -399,6 +409,7 @@ fn rule_on_proposal(
             &basis,
             &goal_axes,
             primary_unknown,
+            give_up,
         )?;
         let settled = tradeoff::apply_in_txn(vault, wtxn, cycle, &mut verdict, &ladder)?;
         verdict.accepted = verdict.disposition.admits();
@@ -569,6 +580,27 @@ pub(super) fn accepted_in_cycle_in_txn(
         }
     }
     Ok(u32::try_from(accepted.len()).unwrap_or(u32::MAX))
+}
+
+/// Re-measure passes already spent on `proposal`, DERIVED from the verdict
+/// ledger like the cycle cap: its undisplaced `DeferredInconclusive` rows. A
+/// retired judge's row answers a different question and is excluded; a
+/// same-cycle redelivery appends no row, so every later-cycle pass counts one.
+pub(super) fn inconclusive_passes_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    proposal: &EntityId,
+) -> Result<u32> {
+    let mut passes = 0_u32;
+    for verdict in verdict_rows_in_txn(vault, rtxn)? {
+        if verdict.proposal == *proposal
+            && verdict.disposition == SkillEditDisposition::DeferredInconclusive
+            && verdict.displaced_by_revision.is_none()
+        {
+            passes = passes.saturating_add(1);
+        }
+    }
+    Ok(passes)
 }
 
 /// k: the fresh anchored labels a judge rubric revision needs since the last
