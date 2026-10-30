@@ -83,12 +83,13 @@ impl Sender {
 
     /// Sends `body` to `url` once with the key in the shape's auth header,
     /// then strips the key from what came back. `call` has passed
-    /// [`CallHeader::check`]. The send ends by `deadline`'s send limit.
+    /// [`CallHeader::check`] on `body`. The send ends by `deadline`'s send
+    /// limit.
     pub(crate) async fn send(
         &self,
         call: &CallHeader,
         url: Url,
-        body: &[u8],
+        body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         deadline: CallDeadline,
     ) -> (Outcome, Zeroizing<Vec<u8>>) {
@@ -134,7 +135,7 @@ impl Sender {
         &self,
         call: &CallHeader,
         checked: Result<Url, Refusal>,
-        body: &[u8],
+        body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
@@ -148,7 +149,7 @@ impl Sender {
         &self,
         call: &CallHeader,
         checked: Result<Url, Refusal>,
-        body: &[u8],
+        body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         writer: &mut W,
         deadline: CallDeadline,
@@ -210,7 +211,7 @@ impl Sender {
         &self,
         call: &CallHeader,
         url: Url,
-        body: &[u8],
+        body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         deadline: CallDeadline,
     ) -> Result<reqwest::Response, Outcome> {
@@ -279,7 +280,7 @@ impl Sender {
         &self,
         call: &CallHeader,
         url: Url,
-        body: &[u8],
+        mut body: Zeroizing<Vec<u8>>,
         secret: &[u8],
         left: Duration,
     ) -> Result<reqwest::Request, Refusal> {
@@ -297,9 +298,11 @@ impl Sender {
         // A bodyless read or removal sends no body, not an empty one.
         if !body.is_empty() {
             // OF-603: past the plaintext checks and the digest binding.
-            builder = match compressed(call, body) {
+            builder = match compressed(call, &body) {
                 Some(encoded) => builder.header(CONTENT_ENCODING, "gzip").body(encoded),
-                None => builder.body(body.to_vec()),
+                // The checked bytes themselves, moved, not copied: a body
+                // can run to `MAX_STREAM` (FIX 1895).
+                None => builder.body(std::mem::take(&mut *body)),
             };
         }
         builder.build().map_err(|_| Refusal::Header)

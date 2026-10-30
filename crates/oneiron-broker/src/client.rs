@@ -213,9 +213,10 @@ impl BrokerConnection {
     }
 
     /// Sends one call with its key, and waits for the reply's outcome; its
-    /// body follows through [`BrokerStream::next`]. The daemon's copy of the
-    /// key is wiped once the frame is written. A reply for another call or
-    /// digest counts as lost.
+    /// body follows through [`BrokerStream::next`]. A body past
+    /// [`crate::MAX_BODY`] goes in chunks, up to [`MAX_STREAM`] bytes (FIX
+    /// 1895). The daemon's copy of the key is wiped once the frame is
+    /// written. A reply for another call or digest counts as lost.
     pub async fn open(
         mut self,
         call: &CallHeader,
