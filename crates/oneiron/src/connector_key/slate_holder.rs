@@ -161,6 +161,39 @@ pub(super) fn clear_ruled_narrows_in_txn(
     Ok(())
 }
 
+/// This table's actor scrub (FIX 9231): an erase of `actor` drops every row
+/// and facet narrow it stamped, in the erase's writer. A narrow without its
+/// holder is meaningless, so the rows are dropped, not anonymized (J1); the
+/// facet narrow names the same actor and goes the same way (J2). A key whose
+/// overlay is empty afterwards keeps no row.
+pub(crate) fn erase_holder_narrows_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    let holder = actor.to_hex();
+    for (key_id, mut narrows) in HOLDER_NARROWS.scan(&vault.store, wtxn)? {
+        let before = narrows.clone();
+        narrows.rows.retain(|_, narrow| narrow.actor != holder);
+        if narrows
+            .facets
+            .as_ref()
+            .is_some_and(|narrow| narrow.actor == holder)
+        {
+            narrows.facets = None;
+        }
+        if narrows == before {
+            continue;
+        }
+        if narrows == KeySlateNarrows::default() {
+            HOLDER_NARROWS.delete(&vault.store, wtxn, &key_id)?;
+        } else {
+            HOLDER_NARROWS.put(&vault.store, wtxn, &key_id, &narrows)?;
+        }
+    }
+    Ok(())
+}
+
 /// The key's view after a narrow: `slate` (with id `slate_id`) met with
 /// `narrows`, the key's overlay (none for a key with its own slate).
 fn narrowed_view(

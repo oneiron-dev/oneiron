@@ -90,7 +90,10 @@ pub(crate) use self::meter::{
 pub(crate) use self::record::{
     ScopedCapabilityProvenance, canonical_scoped_server_segment, normalize_connector_key,
 };
-pub(crate) use self::slate::{read_connector_slate_in_txn, stop_asking_tool_in_txn};
+pub(crate) use self::slate::{
+    erase_grant_slate_holder_narrows_in_txn, read_connector_slate_in_txn, stop_asking_tool_in_txn,
+};
+pub(crate) use self::slate_holder::erase_holder_narrows_in_txn;
 pub(crate) use self::tool_effect::scoped_tool_effect_in_txn;
 pub(crate) use self::txn::{governing_connector_key, suspend_connector_key_in_txn};
 
