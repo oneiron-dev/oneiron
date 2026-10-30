@@ -523,6 +523,7 @@ both bindings and their export-census tests in one change.
 - `vault.connectors.calls.approve_once`
 - `vault.consent.deny`
 - `vault.consent.create_standing_grant`
+- `vault.consent.create_auto_weave_grant`
 - `vault.consent.registry`
 - `vault.consent.failure_signals_held`
 - `vault.consent.revoke`
