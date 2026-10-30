@@ -102,6 +102,7 @@ pub enum AgentVerb {
     VaultFinalizeStream,
     VaultCancelStream,
     VaultMessageStreamPartial,
+    VaultMessageStreamsRefused,
     VaultMessagesDurability,
     VaultWitness,
     VaultClaimsUpsert,
@@ -1338,6 +1339,7 @@ impl AgentVerb {
         Self::VaultFinalizeStream,
         Self::VaultCancelStream,
         Self::VaultMessageStreamPartial,
+        Self::VaultMessageStreamsRefused,
         Self::VaultMessagesDurability,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
@@ -2577,6 +2579,7 @@ impl AgentVerb {
             Self::VaultFinalizeStream => "vault.finalize_stream",
             Self::VaultCancelStream => "vault.cancel_stream",
             Self::VaultMessageStreamPartial => "vault.message_stream_partial",
+            Self::VaultMessageStreamsRefused => "vault.message_streams.refused",
             Self::VaultMessagesDurability => "vault.messages.durability",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
@@ -3843,6 +3846,7 @@ impl AgentVerb {
                 | Self::VaultFinalizeStream
                 | Self::VaultCancelStream
                 | Self::VaultMessageStreamPartial
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -5108,6 +5112,7 @@ impl AgentVerb {
                 | Self::VaultFinalizeStream
                 | Self::VaultCancelStream
                 | Self::VaultMessageStreamPartial
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -6247,6 +6252,7 @@ impl AgentVerb {
                 | Self::SelfInboxList
                 | Self::VaultShapeGroups
                 | Self::Describe
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
@@ -6516,6 +6522,7 @@ impl AgentVerb {
                 | Self::VaultFinalizeStream
                 | Self::VaultCancelStream
                 | Self::VaultMessageStreamPartial
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultRetrievalAgingGet
@@ -8449,6 +8456,7 @@ impl AgentVerb {
             Self::VaultFinalizeStream => &["spec"],
             Self::VaultCancelStream => &["spec"],
             Self::VaultMessageStreamPartial => &["spec"],
+            Self::VaultMessageStreamsRefused => &["spec"],
             Self::VaultMessagesDurability => &["spec"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -9686,6 +9694,7 @@ impl AgentVerb {
             Self::VaultFinalizeStream => &["spec"],
             Self::VaultCancelStream => &["spec"],
             Self::VaultMessageStreamPartial => &["spec"],
+            Self::VaultMessageStreamsRefused => &["spec"],
             Self::VaultMessagesDurability => &["spec"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -11113,6 +11122,9 @@ impl AgentVerb {
             }
             Self::VaultMessageStreamPartial => {
                 "Reads only this actor's accepted in-memory partial using its generation-bound stream handle."
+            }
+            Self::VaultMessageStreamsRefused => {
+                "Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."
             }
             Self::VaultMessagesDurability => {
                 "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."

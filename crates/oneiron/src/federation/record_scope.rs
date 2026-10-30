@@ -32,7 +32,7 @@ mod tests;
 pub(crate) use self::stamping::{
     restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth, settle_source_birth,
     stage_session_position, stamp_blob_project, stamp_import_audience_birth, stamp_leader_project,
-    stamp_put, stamp_task_birth, stamp_task_fact,
+    stamp_put, stamp_task_birth, stamp_task_fact, unstage_session_position,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

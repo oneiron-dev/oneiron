@@ -488,6 +488,11 @@ export_facade! {
     let output = client.vault_message_stream_partial(&input)?;
     crate::codec::lift_record("vault.message_stream_partial", &output)
 };
+"vault.message_streams.refused" => fn vault_message_streams_refused(&self) -> Vec<StreamRecoveryRefusal> = |client| {
+    let input: oneiron::task_verb::sdk::EmptyRequest = crate::codec::lower_empty("vault.message_streams.refused")?;
+    let output = client.vault_message_streams_refused(&input)?;
+    crate::codec::lift_record("vault.message_streams.refused", &output)
+};
 "vault.messages.durability" => fn vault_messages_durability(&self, input: MessageDurabilityRequest) -> ScopedReadResultOptionalMessageDurability = |client| {
     let input: oneiron::memory::MessageDurabilityRequest = crate::codec::lower_record("vault.messages.durability", input)?;
     let output = client.vault_messages_durability(&input)?;
