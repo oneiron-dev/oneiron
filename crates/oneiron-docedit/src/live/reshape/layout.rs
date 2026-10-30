@@ -16,7 +16,7 @@ use crate::live::pptx::{
 };
 use crate::ooxml::XmlTree;
 use crate::retained_opc::Package;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn number_cells(values: &[Option<serde_json::Number>], count: usize) -> Vec<Cell> {
     (0..count)
@@ -503,7 +503,9 @@ pub(super) fn layout(
         })
         .collect();
     let own_plots: Vec<Option<usize>> = own.iter().map(|at| at.map(|at| plot_of[at])).collect();
-    let (targets, assign) = plot_plan(&held_plots, family, resolved, &own_plots);
+    let (mut targets, mut assign) = plot_plan(&held_plots, family, resolved, &own_plots);
+    let settled = settled_places(&targets, &assign, resolved, series);
+    place_ordinals(&mut targets, &mut assign, resolved, &settled);
     let mut assigned: Vec<Vec<usize>> = vec![Vec::new(); targets.len()];
     for (index, &target) in assign.iter().enumerate() {
         assigned[target].push(index);
@@ -541,6 +543,54 @@ pub(super) fn layout(
         assigned,
         seats,
     })
+}
+
+/// The ordinal each of `series` (each of family `resolved`) names for
+/// [`place_ordinals`] in each family whose series the payload groups by
+/// plot otherwise than `targets` and `assign` draw them (a series the
+/// settlement moved to another plot of its family, FIX 10295, or an of-pie
+/// plot it drew once per split view, FIX 9375); none for every other
+/// series, which stays where [`plot_plan`] put it.
+fn settled_places(
+    targets: &[PlotTarget],
+    assign: &[usize],
+    resolved: &[ChartKind],
+    series: &[ChartSeries],
+) -> Vec<Option<u32>> {
+    let ordinal = |index: usize| series.get(index).and_then(|line| line.plot).unwrap_or(0);
+    let mut out = vec![None; resolved.len()];
+    let mut families: Vec<ChartKind> = Vec::new();
+    for kind in resolved {
+        if !families.contains(kind) {
+            families.push(*kind);
+        }
+    }
+    for kind in families {
+        let members: Vec<usize> = (0..resolved.len())
+            .filter(|&index| resolved[index] == kind && index < assign.len())
+            .collect();
+        let mut named: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+        for &index in &members {
+            named.entry(ordinal(index)).or_default().push(index);
+        }
+        let drawn: Vec<Vec<usize>> = (0..targets.len())
+            .filter(|&at| targets[at].kind == kind)
+            .map(|at| {
+                members
+                    .iter()
+                    .copied()
+                    .filter(|&index| assign[index] == at)
+                    .collect::<Vec<usize>>()
+            })
+            .filter(|group| !group.is_empty())
+            .collect();
+        if named.into_values().collect::<Vec<_>>() != drawn {
+            for &index in &members {
+                out[index] = Some(ordinal(index));
+            }
+        }
+    }
+    out
 }
 
 /// One chart part as a rewrite reads it, and how the live series take its
