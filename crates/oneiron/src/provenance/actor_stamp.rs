@@ -35,6 +35,8 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
+use crate::receipt::{ReceiptKind, ReceiptRecord};
+use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_RECEIPT_RECORD};
 use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::WriteActor;
@@ -133,7 +135,7 @@ pub(crate) fn resolve_actor_stamp_in_txn(
     let is_claim = vault
         .store
         .port_entity_record(txn, token)?
-        .is_some_and(|row| row.entity_type == crate::registry::ENTITY_TYPE_CLAIM);
+        .is_some_and(|row| row.entity_type == ENTITY_TYPE_CLAIM);
     if !is_claim {
         return Ok(None);
     }
@@ -169,8 +171,9 @@ fn stamped_actor(body: &ClaimBody) -> Option<WriteActor> {
         || body.source != Some(ClaimSource::Observed)
         || body.lifecycle == ClaimLifecycleStatus::Retracted
         || crate::claim::claim_generated_origin(body)
-        || crate::claim::claim_evidence_taint(body)
-            .is_some_and(|taint| matches!(taint, ClaimSource::Imported | ClaimSource::ToolOutput))
+        || crate::claim::claim_evidence_taint(body).is_some_and(|taint| {
+            matches!(taint, ClaimSource::Imported | ClaimSource::ToolOutput)
+        })
     {
         return None;
     }
@@ -302,7 +305,7 @@ fn tokens_of_in_txn(
 /// What the hold check reads of a RECEIPT_RECORD carrier: its receipt.
 #[derive(serde::Deserialize)]
 struct ReceiptCarrier {
-    receipt: crate::receipt::ReceiptRecord,
+    receipt: ReceiptRecord,
 }
 
 /// The tokens a held reference-refusal receipt names (FIX 11040), read from
@@ -314,11 +317,10 @@ fn held_tokens_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityI
         return Ok(held);
     }
     let mut records = Vec::new();
-    for id in vault.store.port_entity_ids_by_type(
-        txn,
-        crate::registry::ENTITY_TYPE_RECEIPT_RECORD,
-        None,
-    )? {
+    for id in vault
+        .store
+        .port_entity_ids_by_type(txn, ENTITY_TYPE_RECEIPT_RECORD, None)?
+    {
         records.push(id?);
     }
     for id in records {
@@ -331,15 +333,15 @@ fn held_tokens_in_txn(vault: &Vault, txn: &RoTxn<'_>) -> Result<BTreeSet<EntityI
         let Ok(carrier) = rmp_serde::from_slice::<ReceiptCarrier>(&row.body) else {
             continue;
         };
-        if carrier.receipt.receipt_kind == crate::receipt::ReceiptKind::ReferenceRefusal
-            && let Some(token) = carrier
-                .receipt
-                .actor
-                .as_deref()
-                .and_then(|hex| EntityId::from_hex(hex).ok())
-        {
-            held.insert(token);
+        if carrier.receipt.receipt_kind != ReceiptKind::ReferenceRefusal {
+            continue;
         }
+        let token = carrier
+            .receipt
+            .actor
+            .as_deref()
+            .and_then(|hex| EntityId::from_hex(hex).ok());
+        held.extend(token);
     }
     Ok(held)
 }
