@@ -296,16 +296,20 @@ pub(crate) fn drop_pad_rows_in_txn(
 impl Vault {
     /// Publishes into current custody, before a snapshot takes its custody
     /// guard, each pad a row here holds that custody lacks (a row whose put
-    /// found custody faulted), so the image carries it by reference. Never
-    /// under the guard: a publication mints. A pad custody still cannot take
-    /// is warned and rides the image as its carrier
-    /// ([`PAD_IMAGE_UNPREPARED`]).
+    /// found custody faulted), so the image carries it by reference, then
+    /// reads each back after its writer committed (FIX 7313): only a pad
+    /// custody holds the same counts as prepared. Never under the guard: a
+    /// publication mints. Returns how many pads a row holds that custody
+    /// still does not hold the same (closed, faulted, holding another pad,
+    /// or a publication that did not read back): each is warned and rides
+    /// the image as its carrier ([`PAD_IMAGE_UNPREPARED`]).
     ///
     /// # Errors
     ///
     /// Storage faults.
-    pub(crate) fn prepare_image_pads(&self) -> Result<()> {
+    pub(crate) fn prepare_image_pads(&self) -> Result<usize> {
         let mut owed = Vec::new();
+        let mut unprepared = 0_usize;
         {
             let txn = self.store.env.read_txn()?;
             for id in self
@@ -326,18 +330,31 @@ impl Vault {
                 let Some(pad) = body.pad() else {
                     continue;
                 };
-                if !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
-                    && matches!(
-                        self.store.world_pad_custody_entry(&pad_item(&key)),
-                        Ok(WorldPadCustody::Missing)
-                    )
-                {
-                    owed.push((key, Zeroizing::new(*pad.bytes())));
+                if world_keys_destroyed_in_txn(&self.store, &txn, key.world)? {
+                    continue;
+                }
+                match self.store.world_pad_custody_entry(&pad_item(&key)) {
+                    Ok(WorldPadCustody::Missing) => {
+                        owed.push((key, Zeroizing::new(*pad.bytes())));
+                    }
+                    Ok(WorldPadCustody::Live(held)) if *held == *pad.bytes() => {}
+                    Ok(WorldPadCustody::Retired) => {}
+                    Ok(WorldPadCustody::Live(_) | WorldPadCustody::Closed) => {
+                        unprepared = unprepared.saturating_add(1);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            kind = ?error.kind(),
+                            "a world key pad's custody did not read before an image; the image \
+                             carries it"
+                        );
+                        unprepared = unprepared.saturating_add(1);
+                    }
                 }
             }
         }
         if owed.is_empty() {
-            return Ok(());
+            return Ok(unprepared);
         }
         self.with_write_txn_grouped(|wtxn| {
             for (key, pad) in &owed {
@@ -353,6 +370,24 @@ impl Vault {
                 }
             }
             Ok(())
-        })
+        })?;
+        // The read back, once the writer committed: what the projection
+        // will find under the snapshot's guard.
+        for (key, pad) in &owed {
+            let held = self
+                .store
+                .world_pad_in_custody(&pad_item(key))
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a world key pad taken into custody did not read back"
+                    );
+                    None
+                });
+            if held.is_none_or(|held| *held != **pad) {
+                unprepared = unprepared.saturating_add(1);
+            }
+        }
+        Ok(unprepared)
     }
 }

@@ -45,7 +45,7 @@ async fn owner_share(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let result = tokio::task::spawn_blocking(move || {
+    let result = super::clock_ingress::run_blocking(move || {
         crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(oneiron::sync::selector::share_guest_document_as_owner(
                 &server.reassert_manager,
@@ -96,7 +96,7 @@ pub(crate) async fn vault_guests_export_envelope(
     };
     let locality = auth.locality();
     let server = Arc::clone(server);
-    let result = tokio::task::spawn_blocking(move || {
+    let result = super::clock_ingress::run_blocking(move || {
         crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(oneiron::sync::selector::export_guest_document_for_guest(
                 &server.reassert_manager,

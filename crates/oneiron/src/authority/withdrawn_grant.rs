@@ -4,14 +4,16 @@
 //! presence-only marker in the same writer as the row's delete: a guest
 //! revoke, a shared-vault member's removal or demotion, an owner-agent or
 //! GitPush revoke, an own-device retirement, and a peer's deletion this
-//! replica materializes. A failed marker write fails that writer, so a
-//! Grant is never deleted here without it. The marker is permanent and
-//! restores LIVE over an older image, so neither a restored nor a re-put
-//! row at the same id, nor its absence, gives a carried act standing again
-//! ([`super::owner_act::grant_standing_in_txn`] reads it first). Cache and
-//! residence eviction never write it: they are not withdrawals. A replica
-//! that never held the Grant learns nothing here and keeps trusting the
-//! carrier.
+//! replica materializes. A local withdrawal also stages its row's hard
+//! erasure for sync in that writer (FIX-LIST 10772), so a peer holding the
+//! Grant materializes the delete and marks it in turn. A failed marker write
+//! fails that writer, so a Grant is never deleted here without it. The
+//! marker is permanent and restores LIVE over an older image, so neither a
+//! restored nor a re-put row at the same id, nor its absence, gives a
+//! carried act standing again ([`super::owner_act::grant_standing_in_txn`]
+//! reads it first). Cache and residence eviction never write it: they are
+//! not withdrawals. A replica that never held the Grant learns nothing here
+//! and keeps trusting the carrier.
 //!
 //! The owner-agent Grant enumeration every reader shares
 //! (`federation::agent_grants_for_store_in_txn`) reads it too, so a marked
@@ -42,12 +44,44 @@ pub(crate) const ISOLATION_NEW_CHECK_ERROR_MODE: NewCheckErrorMode =
     NewCheckErrorMode::KeepExistingPath;
 
 /// Records, in the writer that deletes it, that `grant` was withdrawn here.
-pub(crate) fn mark_withdrawn_grant_in_txn(
+fn mark_withdrawn_grant_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     grant: EntityId,
 ) -> Result<()> {
     WITHDRAWN_GRANT.put(store, wtxn, &HexId(grant), &())
+}
+
+/// A local withdrawal of the row `grant`, in the writer about to delete it
+/// (FIX-LIST 10772), by its stored type alone: a FEDERATION_GRANT row stored
+/// here, live or as a deleted shell, is marked, and its hard erasure staged
+/// for sync (its permanent `dt:` marker, and its `pt:` intent in the base
+/// window of its learned-at, which the window's next load publishes); any
+/// other kind, or no row, is not. Any delete door may take it for every id
+/// it tears.
+pub(crate) fn withdraw_grant_row_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    grant: EntityId,
+) -> Result<()> {
+    let Some(row) = crate::ports::EntityStoreRead::port_entity_record(store, &*wtxn, &grant)?
+        .filter(|row| row.entity_type == crate::registry::ENTITY_TYPE_FEDERATION_GRANT)
+    else {
+        return Ok(());
+    };
+    mark_withdrawn_grant_in_txn(store, wtxn, grant)?;
+    let withdrawn_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(
+        store,
+        wtxn,
+        &grant,
+        row.learned_at,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: withdrawn_at,
+            request_id: *grant.as_bytes(),
+        },
+    )
 }
 
 /// [`mark_withdrawn_grant_in_txn`] for a row a peer's delete is about to

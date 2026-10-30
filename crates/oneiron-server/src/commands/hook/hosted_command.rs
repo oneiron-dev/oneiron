@@ -8,7 +8,8 @@
 //!   credential file, once the origin admits that credential over
 //!   `oneiron mcp` (the transport a recall uses), and selects it. A slip
 //!   names its own vault, which must be the one named; an owner's sign-in
-//!   names none, so its vault id is the one the exporting surface gives.
+//!   names none, so the id the exporting surface gives is confirmed
+//!   against the vault the origin answers for.
 //! - `select` selects one recorded vault, or none.
 //! - `logout` forgets one recorded vault, or every one. It never deletes a
 //!   credential file: the surface that wrote it keeps it.
@@ -42,8 +43,9 @@ pub fn hosted(command: HostedCommand) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Records the vault `args` name once its origin admits the credential,
-/// and selects it. Nothing is recorded when it does not.
+/// Records the vault `args` name once its origin admits the credential
+/// and, in owner mode, answers for the vault named, and selects it.
+/// Nothing is recorded when it does not.
 fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     let mut selection = held()?;
     let origin = origin(&args.origin)?;
@@ -103,12 +105,39 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
     };
     let deadline = Instant::now() + Duration::from_secs(args.timeout_secs);
     let oneiron = super::oneiron(None);
-    if let Err(error) = recall::admits(&oneiron, &vault.origin, vault.recall_auth(), deadline) {
-        anyhow::bail!(
-            "{} did not admit this credential over `oneiron mcp` ({error}); nothing was \
-             recorded",
-            vault.origin
-        );
+    let answered = match recall::admits(&oneiron, &vault.origin, vault.recall_auth(), deadline) {
+        Ok(answered) => answered,
+        Err(error) => {
+            anyhow::bail!(
+                "{} did not admit this credential over `oneiron mcp` ({error}); nothing was \
+                 recorded",
+                vault.origin
+            );
+        }
+    };
+    // An owner's sign-in names no vault of its own, so the id the exporting
+    // surface gives is confirmed against the vault the origin answers for
+    // (FIX 11695): a named mismatch is reported and nothing is recorded, as a
+    // slip's own mismatch is. A slip's admission already proves its vault.
+    if auth_mode == HostedAuthMode::Owner {
+        match answered.as_deref() {
+            Some(answer) if answer == vault.vault_id.as_str() => {}
+            Some(answer) => {
+                anyhow::bail!(
+                    "{} answers for vault {answer}, not {}; a credential goes to its own vault \
+                     alone, so nothing was recorded",
+                    vault.origin,
+                    vault.vault_id
+                );
+            }
+            // An origin that names no vault (not yet rooted) is recorded as
+            // before, with the reason on one line: only a named mismatch
+            // stops the login.
+            None => eprintln!(
+                "{} answered no vault id, so the vault {} it was told is recorded unconfirmed",
+                vault.origin, vault.vault_id
+            ),
+        }
     }
     vault.verified_at_ms = now_ms();
     selection
