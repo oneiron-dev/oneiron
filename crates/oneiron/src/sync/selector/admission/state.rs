@@ -25,7 +25,7 @@ use super::super::edge::{
 #[cfg(feature = "sync")]
 pub(crate) struct AdmittedUpdate {
     key: WindowKey,
-    bytes: Vec<u8>,
+    pub(super) bytes: Vec<u8>,
     rows: u64,
     early: EarlyStamps,
     births: Vec<(EntityId, Vec<u8>)>,
@@ -33,7 +33,7 @@ pub(crate) struct AdmittedUpdate {
     delivered: BTreeMap<EntityId, [u8; 32]>,
     born_with: Vec<super::super::born_with::CarriedText>,
     lane: Option<String>,
-    routed: Vec<AdmittedUpdate>,
+    pub(super) routed: Vec<AdmittedUpdate>,
 }
 
 #[cfg(feature = "sync")]

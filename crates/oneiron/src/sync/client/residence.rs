@@ -33,9 +33,11 @@ pub(crate) use self::search_client::search_resident;
 
 use serde::Deserialize;
 
-use super::base::SyncClient;
+use super::base::{SyncClient, home_reads_window};
+use super::types::SyncClientConfig;
 use crate::EntityId;
 use crate::sync::types::WindowKey;
+use rpc::{ResidenceRpc, refused, residence_budgets};
 
 /// Search explicitly distinguishes a complete home answer from a partial
 /// offline answer over this device's previously opened, cached items.
