@@ -211,12 +211,30 @@ impl Vault {
         signer: FrontierSigner<'_>,
         room: usize,
     ) -> Result<Option<AuthorityView>> {
+        self.join_authority_heads_in_txn(txn, fold, &fold.append_heads, signer, room)
+    }
+
+    /// [`Self::prepare_authority_frontier_in_txn`] over `heads`, the part of
+    /// `fold`'s main-log heads an act names (FIX 8497: a world key record
+    /// names the heads no side leaf of its world holds beneath it). The
+    /// other heads stay heads, and stay out of the joins.
+    ///
+    /// # Errors
+    /// As [`Self::prepare_authority_frontier_in_txn`].
+    pub(crate) fn join_authority_heads_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        heads: &BTreeSet<AuthorityEntryHash>,
+        signer: FrontierSigner<'_>,
+        room: usize,
+    ) -> Result<Option<AuthorityView>> {
         let room = room.max(1);
-        if fold.append_heads.len() <= room {
+        if heads.len() <= room {
             return Ok(None);
         }
-        measure_authority_work(self.limit_watch(), fold.append_heads.len());
-        let Some(tip) = self.admission_tip_in_txn(txn, fold, signer)? else {
+        measure_authority_work(self.limit_watch(), heads.len());
+        let Some(tip) = self.admission_tip_in_txn(txn, heads, signer)? else {
             return Ok(None);
         };
         let now = self.instant_in_txn(txn)?.secs();
@@ -225,7 +243,7 @@ impl Vault {
             end: now,
         };
         let mut seq = signer.first_sequence(fold)?;
-        let mut tips = fold.append_heads.clone();
+        let mut tips = heads.clone();
         let mut level_tip = Some(tip);
         let mut rows = Vec::new();
         let mut joins = Vec::new();
@@ -249,19 +267,18 @@ impl Vault {
         Ok(Some(joined))
     }
 
-    /// The admission tip of `fold`'s heads for `signer`: the lowest-hash
-    /// head whose own state admits it ([`admits_join_signer`]), read from
-    /// the capture the causal points read. `None` when no head does, or when
-    /// the states cannot be read here
-    /// ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
+    /// The admission tip of `heads` for `signer`: the lowest-hash head whose
+    /// own state admits it ([`admits_join_signer`]), read from the capture
+    /// the causal points read. `None` when no head does, or when the states
+    /// cannot be read here ([`AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT`]).
     fn admission_tip_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        fold: &AuthorityFold,
+        heads: &BTreeSet<AuthorityEntryHash>,
         signer: FrontierSigner<'_>,
     ) -> Result<Option<AuthorityEntryHash>> {
         let states: Option<BTreeMap<AuthorityEntryHash, Option<FoldState>>> =
-            match super::act_standing::head_states_in_txn(&self.store, txn, &fold.append_heads) {
+            match super::act_standing::head_states_in_txn(&self.store, txn, heads) {
                 Ok(states) => states,
                 Err(_) if AUTHORITY_NEW_CHECK_UNKNOWN_KEEP_CURRENT => None,
                 Err(error) => return Err(error),
