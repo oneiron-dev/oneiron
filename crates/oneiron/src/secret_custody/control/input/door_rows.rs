@@ -264,6 +264,18 @@ impl StreamedDigest {
         }
     }
 
+    /// The digest of the input's first part, as [`part_digest`] takes it of
+    /// its first [`PART_BYTES`] (FIX 12297): the whole input's when it is
+    /// within one part, else that part's once it is read through, or of what
+    /// of it is read so far.
+    pub(super) fn first_part(&self) -> [u8; 32] {
+        match (&self.whole, self.digests.first()) {
+            (Some(whole), _) => part_digest(whole),
+            (None, Some(first)) => *first,
+            (None, None) => *self.part.finalize().as_bytes(),
+        }
+    }
+
     /// The digest of the input read through.
     pub(super) fn finish(mut self) -> [u8; 32] {
         if let Some(whole) = &self.whole {
