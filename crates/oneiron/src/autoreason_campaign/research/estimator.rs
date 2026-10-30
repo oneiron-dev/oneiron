@@ -149,7 +149,7 @@ pub fn record_selection_benchmark(
         &record.benchmark.revision,
         "a benchmark names its dataset revision",
     )?;
-    bounded_refs(&record.receipt_refs, true)?;
+    bounded_refs(vault, &record.receipt_refs, true)?;
     if !record.dgm_score.is_finite() || !record.estimator_score.is_finite() {
         return Err(invalid("benchmark scores are finite"));
     }
