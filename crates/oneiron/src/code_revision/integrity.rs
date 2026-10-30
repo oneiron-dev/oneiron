@@ -8,8 +8,6 @@ use sha2::{Digest, Sha256};
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::limits::MAX_ANCESTOR_DEPTH;
-use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{CodecError, RawValue};
 use crate::store::Store;
 
@@ -20,16 +18,15 @@ use super::codec::{
     optional_hash_value, u64_value,
 };
 use super::frontier::{get_code_revision_frontier_in_txn, rebuild_code_revision_frontier_in_txn};
-use super::graph::{
-    code_artifact_body_bytes, require_code_revision_ancestor, require_entity_type,
-    require_revision_session,
-};
+use super::graph::code_artifact_body_bytes;
 use super::keys::INTEGRITY;
 use super::storage::{
     collect_code_revision_records_by_index_prefix, read_code_revision_record_in_txn,
 };
 use super::types::{CodeRevision, CodeRevisionIntegrityRecord, CodeRevisionKind};
 use crate::error::ArtifactError;
+
+mod walk;
 
 /// The side table's declared codec is `Raw`: [`encode_code_revision_integrity_record`]/
 /// [`decode_code_revision_integrity_record`] already spell this row's on-disk shape.
@@ -409,132 +406,7 @@ pub(super) fn verify_or_build_code_revision_integrity_record_in_txn(
     revision: &CodeRevision,
     visiting: &mut HashSet<EntityId>,
 ) -> Result<CodeRevisionIntegrityRecord> {
-    if visiting.len() >= MAX_ANCESTOR_DEPTH {
-        return Err(Error::IndexOverflow("code_revision_parent_chain"));
-    }
-    if !visiting.insert(revision.revision_id) {
-        return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-            "code revision parent chain contains a cycle",
-        )));
-    }
-
-    let result = (|| {
-        let record =
-            load_optional_code_revision_integrity_record(store, rtxn, &revision.revision_id)?;
-        if let Some(record) = &record
-            && (record.revision_id != revision.revision_id
-                || record.session_id != revision.session_id
-                || record.parent_revision_id != revision.parent_revision_id
-                || record.reverted_to_revision_id != revision.reverted_to_revision_id
-                || record.provenance_claim_id != revision.provenance_claim_id
-                || record.finalized_at != revision.finalized_at
-                || record.parent_fold.is_some() != revision.parent_revision_id.is_some()
-                || record.reverted_to_fold.is_some() != revision.reverted_to_revision_id.is_some())
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "code revision integrity record does not match revision record",
-            )));
-        }
-
-        let artifact_body = code_artifact_body_bytes(store, rtxn, &revision.revision_id)?;
-        let artifact_hash =
-            super::file_frontiers::artifact_hash(store, rtxn, revision, &artifact_body)?;
-        if let Some(record) = &record
-            && artifact_hash != record.artifact_hash
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                "code revision artifact hash mismatch",
-            )));
-        }
-        if let Some(provenance_claim_id) = revision.provenance_claim_id {
-            require_entity_type(
-                store,
-                rtxn,
-                &provenance_claim_id,
-                ENTITY_TYPE_CLAIM,
-                "provenance_claim_id must be a CLAIM entity",
-            )?;
-        }
-
-        let parent_fold = match revision.parent_revision_id {
-            Some(parent_id) => {
-                let (parent_revision, parent_fold) = require_code_revision_with_fold_with_visited(
-                    store, rtxn, &parent_id, visiting,
-                )?;
-                require_revision_session(
-                    &parent_revision,
-                    revision.session_id,
-                    "parent_revision_id must belong to session_id",
-                )?;
-                if let Some(record) = &record
-                    && record.parent_fold != Some(parent_fold)
-                {
-                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                        "code revision parent fold mismatch",
-                    )));
-                }
-                Some(parent_fold)
-            }
-            None => None,
-        };
-        let reverted_to_fold = match revision.reverted_to_revision_id {
-            Some(reverted_to_id) => {
-                let reverted_to_fold = require_code_revision_fold_with_visited(
-                    store,
-                    rtxn,
-                    &reverted_to_id,
-                    visiting,
-                )?;
-                if let Some(record) = &record
-                    && record.reverted_to_fold != Some(reverted_to_fold)
-                {
-                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                        "code revision reverted-to fold mismatch",
-                    )));
-                }
-                Some(reverted_to_fold)
-            }
-            None => None,
-        };
-        if let (Some(parent_id), Some(reverted_to_id)) = (
-            revision.parent_revision_id,
-            revision.reverted_to_revision_id,
-        ) {
-            require_code_revision_ancestor(store, rtxn, &parent_id, &reverted_to_id)?;
-        }
-
-        let expected_fold = compute_code_revision_fold(
-            revision.kind,
-            &artifact_hash,
-            revision.provenance_claim_id,
-            parent_fold,
-            reverted_to_fold,
-        );
-        if let Some(record) = record {
-            if expected_fold != record.revision_fold {
-                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
-                    "code revision fold mismatch",
-                )));
-            }
-            Ok(record)
-        } else {
-            Ok(CodeRevisionIntegrityRecord {
-                revision_id: revision.revision_id,
-                session_id: revision.session_id,
-                parent_revision_id: revision.parent_revision_id,
-                reverted_to_revision_id: revision.reverted_to_revision_id,
-                provenance_claim_id: revision.provenance_claim_id,
-                artifact_hash,
-                parent_fold,
-                reverted_to_fold,
-                revision_fold: expected_fold,
-                finalized_at: revision.finalized_at,
-            })
-        }
-    })();
-
-    visiting.remove(&revision.revision_id);
-    result
+    walk::verify_or_build(store, rtxn, revision, visiting)
 }
 
 fn require_code_revision_fold(

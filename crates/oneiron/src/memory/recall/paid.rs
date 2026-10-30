@@ -23,7 +23,9 @@
 //! transaction and before it serves or records anything, only to the same
 //! block at the same revisions: a block or a row that changed in between
 //! takes none of the scores, and the door scores the new block once more
-//! before it refuses.
+//! before it refuses. A rerank that stopped short scored a prefix of the
+//! block: those scores apply, and the unscored rest stays below them in its
+//! fusion order (FIX 11772).
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -162,6 +164,8 @@ impl RerankEgress<'_> {
 
 /// A host's scores for one block, and the model that gave them.
 pub struct RerankScores {
+    /// One score per candidate, in block order: all of them, or the prefix
+    /// a call that stopped short scored (FIX 11772).
     pub scores: Vec<f32>,
     /// The model the host routed the call to.
     pub model: String,
@@ -174,8 +178,9 @@ pub struct RerankScores {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum RerankReport {
-    /// The host's reranker scored the top block, and the block is in its
-    /// order.
+    /// The host's reranker scored the top block, or the prefix of it a call
+    /// that stopped short scored, and the block is in its order, the
+    /// unscored rest below in fusion order (FIX 11772).
     Applied {
         /// The model the host routed the call to.
         model: String,
@@ -486,10 +491,13 @@ impl Memory<'_> {
                     None => return Err(error),
                 },
             };
-            if scored.scores.len() != block.len() {
+            // FIX 11772: a call that stopped short scored a prefix of the
+            // block; its finished scores apply.
+            let scored_count = scored.scores.len();
+            if scored_count == 0 || scored_count > block.len() {
                 return Err(MemoryError::new(
                     MEMORY_CODE_MODEL_UNAVAILABLE,
-                    "the reranker did not score every candidate",
+                    "the reranker's scores do not fit the candidates",
                     &["Check the reranker route's endpoint, or recall at medium."],
                 ));
             }
@@ -500,6 +508,7 @@ impl Memory<'_> {
                     *score = f32::MIN;
                 }
             }
+            rank_unscored_below(&mut scored.scores, &texts);
             let candidates: Vec<RerankCandidate<'_>> =
                 block.iter().map(BlockCandidate::borrowed).collect();
             let prepared = PreparedBlock {
@@ -524,7 +533,7 @@ impl Memory<'_> {
                     RerankReport::Applied {
                         model: scored.model.clone(),
                         served_model: scored.served_model.clone(),
-                        candidates: block.len(),
+                        candidates: scored_count,
                         calls: call,
                     }
                 } else {
@@ -717,6 +726,28 @@ fn kept_on_device(
         }
     }
     Ok(kept)
+}
+
+/// Scores for the candidates a rerank that stopped short left unscored
+/// (FIX 11772), after the prefix it scored: each below every score the
+/// reranker gave and above the empty rows, in fusion order, so the block
+/// keeps that order for them; a row sent empty scores last, as a scored
+/// one does.
+fn rank_unscored_below(scores: &mut Vec<f32>, texts: &[String]) {
+    let mut next = scores
+        .iter()
+        .copied()
+        .filter(|score| score.is_finite() && *score > f32::MIN)
+        .reduce(f32::min)
+        .unwrap_or(0.0);
+    for text in texts.iter().skip(scores.len()) {
+        if text.is_empty() {
+            scores.push(f32::MIN);
+        } else {
+            next = next.next_down();
+            scores.push(next);
+        }
+    }
 }
 
 /// Whether an endpoint's name for the model that answered is one a pack

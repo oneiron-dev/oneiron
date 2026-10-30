@@ -49,16 +49,18 @@ async fn vault_questions_answers_answer(
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionAnswersReply> {
-        // A narrowed caller reads each answer its own lane reads (OF-506).
-        let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
-        Ok(question_answers_in_lane(
-            server.vault(),
-            &lane,
-            principal,
-            &input,
-        )?)
-    })
+    crate::api::facade::clock_ingress::run_blocking(
+        move || -> MemoryResult<QuestionAnswersReply> {
+            // A narrowed caller reads each answer its own lane reads (OF-506).
+            let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+            Ok(question_answers_in_lane(
+                server.vault(),
+                &lane,
+                principal,
+                &input,
+            )?)
+        },
+    )
     .await
     .map_err(|_| internal(VERB))?
 }
