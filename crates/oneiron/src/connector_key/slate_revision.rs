@@ -215,7 +215,7 @@ fn offer_of(
 
 /// A scope revision's acceptance, in the stamping writer: the offer must
 /// still stand on the authority it was earned under, and the widened grant
-/// replaces the actor's grant for the row through the consent door.
+/// adds the requested endpoint to the actor's grant for the row through the consent door.
 fn accept_scope_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -247,7 +247,7 @@ fn accept_scope_in_txn(
         .cloned()
         .ok_or_else(|| invalid_body("the revision's grant names no endpoint"))?;
     match &signal.exceed {
-        ConnectorScopeExceed::Endpoint { requested } => endpoint.clone_from(requested),
+        ConnectorScopeExceed::Endpoint { requested } => endpoint = requested.clone(),
         ConnectorScopeExceed::PayloadClass { requested, .. } => ceiling = ceiling.max(*requested),
         ConnectorScopeExceed::ToolDataClass { requested } => {
             headers |= requested == ToolGrantDataClass::XMcpHeader.as_str();

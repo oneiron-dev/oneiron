@@ -5,7 +5,7 @@
 //! carry a key's custody record name, never a secret.
 use serde::{Deserialize, Serialize};
 
-use crate::connector_key::{ConnectorCatalogEntry, ConnectorDescription};
+use crate::connector_key::{ConnectorCatalogEntry, ConnectorDescription, ConnectorIssuerHaltView};
 use crate::memory::{Memory, MemoryResult, OutboundDraftInput, OutboundIntentReceipt};
 
 /// `connector.list`'s input: a name or summary fragment; every live
@@ -57,6 +57,8 @@ pub struct ConnectorView {
     pub entry: ConnectorEntry,
     /// `pending`, `active`, `suspended` or `revoked`.
     pub status: String,
+    /// The connector's open issuer transition, if one halts its rows.
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     /// The custody record the key's secret lives in, by name.
     pub secret_ref: Option<String>,
     pub key_generation: u32,
@@ -71,6 +73,7 @@ impl From<ConnectorDescription> for ConnectorView {
             key_ref: description.key_ref.to_hex(),
             entry: description.entry.into(),
             status: description.status.as_str().to_owned(),
+            issuer_halt: None,
             secret_ref: description.secret_ref,
             key_generation: description.key_generation,
             registered_at: description.registered_at,
@@ -97,11 +100,15 @@ pub fn connector_description(
     memory: &Memory<'_>,
     input: ConnectorNameRequest,
 ) -> MemoryResult<Option<ConnectorView>> {
+    let halt = memory.vault().open_issuer_halt_for_connector(&input.name)?;
     Ok(memory
         .vault()
         .describe_connector(&input.name)?
         .filter(|described| described.connector != crate::connector_key::PROXY_CONNECTOR)
-        .map(Into::into))
+        .map(|described| ConnectorView {
+            issuer_halt: halt,
+            ..ConnectorView::from(described)
+        }))
 }
 
 /// `connector.outbound.schedule`'s input: one send through a granted

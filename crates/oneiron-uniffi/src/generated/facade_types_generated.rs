@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1211 facade rows, 4390 generated types.
+// UniFFI census: 1211 facade rows, 4391 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1163.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -18450,6 +18450,19 @@ pub struct ConnectorPackGrantsGetRequest {
     pub actor: Option<String>,
 }
 
+/// `oneiron::connector_key::credential_binding::ConnectorIssuerHaltView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ConnectorIssuerHaltView {
+    #[serde(rename = "old_issuer")]
+    pub old_issuer: String,
+    #[serde(rename = "new_issuer")]
+    pub new_issuer: String,
+    #[serde(rename = "detected_at")]
+    pub detected_at: u64,
+    #[serde(rename = "dependent_rows")]
+    pub dependent_rows: Vec<String>,
+}
+
 /// `oneiron::outbound_consent::scope::DataClass`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Enum)]
 pub enum DataClass {
@@ -18495,6 +18508,12 @@ pub struct ConnectorConsentView {
     pub actor: String,
     #[serde(rename = "status")]
     pub status: String,
+    #[serde(
+        rename = "issuer_halt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     #[serde(
         rename = "protocol_revision",
         default,
@@ -19143,6 +19162,12 @@ pub struct ConnectorKeyView {
     pub id: String,
     #[serde(rename = "status")]
     pub status: String,
+    #[serde(
+        rename = "issuer_halt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     #[serde(
         rename = "secret_ref",
         default,
@@ -55103,6 +55128,12 @@ pub struct ConnectorView {
     pub entry: ConnectorEntry,
     #[serde(rename = "status")]
     pub status: String,
+    #[serde(
+        rename = "issuer_halt",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub issuer_halt: Option<ConnectorIssuerHaltView>,
     #[serde(
         rename = "secret_ref",
         default,
