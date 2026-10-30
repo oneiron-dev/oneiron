@@ -17,10 +17,10 @@ use super::rpc::{ResidenceRpc, refused, residence_budgets};
 
 #[derive(Deserialize)]
 pub(super) struct PromotionReply {
-    window: String,
+    pub(super) window: String,
     snapshot: String,
     /// Every pad of the window's world the home holds (FIX 3789).
-    pads: Vec<super::promoted_pads::PromotedPad>,
+    pub(super) pads: Vec<super::promoted_pads::PromotedPad>,
 }
 
 /// The home's version vector for one window (OF-534 demotion).
