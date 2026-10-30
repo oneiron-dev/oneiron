@@ -4,7 +4,9 @@
 //! stored bytes), the host's own model derives a text from them outside
 //! every writer, and the copy lands only when the writer finds the same
 //! proof. A model that derives nothing leaves the copy pending for the next
-//! pass; no deadline or retry count retires it.
+//! pass; no deadline or retry count retires it. A pass reads the marks
+//! twice, whatever its size (FIX 10409): once for every source it reads,
+//! once in the one writer that lands its copies.
 
 use heed::RoTxn;
 
@@ -103,7 +105,10 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
     ) -> Result<RepoDerivedIndexReport> {
         let mut report = RepoDerivedIndexReport::default();
-        let texts: Vec<EntityId> = {
+        // FIX 10409: one read transaction and one mark walk read every
+        // drawn text's sources; one writer and one walk land them.
+        let mut reads = Vec::new();
+        {
             let rtxn = self.store.env.read_txn()?;
             let mut texts: Vec<EntityId> = pending_in(&self.store, &rtxn, usize::MAX)?
                 .into_iter()
@@ -119,28 +124,33 @@ impl Vault {
                 *blake3::keyed_hash(blake3::hash(&draw).as_bytes(), id.as_bytes()).as_bytes()
             });
             texts.truncate(max_items);
-            texts
-        };
-        for entity in texts {
-            let read = {
-                let rtxn = self.store.env.read_txn()?;
-                let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
+            if texts.is_empty() {
+                return Ok(report);
+            }
+            let marks = RepoIndexMarks::read_scoped_in_txn(self, &rtxn)?;
+            for entity in texts {
                 match repo_derived_index_sources_in(self, &self.store, &rtxn, &marks, &entity) {
-                    Ok(Some(sources)) => Some((
-                        sources.proof(),
-                        source_copies_in(self, &rtxn, &marks, &sources)?,
+                    Ok(Some(sources)) => reads.push((
+                        entity,
+                        Some((
+                            sources.proof(),
+                            source_copies_in(self, &rtxn, &marks, &sources)?,
+                        )),
                     )),
-                    Ok(None) => None,
+                    Ok(None) => reads.push((entity, None)),
                     Err(error) if is_storage_error(&error) => return Err(error),
                     Err(error) => {
                         tracing::warn!(error = %error, "a derived text's sources stay unread");
                         report.declined += 1;
-                        continue;
                     }
                 }
-            };
+            }
+        }
+        let mut released = Vec::new();
+        let mut derived = Vec::new();
+        for (entity, read) in reads {
             let Some((proof, copies)) = read else {
-                self.release_derived_text(&entity)?;
+                released.push(entity);
                 report.released += 1;
                 continue;
             };
@@ -175,8 +185,23 @@ impl Vault {
                 report.declined += 1;
                 continue;
             };
-            let mut wtxn = self.store.env.write_txn()?;
-            let marks = RepoIndexMarks::read_scoped_in_txn(self, &wtxn)?;
+            derived.push((entity, proof, safe_text));
+        }
+        if released.is_empty() && derived.is_empty() {
+            return Ok(report);
+        }
+        let mut wtxn = self.store.env.write_txn()?;
+        let marks = RepoIndexMarks::read_scoped_in_txn(self, &wtxn)?;
+        // A pending text no marked source reaches any more: its row goes and
+        // its index reads its own words again, when that still holds here.
+        for entity in released {
+            if repo_derived_index_sources_in(self, &self.store, &wtxn, &marks, &entity)?.is_some() {
+                continue;
+            }
+            super::delete_in_txn(&self.store, &mut wtxn, RepoDerivedOwner::Text(entity))?;
+            republish_in_txn(self, &mut wtxn, &marks, &entity, None)?;
+        }
+        for (entity, proof, safe_text) in derived {
             let sources =
                 match repo_derived_index_sources_in(self, &self.store, &wtxn, &marks, &entity) {
                     Ok(sources) => sources,
@@ -203,9 +228,9 @@ impl Vault {
                 },
             )?;
             republish_in_txn(self, &mut wtxn, &marks, &entity, None)?;
-            wtxn.commit()?;
             report.derived += 1;
         }
+        wtxn.commit()?;
         Ok(report)
     }
 
@@ -232,21 +257,6 @@ impl Vault {
             }
         }
         Ok(true)
-    }
-
-    /// A pending text no marked source reaches any more: its row goes and
-    /// its index reads its own words again, when that still holds in the
-    /// writer.
-    fn release_derived_text(&self, entity: &EntityId) -> Result<()> {
-        let mut wtxn = self.store.env.write_txn()?;
-        let marks = RepoIndexMarks::read_scoped_in_txn(self, &wtxn)?;
-        if repo_derived_index_sources_in(self, &self.store, &wtxn, &marks, entity)?.is_some() {
-            return Ok(());
-        }
-        super::delete_in_txn(&self.store, &mut wtxn, RepoDerivedOwner::Text(*entity))?;
-        republish_in_txn(self, &mut wtxn, &marks, entity, None)?;
-        wtxn.commit()?;
-        Ok(())
     }
 }
 
