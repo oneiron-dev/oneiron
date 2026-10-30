@@ -14,18 +14,20 @@
 //! answer turns stale. A frontier that fits keeps today's path and bytes.
 //!
 //! A join is signed by the key that signs the act: the carrier's install
-//! key, the host's slip issuer for a host-issued op, or an owner anchor for
+//! key, the host's slip issuer for a host-issued op, an owner anchor for
 //! its own rows (FIX 8498, Engine 09:31: its root record, its marks and the
-//! owner's kit push, never a row of another signer family). The fold admits
-//! its signer by the act's own rule on the join's parent state
-//! ([`admits_join_signer`]): the one carrier rule in the roster view, a live
-//! Ed25519 owner roster key, or an anchor the fold recorded for a stored
-//! root, never a key the join names for itself. A join signed by any other
-//! key folds as every unvouched row does: invalid, with no sequence slot, so
-//! it never forks or blocks the act's sequence. Every group names the
-//! frontier's admission tip, the lowest-hash head whose own state admits the
-//! signer, so each join's parents carry the signer's standing. It reads no
-//! role, clearance or owner act beyond that, and grants nothing.
+//! owner's kit push, never a row of another signer family), or the root a
+//! ReRoot retires, through the move's signing callback, in the host family
+//! (FIX 11867). The fold admits its signer by the act's own rule on the
+//! join's parent state ([`admits_join_signer`]): the one carrier rule in the
+//! roster view, a live Ed25519 owner roster key, or an anchor the fold
+//! recorded for a stored root, never a key the join names for itself. A join
+//! signed by any other key folds as every unvouched row does: invalid, with
+//! no sequence slot, so it never forks or blocks the act's sequence. Every
+//! group names the frontier's admission tip, the lowest-hash head whose own
+//! state admits the signer, so each join's parents carry the signer's
+//! standing. It reads no role, clearance or owner act beyond that, and
+//! grants nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -51,13 +53,19 @@ pub(crate) enum FrontierSigner<'a> {
     /// A stored owner root's anchor, for the anchor's own rows alone: its
     /// root record, its marks and the owner's kit push (FIX 8498).
     Anchor(&'a SigningKey),
+    /// A ReRoot's signer, the Ed25519 owner root the move retires, held
+    /// behind the caller's signing callback, which signs each join's
+    /// transcript (FIX 11867). Its joins are in the host family: that
+    /// family's rule, a live Ed25519 owner roster key, is the standing the
+    /// ReRoot itself stands on.
+    Callback([u8; 32], &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
 }
 
 impl FrontierSigner<'_> {
     fn family(self) -> FrontierJoinFamily {
         match self {
             Self::Install(carrier, _) => FrontierJoinFamily::Install(carrier),
-            Self::Host(_) => FrontierJoinFamily::Host,
+            Self::Host(_) | Self::Callback(..) => FrontierJoinFamily::Host,
             Self::Anchor(_) => FrontierJoinFamily::Anchor,
         }
     }
@@ -68,6 +76,7 @@ impl FrontierSigner<'_> {
                 AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
             }
             Self::Host(issuer) => issuer.public_key(),
+            Self::Callback(key, _) => AuthorityKey::Ed25519(key),
         }
     }
 
@@ -75,7 +84,9 @@ impl FrontierSigner<'_> {
     /// by its signer's own rule.
     fn first_sequence(self, fold: &AuthorityFold) -> Result<u64> {
         match self {
-            Self::Install(..) | Self::Anchor(_) => next_sequence(fold, &self.key()),
+            Self::Install(..) | Self::Anchor(_) | Self::Callback(..) => {
+                next_sequence(fold, &self.key())
+            }
             Self::Host(issuer) => fold
                 .append_sequences
                 .get(&issuer.public_key())
@@ -102,6 +113,11 @@ impl FrontierSigner<'_> {
             Self::Host(issuer) => {
                 issuer.sign_entry(fold.vault_id, seq, parents.into_iter().collect(), op, now)
             }
+            Self::Callback(key, transcript_signer) => {
+                let mut entry = unsigned_side_entry(fold, key, seq, parents, op, now)?;
+                entry.signer.signature = transcript_signer(&authority_transcript(&entry)?)?;
+                Ok(entry)
+            }
         }
     }
 }
@@ -111,9 +127,10 @@ impl FrontierSigner<'_> {
 /// carrier rule in the roster view ([`super::owner_act_signer_admits`]: not
 /// a roster key, no removed chain, a live chain whose machine key it is);
 /// for the host, a live Ed25519 owner roster key, as the host's slip issuer
-/// is; for an anchor, an anchor `state` recorded for a stored root, as its
-/// marks are admitted (FIX 8498, Engine 09:31 (2)), never a key the join
-/// carries and never a roster key in its place. A P-256 key signs no join.
+/// and a ReRoot's signer are (FIX 11867); for an anchor, an anchor `state`
+/// recorded for a stored root, as its marks are admitted (FIX 8498, Engine
+/// 09:31 (2)), never a key the join carries and never a roster key in its
+/// place. A P-256 key signs no join.
 fn admits_join_signer(
     state: &FoldState,
     family: FrontierJoinFamily,
