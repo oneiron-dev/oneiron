@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use super::masked_view::masked_body_view;
+use super::masked_view::{mask_crossing_runs, masked_body_view};
 use super::{
     BodyBlockKind, BodyCell, BodyFormat, BodyName, DeckBodyView, DocxBody, DocxBodyOp,
     OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
@@ -452,10 +452,13 @@ impl Memory<'_> {
         // So does each text a key split over adjacent texts touches, which no
         // text alone shows; at an earlier frontier that is history, so it is
         // only masked: no write is opened and no proposal filed (FIX 12232).
+        // A DOCX paragraph's runs read its handles as its text does (FIX 12301).
         if !self.reads_lifted_keys_masked()? {
             return Ok(read.view);
         }
-        masked_body_view(&read.keys, read.view)
+        let mut view = read.view;
+        mask_crossing_runs(&read.keys, &mut view);
+        masked_body_view(&read.keys, view)
     }
 
     /// Whether this read of `artifact`'s body `view` reads it whole: a reader
