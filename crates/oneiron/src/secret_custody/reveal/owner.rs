@@ -1,14 +1,13 @@
 //! The owner's doors: the asks and receipts, the answer to one ask, and the
 //! owner's own read of a value.
 
+use super::notice::settle_reveal_notices_in_txn;
 use super::{
-    FileSight, OwnerSecretReveal, READER_AGENT, READER_OWNER, REVEALS, RevealAct, RevealRow,
-    RevealGrantScope, RevealTarget, SECRET_REVEAL_OPERATION, SecretRevealAnswer,
-    SecretRevealAnswered,
+    FileSight, OwnerSecretReveal, READER_AGENT, READER_OWNER, REVEALS, RevealAct, RevealGrantScope,
+    RevealRow, RevealTarget, SECRET_REVEAL_OPERATION, SecretRevealAnswer, SecretRevealAnswered,
     SecretRevealAsk, SecretRevealState, append_reveal_decision_in_txn, checked_text, not_active,
     resolve_handle_in_txn, unknown, value_in_txn,
 };
-use super::notice::settle_reveal_notices_in_txn;
 use crate::consent::{AuthenticatedOwner, GrantBound};
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
