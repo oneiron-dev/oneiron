@@ -267,7 +267,12 @@ pub struct RecordRefusal {
     pub suggestions: Vec<String>,
     /// The refused element's or slot's JSON pointer (`/claims/2`).
     pub field: String,
+    /// The legal-hold notice behind this refusal, when its producer supplied one.
+    pub legal_hold: Option<crate::facade_types_generated::LegalHoldNotice>,
 }
+
+// The canonical notice contains only Eq fields; generated records derive PartialEq.
+impl Eq for crate::facade_types_generated::LegalHoldNotice {}
 
 /// Selector for `vault.forget`: a claim ref, or a subject/predicate pair.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]

@@ -162,6 +162,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
             retry_after: None,
             resets_at: Vec::new(),
             reason_codes: Vec::new(),
+            legal_hold: None,
         })
     })
 }
@@ -181,6 +182,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         retry_after: None,
         resets_at: Vec::new(),
         reason_codes: Vec::new(),
+        legal_hold: None,
     })
 }
 
@@ -3028,6 +3030,20 @@ impl NativeClient {
         let input: serde_json::Value = decode(input_json, "vault.mesh.dial")?;
         let output = py
             .detach(|| self.inner.agent_verb("vault.mesh.dial", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_outbox_diverged_list(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.outbox.diverged.list")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.outbox.diverged.list", input))
+            .map_err(raise)?;
+        encode(&output)
+    }
+    fn vault_outbox_diverged_answer(&self, py: Python<'_>, input_json: &str) -> PyResult<String> {
+        let input: serde_json::Value = decode(input_json, "vault.outbox.diverged.answer")?;
+        let output = py
+            .detach(|| self.inner.agent_verb("vault.outbox.diverged.answer", input))
             .map_err(raise)?;
         encode(&output)
     }

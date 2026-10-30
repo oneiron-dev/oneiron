@@ -344,6 +344,7 @@ fn model_request(
             class: CallClass::BestEffort,
             response_format: ResponseFormat::Text,
             locality: served_at,
+            host_keyless: false,
             seat_effort: None,
         },
         messages: chat.messages.iter().map(ChatMessage::to_llm).collect(),

@@ -28,7 +28,7 @@ async fn as_owner<T: Send + 'static>(
 ) -> MemoryResult<T> {
     let owner = owner_proof(auth, server, verb)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || act(server.vault(), &owner))
+    super::clock_ingress::run_blocking(move || act(server.vault(), &owner))
         .await
         .unwrap_or_else(|_| Err(internal(verb)))
 }

@@ -20,7 +20,7 @@ pub(crate) async fn vault_skills_attribution_settle(
 ) -> MemoryResult<ProposalDeltaSettlement> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.settle")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_settle_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -37,7 +37,7 @@ pub(crate) async fn vault_skills_attribution_read(
     // sits (FIX 11351).
     let locality = auth.locality();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_read_as_owner(server.vault(), &owner, locality, &input)
     })
     .await
@@ -51,7 +51,7 @@ pub(crate) async fn vault_skills_attribution_evidence_record(
 ) -> MemoryResult<AttributionEvidenceReceipt> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.evidence.record")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_evidence_record_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -65,7 +65,7 @@ pub(crate) async fn vault_skills_attribution_project(
 ) -> MemoryResult<AttributionProjection> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.project")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_project_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -79,7 +79,7 @@ pub(crate) async fn vault_skills_attribution_judgments(
 ) -> MemoryResult<AttributionJudgmentsView> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.judgments")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_judgments_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -93,7 +93,7 @@ pub(crate) async fn vault_skills_attribution_proposals(
 ) -> MemoryResult<AttributionProposalsView> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.proposals")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_proposals_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -107,7 +107,7 @@ pub(crate) async fn vault_skills_attribution_positive_retire(
 ) -> MemoryResult<PositiveRetireReceipt> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.positive.retire")?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         sdk::skill_attribution_positive_retire_as_owner(server.vault(), &owner, &input)
     })
     .await

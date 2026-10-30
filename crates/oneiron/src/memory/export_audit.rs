@@ -14,12 +14,15 @@
 //! and never withholds the copy. An owner's export that carries his act is
 //! also signed in that write as an `ExportAct` every machine he admits
 //! folds and checks (FIX 4624), on the same terms: a record that cannot be
-//! signed is logged, and the copy and its row stand.
+//! signed is logged, and the copy and its row stand. Each custody value the
+//! copy carried as its handle because it did not open here is recorded in
+//! that write too, for its holder to seal to the owner (FIX 4624(b)), and
+//! the row lists them, each recorded or why not; on the same terms again.
 
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::authority::OwnerAct;
+use crate::authority::{HolderExportBasis, HolderExportRequest, OwnerAct};
 use crate::batch::export::{ExportDiaryRead, WholeVaultExportReceipt};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -76,6 +79,11 @@ pub struct ExportReceipt {
     /// snapshot revalidated, with where he said so (audit only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub act: Option<OwnerAct>,
+    /// FIX 4624(b): each custody value the copy carried as its handle
+    /// because it did not open here, and where its holder's sealed copy
+    /// stands, read again from the fold whenever the row is read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub holder_requests: Vec<HolderExportRequest>,
 }
 
 const EXPORT_RECEIPTS: SideTable<u64, ExportReceipt, Named> =
@@ -94,6 +102,11 @@ pub(crate) struct ExportCopy {
     pub(crate) diary_reads: Vec<ExportDiaryRead>,
     pub(crate) act: Option<OwnerAct>,
     pub(crate) thread_roots: ExportThreadRoots,
+    /// The custody values the copy's snapshot could not open, not recorded
+    /// yet (FIX 4624(b)).
+    pub(crate) holder_requests: Vec<HolderExportRequest>,
+    /// The machine the owner named to receive their sealed copies.
+    pub(crate) recipient: Option<EntityId>,
 }
 
 impl ExportCopy {
@@ -116,6 +129,8 @@ impl ExportCopy {
             diary_reads,
             act: None,
             thread_roots,
+            holder_requests: Vec::new(),
+            recipient: None,
         }
     }
 
@@ -133,6 +148,8 @@ impl ExportCopy {
             diary_reads: Vec::new(),
             act: None,
             thread_roots,
+            holder_requests: Vec::new(),
+            recipient: None,
         }
     }
 }
@@ -159,13 +176,28 @@ impl Vault {
     }
 }
 
-/// Every export audit row in `txn`, oldest first.
+/// Every export audit row in `txn`, oldest first, each holder request's
+/// status read again from the fold in `txn` (FIX 4624(b)); a fold that does
+/// not read leaves each as its row recorded it.
 fn export_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec<ExportReceipt>> {
-    Ok(EXPORT_RECEIPTS
+    let mut receipts: Vec<ExportReceipt> = EXPORT_RECEIPTS
         .scan(&vault.store, txn)?
         .into_iter()
         .map(|(_, receipt)| receipt)
-        .collect())
+        .collect();
+    if receipts
+        .iter()
+        .any(|receipt| !receipt.holder_requests.is_empty())
+        && let Ok(fold) = vault.authority_view_readonly_in_txn(txn)
+    {
+        for receipt in &mut receipts {
+            receipt.holder_requests = std::mem::take(&mut receipt.holder_requests)
+                .into_iter()
+                .map(|request| request.refreshed(&fold))
+                .collect();
+        }
+    }
+    Ok(receipts)
 }
 
 /// Records `copy`, once it has left (FIX 6427): its audit row under a fresh
@@ -176,15 +208,9 @@ fn export_receipts_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> crate::Result<Vec
 /// since the copy read it, from the binding that read resolved and the
 /// edits base holds now (FIX 6681). Best effort: whatever this meets is
 /// logged and never reaches the copy's door, and a row not written still
-/// lets the notices go.
-pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
-    let export = match vault.new_entity_id() {
-        Ok(export) => export,
-        Err(error) => {
-            tracing::warn!(%error, "export served without its audit: no export id");
-            return;
-        }
-    };
+/// lets the notices go. Returns where each custody value the copy carried as
+/// its handle stands for its holder (FIX 4624(b)): recorded, or why not.
+pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) -> Vec<HolderExportRequest> {
     let ExportCopy {
         scope,
         exporter,
@@ -195,7 +221,20 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
         diary_reads,
         act,
         thread_roots,
+        holder_requests,
+        recipient,
     } = copy;
+    let export = match vault.new_entity_id() {
+        Ok(export) => export,
+        Err(error) => {
+            tracing::warn!(%error, "export served without its audit: no export id");
+            return holder_requests;
+        }
+    };
+    let needs: Vec<_> = holder_requests
+        .iter()
+        .map(HolderExportRequest::need)
+        .collect();
     let written = vault.with_write_txn(|txn| {
         // The id's allocation floor is kept with the row that names it.
         let at = match crate::ports::recorded_at_in_txn(&vault.store, txn) {
@@ -205,6 +244,26 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
                 vault.store.clock.now_recorded_at()
             }
         };
+        // The signed record goes before the holder requests, which link it,
+        // and both before the row, which lists them: each in a savepoint of
+        // its own, so a fault leaves the write as it was.
+        let export_act = act.and_then(|act| {
+            vault.record_export_act_op_in_txn(txn, act, export, &format, bytes, digest.as_deref())
+        });
+        let holder_requests = vault.record_holder_export_requests_in_txn(
+            txn,
+            HolderExportBasis {
+                act,
+                export,
+                digest: digest
+                    .as_deref()
+                    .and_then(|hex| blake3::Hash::from_hex(hex).ok())
+                    .map(|hash| *hash.as_bytes()),
+                export_act,
+                recipient,
+                needs: &needs,
+            },
+        );
         let receipt = ExportReceipt {
             export,
             scope,
@@ -216,6 +275,7 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
             by,
             diary_reads,
             act,
+            holder_requests,
         };
         if let Err(error) = append_in_txn(vault, txn, &receipt) {
             tracing::warn!(
@@ -231,21 +291,18 @@ pub(crate) fn record_export(vault: &Vault, copy: ExportCopy) {
             exporter,
             export,
         );
-        // The signed record goes last, after the row and the notices.
-        if let Some(act) = receipt.act {
-            vault.record_export_act_op_in_txn(
-                txn,
-                act,
-                export,
-                &receipt.format,
-                receipt.bytes,
-                receipt.digest.as_deref(),
-            );
-        }
-        Ok(())
+        Ok(receipt.holder_requests)
     });
-    if let Err(error) = written {
-        tracing::warn!(export = %export.to_hex(), %error, "export served without its audit");
+    match written {
+        Ok(holder_requests) => holder_requests,
+        Err(error) => {
+            tracing::warn!(export = %export.to_hex(), %error, "export served without its audit");
+            // Nothing the write did stands: no request waits for a holder.
+            needs
+                .into_iter()
+                .map(HolderExportRequest::unrecorded)
+                .collect()
+        }
     }
 }
 
@@ -278,8 +335,11 @@ pub(crate) fn record_raw_export(
     receipt: &mut WholeVaultExportReceipt,
 ) {
     let roots = std::mem::take(&mut receipt.thread_roots);
-    let copy = ExportCopy::raw(exporter, format, receipt.diary_reads.clone(), roots);
-    record_export(vault, copy);
+    let copy = ExportCopy {
+        holder_requests: std::mem::take(&mut receipt.holder_requests),
+        ..ExportCopy::raw(exporter, format, receipt.diary_reads.clone(), roots)
+    };
+    receipt.holder_requests = record_export(vault, copy);
 }
 
 /// Records the whole-vault JSON bundle `json` a raw `Vault` door encoded

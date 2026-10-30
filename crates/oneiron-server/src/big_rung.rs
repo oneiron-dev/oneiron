@@ -288,6 +288,7 @@ impl BigModel {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: false,
             },
             messages: vec![
                 message(LlmMessageRole::System, self.wording.clone()),

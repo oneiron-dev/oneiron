@@ -275,25 +275,6 @@ pub(crate) fn partition_held_in_txn(
     Ok(!standing_on_in_txn(dbs, txn, &key)?.is_empty())
 }
 
-/// Whether any hold, customer or host-order, stands here: the first row of
-/// each target index. A standing hold indexes every target it names and a
-/// hold names at least one; a lifted hold indexes none. Gated with its only
-/// caller, a left shared vault's purge (`sync`-only).
-#[cfg(feature = "sync")]
-pub(crate) fn any_standing_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<bool> {
-    for targets in [TARGETS, HOST_TARGETS] {
-        if targets
-            .iter_raw_from(dbs, txn, &[])?
-            .next()
-            .transpose()?
-            .is_some()
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Writes `hold`, keeping its target index exact: a standing hold indexes
 /// every target it names, a lifted one none.
 pub(crate) fn put_hold_in_txn(

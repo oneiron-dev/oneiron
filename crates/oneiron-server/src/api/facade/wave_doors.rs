@@ -72,7 +72,7 @@ async fn tasks_wave_answer(
     };
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         let (epic, constraints) = wave_plan(
             &server,
             WriteActor::new(actor, class),

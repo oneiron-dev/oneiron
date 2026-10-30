@@ -30,6 +30,12 @@ pub(crate) struct AppError {
     /// named any (FIX 7398).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     reason_codes: Vec<String>,
+    #[serde(
+        default,
+        rename = "legal_hold",
+        skip_serializing_if = "Option::is_none"
+    )]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 impl AppError {
@@ -49,6 +55,7 @@ impl AppError {
             wrong_root: None,
             hook: None,
             reason_codes: Vec::new(),
+            legal_hold: None,
         }
     }
 
@@ -148,11 +155,15 @@ impl AppError {
 
 impl From<ApiError> for AppError {
     fn from(error: ApiError) -> Self {
-        Self::new(
-            error.code().as_str(),
-            error.message(),
-            error.suggestions().to_vec(),
-        )
+        let legal_hold = error.legal_hold().cloned().map(Box::new);
+        Self {
+            legal_hold,
+            ..Self::new(
+                error.code().as_str(),
+                error.message(),
+                error.suggestions().to_vec(),
+            )
+        }
     }
 }
 
@@ -174,6 +185,7 @@ impl From<MemoryError> for AppError {
             wrong_root: error.wrong_root,
             hook: error.hook,
             reason_codes: error.reason_codes,
+            legal_hold: error.legal_hold,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

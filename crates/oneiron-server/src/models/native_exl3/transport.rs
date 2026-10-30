@@ -32,7 +32,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
 use oneiron::llm::{CallSchedule, ScheduleAck, ScheduleUpdate, SessionOp};
-use oneiron_driver::WorkerLease;
+use oneiron_driver::{DeviceGrant, WorkerLease};
 use oneiron_llm_openai::OpenAiCompatTransportError;
 use rustix::net::{
     RecvAncillaryBuffer, RecvAncillaryMessage, RecvFlags, ReturnFlags, SendAncillaryBuffer,
@@ -413,17 +413,19 @@ fn release_failed(body: &JsonValue) -> bool {
 
 /// Holds `lease` until its incarnation ends, on a task of its own: the
 /// worker still charges a call it could not release.
-fn keep_until_revoked(lease: Option<WorkerLease>) {
-    let Some(lease) = lease else {
+fn keep_until_revoked(lease: Option<WorkerLease>, grant: Option<DeviceGrant>) {
+    if lease.is_none() && grant.is_none() {
         return;
-    };
+    }
     tracing::warn!(
         "a native EXL3 call's Job was not released; its lease stays until the worker ends"
     );
     if let Ok(runtime) = tokio::runtime::Handle::try_current() {
         runtime.spawn(async move {
-            lease.revocation().await;
-            drop(lease);
+            if let Some(lease) = &lease {
+                lease.revocation().await;
+            }
+            drop((lease, grant));
         });
     }
 }
@@ -431,10 +433,6 @@ fn keep_until_revoked(lease: Option<WorkerLease>) {
 /// A `schedule` sender for one call, on its own connection: it can go from
 /// any task while the call's events are read on another.
 #[derive(Clone)]
-#[expect(
-    dead_code,
-    reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
-)]
 pub(super) struct CallUpdates {
     writer: Arc<AsyncMutex<OwnedWriteHalf>>,
     request_id: u64,
@@ -444,10 +442,6 @@ pub(super) struct CallUpdates {
 impl CallUpdates {
     /// Sends `update` under the call's id and epoch; the worker's
     /// `schedule_ack` comes back as [`Event::Scheduled`].
-    #[expect(
-        dead_code,
-        reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
-    )]
     pub(super) async fn send(&self, update: &ScheduleUpdate) -> io::Result<()> {
         let bytes = Channel::frame(
             "schedule",
@@ -540,6 +534,8 @@ pub(super) struct Call {
     /// The lease on the incarnation the call went to, held until the call
     /// has ended there.
     lease: Option<WorkerLease>,
+    /// Its device grant follows exactly the same release/reap custody.
+    grant: Option<DeviceGrant>,
     ended: bool,
 }
 
@@ -587,6 +583,7 @@ impl Call {
             request_id,
             epoch: epoch.to_owned(),
             lease,
+            grant: None,
             ended: false,
         };
         if let Err(error) = sent {
@@ -626,6 +623,11 @@ impl Call {
         }
     }
 
+    /// Binds the accepted call's device grant to its release custody.
+    pub(super) fn set_grant(&mut self, grant: Option<DeviceGrant>) {
+        self.grant = grant;
+    }
+
     fn channel_mut(&mut self) -> &mut Channel {
         self.channel
             .as_mut()
@@ -633,10 +635,6 @@ impl Call {
     }
 
     /// A sender of this call's `schedule` updates, on its connection.
-    #[expect(
-        dead_code,
-        reason = "the host's device admission (V2-R4 host) sends the yields and reprioritizations"
-    )]
     pub(super) fn updates(&self) -> Option<CallUpdates> {
         let channel = self.channel.as_ref()?;
         Some(CallUpdates {
@@ -693,7 +691,7 @@ impl Call {
                 "final" => {
                     self.ended = true;
                     if release_failed(&frame.body) {
-                        keep_until_revoked(self.lease.take());
+                        keep_until_revoked(self.lease.take(), self.grant.take());
                     }
                     return Ok(Event::Final(frame.body));
                 }
@@ -720,6 +718,7 @@ impl Drop for Call {
             return;
         };
         let lease = self.lease.take();
+        let grant = self.grant.take();
         let request_id = self.request_id;
         // Outside a runtime the connection's close is the cancel: the worker
         // cancels every call of a connection that goes.
@@ -731,7 +730,7 @@ impl Drop for Call {
                     // The worker still charges the call: so does the lease.
                     lease.revocation().await;
                 }
-                drop(lease);
+                drop((lease, grant));
             });
         }
     }

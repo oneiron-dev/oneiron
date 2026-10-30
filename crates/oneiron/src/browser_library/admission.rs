@@ -179,6 +179,9 @@ pub enum CallerUnavailable {
     ScopeRefused,
     /// No door rebuilds this caller: a person with no credential.
     ContextUnavailable,
+    /// The managed vault's attested owner the source acted as is no longer
+    /// its live owner (FIX 11690): his lapse, not the door's.
+    OwnerNotLive,
 }
 
 /// Why a job's sources no longer stand (CUA E8b).

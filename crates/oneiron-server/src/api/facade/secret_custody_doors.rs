@@ -40,7 +40,7 @@ async fn as_custody_owner<T: Send + 'static>(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || act(server.vault(), &owner))
+    let answer = super::clock_ingress::run_blocking(move || act(server.vault(), &owner))
         .await
         .unwrap_or_else(|_| Err(internal(verb)));
     (answer, Vec::new())
