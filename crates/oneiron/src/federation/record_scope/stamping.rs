@@ -34,6 +34,8 @@ pub(crate) fn stamp_put(
     if replicated && kind != crate::registry::ENTITY_TYPE_CLAIM {
         // A peer cannot mint a birth position for an opaque row merely by
         // picking its ID and bytes. Only an existing stamped row inherits.
+        // A replicated NOTIFICATION stays unstamped through its recipient's
+        // local marks too ([`keep_unstamped_in_txn`], FIX 6552).
         return Ok(());
     }
     let stamp = Stamp {
@@ -44,6 +46,34 @@ pub(crate) fn stamp_put(
     };
     SCOPE_RECORD.put(store, txn, &id, &stamp)?;
     Ok(())
+}
+
+/// Whether `id` is stored here with a birth position.
+pub(crate) fn has_stored_position(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<bool> {
+    Ok(SCOPE_RECORD.get(store, txn, &id)?.is_some())
+}
+
+/// Runs `put`, a local re-put of the stored row `id`, keeping a row stored
+/// with no position unstamped: a replicated NOTIFICATION's recipient marks
+/// it as this node's local-row act, which mints no position for a row a
+/// peer sent (Engine 09:39, FIX 6552). A row stamped before keeps its stamp,
+/// judged by `put`'s own [`stamp_put`] as before.
+pub(crate) fn keep_unstamped_in_txn<T>(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    put: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
+) -> Result<T> {
+    let unstamped = !has_stored_position(store, txn, id)?;
+    let written = put(&mut *txn)?;
+    if unstamped {
+        SCOPE_RECORD.delete(store, txn, &id)?;
+    }
+    Ok(written)
 }
 
 /// Stages the position of `id`, a row a room's write stages in `view`, beside
