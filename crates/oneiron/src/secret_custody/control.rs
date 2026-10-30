@@ -460,10 +460,20 @@ impl Vault {
         // key while the carrier wire is on (FIX 7402); one the holder's own
         // door executes from in this commit is never kept.
         let leafed = CUSTODY_CARRIER_LEAF_WIRE && (holder != machine || change.sealed.is_some());
+        // A rewrap carries an input only for a bind (CALLS
+        // CUSTODY_BIND_TRAVEL); a revoke never does. The kind is checked
+        // before any input is read: one that carries none reads no frame
+        // (FIX 12178).
+        let carries = !matches!(
+            (change.change, &change.material),
+            (CustodyChange::Revoke, _)
+                | (CustodyChange::Rewrap, Material::Held | Material::Input(_))
+        );
+        let sealed = change.sealed.filter(|_| carries);
         // A surface's input is sealed under the key whole while it fits one
         // row, joined; one past it is never joined (FIX 11140), and is sealed
         // in numbered parts as it is read (FIX 12148).
-        let surface_input = match change.sealed {
+        let surface_input = match sealed {
             Some(frame) if leafed => surface_leaf_input(&frame)?,
             _ => None,
         };
@@ -487,15 +497,13 @@ impl Vault {
                 }
             }
         }
-        // A rewrap carries an input only for a bind (CALLS
-        // CUSTODY_BIND_TRAVEL); a revoke never does. One the owner's surface
-        // sealed is read where it lies, its digest part by part (FIX 11140).
+        // One the owner's surface sealed is read where it lies, its digest
+        // part by part (FIX 11140).
         let sealed_here;
         let leaf_parts;
-        let frame = match (change.change, &change.material, change.sealed) {
-            (CustodyChange::Revoke, ..)
-            | (CustodyChange::Rewrap, Material::Held | Material::Input(_), _) => None,
-            (_, _, Some(sealed)) => match &surface_input {
+        let frame = match (carries, sealed) {
+            (false, _) => None,
+            (true, Some(sealed)) => match &surface_input {
                 Some(SurfaceLeaf::Joined(joined)) => {
                     sealed_here = seal_leaf_input_in_txn(
                         self,
@@ -512,8 +520,8 @@ impl Vault {
                 }
                 None => Some(sealed),
             },
-            (_, material, None) => {
-                let body = plaintext(material)?;
+            (true, None) => {
+                let body = plaintext(&change.material)?;
                 sealed_here = if leafed {
                     seal_leaf_input_in_txn(
                         self,
