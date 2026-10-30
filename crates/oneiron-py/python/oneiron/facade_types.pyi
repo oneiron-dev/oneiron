@@ -10304,10 +10304,17 @@ class ConsentRegistryDelegation(TypedDict):
     wall_expires_at: int
     status: SupportGrantStatus
     comm: CommReach
+class RepoAccessBounds(TypedDict):
+    repo: EntityId
+    project: EntityId
+    refs: list[str]
+    readable: NotRequired[list[str]]
+    editable: NotRequired[list[str]]
 class ConsentRegistryAgentGrant(TypedDict):
     agent: EntityId
     delegated_by: EntityId
     expires_at: NotRequired[int | None]
+    repo_bounds: NotRequired[RepoAccessBounds | None]
     confers: bool
 ConsentRegistryRow = TypedDict("ConsentRegistryRow", {"grant_ref": str, "domain": ConsentDomain, "subject": str, "class": str, "selectors": list[str], "scope": NotRequired[Scope | None], "status": ConsentGrantStatus, "created_at": int, "revoke_action": ConsentRevokeAction, "bypass": NotRequired[BypassExtent | None], "delegation": NotRequired[ConsentRegistryDelegation | None], "agent_grant": NotRequired[ConsentRegistryAgentGrant | None]})
 class ConsentRegistry(TypedDict):
@@ -13321,12 +13328,6 @@ class AgentDreamingSetRequest(TypedDict):
     new_version: str
     mode: DreamingModeInput
     dreaming_model: NotRequired[str | None]
-class RepoAccessBounds(TypedDict):
-    repo: EntityId
-    project: EntityId
-    refs: list[str]
-    readable: NotRequired[list[str]]
-    editable: NotRequired[list[str]]
 class AgentGrantMintRequest(TypedDict):
     agent: EntityId
     authority_scope: Scope
