@@ -254,6 +254,8 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         requested: Option<&RetrievalFilter>,
     ) -> Result<(ResolvedRetrievalFilter, PolicyManifestResolution)> {
+        let _l15 = crate::stage_timing::stage("gate.resolve_filter");
+        crate::stage_timing::record("count.resolve_filter", 1);
         if !self.proof_live_in(txn)? {
             return Err(Error::InvalidClaimBody(
                 "scoped read credential no longer live",
