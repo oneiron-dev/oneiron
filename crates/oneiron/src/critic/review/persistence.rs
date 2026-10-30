@@ -4,6 +4,7 @@ use crate::batch::secret_scan::{admitted_from, named_tree};
 use crate::side_table::{self, Named, Raw, SideTable};
 
 mod dissent_rows;
+mod erased_claims;
 pub(super) use dissent_rows::{
     claim_dissent, dissent_state, release_dissent_claim, reviews_with_dissent,
     reviews_with_unkept_dissent, save_dissent,
@@ -566,14 +567,17 @@ pub(crate) fn trusted_review_in_txn(
     }))
 }
 
-/// Re-keys the session tag of every review verdict, automatic outcome and outcome naming erased
-/// `entity` to one fresh opaque id (FIX 11363), its trust stamp with it. Gives back the
-/// verdicts it touched, for their cached rows' move.
+/// Tears every review claim about erased `entity` first (FIX 12073): its verdicts, their
+/// automatic outcomes and outcomes, and the outcomes of its session. Then re-keys the session
+/// tag of every review verdict and automatic outcome still naming `entity` to one fresh opaque
+/// id (FIX 11363), its trust stamp with it. Gives back the verdicts it re-keyed, for their
+/// cached rows' move.
 pub(crate) fn erase_review_session_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     entity: &EntityId,
 ) -> Result<Vec<EntityId>> {
+    erased_claims::erase_review_claims_in_txn(vault, wtxn, entity)?;
     let named = entity.to_hex();
     let mut opaque = None;
     let mut verdicts = Vec::new();
