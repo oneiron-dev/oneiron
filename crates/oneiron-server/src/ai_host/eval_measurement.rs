@@ -238,7 +238,15 @@ impl Job<'_> {
             Generated::Answer { text, served } => (text, served),
             Generated::Unavailable(reason) => return Ok(EvalLegRecord::unavailable(reason)),
         };
-        let output = oneiron::compaction::output::store_output(self.vault, answer.as_bytes())?;
+        // The answer is made from the case's task, so it records the case's
+        // source rows: an erase or withdrawal of one withholds the stored
+        // answer and the leg keeps its reference (FIX 10447). A case whose
+        // rows are unknown stores it as before.
+        let output = oneiron::compaction::output::store_output_sourced(
+            self.vault,
+            answer.as_bytes(),
+            task.source_rows.clone(),
+        )?;
         let mut record = EvalLegRecord {
             output: Some(output),
             receipt: Some(format!(
