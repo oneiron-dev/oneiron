@@ -54,8 +54,6 @@ impl Stop {
             return None;
         }
         let now = Instant::now();
-        // A pull under way holds its own handle to the stream.
-        let idle = |held: &super::Held| Arc::strong_count(&held.running) == 1;
         let mut streams = lock(&session.streams);
         streams.retain(|_, held| !idle(held) || now < held.pulled + UNPULLED_GRACE);
         streams
@@ -82,6 +80,12 @@ impl Stop {
             }
         }
     }
+}
+
+/// Whether no pull is under way on `held`: a pull holds its own handle to
+/// the stream.
+fn idle(held: &super::Held) -> bool {
+    Arc::strong_count(&held.running) == 1
 }
 
 /// What a connection's loop goes on with.
