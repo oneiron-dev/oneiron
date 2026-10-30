@@ -157,7 +157,9 @@ pub(crate) async fn vault_batch(
 /// over a stored row outside it refuses as missing, and under a read lane a
 /// CLAIM's typed record refs must resolve. A credential that grants no read
 /// is held to the bounds of what it may write to, and its CLAIMs commit as
-/// before.
+/// before. A batch carries no byline: the bound action's `vault.batch` door
+/// is this one, so a caller no action binds commits as a bound one does
+/// (FIX 9154).
 pub(crate) async fn write_core_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
