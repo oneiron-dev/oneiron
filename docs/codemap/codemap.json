@@ -4486,6 +4486,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/authority/owner_work/permit_pieces.rs",
+     "purpose": "A custody request's permits in pieces: their writer and their fold (FIX 11866)",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/authority/owner_work/privacy_basis.rs",
      "purpose": "The fold's one judgment of key work a world settings edit left (FIX 4704): a request that carries a…",
      "surface": {
@@ -83306,7 +83316,7 @@
      "purpose": "Generic LMDB-backed background attempt queue"
     },
     "authority": {
-     "files": 234,
+     "files": 235,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84785,7 +84795,7 @@
    },
    "over_bar": 110,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5707,
+   "source_files": 5708,
    "test_files": 902
   },
   "oneiron-android": {
@@ -85235,10 +85245,10 @@
      "purpose": "The owner's work requests and their results, and their wire codec: the key, custody or root work an owner…",
      "surface": {
       "const": 4,
-      "crate-vis": 5,
+      "crate-vis": 6,
       "enum": 4,
       "fn": 14,
-      "re-export": 5,
+      "re-export": 6,
       "struct": 2
      }
     },
@@ -85262,6 +85272,7 @@
      "kind": "src",
      "notable": [
       "CustodyChange",
+      "CustodyPermitPieces",
       "CustodyRecipientPermit",
       "CustodyRequestAuthority"
      ],
@@ -85269,10 +85280,10 @@
      "purpose": "A custody work map: one change to one portable secret's custody (WILL L04 row 04), asked of the install the…",
      "surface": {
       "const": 2,
-      "crate-vis": 5,
+      "crate-vis": 9,
       "enum": 2,
-      "fn": 5,
-      "struct": 1
+      "fn": 7,
+      "struct": 2
      }
     },
     {
@@ -85285,6 +85296,21 @@
      "purpose": "An export secret work map (FIX 4624(b)): one custody secret the owner's whole-vault export met that its…",
      "surface": {
       "crate-vis": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CustodyPermitPiece"
+     ],
+     "path": "src/authority/owner_work/permit_piece.rs",
+     "purpose": "One numbered piece of a custody request's permit set, and its wire codec (FIX 11866)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -85643,7 +85669,7 @@
    ],
    "modules": {
     "authority": {
-     "files": 40,
+     "files": 41,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85673,7 +85699,7 @@
    },
    "over_bar": 0,
    "purpose": "Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the…",
-   "source_files": 51,
+   "source_files": 52,
    "test_files": 1
   },
   "oneiron-bench": {
