@@ -392,8 +392,9 @@ pub(crate) fn code_consent_admission_in_txn(
 }
 
 /// Settles wait `wait_id` as refused for `reasons`, in the caller's writer:
-/// its held connector row and the wait both, so nothing runs under it. A
-/// held browser act has no row of its own: its wait settles refused alone.
+/// its held connector row and the wait both, so nothing runs under it. The
+/// refusal's reply lists the rows the held call's passes picked (FIX 5818).
+/// A held browser act has no row of its own: its wait settles refused alone.
 pub(crate) fn refuse_code_consent_wait_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -406,36 +407,27 @@ pub(crate) fn refuse_code_consent_wait_in_txn(
     let Some(call) = row.binding.pending.connector_call() else {
         return super::browser::refuse_browser_wait_in_txn(vault, txn, row, reasons).map(drop);
     };
+    let rows = crate::outbound_consent::code_owned_call_rows_in_txn(vault, txn, &call.call_ref)?;
     let outcome = ConnectorCallOutcome::Refused {
         decision_ref: None,
         reasons: reasons.iter().map(|reason| (*reason).to_owned()).collect(),
     };
     crate::outbound_consent::settle_code_owned_call_in_txn(vault, txn, &call.call_ref, &outcome)?;
-    settle_code_consent_wait_in_txn(vault, txn, wait_id, &outcome)?;
+    settle_code_consent_wait_listing_in_txn(vault, txn, wait_id, &outcome, rows.as_deref())?;
     Ok(())
 }
 
 /// Settles wait `wait_id` with the held effect's actual outcome, in the
 /// caller's writer: the settlement, its receipt in the consent Gate family,
-/// and the reply delivered to the parked run, which wakes its trap in the
-/// same commit. An outcome that is not terminal (still held, or a send the
-/// ledger retries) settles nothing. A settled wait keeps its first
+/// and the reply delivered to the parked run beside `rows`, the rows the
+/// call's passes picked (FIX 5455) when they are known, which wakes its trap
+/// in the same commit. An outcome that is not terminal (still held, or a
+/// send the ledger retries) settles nothing. A settled wait keeps its first
 /// settlement. `true` when this call settled it.
 ///
 /// The reply is delivered first, and the settlement binds the reply as it
 /// was stored and delivered (after the side-row wall's masking), so the
 /// parked run's consumption verifies the very reply it takes (1b).
-pub(crate) fn settle_code_consent_wait_in_txn(
-    vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    wait_id: EntityId,
-    outcome: &ConnectorCallOutcome,
-) -> Result<bool> {
-    settle_code_consent_wait_listing_in_txn(vault, txn, wait_id, outcome, None)
-}
-
-/// [`settle_code_consent_wait_in_txn`], its reply delivered beside `rows`,
-/// the rows the call's passes picked (FIX 5455), when they are known.
 pub(crate) fn settle_code_consent_wait_listing_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
