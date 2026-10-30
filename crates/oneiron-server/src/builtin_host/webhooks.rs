@@ -376,8 +376,9 @@ fn workspace_persona(
 
 /// The persona a Slack event goes to (Engine ruling 10-17). One persona in
 /// the workspace takes it. With several, the one the event's addressed bot
-/// or app names, else the earliest, and the choice is logged; an addressed
-/// message is never dropped for a tie.
+/// or app names, else the earliest created, whose place no rewrite of an
+/// identity row moves, and the choice is logged; an addressed message is
+/// never dropped for a tie.
 fn receiving_persona<'p>(personas: &'p [String], delivery: &Value) -> Option<&'p str> {
     if personas.len() > 1 {
         let addressed: Vec<String> = delivery
@@ -395,7 +396,7 @@ fn receiving_persona<'p>(personas: &'p [String], delivery: &Value) -> Option<&'p
         tracing::info!(
             persona = %personas[0],
             candidates = personas.len(),
-            "several Slack personas in one workspace; the event goes to the earliest"
+            "several Slack personas in one workspace; the event goes to the earliest created"
         );
     }
     personas.first().map(String::as_str)

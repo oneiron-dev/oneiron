@@ -7,14 +7,14 @@ use crate::channel_identity::{
     ChannelIdentityBinding, InboundDisposition, channel_identity_facts_in_txn,
 };
 use crate::error::Result;
-use crate::ports::EntityStore;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
 
 use super::SLACK_CHANNEL;
 
 impl Vault {
     /// The actor-bound Slack personas of one workspace that take inbound
-    /// now, earliest first: every `{workspace_ref}:persona:{persona}`
+    /// now, earliest created first (by identity id, which no rewrite moves):
+    /// every `{workspace_ref}:persona:{persona}`
     /// identity whose live facts, read on its row's custody, deliver
     /// ([`InboundDisposition::Deliver`] or
     /// [`InboundDisposition::DeliverRetiring`]). A rotating, released or
@@ -66,11 +66,10 @@ impl Vault {
             let Some(persona) = facts.address_or_handle.strip_prefix(&prefix) else {
                 continue;
             };
-            let since = self
-                .port_entity_get(&txn, &id)?
-                .map_or(u64::MAX, |record| record.learned_at);
-            personas.push((since, persona.to_owned()));
+            personas.push((id, persona.to_owned()));
         }
+        // Earliest by the identity's id, minted once when it was created: a
+        // rewrite of the identity's row never moves a persona in this order.
         personas.sort();
         Ok(personas.into_iter().map(|(_, persona)| persona).collect())
     }
