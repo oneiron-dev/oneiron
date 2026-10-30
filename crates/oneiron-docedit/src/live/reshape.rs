@@ -27,7 +27,7 @@ mod workbook;
 
 pub(super) use chart::{chart, reseed};
 pub(super) use families::same_settings;
-pub(super) use layout::{PlotTarget, plot_plan};
+pub(super) use layout::{PlotTarget, place_ordinals, plot_plan};
 pub(super) use table::table;
 
 use super::LiveError;

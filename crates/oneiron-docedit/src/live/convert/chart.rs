@@ -439,6 +439,32 @@ pub(in crate::live) fn settle_chart(
         }
         (targets, assign) = reshape::plot_plan(&plots, *family, &resolved, &own);
     }
+    // A series asked into another plot of its family, as Plot Series On
+    // Secondary Axis moves it (FIX 10295): a held one whose plot changed
+    // while its family did not, or a new one naming its plot.
+    if let Some(NodePayload::Chart {
+        family: held_family,
+        series: held_series,
+        ..
+    }) = was
+    {
+        let moves: Vec<Option<u32>> = series
+            .iter()
+            .zip(&resolved)
+            .map(|(line, kind)| {
+                let plot = line.plot?;
+                match held_series
+                    .iter()
+                    .find(|held| held.id.is_some() && held.id == line.id)
+                {
+                    Some(held) if held.family.unwrap_or(*held_family) != *kind => None,
+                    Some(held) if held.plot.unwrap_or(0) == plot => None,
+                    _ => Some(plot),
+                }
+            })
+            .collect();
+        reshape::place_ordinals(&mut targets, &mut assign, &resolved, &moves);
+    }
     if was.is_some() {
         for target in &targets {
             match target.held {
