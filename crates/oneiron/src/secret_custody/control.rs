@@ -51,9 +51,9 @@ use zeroize::Zeroizing;
 pub use self::doors::{CustodyCandidate, SealedCustodyChange, SecretCustodyView};
 pub(crate) use self::execute::Material;
 use self::input::{
-    InputBinding, LeafSource, RelayedInput, SealedFrame, SurfaceLeaf, keep_witnessed_input_in_txn,
-    leaf_input_retries_in_txn, request_witness_in_txn, seal_leaf_input_in_txn,
-    seal_leaf_parts_in_txn, surface_leaf_input,
+    DoorInput, InputBinding, LeafSource, RelayedInput, SealedFrame, SurfaceLeaf,
+    keep_witnessed_input_in_txn, request_witness_in_txn, seal_leaf_input_in_txn,
+    seal_leaf_parts_in_txn, surface_leaf_input, surface_retry_in_txn,
 };
 pub use self::manifest::CustodyManifestCheck;
 pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
@@ -479,15 +479,25 @@ impl Vault {
         };
         // CALLS CUSTODY_RETRY under the carrier wire: a surface's same input
         // again is the request whose kept input sealed it, never a second
-        // change.
-        if let Some(surface) = &surface_input {
-            let retry = surface.retry();
+        // change. Its own digest is taken only while a surface's input is
+        // kept here for the secret: one past a row is then read for it before
+        // its key is minted, so a retry mints none (FIX 12177).
+        if let (Some(surface), Some(frame)) = (&surface_input, &sealed) {
+            let mut own = None;
             for (hash, live) in fold.custody_heads(change.id) {
-                if let OwnerWorkBody::Custody {
+                let OwnerWorkBody::Custody {
                     input: Some(named), ..
                 } = &live.work
-                    && leaf_input_retries_in_txn(&self.store, txn, named, &retry)?
-                {
+                else {
+                    continue;
+                };
+                let Some(kept) = surface_retry_in_txn(&self.store, txn, named)? else {
+                    continue;
+                };
+                if own.is_none() {
+                    own = Some(surface.retry(frame)?);
+                }
+                if own == Some(kept) {
                     let receipt =
                         OwnerWorkReceipt::of(&fold, hash).ok_or_else(invalid_authority)?;
                     return Ok(Recorded {
@@ -498,12 +508,12 @@ impl Vault {
             }
         }
         // One the owner's surface sealed is read where it lies, its digest
-        // part by part (FIX 11140).
+        // part by part (FIX 11140); one sealed in numbered carrier parts is
+        // read once, into the rows kept (FIX 12177).
         let sealed_here;
-        let leaf_parts;
-        let frame = match (carries, sealed) {
+        let door = match (carries, sealed) {
             (false, _) => None,
-            (true, Some(sealed)) => match &surface_input {
+            (true, Some(sealed)) => Some(match &surface_input {
                 Some(SurfaceLeaf::Joined(joined)) => {
                     sealed_here = seal_leaf_input_in_txn(
                         self,
@@ -512,14 +522,11 @@ impl Vault {
                         &holder_key,
                         LeafSource::Sealed(joined),
                     )?;
-                    Some(SealedFrame::whole(&sealed_here))
+                    DoorInput::read(SealedFrame::whole(&sealed_here))?
                 }
-                Some(SurfaceLeaf::Parts(retry)) => {
-                    leaf_parts = seal_leaf_parts_in_txn(self, txn, &binding, &sealed, retry)?;
-                    Some(sealed.under_leaf_parts(&leaf_parts))
-                }
-                None => Some(sealed),
-            },
+                Some(SurfaceLeaf::Parts) => seal_leaf_parts_in_txn(self, txn, &binding, sealed)?,
+                None => DoorInput::read(sealed)?,
+            }),
             (true, None) => {
                 let body = plaintext(&change.material)?;
                 sealed_here = if leafed {
@@ -533,18 +540,21 @@ impl Vault {
                 } else {
                     binding.seal(&holder_key, &body)?
                 };
-                Some(SealedFrame::whole(&sealed_here))
+                Some(DoorInput::read(SealedFrame::whole(&sealed_here))?)
             }
         };
-        let digests = frame.as_ref().map(SealedFrame::digests).transpose()?;
-        let input = digests.as_ref().map(|digests| digests.digest);
+        let input = door.as_ref().map(DoorInput::digest);
         // CALLS CUSTODY_RETRY: the same protected input again is the request
-        // that already names it, never a second change.
+        // that already names it, never a second change. Rows a door staged
+        // for it go (FIX 12177).
         if let Some(input) = input
             && let Some((hash, _)) = fold.custody_heads(change.id).into_iter().find(|(_, live)| {
                 matches!(&live.work, OwnerWorkBody::Custody { input: named, .. } if *named == Some(input))
             })
         {
+            if let Some(door) = &door {
+                door.discard_in_txn(self, txn)?;
+            }
             let receipt = OwnerWorkReceipt::of(&fold, hash).ok_or_else(invalid_authority)?;
             return Ok(Recorded {
                 custody: SecretCustodyWork::recorded(receipt),
@@ -563,6 +573,9 @@ impl Vault {
         let receipt =
             self.record_owner_work_for_in_txn(txn, actor, surface, change.id, seen, work)?;
         let Some(hash) = receipt.request_entry() else {
+            if let Some(door) = &door {
+                door.discard_in_txn(self, txn)?;
+            }
             return Ok(Recorded {
                 custody: SecretCustodyWork::recorded(receipt),
                 rotation: None,
@@ -570,12 +583,8 @@ impl Vault {
         };
         let mut rotation = None;
         let mut manifest = None;
-        if let (Some(frame), Some(digests), true) = (
-            frame,
-            &digests,
-            holder != machine || change.sealed.is_some(),
-        ) {
-            // What every row carries beside its bytes, read from `frame`.
+        if let (Some(door), true) = (&door, holder != machine || change.sealed.is_some()) {
+            // What every row carries beside its bytes, kept from `door`.
             let row = RelayedInput {
                 sealed_at: at,
                 request: hash,
@@ -583,7 +592,7 @@ impl Vault {
                 part: None,
                 envelope: Vec::new(),
             };
-            keep_witnessed_input_in_txn(self, txn, row, &frame, digests, &signing)?;
+            keep_witnessed_input_in_txn(self, txn, row, door, &signing)?;
         }
         if holder == machine {
             let request = self

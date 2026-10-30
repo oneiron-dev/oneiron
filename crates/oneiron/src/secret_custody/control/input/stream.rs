@@ -7,8 +7,9 @@
 //! time, opening each envelope as it completes, so only the opened body is
 //! ever whole. Every bound stays: a row's [`PART_BYTES`], the part list's
 //! [`MAX_PARTS`], the frame and envelope codecs. A surface's input past one
-//! row that the door keeps under its carrier key is read the same way, each
-//! numbered part sealed as it is read (FIX 12148, `carrier_seal`).
+//! row that the door keeps under its carrier key is read once instead, each
+//! numbered part sealed as it is read and each row staged as it is digested
+//! (FIX 12148, 12177, `carrier_seal`, `door_rows`).
 
 use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
@@ -142,7 +143,7 @@ impl<'a> SealedFrame<'a> {
 
     /// The input's bytes from its start as kept: its head, envelope and
     /// tail, or those sealed in its numbered carrier parts as they are read.
-    fn reader(self) -> io::Result<Box<dyn Read + 'a>> {
+    pub(super) fn reader(self) -> io::Result<Box<dyn Read + 'a>> {
         let input = self.head.chain(self.envelope.reader()?).chain(self.tail);
         let reader: Box<dyn Read + 'a> = match self.parts {
             Some(parts) => Box::new(parts.reader(input)),
@@ -236,7 +237,11 @@ impl<'a> SealedFrame<'a> {
 
 /// Reads the next part of an input with `left` bytes still to read into
 /// `part`: at most [`PART_BYTES`], the rest of it when less.
-fn read_part(reader: &mut impl Read, part: &mut Vec<u8>, left: &mut u64) -> io::Result<()> {
+pub(super) fn read_part(
+    reader: &mut impl Read,
+    part: &mut Vec<u8>,
+    left: &mut u64,
+) -> io::Result<()> {
     let take = usize::try_from(*left).map_or(PART_BYTES, |left| left.min(PART_BYTES));
     part.clear();
     part.resize(take, 0);
