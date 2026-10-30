@@ -25,11 +25,18 @@ impl SlideNow {
 }
 
 /// Every slide of `bytes`, in deck order.
+/// A resource refusal is the engine's error (FIX 10587), never an invalid deck.
 pub(crate) fn deck_slides_now(bytes: &[u8], limits: Limits) -> Result<Vec<SlideNow>> {
-    let inspection = inspect_pptx(bytes).map_err(|_| invalid("held slide review deck"))?;
+    let inspection = inspect_pptx(bytes).map_err(|error| {
+        crate::office_body::document_error(error.resource(), "held slide review deck")
+    })?;
     let package = Package::open(bytes, limits, &crate::office_body::document_resources())
-        .map_err(|_| invalid("held slide review deck"))?;
-    let view = DeckView::read(&package).map_err(|_| invalid("held slide review deck view"))?;
+        .map_err(|error| {
+            crate::office_body::document_error(error.resource(), "held slide review deck")
+        })?;
+    let view = DeckView::read(&package).map_err(|error| {
+        crate::office_body::document_error(error.resource(), "held slide review deck view")
+    })?;
     view.slides
         .iter()
         .zip(1u64..)
