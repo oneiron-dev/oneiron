@@ -86,6 +86,7 @@ impl Carrier {
                     }
                     Some(VmOutboxFrame::Done) => break,
                     Some(frame @ VmOutboxFrame::AsideRemoved { .. }) => self.aside_removed(frame),
+                    Some(frame @ VmOutboxFrame::AsideKept { .. }) => self.aside_kept(frame),
                     None => anyhow::bail!("the host closed the outbox carrier"),
                     Some(_) => anyhow::bail!("the host sent an outbox frame out of turn"),
                 }

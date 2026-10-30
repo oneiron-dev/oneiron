@@ -399,9 +399,15 @@ pub(super) fn remove(root: &File, kind: VmOutboxKind, member: &str) -> std::io::
         Err(Errno::NOENT) => return Ok(()),
         Err(error) => return Err(error.into()),
     }
-    if kind != VmOutboxKind::Custody {
-        return Ok(());
+    if kind == VmOutboxKind::Custody {
+        drop_empty_custody_dirs(root, member)?;
     }
+    Ok(())
+}
+
+/// Drops each custody batch or log directory `member`'s removal leaves
+/// empty, syncing each parent; `<slot>/<target>` stay.
+fn drop_empty_custody_dirs(root: &File, member: &str) -> std::io::Result<()> {
     // `<slot>/<target>` stay: only the batch and its `log` may empty.
     let parts: Vec<&str> = member.split('/').collect();
     for keep in (3..parts.len()).rev() {
@@ -461,18 +467,29 @@ pub(super) fn move_aside(
 }
 
 /// Deletes `member`'s side copy hashing to `held` under `root`, and syncs
-/// its directory; one not there is gone already (FIX 11985).
-pub(super) fn remove_aside(root: &File, member: &str, held: &str) -> std::io::Result<()> {
+/// its directory; one not there is gone already (FIX 11985). For custody,
+/// a batch directory it leaves empty goes too, as on [`remove`]
+/// (FIX 12011).
+pub(super) fn remove_aside(
+    root: &File,
+    kind: VmOutboxKind,
+    member: &str,
+    held: &str,
+) -> std::io::Result<()> {
     let (dir, leaf) = match parent_of(root, member, None) {
         Ok(found) => found,
         Err(error) if is_gone(&error) => return Ok(()),
         Err(error) => return Err(error),
     };
     match rustix::fs::unlinkat(&dir, aside_leaf(&leaf, held).as_str(), AtFlags::empty()) {
-        Ok(()) => dir.sync_all(),
-        Err(Errno::NOENT) => Ok(()),
-        Err(error) => Err(error.into()),
+        Ok(()) => dir.sync_all()?,
+        Err(Errno::NOENT) => return Ok(()),
+        Err(error) => return Err(error.into()),
     }
+    if kind == VmOutboxKind::Custody {
+        drop_empty_custody_dirs(root, member)?;
+    }
+    Ok(())
 }
 
 /// The side name of `member`'s copy hashing to `held`, relative to its

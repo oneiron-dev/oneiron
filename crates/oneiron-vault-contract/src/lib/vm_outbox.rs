@@ -40,7 +40,8 @@
 //! answer to a diverged copy (FIX 11736, FIX 11737); revision 4 adds the
 //! notice's [`VmOutboxNoticeAction`] and the host's
 //! [`VmOutboxFrame::AsideRemoved`] answer to a removal of its kept-aside copy
-//! (FIX 11985). This
+//! (FIX 11985) and [`VmOutboxFrame::AsideKept`] answer to a keep of one
+//! (FIX 12010). This
 //! extension rides contract version 3 with a build floor, and a vault reports
 //! it on `Ping` (`vm_outbox_revision`).
 
@@ -380,7 +381,8 @@ pub enum VmOutboxFrame {
     /// moved aside, so a refusal the host gave its own version for that
     /// copy no longer holds and its next scan offers it again. A host copy
     /// the owner kept moves aside on the host under its own name, so the
-    /// guest's next version lands. With `remove_aside`, the owner had the
+    /// guest's next version lands, and the host answers [`Self::AsideKept`]
+    /// with its move's result (FIX 12010). With `remove_aside`, the owner had the
     /// host's kept-aside copy removed: the host deletes its side copy and
     /// answers [`Self::AsideRemoved`] (FIX 11985). The host acts only on a
     /// copy its own record keeps with that digest.
@@ -395,6 +397,16 @@ pub enum VmOutboxFrame {
     /// `kind`'s `member` hashing to `held`, which a `remove_aside` notice
     /// named, is deleted, or `failed` says why it is not (FIX 11985).
     AsideRemoved {
+        kind: VmOutboxKind,
+        member: String,
+        held: String,
+        failed: Option<String>,
+    },
+    /// Host to guest, first in the host's turn: its copy of `kind`'s
+    /// `member` hashing to `held`, which a keep notice named, moved aside
+    /// under its own name, or `failed` says why it did not, while the copy
+    /// stays at the member's name (FIX 12010).
+    AsideKept {
         kind: VmOutboxKind,
         member: String,
         held: String,
@@ -420,8 +432,8 @@ pub enum VmOutboxNoticeAction {
     RemoveAside,
 }
 
-/// `detail` as an [`VmOutboxFrame::AsideRemoved`] failure carries it: short
-/// and free of control characters, as a refusal's detail.
+/// `detail` as an aside answer's failure carries it: short and free of
+/// control characters, as a refusal's detail.
 #[must_use]
 pub fn vm_outbox_detail(detail: &str) -> String {
     clip(detail)

@@ -178,7 +178,9 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// tells the host
 /// ([`VmOutboxNoticeAction`](crate::vm_outbox::VmOutboxNoticeAction)), and
 /// the host answers a removal of its kept-aside copy
-/// ([`VmOutboxFrame::AsideRemoved`](crate::vm_outbox::VmOutboxFrame::AsideRemoved)).
+/// ([`VmOutboxFrame::AsideRemoved`](crate::vm_outbox::VmOutboxFrame::AsideRemoved))
+/// and a keep of one with its move's result
+/// ([`VmOutboxFrame::AsideKept`](crate::vm_outbox::VmOutboxFrame::AsideKept), FIX 12010).
 /// It carries a build floor, at the engine revision it merged in: carrier
 /// revision 4, and each end refuses the other's revision 3 at the hello,
 /// with no reader of it kept. The host library, the guest image and its

@@ -274,11 +274,11 @@ mod carrier {
                         ),
                         Vec::new(),
                     ),
+                    // The failure names itself: a removal that did not
+                    // delete, or a host move aside that did not go through
+                    // (FIX 12010).
                     (false, Some(failed)) => (
-                        format!(
-                            "{end}'s kept copy of {member}, under its own name {aside}, was not \
-                             removed: {failed}"
-                        ),
+                        format!("{end}'s kept copy of {member}, under its own name {aside}: {failed}"),
                         vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
                     ),
                     (false, None) => (
