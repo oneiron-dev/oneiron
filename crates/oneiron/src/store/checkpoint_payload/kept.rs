@@ -7,6 +7,7 @@
 //! (Engine 10-20 08:4x, ruling 3).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 
 use super::PayloadItem;
 
@@ -34,6 +35,16 @@ impl KeptGenerations {
     /// name is released.
     pub(crate) fn unread(&mut self) {
         self.incomplete = true;
+    }
+
+    /// Whether a kept copy names `item` at a generation after `generation`:
+    /// a capture sealed it at a later generation, and that copy landed
+    /// (FIX 11800). A copy whose inventory did not read names nothing.
+    pub(crate) fn names_after(&self, item: &PayloadItem, generation: u64) -> bool {
+        let after = (Bound::Excluded(generation), Bound::Unbounded);
+        self.named
+            .get(item)
+            .is_some_and(|generations| generations.range(after).next().is_some())
     }
 
     /// Whether no kept copy needs `item`'s leaf at or below `through`.

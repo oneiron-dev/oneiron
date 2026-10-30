@@ -6,14 +6,26 @@
 //! reference: the leaf lives in custody, and shared bytes keep their own
 //! holder and refcount rules. Restore class LIVE: the live vault's lifecycle
 //! wins over an image's.
+//!
+//! A history purge rolls the owner's active incarnation to the next
+//! generation in the purge's own writer, and notes the generation it left
+//! behind (FIX 11800, L01 01:24). That generation's leaf retires only once a
+//! kept checkpoint names a later one, so a reseal has landed: until then the
+//! checkpoints sealed under it still open, and no window opens in which
+//! neither generation does.
 
 use heed::{RoTxn, RwTxn};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
+use crate::store::key_custody::{RetireCause, RetirementIntent, stage_retirement_in_txn};
+use crate::store::{BackupWriteClass, Callback, Rows, Store};
 
+use super::kept::KeptGenerations;
+use super::rows::OwnerRef;
 use super::{
     CHECKPOINT_PAYLOADS_ENABLED, INCARNATION_LEN, OWNER_LEN, PayloadItem, Subtype, corrupt,
     ensure_enabled,
@@ -43,6 +55,9 @@ pub(crate) enum Lifecycle {
 struct InstanceRow {
     generation: u64,
     lifecycle: Lifecycle,
+    /// The newest generation a history purge left behind, whose leaf
+    /// retires once a kept checkpoint names a later one (FIX 11800).
+    purged_through: Option<u64>,
 }
 
 /// One incarnation of an owner's compartment: its item, the custody
@@ -180,6 +195,7 @@ pub(crate) fn mint_in_txn(
     let row = InstanceRow {
         generation: 0,
         lifecycle: Lifecycle::Active,
+        purged_through: None,
     };
     INSTANCES.put(dbs, wtxn, &item, &row)?;
     Ok(PayloadInstance::of(item, row))
@@ -272,4 +288,99 @@ pub(crate) fn roll_generation_in_txn(
         .ok_or(Error::ArithmeticOverflow("checkpoint payload generation"))?;
     INSTANCES.put(dbs, wtxn, item, &row)?;
     Ok(old)
+}
+
+impl Store {
+    /// A history purge of `entity`'s text, in the purge's own writer (FIX
+    /// 11800, L01 01:24): its active incarnation rolls to the next
+    /// generation, so the next capture reseals what the purge left under a
+    /// fresh leaf, and the generation it left behind is noted for retirement
+    /// once that reseal lands ([`stage_resealed_purges_in_txn`]). An owner
+    /// no capture has sealed has no incarnation and nothing to roll; nothing
+    /// here refuses the purge.
+    pub(crate) fn roll_checkpoint_payload_for_purge_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        entity: &EntityId,
+    ) -> Result<()> {
+        if !CHECKPOINT_PAYLOADS_ENABLED {
+            return Ok(());
+        }
+        let owner = OwnerRef::entity(entity);
+        let instances = instances_in_txn(self, wtxn, owner.subtype, &owner.owner32)?;
+        let Some(active) = only_active(instances)? else {
+            return Ok(());
+        };
+        let left = roll_generation_in_txn(self, wtxn, &active.item)?;
+        let mut row = INSTANCES
+            .get(self, wtxn, &active.item)?
+            .ok_or_else(corrupt)?;
+        row.purged_through = Some(row.purged_through.map_or(left, |held| held.max(left)));
+        INSTANCES.put(self, wtxn, &active.item, &row)
+    }
+}
+
+/// [`stage_resealed_purges_in_txn`] in a bookkeeping write of its own,
+/// opened only when a read finds one due. How many it staged.
+pub(crate) fn stage_resealed_purges(store: &Store, kept: &KeptGenerations) -> Result<usize> {
+    if !CHECKPOINT_PAYLOADS_ENABLED {
+        return Ok(0);
+    }
+    let due = {
+        let txn = store.env.read_txn()?;
+        INSTANCES.scan(store, &txn)?.iter().any(|(item, row)| {
+            row.purged_through
+                .is_some_and(|left| kept.names_after(item, left))
+        })
+    };
+    if !due {
+        return Ok(0);
+    }
+    let class = BackupWriteClass::BackupMetadata;
+    store.group_write_classed(Callback::Opaque, class, |wtxn| {
+        let staged = stage_resealed_purges_in_txn(store, wtxn, kept);
+        match staged {
+            Ok(staged) => Rows::Commit(staged),
+            Err(error) => Rows::Discard(Err(error)),
+        }
+    })
+}
+
+/// Stages, in `wtxn`, the retirement of each generation a history purge
+/// left behind whose reseal has landed: `kept`, the inventory of the
+/// checkpoints a host keeps, names that incarnation at a later generation.
+/// The intent retires its leaf through the generation left behind, never
+/// the live one, so the checkpoints sealed before the purge lose what it
+/// purged (call d). One whose reseal no kept copy names yet stays noted,
+/// and its leaf stays. How many it staged.
+pub(crate) fn stage_resealed_purges_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    kept: &KeptGenerations,
+) -> Result<usize> {
+    if !CHECKPOINT_PAYLOADS_ENABLED {
+        return Ok(0);
+    }
+    let custody = store.core.key_custody.local();
+    let mut staged = 0;
+    for (item, mut row) in INSTANCES.scan(store, wtxn)? {
+        let Some(left) = row.purged_through else {
+            continue;
+        };
+        if !kept.names_after(&item, left) {
+            continue;
+        }
+        if let Some(custody) = &custody {
+            let intent = RetirementIntent {
+                subject: item.subject(custody.binding())?,
+                through: left,
+                cause: RetireCause::Erase,
+            };
+            stage_retirement_in_txn(store, wtxn, &intent)?;
+            staged += 1;
+        }
+        row.purged_through = None;
+        INSTANCES.put(store, wtxn, &item, &row)?;
+    }
+    Ok(staged)
 }

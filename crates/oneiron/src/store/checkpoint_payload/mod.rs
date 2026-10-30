@@ -15,7 +15,7 @@
 //! them, now that KS7-6 turned [`CHECKPOINT_PAYLOADS_ENABLED`] on.
 #![allow(
     dead_code,
-    reason = "a history purge's generation roll and the strict live-key read wait on callers"
+    reason = "the strict live-key read waits on callers"
 )]
 
 pub(crate) mod capture;
