@@ -31496,7 +31496,7 @@
      "surface": {}
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "FolderAsk",
@@ -35803,7 +35803,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/gate/decode/decode_docedit_resource.rs",
-     "purpose": "Strict six-field document resource policy row decoder",
+     "purpose": "Strict three-field document resource policy row decoder (FIX 10590)",
      "surface": {
       "crate-vis": 1
      }
@@ -69836,6 +69836,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/sync/bridge/task_fact_edges.rs",
+     "purpose": "Board announcements on a replicated task-authority fact's link (FIX 11931)",
+     "surface": {
+      "crate-vis": 2
+     }
+    },
+    {
      "bucket": "XL",
      "kind": "test",
      "notable": [],
@@ -70108,7 +70118,7 @@
      "path": "src/sync/client/endpoint.rs",
      "purpose": "FIX 8862: where this machine's sync credentials may go",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -71231,7 +71241,7 @@
      "path": "src/sync/ingest/delivery.rs",
      "purpose": "Which records a federation pact delivered here, and at which consent epoch (FIX 321)",
      "surface": {
-      "crate-vis": 7,
+      "crate-vis": 8,
       "fn": 1
      }
     },
@@ -85440,7 +85450,7 @@
      "purpose": "ARCH-0038 historical-carrier sweep executor — ONE-1087 / ONE-1091 phase 1 (manual trigger via…"
     },
     "sync": {
-     "files": 321,
+     "files": 322,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -85652,7 +85662,7 @@
    },
    "over_bar": 107,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5785,
+   "source_files": 5786,
    "test_files": 902
   },
   "oneiron-android": {
@@ -93099,7 +93109,7 @@
      "surface": {
       "const": 1,
       "enum": 9,
-      "fn": 2,
+      "fn": 3,
       "struct": 16
      }
     },
@@ -94086,7 +94096,7 @@
      "surface": {
       "crate-vis": 17,
       "enum": 5,
-      "fn": 5,
+      "fn": 6,
       "struct": 8
      }
     },
@@ -94127,7 +94137,7 @@
      "surface": {
       "const": 1,
       "enum": 2,
-      "fn": 22,
+      "fn": 27,
       "struct": 4,
       "trait": 1
      }
@@ -94144,7 +94154,7 @@
       "crate-vis": 2,
       "enum": 1,
       "fn": 2,
-      "re-export": 2,
+      "re-export": 1,
       "type": 1
      }
     },
@@ -94218,8 +94228,7 @@
      "path": "src/retained_opc/xml/mod.rs",
      "purpose": "Bounded source-indexed XML part, with checked semantic patches",
      "surface": {
-      "crate-vis": 1,
-      "re-export": 1
+      "crate-vis": 2
      }
     },
     {
@@ -94229,20 +94238,17 @@
      "path": "src/retained_opc/xml/patch.rs",
      "purpose": "Private checked edit authority",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [
-      "XmlLimits"
-     ],
+     "notable": [],
      "path": "src/retained_opc/xml/retained.rs",
      "purpose": "One authoritative parse",
      "surface": {
-      "crate-vis": 4,
-      "struct": 1
+      "crate-vis": 4
      }
     },
     {
@@ -96903,7 +96909,7 @@
      "path": "src/mesh/serve/shutdown.rs",
      "purpose": "A connection's drain at its host's mesh stop (FIX 4756)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -97037,13 +97043,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/iroh_transport/dial.rs",
      "purpose": "The shared authenticated handshake used by a paired dial and by the owner's explicit-address admission attempt",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 3,
       "type": 1
      }
@@ -98653,7 +98659,7 @@
      "path": "src/host/shutdown.rs",
      "purpose": "The mesh's stop, as the organ work it admitted sees it (FIX 4755, 4756)",
      "surface": {
-      "crate-vis": 10,
+      "crate-vis": 11,
       "fn": 8,
       "struct": 1
      }
@@ -112900,7 +112906,7 @@
      "path": "src/machine.rs",
      "purpose": "What this machine has: cores, memory, descriptors, free disk",
      "surface": {
-      "crate-vis": 27
+      "crate-vis": 28
      }
     },
     {
