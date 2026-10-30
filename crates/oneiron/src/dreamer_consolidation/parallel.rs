@@ -478,14 +478,15 @@ impl ConsolidationExecutor<'_> {
 
     /// The incumbent confidence when `candidate` is admitted to the
     /// tournament and carries a string value the judges can read; `None`
-    /// when it stays single-pass.
+    /// when it stays single-pass. Contested is the conflict loop's outcome
+    /// (FIX 12084), never invented: an accumulated member or a merged head.
     fn tournament_admitted(
         &self,
         vault: &Vault,
         selector: &BoundClaimAuthoringSelector,
         candidate: &VerifiedCandidate,
     ) -> Option<f32> {
-        let claim = tournament_claim_of_verified(candidate, false).ok()?;
+        let claim = tournament_claim_of_verified(candidate, candidate.contested).ok()?;
         let admission = selector
             .claim_admission(vault, ClaimAuthoringChoice::Tournament, &claim)
             .ok()?;
