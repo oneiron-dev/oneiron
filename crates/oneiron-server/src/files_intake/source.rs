@@ -23,6 +23,7 @@ use oneiron::task_verb::sdk::{
 use serde::Serialize;
 
 use super::ImportWarning;
+use super::present_links::resolve_present_links;
 use super::reader::{
     FILES_PART_MARK, Note, NoteCounts, PART_MARK, TitleCounts, choose_title, crossed_rows,
     earlier_titles, file_of, read_folder_rescan, resolve_links,
@@ -180,12 +181,17 @@ pub(crate) fn rescan(
     let (mut notes, mut name_only, mut facts, mut skipped) =
         read_for_rescan(source, folder, &mut counts, prior)?;
     let mut standings = standings_of(vault, &namespace, &notes)?;
-    // A new note's inbound links come from the whole folder, skipped files
-    // included: with a new note the folder is read again, whole.
+    // A new note's inbound links, and a changed note's outbound ones, come
+    // from the whole folder, skipped files included: with a new or changed
+    // note the folder is read again, whole, so no live edge reads as dropped
+    // when the rescan reconciles a superseded note's links (FIX 1363).
     if !skipped.is_empty()
-        && standings
-            .iter()
-            .any(|standing| *standing == ImportedNoteStanding::New)
+        && standings.iter().any(|standing| {
+            matches!(
+                standing,
+                ImportedNoteStanding::New | ImportedNoteStanding::Changed
+            )
+        })
     {
         counts = NoteCounts::default();
         (notes, name_only, facts, skipped) = read_for_rescan(source, folder, &mut counts, None)?;
@@ -221,6 +227,18 @@ pub(crate) fn rescan(
     // mount point read empty loses nothing.
     let earlier_titles = earlier_titles(vault, &namespace, &notes, &standings)?;
     let (links, _) = resolve_links(&notes, &standings, &earlier_titles);
+    // Every present file's links as its text holds them now: the rescan
+    // reconciles a superseded note's edges to them. Only a whole read
+    // resolves them; a read that skipped files leaves every file's alone.
+    let present_links = resolve_present_links(&notes, &standings);
+    let mut present_targets: HashMap<&str, Vec<String>> = HashMap::new();
+    for link in &present_links {
+        present_targets
+            .entry(link.from.as_str())
+            .or_insert_with(Vec::new)
+            .push(link.to.clone());
+    }
+    let links_complete = skipped.is_empty();
     let mut known_kinds = HashMap::new();
     let mut taken = HashSet::new();
     let mut titles = TitleCounts::default();
@@ -232,6 +250,8 @@ pub(crate) fn rescan(
             present.push(FolderFile {
                 path: note.path.clone(),
                 markdown,
+                links: links_complete
+                    .then(|| present_targets.remove(note.path.as_str()).unwrap_or_default()),
             });
             continue;
         }
