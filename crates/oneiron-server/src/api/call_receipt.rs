@@ -166,6 +166,7 @@ pub(crate) fn connection_call(
         actor_ref: request_connection(),
         actor_class: oneiron::receipt::CONNECTION_CALL_ACTOR_CLASS.to_owned(),
         credential_ref: None,
+        carrier_machine: None,
         outcome,
         request_digest,
         result_digest,
@@ -409,6 +410,44 @@ pub(crate) fn call_actor(auth: &CoreAuth) -> (String, String) {
 /// The presented credential's revocable id: a slip's id, when it has one.
 pub(crate) fn credential_ref(auth: &CoreAuth) -> Option<String> {
     auth.jti().map(str::to_owned)
+}
+
+/// Who a call a device forwarded to its home is attributed to (FIX 3550):
+/// the caller whose own holder proof the home verified, named as
+/// [`call_actor`] and [`credential_ref`] name a slip holder, and the linked
+/// machine that carried it.
+#[derive(Debug, Clone)]
+pub(crate) struct ForwardedAttribution {
+    pub(crate) actor_ref: String,
+    pub(crate) actor_class: String,
+    pub(crate) credential_ref: String,
+    pub(crate) carrier_machine: String,
+}
+
+impl ForwardedAttribution {
+    /// The attribution of the verified forwarded `caller`.
+    pub(crate) fn of(caller: &oneiron::authority::VerifiedForwardedCaller) -> Self {
+        let claims = caller.caller().claims();
+        let slip: String = claims
+            .slip_id
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let actor_ref = match claims.holder_ref.as_str() {
+            "host" => format!("slip:{slip}"),
+            holder => oneiron::EntityId::from_hex(holder)
+                .map_or_else(|_| holder.to_owned(), |id| id.to_hex()),
+        };
+        Self {
+            actor_ref,
+            actor_class: claims
+                .actor_class
+                .clone()
+                .unwrap_or_else(|| "unbound".to_owned()),
+            credential_ref: slip,
+            carrier_machine: caller.machine().to_hex(),
+        }
+    }
 }
 
 /// The input versions a call of `verb` on `request` reads, captured before

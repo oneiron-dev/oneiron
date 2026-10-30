@@ -7,7 +7,9 @@ use crate::authority::VerifiedSlip;
 
 impl Memory<'_> {
     /// The credential this handle's caller presented, when a host bound one
-    /// ([`Memory::with_read_proof`]); none on an embedded handle.
+    /// ([`Memory::with_read_proof`]): a served request's, or the one an
+    /// embedded handle's delegated reader presented to its host (FIX 647).
+    /// A handle bound to none, as an embedded owner's is, carries none.
     pub(crate) fn presented_credential(&self) -> Option<&VerifiedSlip> {
         self.read_proof.as_ref()
     }

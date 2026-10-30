@@ -101,6 +101,7 @@ pub(in crate::batch) fn apply_put(
     let old_record::OldRecord {
         body_changed,
         consolidation_dirty,
+        stored_before,
         previous_skill_record,
         optimizer_birth_marker,
     } = old_record::apply_old_record(
@@ -134,6 +135,7 @@ pub(in crate::batch) fn apply_put(
         &revision,
         body_changed,
         consolidation_dirty,
+        stored_before,
         &previous_skill_record,
         short_id_plan,
         authority_first_seen_key,

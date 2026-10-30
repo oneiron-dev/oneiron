@@ -271,6 +271,54 @@ pub(super) fn delivered_digest_in(
     )
 }
 
+/// The draft's signing links minted under `txn`, its minter's authority
+/// already proved there ([`Vault::issue_esign_capabilities`], or a narrowed
+/// owner credential's own proof, FIX 6403): each recipient holding no link
+/// that covers the current deadline, or every one on a `rotate`, gets a
+/// fresh link, its earlier ones revoked first.
+pub(super) fn mint_draft_capabilities_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    rotate: bool,
+) -> Result<Vec<(String, EsignCapability)>> {
+    let state = state_in(vault, txn, document)?;
+    if state.status != DocumentStatus::Draft {
+        return Err(invalid("tokens are minted before send"));
+    }
+    let now = vault.now_recorded_at();
+    let mut issued = Vec::new();
+    for recipient in &state.document.recipients {
+        let held = recipient_bindings(vault, txn, document, &recipient.id)?;
+        if !rotate
+            && held
+                .iter()
+                .any(|(_, cap)| cap.usable_until(state.document.expires_at, now))
+        {
+            continue;
+        }
+        // A rotation, or a recipient whose every link lapsed: each
+        // indexed link is revoked before the fresh one.
+        for (digest, mut prior) in held {
+            if prior.revoked_at.is_none() {
+                prior.revoked_at = Some(now);
+                TOKENS.put(&vault.store, txn, &digest, &prior)?;
+            }
+        }
+        let token = EsignCapability::mint()?;
+        let row = CapabilityBinding {
+            document: document.to_hex(),
+            recipient: recipient.id.clone(),
+            hard_expires_at: state.document.expires_at,
+            revoked_at: None,
+            delivery: None,
+        };
+        put_capability(vault, txn, &token, &row, document)?;
+        issued.push((recipient.id.clone(), token));
+    }
+    Ok(issued)
+}
+
 impl Vault {
     /// Mint missing or unusable recipient capabilities in DRAFT, for the
     /// owner to hand out. A recipient already holding a link that covers the
@@ -301,41 +349,7 @@ impl Vault {
     ) -> Result<Vec<(String, EsignCapability)>> {
         self.with_write_txn_grouped(|txn| {
             verify_owner(self, txn, owner)?;
-            let state = state_in(self, txn, document)?;
-            if state.status != DocumentStatus::Draft {
-                return Err(invalid("tokens are minted before send"));
-            }
-            let now = self.now_recorded_at();
-            let mut issued = Vec::new();
-            for recipient in &state.document.recipients {
-                let held = recipient_bindings(self, txn, document, &recipient.id)?;
-                if !rotate
-                    && held
-                        .iter()
-                        .any(|(_, cap)| cap.usable_until(state.document.expires_at, now))
-                {
-                    continue;
-                }
-                // A rotation, or a recipient whose every link lapsed: each
-                // indexed link is revoked before the fresh one.
-                for (digest, mut prior) in held {
-                    if prior.revoked_at.is_none() {
-                        prior.revoked_at = Some(now);
-                        TOKENS.put(&self.store, txn, &digest, &prior)?;
-                    }
-                }
-                let token = EsignCapability::mint()?;
-                let row = CapabilityBinding {
-                    document: document.to_hex(),
-                    recipient: recipient.id.clone(),
-                    hard_expires_at: state.document.expires_at,
-                    revoked_at: None,
-                    delivery: None,
-                };
-                put_capability(self, txn, &token, &row, document)?;
-                issued.push((recipient.id.clone(), token));
-            }
-            Ok(issued)
+            mint_draft_capabilities_in(self, txn, document, rotate)
         })
     }
     pub fn revoke_esign_capability(
