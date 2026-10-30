@@ -44,7 +44,7 @@ use crate::ports::TombstoneStoreRead;
 use crate::sync::WindowManager;
 use crate::sync::loro_support::{import_doc, map_delete, map_for_each_value_bytes};
 use crate::sync::schema::create_window_doc;
-use crate::sync::types::{WindowKey, authority_wrap_world};
+use crate::sync::types::{WindowKey, authority_side_entry_world};
 use crate::sync::window::{
     ReplacementByteBound, apply_pending_window_updates, export_history_free_window_snapshot,
     export_window_replacement, load_window_from_state, reverse_rematerialize,
@@ -605,8 +605,9 @@ fn refuse_machine_of_the_vault(vault: &Vault, vault_id: &[u8; 32]) -> Result<()>
     Ok(())
 }
 
-/// `snapshot` with no world key pad row and no key wrap entry: pads ride only
-/// the pad object, wraps only their world's authority capsule, and a world's
+/// `snapshot` with no world key pad row and no world side entry (a key wrap
+/// or a join over the world's side leaves): pads ride only the pad object,
+/// side entries only their world's authority capsule, and a world's
 /// settings entries stay. A snapshot that held one is cut again, history-free
 /// at its newest operation, so its bytes are not in it.
 fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
@@ -615,9 +616,9 @@ fn without_key_rows(snapshot: Vec<u8>) -> Result<Vec<u8>> {
     let entities = doc.get_map("entities");
     let mut keys = Vec::new();
     map_for_each_value_bytes(&entities, |key, raw| {
-        if raw
-            .is_some_and(|raw| pad_body_world(raw).is_some() || authority_wrap_world(raw).is_some())
-        {
+        if raw.is_some_and(|raw| {
+            pad_body_world(raw).is_some() || authority_side_entry_world(raw).is_some()
+        }) {
             keys.push(key.to_owned());
         }
     });
