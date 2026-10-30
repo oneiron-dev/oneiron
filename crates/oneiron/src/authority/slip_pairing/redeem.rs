@@ -132,6 +132,29 @@ impl Vault {
             Some(mesh),
         )
     }
+    /// The checkpoint pin the outstanding link `code` keeps, only read (FIX
+    /// 3375, L02 04:5x): what a device joining from an empty vault checks
+    /// against its link's digest before it redeems. A code redeem refuses
+    /// (unknown, spent, expired, another host's) is refused here alike, and
+    /// so is a link that keeps no pin. The link and its lifetime stay as
+    /// they are.
+    pub fn pending_pairing_pin(
+        &self,
+        issuer: &HostSlipIssuer,
+        code: &str,
+    ) -> Result<AuthorityCheckpointPin> {
+        let row_key = pairing_row_key(issuer, code)?;
+        let txn = self.store.env.read_txn()?;
+        let now = self.instant_in_txn(&txn)?.secs();
+        let pending = PAIRING_PENDING
+            .get(&self.store, &txn, &row_key)
+            .map_err(|_| invalid_authority())?
+            .ok_or_else(invalid_authority)?;
+        if now >= pending.expires_at || pending.host_key != issuer.binding_key() {
+            return Err(invalid_authority());
+        }
+        pending.pin.ok_or_else(invalid_authority)
+    }
     /// Redeems a link that adds a machine: the slip and the owner's profile
     /// for `request` land in one transaction, under the answer the owner gave
     /// when making the link.

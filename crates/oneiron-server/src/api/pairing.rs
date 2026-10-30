@@ -393,6 +393,33 @@ pub(super) async fn redeem(
     }))
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PendingPinRequest {
+    code: String,
+}
+#[derive(Serialize)]
+pub(super) struct PendingPin {
+    pin: oneiron::authority::AuthorityCheckpointPin,
+}
+/// The checkpoint pin an outstanding link keeps, by its code, read only (FIX
+/// 3375, L02 04:5x): a device joining from an empty vault checks it against
+/// its link's digest before it redeems, and takes the home's storage id and
+/// genesis from its root-signed key bindings. It is what redeem gives the
+/// code's holder. A code redeem refuses (unknown, spent, expired), or a link
+/// that keeps no pin, gets redeem's own refusal; redeem counts no attempts
+/// and locks out none, so neither does this. The link and its lifetime stay
+/// as they are.
+pub(super) async fn pending_pin(
+    State(server): State<Arc<SyncServer>>,
+    Json(request): Json<PendingPinRequest>,
+) -> Result<Json<PendingPin>, EnvelopedApiError> {
+    let pin = with_issuer(&server, |issuer| {
+        server.vault().pending_pairing_pin(issuer, &request.code)
+    })?;
+    Ok(Json(PendingPin { pin }))
+}
+
 /// Whether a paired slip proposes or writes: the OpenAI proxy's write leg.
 fn slip_proposes(claims: &oneiron::authority::SlipClaims) -> bool {
     [
