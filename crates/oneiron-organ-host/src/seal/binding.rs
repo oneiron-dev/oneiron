@@ -15,7 +15,8 @@ use cms::signed_data::{SignedAttributes, SignedData, SignerIdentifier};
 use const_oid::ObjectIdentifier;
 use der::asn1::{Any, OctetString};
 use der::{Decode, Encode, Reader, SliceReader};
-use oneiron::blob_artifact::esign::{EsignSealInput, EsignSealerError, SEAL_CONTENTS_LADDER};
+use oneiron::blob_artifact::esign::{EsignSealInput, EsignSealerError};
+use oneiron_organ_protocol::seal::backend_operation_id;
 use oneiron_organ_protocol::{AskCode, AskRefusal, ByteBuf};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -39,8 +40,9 @@ const ID_SHA256_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.8
 /// gave, and every signature the key issued in this call.
 pub(super) struct SealCall<'a> {
     keys: &'a dyn SealKeys,
-    /// The call's operation and a colon: every signature's operation
-    /// starts with it.
+    /// The call's operation as the backend sees it (itself, or its bounded
+    /// alias, FIX 6271) and a colon: every signature's operation starts
+    /// with it.
     operation: String,
     input: &'a EsignSealInput,
     signer: Mutex<Option<Signer>>,
@@ -95,15 +97,17 @@ struct SignAsk {
 }
 
 impl<'a> SealCall<'a> {
-    /// Checks the engine's revisions before any organ sees them: one per
-    /// rung of the contents ladder, each a hole of ASCII zeros after the
-    /// prepared PDF, which its ByteRange leaves out and nothing else.
+    /// Checks the engine's revisions before any organ sees them: one or
+    /// more (one per rung of the contents ladder, or the one larger revision
+    /// written when they held too little, FIX 6270), each a hole of ASCII
+    /// zeros after the prepared PDF, which its ByteRange leaves out and
+    /// nothing else.
     pub(super) fn new(
         keys: &'a dyn SealKeys,
         operation_id: &str,
         input: &'a EsignSealInput,
     ) -> Result<Self, EsignSealerError> {
-        if input.revisions.len() != SEAL_CONTENTS_LADDER.len()
+        if input.revisions.is_empty()
             || (0..input.revisions.len()).any(|index| hole(input, index).is_none())
         {
             return Err(EsignSealerError::Fatal {
@@ -113,7 +117,7 @@ impl<'a> SealCall<'a> {
         }
         Ok(Self {
             keys,
-            operation: format!("{operation_id}:"),
+            operation: format!("{}:", backend_operation_id(operation_id)),
             input,
             signer: Mutex::new(None),
             issued: Mutex::new(Vec::new()),
@@ -295,18 +299,20 @@ impl<'a> SealCall<'a> {
 
 /// The hole of revision `index`: the offsets of its `<` and one past its
 /// `>`, in the whole revision. `None` unless the ByteRange leaves out
-/// exactly the hole, the hole lies after the prepared PDF, holds this
-/// rung's capacity, and is all ASCII zeros.
+/// exactly the hole, the hole lies inside the revision after the prepared
+/// PDF, holds whole DER bytes (an even count of hex digits between its
+/// delimiters), and is all ASCII zeros.
 fn hole(input: &EsignSealInput, index: usize) -> Option<(usize, usize)> {
     let revision = input.revisions.get(index)?;
-    let capacity = *SEAL_CONTENTS_LADDER.get(index)?;
     let base = input.pdf.len();
     let len = base.checked_add(revision.suffix.len())?;
     let [start, open, close, rest] = revision.byte_range.map(|at| usize::try_from(at).ok());
     let (open, close, rest) = (open?, close?, rest?);
+    let digits = close.checked_sub(open)?.checked_sub(2)?;
     if start != Some(0)
         || open < base
-        || close.checked_sub(open)? != capacity.checked_mul(2)?.checked_add(2)?
+        || digits == 0
+        || !digits.is_multiple_of(2)
         || close.checked_add(rest)? != len
     {
         return None;

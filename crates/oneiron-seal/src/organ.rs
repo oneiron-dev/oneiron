@@ -213,6 +213,11 @@ enum Failure {
     InputInvalid {
         code: InputInvalidCode,
     },
+    /// The engine's revisions held too little: the CMS needed `needed` DER
+    /// bytes, for the engine to write a larger revision (FIX 6270).
+    ContentsShort {
+        needed: u64,
+    },
 }
 
 impl Failure {
@@ -271,8 +276,18 @@ fn seal(call: &CallContext<'_>, began: Instant) -> Result<Answer, OrganError> {
         .collect::<Result<Vec<_>, OrganError>>()?;
     let (observed, engine) = engine(args.config, args.now_ms, began, call.asker())?;
     let failed = |err: SealError| -> Result<Answer, OrganError> {
-        let failure = SealReport::Failed(Failure::of(err, None, &memory)?);
-        report(&failure, &observed, &memory)
+        let failure = match err {
+            // Past the largest revision the engine wrote, the DER bytes the
+            // CMS needed are the call's own count (FIX 6270).
+            SealError::Fatal {
+                stage: SealStage::PdfIncrementalUpdate,
+                code: FatalCode::ContentsCapacityExceeded,
+            } => Failure::ContentsShort {
+                needed: observed.observed().contents_bytes,
+            },
+            err => Failure::of(err, None, &memory)?,
+        };
+        report(&SealReport::Failed(failure), &observed, &memory)
     };
     let engine = match engine {
         Ok(engine) => engine,
@@ -658,7 +673,7 @@ impl SealFetcher for AskedFetcher {
         if !(200..300).contains(&answer.status) {
             return Err(FetchError::InvalidResponse);
         }
-        let body = match reply.data {
+        let mut body = match reply.data {
             // A region's bytes came reserved before the runtime copied them
             // (FIX 8454): that copy is adopted whole with what holds it, and
             // nothing copies it again. Inline bytes take a lease of their own.
@@ -670,6 +685,13 @@ impl SealFetcher for AskedFetcher {
             }
             None => AdmittedBytes::empty(),
         };
+        // The answer's content type and the header around the body are held
+        // with it (FIX 8455).
+        let beside = self
+            .memory
+            .lease(AdmittedBytes::beside_bytes(answer.content_type.as_deref()))
+            .map_err(FetchError::Memory)?;
+        body.hold_beside(beside);
         Ok(FetchResponse {
             body: Arc::new(body),
             content_type: answer.content_type,

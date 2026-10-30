@@ -4,7 +4,7 @@
 //! call receipt: the organ and its version are the process, the args digest
 //! the replay key, the vault versions it read the inputs.
 
-use oneiron::edit_settle::{MadeByReader, NativeOutput, PendingProposalView};
+use oneiron::edit_settle::{NativeOutput, PendingProposalView};
 use oneiron::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
@@ -74,14 +74,17 @@ impl OrganOutcome {
 }
 
 /// Offers every export file of one organ call to `artifact`, each a proposal
-/// waiting for Keep, with the call receipt as its made_by. No caller
-/// credential reaches this rail, so the envelope waits as the host built it
-/// ([`MadeByReader::OrganReceipt`], FIX 1229).
+/// waiting for Keep, with the call receipt as its made_by. A call a principal
+/// submitted has its envelope's trigger and receipt inputs admitted through
+/// that principal's own read as each proposal is retained (FIX 9310); a
+/// host's own call, with no submitter, keeps the envelope as the host built
+/// it ([`oneiron::edit_settle::MadeByReader::OrganReceipt`], FIX 1229).
 ///
 /// # Errors
 ///
 /// The vault's refusal of an output: another media type than the artifact's,
-/// an empty file, a ref already settled or waiting.
+/// an empty file, a ref already settled or waiting, or a source the
+/// submitter cannot read.
 pub fn propose_organ_outputs(
     vault: &Vault,
     artifact: &EntityId,
@@ -89,6 +92,7 @@ pub fn propose_organ_outputs(
     run_ref: &str,
     trigger: Option<MadeByTrigger>,
     actor: WriteActor,
+    submitter: Option<EntityId>,
 ) -> oneiron::Result<Vec<PendingProposalView>> {
     let now = vault.now_recorded_at();
     let made_by = outcome.made_by(actor.entity_ref(), trigger, now);
@@ -96,13 +100,8 @@ pub fn propose_organ_outputs(
         .native_outputs(run_ref, Some(&made_by))
         .iter()
         .map(|output| {
-            vault.propose_native_output(
-                artifact,
-                output,
-                Some(MadeByReader::OrganReceipt),
-                actor,
-                now,
-            )
+            let reader = vault.organ_landing_reader(submitter)?;
+            vault.propose_native_output(artifact, output, Some(reader), actor, now)
         })
         .collect()
 }

@@ -1,6 +1,6 @@
 //! DSS serialization: stream objects, global Certs/OCSPs/CRLs arrays, DSS revision append.
 
-use crate::error::{InputInvalidCode, SealError};
+use crate::error::{InputInvalidCode, SealError, SealStage};
 use crate::memory::SharedBytes;
 
 use super::super::pdf;
@@ -99,5 +99,6 @@ pub(super) fn append_dss(
         dss_obj: dss_num,
     };
     let draft = pdf::append_revision(bytes, &state, &kind, 0)?;
+    super::assembly::charge_draft(ctx.limits, &draft, SealStage::Dss)?;
     Ok(draft.bytes)
 }

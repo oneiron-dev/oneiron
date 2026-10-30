@@ -29,6 +29,10 @@ pub struct OrganJob {
     pub call: OrganCall,
     pub lent: Vec<LentInput>,
     pub trigger: Option<MadeByTrigger>,
+    /// The authenticated principal who submitted the job, when one did: its
+    /// files' made_by is admitted through that principal's own read when
+    /// they land, now or at a redrive (FIX 9310). None for a host's own job.
+    pub submitter: Option<EntityId>,
 }
 
 /// What became of a submitted job.
@@ -194,13 +198,15 @@ impl OrganRouter {
             call,
             lent,
             trigger,
+            submitter,
         } = job;
         let held = rmp_serde::to_vec_named(&HeldCall::of(&call, &lent))
             .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
         match self.call_with(vault, call, lent, asks)? {
             Routed::Done { outcome, ran_on } => {
-                let proposals =
-                    propose_organ_outputs(vault, &artifact, &outcome, &run_ref, trigger, actor)?;
+                let proposals = propose_organ_outputs(
+                    vault, &artifact, &outcome, &run_ref, trigger, actor, submitter,
+                )?;
                 Ok(Submitted::Landed { proposals, ran_on })
             }
             Routed::Waiting(wait) => {
@@ -211,6 +217,7 @@ impl OrganRouter {
                     verb: wait.verb,
                     call: held,
                     trigger,
+                    submitter,
                     held_by: actor,
                     held_at: vault.now_recorded_at(),
                 };
@@ -282,6 +289,7 @@ impl OrganRouter {
                 &wait.run_ref,
                 wait.trigger.clone(),
                 wait.held_by,
+                wait.submitter,
             ) {
                 Ok(proposals) => {
                     vault.release_organ_wait(&artifact, &wait.run_ref)?;
