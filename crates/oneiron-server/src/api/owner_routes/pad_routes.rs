@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -13,14 +12,22 @@ use oneiron::EdgeActorClass;
 use oneiron::memory::DiaryReadOutcome;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/pads/read", post(read))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/pads/read",
+            summary: "The owner reads an agent's sealed pads.",
+            row: None,
+        },
+        post(read),
+    )]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

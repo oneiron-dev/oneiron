@@ -12,7 +12,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -23,7 +22,7 @@ use oneiron::dreamer_runner::maintenance::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -34,14 +33,36 @@ use crate::server::SyncServer;
 /// The most applied writes one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/dreamer/maintenance/applied", get(applied))
-        .route("/dreamer/maintenance/revert", post(revert))
-        .route(
-            "/dreamer/maintenance/action-mode/apply",
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/maintenance/applied",
+                summary: "Every applied write, reverted ones too, newest first.",
+                row: None,
+            },
+            get(applied),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/maintenance/revert",
+                summary: "The owner's revert of one applied write.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/maintenance/action-mode/apply",
+                summary: "The owner's apply of one action-mode finding's explicit agent-ceiling patch (FIX 1786): `finding` (32 hex), and the `agent` (32 hex) and `ceiling` (`proposed` or `auto`) the finding's patch names, as shown. The ceiling moves through the owner's definition writer, fenced on the definition revision the finding read; the finding's revert puts it back. Answers the applied write.",
+                row: None,
+            },
             post(apply_action_mode),
-        )
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

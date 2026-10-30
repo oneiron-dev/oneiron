@@ -31,12 +31,11 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, put};
 use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
 use oneiron::error::RecordError;
 use oneiron::feedback::{
@@ -49,7 +48,7 @@ use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
-use super::{OwnerReply, blocking};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
@@ -64,11 +63,54 @@ const LEARNING_READS: CoreScope = CoreScope::Read;
 /// conversation-learning scope"); the engine's writer then judges who may.
 const LEARNING_ACTS: CoreScope = CoreScope::Write;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/conversation-learning", get(view).put(set))
-        .route("/conversation-learning/me", get(own_view).put(set_own))
-        .route("/conversation-learning/receipts", get(receipts))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning",
+                summary: "The vault's \"Learn from my conversations\" setting, for a live member, delegate or guest (the owner, or another live person on their own human slip): on, allow_opt_out, the revision to present back as seen, any conflict, the act in force, set_by (the admin, 32 hex) and the one line a member's surface shows while it is on. While on, everything in the vault counts, people, agents and guests alike; private worlds never do.",
+                row: None,
+            },
+            get(view),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/conversation-learning",
+                summary: "The vault's admin (its live owner, or a shared vault's owner or admin holding the workspace-settings power) sets it: body {on, allow_opt_out, seen}, both flags required (a body missing one is a 400). Off until turned on; turning it off stops new sharing and withdraws nothing already shared. A stale seen (64 hex) is a conflict; anyone else is refused.",
+                row: None,
+            },
+            put(set),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning/me",
+                summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force.",
+                row: None,
+            },
+            get(own_view),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/conversation-learning/me",
+                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. It stops new sharing of their messages and withdraws nothing already shared. A stale seen (64 hex) is a conflict.",
+                row: None,
+            },
+            put(set_own),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning/receipts",
+                summary: "One page of the caller's own publisher training receipts, as the person their proof names: each submission carrying their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
+                row: None,
+            },
+            get(receipts),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

@@ -15,11 +15,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::consent::{
     CONTACT_CLEARANCE_REVOKE_COMMAND, ContactClearanceAct, ContactDisclosureOutcome,
     DisclosureConfirmationReceipt, DisclosureOfferMode, contact_clearance_ref,
@@ -29,7 +28,7 @@ use oneiron::disclosure::AttendeeIdentityChoice;
 use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::params::hex_bytes;
 use crate::api::query_params;
@@ -37,18 +36,108 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/disclosure/offer", get(offer))
-        .route("/disclosure/confirm", post(confirm))
-        .route("/disclosure/narrow", post(narrow))
-        .route("/disclosure/revoke", post(revoke))
-        .route("/disclosure/preclear", post(preclear))
-        .route("/disclosure/mode", get(mode).put(set_mode))
-        .route("/disclosure/attendee", post(attendee))
-        .route("/disclosure/entry", get(entry))
-        .route("/disclosure/entry/confirm", post(confirm_entry))
-        .route("/disclosure/entry/decline", post(decline_entry))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/disclosure/offer",
+                summary: "One frozen contact-disclosure offer, the private ask the owner answers.",
+                row: None,
+            },
+            get(offer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/confirm",
+                summary: "The owner's answer to one frozen offer, against the exact delta it was shown.",
+                row: None,
+            },
+            post(confirm),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/narrow",
+                summary: "Narrows a contact's standing clearance to a Scope inside the current one.",
+                row: None,
+            },
+            post(narrow),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/revoke",
+                summary: "Consent.revoke_contact_disclosure, the one-tap revoke of a contact's standing clearance.",
+                row: None,
+            },
+            post(revoke),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/preclear",
+                summary: "The owner clears a named trusted set for one Scope in advance, each contact with its own receipt.",
+                row: None,
+            },
+            post(preclear),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/disclosure/mode",
+                summary: "The disclosure-mode knob, auto when never set.",
+                row: None,
+            },
+            get(mode),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/disclosure/mode",
+                summary: "Turns the knob.",
+                row: None,
+            },
+            put(set_mode),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/attendee",
+                summary: "The owner's answer to one unknown-attendee ask, once.",
+                row: None,
+            },
+            post(attendee),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/disclosure/entry",
+                summary: "One attendee's first entry into a chat or room, the P5 question the owner answers once.",
+                row: None,
+            },
+            get(entry),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/entry/confirm",
+                summary: "The owner's yes to one entry's P5 question: the entry's contact is cleared standing under the frozen offer, the entry sees the history chosen, and the entry is decided once.",
+                row: None,
+            },
+            post(confirm_entry),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/entry/decline",
+                summary: "The owner's no to one entry's P5 question: the offer settles denied, nothing widens, and the entry is decided once.",
+                row: None,
+            },
+            post(decline_entry),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

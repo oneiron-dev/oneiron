@@ -47,7 +47,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{FromRequestParts, State};
 use axum::http::request::Parts;
 use axum::response::Json;
@@ -68,7 +67,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::owner_work_routes::request_entry;
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::pairing::MachineEnrolment;
 use crate::auth::CoreAuth;
@@ -82,12 +81,20 @@ pub(crate) mod pad_access;
 pub(crate) mod root_doors;
 pub(crate) mod secret_anchor;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/roots/requests/run", post(run))
-        .merge(pad_access::routes())
-        .merge(root_doors::routes())
-        .merge(secret_anchor::routes())
+pub(super) fn owner_table() -> OwnerTable {
+    let mut table = vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/roots/requests/run",
+            summary: "The named target's own call: runs a root request pending here with the kit material its change needs, for this call alone, once the target proves to be this install and a machine the worlds' privacy lets hold their keys; answers the target's report and its words to this caller only.",
+            row: None,
+        },
+        post(run),
+    )];
+    table.extend(pad_access::owner_table());
+    table.extend(root_doors::owner_table());
+    table.extend(secret_anchor::owner_table());
+    table
 }
 
 /// The material for one pending root request, as the target's caller

@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
@@ -25,17 +24,43 @@ use oneiron::authority::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/machines/answer", get(get_answer).post(set_answer))
-        .route("/machines/remove", post(remove))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/machines/answer",
+                summary: "One machine's answer (`?machine=<id>`): its role, the carrier of the owner's standing answer, and the revision a surface presents back as seen.",
+                row: None,
+            },
+            get(get_answer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/answer",
+                summary: "The owner marks or re-marks one of his machines yours, work or school, or rented, from any linked surface; a stale seen is a conflict.",
+                row: None,
+            },
+            post(set_answer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/remove",
+                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict.",
+                row: None,
+            },
+            post(remove),
+        ),
+    ]
 }
 
 /// Where the owner's say-so reached this install, for the act's audit and

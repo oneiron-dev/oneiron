@@ -24,7 +24,6 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -36,7 +35,7 @@ use serde::Deserialize;
 use zeroize::Zeroizing;
 
 use super::super::machine_routes::parse_revision;
-use super::super::{OwnerReply, blocking, owner};
+use super::super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use super::{
     Kit, OwnerDevice, RootWorkAnswer, issue_homes, kit_target, passphrase_of, request_code,
     vault_id,
@@ -47,12 +46,45 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/roots/anchor", post(anchor))
-        .route("/roots/restore", post(restore))
-        .route("/roots/issue", post(issue))
-        .route("/roots/confirm", post(confirm))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/anchor",
+                summary: "The named target's own call: the bound root's kit marks the enrolment's machine mine here, with the 26-symbol code a new machine shows; fingerprint or confirm_root vouches for a kit this install cannot verify.",
+                row: None,
+            },
+            post(anchor),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/restore",
+                summary: "The named target's own call: the kit restores the world keys wrapped to its root on this install; fingerprint or confirm_root vouches for a kit this install cannot verify.",
+                row: None,
+            },
+            post(restore),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/issue",
+                summary: "The named target's own call: issues a world kit over three homes, its pieces in this answer alone; nothing is published until confirm.",
+                row: None,
+            },
+            post(issue),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/confirm",
+                summary: "The named target's own call: two pieces of the pending kit (or one and the passphrase) confirm it, and its root goes live here, carrying the machines named.",
+                row: None,
+            },
+            post(confirm),
+        ),
+    ]
 }
 
 /// What vouches for a kit this install cannot verify: `fingerprint`, read on

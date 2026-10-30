@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::response::Json;
 use axum::routing::post;
@@ -14,14 +13,22 @@ use oneiron::EdgeActorClass;
 use oneiron::memory::MemoryError;
 use oneiron::task_verb::sdk::{SteerReceipt, SteerRequest, steer_child_as_owner};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/steer", post(steer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/steer",
+            summary: "The steer verb's input (task_ref, instruction, key) and its receipt.",
+            row: None,
+        },
+        post(steer),
+    )]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/steer`'s body (FIX 11611):

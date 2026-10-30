@@ -13,7 +13,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{FromRequest, Query, Request, State};
@@ -25,7 +24,7 @@ use serde::de::{DeserializeOwned, IgnoredAny, MapAccess, Visitor};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::{OwnerJsonBody, invalid_json};
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -34,17 +33,90 @@ use crate::owner::vault_key::{self as view, PrfInput, SignerPin, VaultKeyReport,
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/vault-key", get(status))
-        .route("/vault-key/signer", get(signer))
-        .route("/vault-key/prf-input", get(prf_input))
-        .route("/vault-key/unlock", post(unlock))
-        .route("/vault-key/password", post(set_password))
-        .route("/vault-key/passkeys", post(add_passkey))
-        .route("/vault-key/device", post(add_device))
-        .route("/vault-key/remove", post(remove))
-        .route("/vault-key/retire-escrow", post(retire_escrow))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/vault-key",
+                summary: "Whether the vault has a data key, whether this server holds it, and its wraps, each passkey's with its PRF input.",
+                row: None,
+            },
+            get(status),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/vault-key/signer",
+                summary: "This install's checkpoint signer, the pin another host trusts this vault's backups by.",
+                row: None,
+            },
+            get(signer),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/vault-key/prf-input",
+                summary: "The PRF input a passkey of that name is asked at.",
+                row: None,
+            },
+            get(prf_input),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/unlock",
+                summary: "Holds the vault key on this server, from the password or a passkey's PRF output.",
+                row: None,
+            },
+            post(unlock),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/password",
+                summary: "Sets the vault password, replacing an earlier one.",
+                row: None,
+            },
+            post(set_password),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/passkeys",
+                summary: "Wraps the vault key to a passkey by its PRF output.",
+                row: None,
+            },
+            post(add_passkey),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/device",
+                summary: "Wraps the vault key to this install's keystore.",
+                row: None,
+            },
+            post(add_device),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/remove",
+                summary: "Removes one wrap; the last one stays.",
+                row: None,
+            },
+            post(remove),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/vault-key/retire-escrow",
+                summary: "Retires an escrow recipient whose secret was released.",
+                row: None,
+            },
+            post(retire_escrow),
+        ),
+    ]
 }
 
 /// `GET /v1/owner/vault-key`: whether the vault has a data key, whether this
