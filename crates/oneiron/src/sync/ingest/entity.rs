@@ -35,6 +35,8 @@ pub(in crate::sync) struct IngestCtx<'a> {
     pub(super) staged: super::task_pairs::Staging,
     /// A by-reference body a transfer received, for its carrier (FIX 5489).
     asset_body: Option<(EntityId, &'a crate::store::StagedAssetBody)>,
+    /// The window whose body references a residence-free caller reads.
+    body_refs: Option<&'a loro::LoroDoc>,
 }
 
 /// How an entry holds a body that does not belong to its window's residence.
@@ -65,6 +67,7 @@ impl<'a> IngestCtx<'a> {
             residence: None,
             staged: Default::default(),
             asset_body: None,
+            body_refs: None,
         }
     }
 
