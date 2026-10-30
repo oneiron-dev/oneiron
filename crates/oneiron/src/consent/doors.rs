@@ -16,7 +16,8 @@ use super::grant::{
 };
 use super::registry::{ConsentRegistry, ConsentRegistryQuery, ConsentRegistryRow};
 use super::support::{
-    APPROVE_ONCE_MARKERS, ApproveOnceMarker, CONSENT_APPROVE_ONCE_AVAILABLE, normalized_ref,
+    APPROVE_ONCE_MARKERS, ApproveOnceMarker, CONSENT_APPROVE_ONCE_AVAILABLE,
+    CONSENT_APPROVE_ONCE_SPENT, normalized_ref,
 };
 use crate::error::GateError;
 
