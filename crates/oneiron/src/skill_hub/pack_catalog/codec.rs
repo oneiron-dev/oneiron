@@ -1,9 +1,9 @@
 //! Canonical source-bearing ASSET envelopes: immutable content, not authority.
 use super::{PackSource, invalid};
+use crate::entity_id::derived_domains::PACK_SOURCE_ASSET;
 use crate::skill_hub::HubFile;
 use crate::{EntityId, error::Result};
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 const FORMAT: &str = "oneiron.pack_source.v1";
 
 #[derive(Serialize, Deserialize)]
@@ -66,15 +66,9 @@ pub(crate) fn decode(bytes: &[u8]) -> Result<Option<PackSource>> {
     Ok(Some(source))
 }
 
+/// The ASSET id of a pack source, derived from its canonical tree content hash.
 pub(super) fn source_id(source: &PackSource) -> Result<EntityId> {
-    let digest = Sha256::new()
-        .chain_update(b"oneiron.pack-source.asset.v1\0")
-        .chain_update(source.hash.as_bytes())
-        .finalize();
-    let bytes: [u8; 16] = digest[..16]
-        .try_into()
-        .map_err(|_| invalid("source ID width"))?;
-    EntityId::from_bytes(bytes)
+    EntityId::derive(PACK_SOURCE_ASSET, &[&source.hash.as_bytes()[..]])
 }
 
 /// All puts, including replay, check content and source identity. No local
