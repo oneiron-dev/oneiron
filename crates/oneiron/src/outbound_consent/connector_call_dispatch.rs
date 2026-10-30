@@ -20,7 +20,9 @@ const CONNECTOR_ENDPOINT_CHANGED: &str = "connector_endpoint_changed";
 
 /// Maps one execute onto a step, with the reply and the questions `host`
 /// kept for its send. Questions a step that is not Done leaves behind have
-/// no caller to answer them, so the host ends them at once (FIX 3844).
+/// no caller to answer them, so the host ends them at once (FIX 3844). A
+/// send the host held at its last binding read presented nothing, so the
+/// call holds with the host's reason rather than counting as a failure.
 pub(super) fn step_from_host<H: ConnectorCallHost>(
     dispatch: &ScopedMcpDispatchResult,
     host: &mut H,
@@ -28,7 +30,14 @@ pub(super) fn step_from_host<H: ConnectorCallHost>(
     let reply = host.take_result();
     let awaiting = host.take_awaiting_input();
     let handle = awaiting.as_ref().map(|input| input.handle.clone());
-    let step = step_from_dispatch(dispatch, reply, awaiting);
+    let step = match host.take_send_hold() {
+        Some(reason) => Step::Held {
+            decision_ref: None,
+            reasons: vec![reason.to_owned()],
+            ask: None,
+        },
+        None => step_from_dispatch(dispatch, reply, awaiting),
+    };
     if let Some(handle) = handle
         && !matches!(step, Step::AwaitingInput { .. })
     {
