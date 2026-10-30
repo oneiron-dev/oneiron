@@ -164,6 +164,10 @@ pub enum JudgeLabelFit {
 pub struct JudgeLabelRecheckRequest<'a> {
     pub label: &'a JudgeLabel,
     pub rubric: &'a JudgeRubric,
+    /// The rows the pick and rubric were read from (FIX 7102), for the
+    /// checker's call to carry. `None`: label rows are keyed by their ask id,
+    /// not by an `EntityId`, so the set is unknown; calls never refuse for it.
+    pub sources: Option<&'a [EntityId]>,
 }
 
 /// The host's side of a re-check: one model call per pending pick, made
@@ -232,6 +236,7 @@ pub(crate) fn recheck_judge_labels(
         let fit = checker.check(&JudgeLabelRecheckRequest {
             label: &label,
             rubric: &rubric,
+            sources: None,
         })?;
         if fit == JudgeLabelFit::Unavailable {
             report.pending += 1;
