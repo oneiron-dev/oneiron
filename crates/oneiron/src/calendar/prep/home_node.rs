@@ -1,9 +1,11 @@
 //! Closed-vault due execution of prep jobs.
 
+use std::collections::BTreeSet;
+
 use serde::{Deserialize, Serialize};
 
 use super::lens::{PrepLensCopy, render_prep_lens};
-use super::pack::{PrepBuildRequest, build_prep_pack};
+use super::pack::{PrepBuildRequest, build_prep_pack, prep_pack_source_refs};
 use super::wake::{PrepEvent, PrepPolicy, PrepWake, prep_fire_at};
 use crate::calendar::claims::{
     CalendarStatus, PREDICATE_CALENDAR_ATTENDEE, PREDICATE_CALENDAR_PREP_OPT_IN,
@@ -80,6 +82,28 @@ pub fn run_due_home_node_prep(
     policy: PrepPolicy,
     copy: &PrepLensCopy,
 ) -> Result<Option<GeneratedLens>> {
+    Ok(
+        run_due_home_node_prep_with_sources(vault, job, fired_at, policy, copy)?
+            .map(|(lens, _)| lens),
+    )
+}
+
+/// [`run_due_home_node_prep`], with the pack's cited rows beside the lens.
+///
+/// The set holds every vault row the lens copied, the EVENT itself excluded;
+/// it is empty when no lens renders. The INBOX card keeps it as its
+/// `source_refs`, so the erase of a copied row drops the card.
+///
+/// # Errors
+///
+/// As [`run_due_home_node_prep`].
+pub fn run_due_home_node_prep_with_sources(
+    vault: &Vault,
+    job: &PrepHomeNodeJob,
+    fired_at: u64,
+    policy: PrepPolicy,
+    copy: &PrepLensCopy,
+) -> Result<Option<(GeneratedLens, BTreeSet<EntityId>)>> {
     let event_ref = EntityId::from_hex(&job.event_ref)?;
     let Some(event) = live_prep_event(vault, event_ref)? else {
         return Ok(None);
@@ -95,7 +119,8 @@ pub fn run_due_home_node_prep(
     let Some(pack) = build_prep_pack(vault, &request)? else {
         return Ok(None);
     };
-    render_prep_lens(&pack, copy).map(Some)
+    let sources = prep_pack_source_refs(&pack);
+    Ok(Some((render_prep_lens(&pack, copy)?, sources)))
 }
 
 /// Re-derives the EVENT facts prep is decided from, as they stand at due time.
