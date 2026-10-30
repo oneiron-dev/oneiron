@@ -7104,7 +7104,7 @@ export type ClaimDemoteRequest = { claim_ref: string; action: ClaimDemoteActionI
 /** `oneiron::memory::claim_stale::ClaimDemoteView` */
 export type ClaimDemoteView = { claim_ref: string; short_ref?: string | null; rung: string; stale: boolean; receipt_ref: string }
 /** `oneiron::memory::claim_stale::ReadFilterInput` */
-export type ReadFilterInput = { entity_types?: number[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null }
+export type ReadFilterInput = { entity_types?: string[] | null; max_sensitivity_band?: number | null; include_stale?: boolean | null; min_confidence?: number | null; min_salience?: number | null }
 /** `oneiron::memory::claim_stale::ClaimFilteredListRequest` */
 export type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?: string | null; lifecycle?: string | null; limit: number; filter?: ReadFilterInput | null }
 /** `oneiron::memory::claim_stale::ClaimFilteredReadRequest` */
