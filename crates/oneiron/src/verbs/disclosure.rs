@@ -101,7 +101,7 @@ pub struct RevealAsksRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RevealAskView {
-    pub receipt: super::sdk_secret::RevealReceipt,
+    pub receipt: super::secret::RevealReceipt,
     pub state: String,
     pub expires_at: u64,
     pub disclosure: Option<String>,
@@ -143,7 +143,7 @@ pub fn disclosure_reveals_as_owner(
         .secret_reveals(owner, input.pending, input.limit.unwrap_or(50).min(200))?
         .into_iter()
         .map(|ask| RevealAskView {
-            receipt: super::sdk_secret::reveal_receipt(ask.receipt),
+            receipt: super::secret::reveal_receipt(ask.receipt),
             state: ask.state.as_str().to_owned(),
             expires_at: ask.expires_at,
             disclosure: ask.disclosure,

@@ -149,7 +149,7 @@ pub fn mint_invitation_slip_embedded(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         "vault.members.invitation_slip signs the invitee's slip with the host's own key; an embedded vault holds none",
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }
 
@@ -311,6 +311,6 @@ pub fn mint_guest_slip_embedded(
     Err(MemoryError::new(
         MEMORY_CODE_INVALID_STATE,
         "vault.guests.mint_slip signs the guest's slip with the host's own key; an embedded vault holds none",
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }

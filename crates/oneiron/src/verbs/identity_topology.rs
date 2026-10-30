@@ -256,7 +256,7 @@ pub struct IdentityEventRequest {
 #[serde(deny_unknown_fields)]
 pub struct IdentityUndoRequest {
     pub event: EntityId,
-    #[serde(with = "super::brief::hex32")]
+    #[serde(with = "crate::task_verb::hex32")]
     #[schemars(with = "String")]
     pub seen: [u8; 32],
 }
@@ -321,7 +321,7 @@ pub enum IdentityProposalRuling {
 #[serde(deny_unknown_fields)]
 pub struct IdentityProposalResolveRequest {
     pub proposal: EntityId,
-    #[serde(with = "super::brief::hex32")]
+    #[serde(with = "crate::task_verb::hex32")]
     #[schemars(with = "String")]
     pub seen: [u8; 32],
     pub decision: IdentityProposalRuling,
@@ -424,7 +424,7 @@ pub struct IdentityTopologyReceipt {
     pub confidence: f32,
     pub evidence: Option<IdentityEvidence>,
     pub action: IdentityEventAction,
-    #[serde(with = "super::brief::hex32")]
+    #[serde(with = "crate::task_verb::hex32")]
     #[schemars(with = "String")]
     pub seen: [u8; 32],
 }

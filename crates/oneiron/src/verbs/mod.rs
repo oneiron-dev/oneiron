@@ -68,7 +68,6 @@ mod secret_custody;
 mod secret_grant;
 mod secret_use;
 mod self_actor;
-#[path = "self.rs"]
 mod self_verbs;
 mod share;
 mod shared;
@@ -96,26 +95,11 @@ use crate::task_verb::{
 };
 use serde::{Deserialize, Serialize};
 
-// FIX 8907: the files moved here from task_verb still name their siblings
-// by the old `sdk_*` module names, this root as `sdk`, and a few task
-// items as `super::…`; these private aliases keep those bytes.
-use self::connector_call as sdk_connector_call;
-use self::host as sdk_host;
-use self::hub as sdk_hub;
-use self::secret as sdk_secret;
-use self::shared_members as sdk_shared_members;
-use self::skills as sdk_skills;
-use crate::task_verb::{AttemptHandle, TaskDescription, TaskHandle, TaskStatusQuery};
-use crate::verbs as sdk;
-mod brief {
-    pub(super) use crate::task_verb::{decode_hex, hex32};
-}
-
 /// `can(ask(...))`: one read-only preflight for a typed ask spec.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TaskCanAskRequest {
-    pub ask: super::TaskAskSpec,
+    pub ask: crate::task_verb::TaskAskSpec,
 }
 
 /// One SDK verb with two disjoint wire shapes. Rich fields cannot be
@@ -170,7 +154,7 @@ pub struct TaskWaitRequest {
 #[serde(deny_unknown_fields)]
 pub struct TaskAnswerRequest {
     pub handle: TaskAskHandle,
-    pub word: super::TaskAskWord,
+    pub word: crate::task_verb::TaskAskWord,
 }
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -324,11 +308,11 @@ pub struct TaskUpdateRequest {
     #[serde(default, rename = "resultRef", skip_serializing_if = "Option::is_none")]
     pub result_ref: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub report: Option<super::TaskReportBody>,
+    pub report: Option<crate::task_verb::TaskReportBody>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub report_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub attempt: Option<super::AttemptHandle>,
+    pub attempt: Option<crate::task_verb::AttemptHandle>,
 }
 /// `vault.projects.proposals`: the conversation whose project cards to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -360,7 +344,7 @@ pub struct TaskCreateRequest {
     /// an agent run's TASK runs under its creator only by its host's
     /// binding (OF-532).
     #[serde(default)]
-    pub assignee: Option<super::TaskAssignee>,
+    pub assignee: Option<crate::task_verb::TaskAssignee>,
     /// The caller's idempotency key for a briefed create (OF-220): with
     /// `brief`, the create is a post through the task highway, and one
     /// actor and key name one post.
@@ -368,10 +352,10 @@ pub struct TaskCreateRequest {
     pub intent_key: Option<String>,
     /// The typed brief a post carries (OF-220).
     #[serde(default)]
-    pub brief: Option<super::QueueTaskBrief>,
+    pub brief: Option<crate::task_verb::QueueTaskBrief>,
     /// The TASK's absolute expiry.
     #[serde(default)]
-    pub ttl: Option<super::TaskTtl>,
+    pub ttl: Option<crate::task_verb::TaskTtl>,
     /// The parent TASK this one files under (DOOR-113), by short-id ref or
     /// 32-hex id. The nesting matrix decides, so a Task nests under a
     /// Milestone; absent is a root.
@@ -385,13 +369,13 @@ pub struct TaskCreateRequest {
 pub fn task_create_spec(
     memory: &Memory<'_>,
     input: TaskCreateRequest,
-) -> MemoryResult<super::TaskCreateSpec> {
+) -> MemoryResult<crate::task_verb::TaskCreateSpec> {
     let parent_ref = input
         .parent_ref
         .as_deref()
         .map(|reference| crate::memory::resolve_entity_ref(memory.vault(), reference))
         .transpose()?;
-    let spec = super::TaskCreateSpec::new(
+    let spec = crate::task_verb::TaskCreateSpec::new(
         crate::msgpack_value_from_json(&input.spec)?,
         input.label,
         Some(memory.actor()),
@@ -697,7 +681,6 @@ pub struct InboxMarkRequest {
     pub mark: crate::inbox::NotificationMark,
 }
 
-#[path = "memory.rs"]
 mod memory_requests;
 pub use memory_requests::*;
 

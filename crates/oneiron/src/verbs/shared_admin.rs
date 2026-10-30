@@ -189,7 +189,7 @@ pub fn reset_shared_project_access(
 /// The relationship resolver is the same one all engine contexts use.
 pub fn read_member_projection(
     memory: &Memory<'_>,
-    input: super::sdk::SharedMemberRequest,
+    input: super::SharedMemberRequest,
 ) -> MemoryResult<MemberProjection> {
     let member = EntityId::from_hex(&input.member)
         .map_err(|_| MemoryError::bad_request("member is not an entity id"))?;
