@@ -73,6 +73,7 @@ pub use pad_objects::PadObjectNote;
 pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
     BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSnapshotReceipt,
@@ -94,6 +95,11 @@ const INDEX_SOURCE_PHONETIC: SideTable<EntityId, (), Named> =
 /// `u64be(sequence)`.
 const RESTORE_EPOCH: SideTable<u64, RestoreEpoch, Named> =
     SideTable::new(&side_table::RESTORE_EPOCH);
+/// How long a restore's swap waits, at most, for the writes queued before it
+/// closed the vault's in-memory nonce spends (FIX 12023 W0, L02 10-31): a
+/// spend whose rows have not landed by then is left to the swap's fence,
+/// which refuses it as it refuses one the swap never waited for.
+const SWAP_SPEND_DRAIN_WAIT: Duration = Duration::from_secs(5);
 /// Whose exterior key custody a restored vault holds (ARCH-0038
 /// #erasure-completeness, "Key custody in a side restore").
 #[derive(Clone, Copy)]
@@ -558,11 +564,30 @@ impl Vault {
     /// replacement was made refuses it, and nothing moves: the replacement
     /// would not know those proofs; so does one that holds an agent id looser
     /// than this vault now does (H215).
+    ///
+    /// First, no admission spends a nonce in memory on this handle any more,
+    /// and the swap waits up to `SWAP_SPEND_DRAIN_WAIT` (5 s) for the writes
+    /// queued before, so the rows of every spend made there have landed when
+    /// its fence reads them (FIX 12023 W0, L02 10-31). A spend whose rows
+    /// failed, or are still queued when the wait ends, refuses the swap as
+    /// above. The spends stay closed on this handle when the swap then
+    /// fails; its admissions take the writer, which refuses none of them.
     pub fn swap_in_replacement(
         &self,
         replacement: &Self,
         swap: impl FnOnce() -> std::io::Result<()>,
     ) -> Result<()> {
+        // Waited for before the swap's writer opens, never in it: the
+        // queued writes need that writer to commit.
+        let deadline = Instant::now() + SWAP_SPEND_DRAIN_WAIT;
+        let drained = self.spent_nonces.close_for_swap(deadline)
+            && self.store.wait_for_deferred_commits_until(deadline);
+        if !drained {
+            tracing::warn!(
+                wait_secs = SWAP_SPEND_DRAIN_WAIT.as_secs(),
+                "the writes queued before a restore's swap were not all decided in its wait; its fence refuses it if a nonce spend's rows are among them"
+            );
+        }
         // The archive the swap parks keeps every body instance its rows
         // name, until its custodian releases it (FIX 6022).
         self.store.hold_parked_archive_bodies()?;

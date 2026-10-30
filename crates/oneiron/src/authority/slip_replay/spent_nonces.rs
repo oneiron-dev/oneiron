@@ -24,7 +24,8 @@
 //! stays spent here.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::time::Instant;
 
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
@@ -93,12 +94,17 @@ pub(crate) struct SpentNonces {
     /// in-memory spend's rows are written on it.
     served: OnceLock<Weak<Vault>>,
     nonces: Mutex<Nonces>,
+    /// Wakes a swap that waits for the spends admitted here to be queued
+    /// ([`Self::close_for_swap`]); waited on with the set's lock.
+    queued: Condvar,
 }
 
 #[derive(Default)]
 struct Nonces {
-    /// A restore's swap passed its fence: from then on every admission takes
-    /// the writer, which the swap seals.
+    /// A restore's swap closed this set, before it waits for the spends
+    /// queued here ([`SpentNonces::close_for_swap`]), and its fence keeps it
+    /// closed: from then on every admission takes the writer, which the swap
+    /// seals.
     fenced: bool,
     /// Spent by an admission here and not yet landed, each with the authority
     /// second its slip's replay window ends: it leaves once its rows land, or
@@ -109,6 +115,9 @@ struct Nonces {
     /// Spent in a writer whose transaction is not known to be decided, each
     /// with the id that transaction commits as.
     staged: HashMap<SpentKey, usize>,
+    /// Spent here by an admission whose rows are not queued on the detached
+    /// door yet, which they are just after the lock is let go.
+    queuing: usize,
 }
 
 impl Nonces {
@@ -212,7 +221,17 @@ impl SpentNonces {
         let until = expires_at.saturating_add(WINDOW_SECS);
         nonces.admitted.insert(key, until);
         nonces.leaving.insert((until, key));
+        nonces.queuing += 1;
         true
+    }
+
+    /// Notes that the rows of a spend [`Self::admit`] took are queued on the
+    /// detached door, where a swap's wait for them counts them.
+    fn note_queued(&self) {
+        let mut nonces = self.lock();
+        nonces.queuing = nonces.queuing.saturating_sub(1);
+        drop(nonces);
+        self.queued.notify_all();
     }
 
     /// Stages `key`'s spend in a writer of `vault` (FIX 12023 W0): `false`
@@ -252,12 +271,33 @@ impl SpentNonces {
         self.lock().leave(key);
     }
 
+    /// Closes this set for a restore's swap, first in it (FIX 12023 W0, L02
+    /// 10-31): every later admission takes the writer, so the spends made
+    /// here so far are the last the swap waits for before its writer opens.
+    /// Then waits until `deadline` at most for each of them to be queued on
+    /// the detached door, where the swap's wait for the queue finds it:
+    /// `false` when one is not by then. It stays closed on this handle
+    /// whether the swap goes on or fails; that handle's admissions keep the
+    /// writer's path, which refuses none of them.
+    pub(crate) fn close_for_swap(&self, deadline: Instant) -> bool {
+        let mut nonces = self.lock();
+        nonces.fenced = true;
+        let timeout = deadline.saturating_duration_since(Instant::now());
+        let (nonces, _) = self
+            .queued
+            .wait_timeout_while(nonces, timeout, |now| now.queuing > 0)
+            .unwrap_or_else(PoisonError::into_inner);
+        nonces.queuing == 0
+    }
+
     /// A restore swap's fence over `vault`'s proof freshness, run in the
     /// swap's writer `txn` with `rows_match`, its comparison of the committed
     /// rows, under this set's lock: `false` when an admission spent a nonce
     /// here whose row has not landed, which the replacement cannot know, or
-    /// when the rows differ. Once it passes, nothing more is spent here:
-    /// every later admission takes the writer, which the swap seals.
+    /// when the rows differ. The swap closed this set before it waited for
+    /// the spends queued here ([`Self::close_for_swap`]); once this passes,
+    /// it stays closed: every later admission takes the writer, which the
+    /// swap seals.
     pub(super) fn fence(
         &self,
         vault: &Vault,
@@ -325,6 +365,7 @@ impl SpendDoor {
             failures: 0,
         }
         .queue(served);
+        served.spent_nonces.note_queued();
         true
     }
 }
