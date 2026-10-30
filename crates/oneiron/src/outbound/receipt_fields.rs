@@ -320,6 +320,7 @@ pub(super) fn dispatch_result_receipt(
         held_approval_actor,
         provider_wait,
         provider_wait_held_until,
+        paced_until,
         budget_reservation,
     } = verdict;
     let gate_outcome_kind = gate_outcome;
@@ -420,6 +421,18 @@ pub(super) fn dispatch_result_receipt(
         provider_wait_held_until,
         budget_reservation,
     );
+    // FIX 7948: a send a full window paces names the instant it comes back,
+    // which its executor re-arms at, and the window it waits for.
+    if let Some(edge) = paced_until {
+        receipt
+            .fields
+            .insert("retry_at".to_owned(), edge.to_string());
+        append_optional_receipt_field(
+            &mut receipt,
+            "hold_reason",
+            gate_reason_codes.first().map(String::as_str),
+        );
+    }
     append_contract_receipt(&mut receipt, verb_contract, policy_risk);
     for (key, value) in engine_receipt_fields {
         receipt.fields.insert(key, value);

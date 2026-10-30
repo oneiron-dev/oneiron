@@ -18,9 +18,21 @@ pub(crate) fn record_external_effect_policy(
         approval_context,
         matched_grant,
         envelope_reservation,
+        envelope_wait,
         budget_target: _,
         scoped_capability: _,
     } = governance;
+    // FIX 7948: an Allow that stands on a place in a full window's line
+    // admits nothing; only the chokepoint keeps that place, and it records no
+    // admission for it.
+    if envelope_wait.is_some()
+        && decision.outcome() == GateOutcome::Allow
+        && approval_context != ApprovalContext::Observe
+    {
+        return Err(crate::error::Error::InvariantViolation(
+            "channel identity window wait recorded as an admission",
+        ));
+    }
     if decision.outcome() == GateOutcome::Allow
         && (approval_context != ApprovalContext::Observe
             || !input
@@ -158,5 +170,27 @@ pub(crate) fn record_held_external_effect_policy(
     governance.approve_once = None;
     governance.matched_grant = None;
     governance.envelope_reservation = None;
+    governance.envelope_wait = None;
     record_external_effect_policy(store, wtxn, governance)
+}
+
+impl ExternalEffectGovernance {
+    /// FIX 7948: keeps this send's place in its envelope's line in the
+    /// caller's writer and returns the wait, when the Gate allowed the send
+    /// on an envelope whose window is full. Nothing is admitted, recorded or
+    /// charged: the caller commits the place and brings the send back at the
+    /// wait's `next_eligible_at`, before its `deadline`.
+    pub(crate) fn retain_envelope_wait_in_txn(
+        &mut self,
+        store: &Store,
+        wtxn: &mut heed::RwTxn<'_>,
+    ) -> Result<Option<crate::outbound_grant::ChannelIdentityWindowWait>> {
+        if self.decision.outcome() != GateOutcome::Allow {
+            return Ok(None);
+        }
+        self.envelope_wait
+            .take()
+            .map(|place| place.retain_in_txn(store, wtxn))
+            .transpose()
+    }
 }

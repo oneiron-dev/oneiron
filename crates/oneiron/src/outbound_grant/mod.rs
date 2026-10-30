@@ -18,10 +18,12 @@ pub use self::codec::{
     encode_standing_outbound_grant_body,
 };
 pub use self::consume::{
-    CHANNEL_IDENTITY_GRANT_USAGE_PREFIX, ChannelIdentityGrantOutcome, ChannelIdentityWindowWait,
+    CHANNEL_IDENTITY_GRANT_USAGE_PREFIX, CHANNEL_IDENTITY_WINDOW_WAIT_REASON,
+    ChannelIdentityGrantOutcome, ChannelIdentityWindowWait,
 };
 pub(crate) use self::consume::{
-    ChannelIdentityGrantReservation, reserve_channel_identity_grant_in_txn,
+    ChannelIdentityGrantAdmission, ChannelIdentityGrantReservation, ChannelIdentityGrantRetention,
+    admit_channel_identity_grant_in_txn,
 };
 pub use self::grant::{StandingOutboundGrant, StandingOutboundGrantStatus};
 pub use self::scope::{
