@@ -509,6 +509,7 @@ fn answer_app_message(
                 request,
                 &mut state.residence_index,
                 &mut state.authority_append_stage,
+                &mut state.residence_touch,
             )?
             .queued(conn)
         } else {
