@@ -32,7 +32,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chunks;
-mod narrative_labels;
+pub(super) mod narrative_labels;
 mod write;
 pub(super) use super::call_labels::subject_label;
 use chunks::retry_chunks_in_txn;

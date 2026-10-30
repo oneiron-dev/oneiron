@@ -218,16 +218,23 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(composition) => composition,
             Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
         };
+        // The text lands in durable names, never its pages' labels (FIX 10359).
+        let (text, keep, line_sources) = super::durable_labels::durable_summary(
+            composition.text,
+            &composition.keep,
+            Some(composition.line_sources),
+            &super::durable_labels::label_names(&labels, None),
+        );
         let composed = ComposedSummary {
-            text: &composition.text,
-            keep: &composition.keep,
+            text: &text,
+            keep: &keep,
             params_hash,
             instruction,
             model: self.model.as_str(),
             covers: evidence.covers.clone(),
             messages: evidence.messages.clone(),
             memo,
-            line_sources: Some(composition.line_sources),
+            line_sources,
             arc_work: None,
         };
         // The landing fence reads the whole evidence again, every page's

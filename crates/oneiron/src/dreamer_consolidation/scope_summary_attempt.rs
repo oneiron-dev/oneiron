@@ -47,6 +47,7 @@ mod arc_review;
 mod arc_synopsis;
 mod arc_turns;
 mod chunks;
+mod durable_labels;
 mod output;
 mod window;
 
@@ -361,6 +362,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
             },
         };
+        // The text lands in durable names, never its call's labels (FIX 10359).
+        let names = durable_labels::label_names(&evidence.labels, None);
+        let (text, keep, line_sources) =
+            durable_labels::durable_summary(text, &keep, line_sources, &names);
         let composed = ComposedSummary {
             text: &text,
             keep: &keep,
