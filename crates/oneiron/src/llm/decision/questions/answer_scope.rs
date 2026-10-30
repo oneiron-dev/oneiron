@@ -1,5 +1,5 @@
-//! OF-506 (FIX 1712, 1857, 11827, 12060, 12171): a caller reads its own
-//! standing question, its answers, and what a refresh, a backfill, its
+//! OF-506 (FIX 1712, 1857, 11827, 12060, 12171, 12285): a caller reads its
+//! own standing question, its answers, and what a refresh, a backfill, its
 //! outcome windows, labels and calibration pairs and a projection answer of
 //! them, through its own live lane. A question may be saved under one
 //! credential and read under a narrower one of the same principal; each item
@@ -34,12 +34,13 @@ use crate::settings::ReadDestination;
 use crate::{EntityId, Result, Vault};
 
 /// [`read_question`] as `lane`, the caller's own live lane, reads it (FIX
-/// 12060, 12171): the whole record for a full lane; for a narrowed one, the
-/// record with each unit, and each artifact ask, whose rows the lane does
-/// not read left out, and its saved lane as the lane reads it
-/// ([`crate::claim::FrozenReadLane::reader_view`]), all judged in one
-/// snapshot. An artifact ask names its artifact and each file a folder ask
-/// reads.
+/// 12060, 12171, 12285): the whole record for a full lane; for a narrowed
+/// one, the record with each unit, and each artifact ask, whose rows the
+/// lane does not read left out, and its saved lane as the lane reads it
+/// ([`crate::claim::FrozenReadLane::reader_view`]): its rows as the lane
+/// reads them, its world, facet and audience ids as the lane's own bounds
+/// cover them, all judged in one snapshot. An artifact ask names its
+/// artifact and each file a folder ask reads.
 ///
 /// # Errors
 /// As [`read_question`], and a store failure judging the rows.
@@ -66,11 +67,9 @@ pub fn read_question_in_lane(
         .chain(definition.artifacts.iter().map(artifact_ask_rows))
         .chain(lane_rows.iter().map(|row| vec![*row]))
         .collect();
-    let each = if sets.is_empty() {
-        Vec::new()
-    } else {
-        lane.refs_readable_each(&sets)?
-    };
+    // The saved lane's scope ids are judged by the lane's own bounds, in the
+    // same snapshot (FIX 12285): a base world is no stored row.
+    let (each, bound) = lane.refs_readable_each_with_scope_id_bound(&sets)?;
     // One answer per set: units first, then artifact asks, then the saved
     // lane's rows, each in their order.
     let mut each = each.into_iter();
@@ -82,7 +81,9 @@ pub fn read_question_in_lane(
         .into_iter()
         .filter(|_| each.next().unwrap_or(false))
         .collect();
-    record.read_lane = record.read_lane.reader_view(|row| read.contains(row));
+    record.read_lane = record
+        .read_lane
+        .reader_view(|row| read.contains(row), &bound);
     Ok(Some(record))
 }
 
