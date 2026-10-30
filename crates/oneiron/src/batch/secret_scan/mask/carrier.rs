@@ -476,6 +476,37 @@ impl MaskedText {
             stored: from..to,
         })
     }
+
+    /// The text the reader reads, cut into one piece per stretch of the
+    /// stored text that `cuts` (stored positions, in order) bound: a DOCX
+    /// paragraph's runs, each under one set of marks (FIX 12301). A stretch
+    /// read as it is is cut where the stored text is; a handle reads whole in
+    /// the piece its stretch starts in, so each later piece its stretch
+    /// covers reads none of it. The pieces join to [`Self::text`]. `None`
+    /// when no handle's stretch crosses a cut: each piece then holds its keys
+    /// whole.
+    pub(crate) fn split_at_stored(&self, cuts: &[usize]) -> Option<Vec<String>> {
+        let crosses = self.0.iter().any(|run| {
+            run.handle && cuts.iter().any(|&cut| run.source.start < cut && cut < run.source.end)
+        });
+        if !crosses {
+            return None;
+        }
+        let piece = |at: usize| cuts.partition_point(|&cut| cut <= at);
+        let mut pieces = vec![String::new(); cuts.len() + 1];
+        // The runs' stretches start in order, so each run's piece follows
+        // the one before it.
+        for run in &self.0 {
+            if run.handle {
+                pieces[piece(run.source.start)].push_str(&run.text);
+                continue;
+            }
+            for (offset, character) in run.text.chars().enumerate() {
+                pieces[piece(run.source.start + offset)].push(character);
+            }
+        }
+        Some(pieces)
+    }
 }
 
 /// Where [`str::replace`] replaces `value` in `text`, in characters.
