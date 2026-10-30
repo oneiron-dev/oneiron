@@ -35,7 +35,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
@@ -48,19 +47,61 @@ use serde_json::Value;
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::owner_work_routes::{OwnerWorkView, request_entry};
 use super::recovery_kit_target_routes::RepinView;
-use super::{OwnerReply, blocking, hooked_owner, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/roots", get(roots))
-        .route("/roots/pin", post(pin))
-        .route("/roots/requests", get(pending).post(request))
-        .route("/roots/requests/cancel", post(cancel))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/roots",
+                summary: "The roots this install sees: the one it pins, one page of foreign roots (after, limit) with next, the root a pin awaits, and this install's machine.",
+                row: None,
+            },
+            get(roots),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/pin",
+                summary: "Pins a root on this install from its fingerprint and re-wraps the keys this machine may read under it; a root not stored here yet is awaited.",
+                row: None,
+            },
+            post(pin),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/roots/requests",
+                summary: "The root requests naming this install with no result yet, each with its change and receipt. Ids only.",
+                row: None,
+            },
+            get(pending),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/requests",
+                summary: "Records the owner's root change (pin, activate, restore, anchor) for the target install, ids only; the receipt is recorded and awaiting the target, or says why nothing was recorded.",
+                row: None,
+            },
+            post(request),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/roots/requests/cancel",
+                summary: "Records the owner's cancel of one root request, ids only; it takes effect on the target whenever it syncs, offline or not. The receipt says cancelled, or that the target answered it first (already enacted or refused), which stands.",
+                row: Some("vault.roots.requests.cancel"),
+            },
+            post(cancel),
+        ),
+    ]
 }
 
 /// One root change as a surface shows it: its kind, and the ids it binds,

@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -22,23 +21,61 @@ use oneiron::dreamer_runner::maintenance::agent_health::{
 use oneiron::memory::MemoryError;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/inbox/concern", get(card))
-        .route("/inbox/concern/outcome", post(set_outcome))
-        .route("/inbox/concern/move", post(take_move))
-        .route("/inbox/concern/apply", post(apply_edit))
-        .route(
-            "/inbox/concern/apply-prompt-inject",
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/inbox/concern",
+                summary: "One card, with the run its attempt is in and that attempt's node marked.",
+                row: None,
+            },
+            get(card),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/outcome",
+                summary: "Sets one card's outcome.",
+                row: None,
+            },
+            post(set_outcome),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/move",
+                summary: "Takes one of the card's moves.",
+                row: None,
+            },
+            post(take_move),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/apply",
+                summary: "Applies the Coach's skill edit on one card as the owner approves it.",
+                row: None,
+            },
+            post(apply_edit),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/inbox/concern/apply-prompt-inject",
+                summary: "Applies the Coach's prompt injection on one card as the owner approves or edits it: the failed attempt goes on as a new one, from its pre-fail checkpoint.",
+                row: None,
+            },
             post(apply_prompt_inject),
-        )
+        ),
+    ]
 }
 
 /// The OpenAPI schema of `POST /v1/owner/inbox/concern/outcome`'s body

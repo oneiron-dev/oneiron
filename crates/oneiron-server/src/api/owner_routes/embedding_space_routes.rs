@@ -15,11 +15,10 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::MediaRefused;
 use oneiron::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
@@ -32,28 +31,151 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row, memory_refusal};
 use crate::server::{MediaEmbedRefusal, SyncServer};
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/embedding-spaces", get(list).put(declare))
-        .route("/embedding-spaces/bind", post(bind))
-        .route("/embedding-spaces/one-space", post(one_space))
-        .route("/embedding-spaces/retire", post(retire))
-        .route("/embedding-spaces/move", post(begin_move))
-        .route("/embedding-spaces/move/check", post(check_move))
-        .route("/embedding-spaces/move/approve", post(approve_move))
-        .route("/embedding-spaces/move/undo", post(undo_move))
-        .route("/embedding-spaces/move/abandon", post(abandon_move))
-        .route("/embedding-spaces/probes", get(probes).post(put_probe))
-        .route("/embedding-spaces/probes/delete", post(delete_probe))
-        .route("/embedding-spaces/refused", get(refused))
-        .route("/embedding-spaces/refused/clear", post(clear_refused))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/embedding-spaces",
+                summary: "Every unanswered contradiction, oldest first.",
+                row: Some("vault.embedding_spaces.list"),
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/embedding-spaces",
+                summary: "Declares or widens one space; a new width is a new space.",
+                row: Some("vault.embedding_spaces.declare"),
+            },
+            put(declare),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/bind",
+                summary: "Binds one kind slot, or returns it to its default.",
+                row: Some("vault.embedding_spaces.bind"),
+            },
+            post(bind),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/one-space",
+                summary: "The one-space preset.",
+                row: Some("vault.embedding_spaces.one_space"),
+            },
+            post(one_space),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/retire",
+                summary: "Drops a space no slot binds and no open move names, with its rows.",
+                row: Some("vault.embedding_spaces.retire"),
+            },
+            post(retire),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/move",
+                summary: "Starts moving every slot the incumbent serves to the candidate.",
+                row: Some("vault.embedding_spaces.move"),
+            },
+            post(begin_move),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/move/check",
+                summary: "Runs the move's probes now, through both spaces' towers, and acts on the reading.",
+                row: Some("vault.embedding_spaces.move_check"),
+            },
+            post(check_move),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/move/approve",
+                summary: "The owner's yes over a check that did not read not worse.",
+                row: Some("vault.embedding_spaces.move_approve"),
+            },
+            post(approve_move),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/move/undo",
+                summary: "Binds a swapped-in move's incumbent again.",
+                row: Some("vault.embedding_spaces.move_undo"),
+            },
+            post(undo_move),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/move/abandon",
+                summary: "Ends an open move with no swap.",
+                row: Some("vault.embedding_spaces.move_abandon"),
+            },
+            post(abandon_move),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/embedding-spaces/probes",
+                summary: "Probes.",
+                row: Some("vault.embedding_spaces.probes.list"),
+            },
+            get(probes),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/probes",
+                summary: "Stores one probe the owner, or another model, wrote.",
+                row: Some("vault.embedding_spaces.probes.put"),
+            },
+            post(put_probe),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/probes/delete",
+                summary: "Delete probe.",
+                row: Some("vault.embedding_spaces.probes.delete"),
+            },
+            post(delete_probe),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/embedding-spaces/refused",
+                summary: "Every document the space's model refused by its content, with the reason and when.",
+                row: None,
+            },
+            get(refused),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/embedding-spaces/refused/clear",
+                summary: "Forgets one refusal, so the backfill sends the same bytes to the space's model again.",
+                row: None,
+            },
+            post(clear_refused),
+        ),
+    ]
 }
 
 /// How long `move/check` holds the request for the probes before it answers

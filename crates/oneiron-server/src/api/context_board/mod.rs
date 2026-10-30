@@ -281,7 +281,7 @@ pub(crate) struct ContextBoardBudget {
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read, or core:write when naming a turn.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "The named turn is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The named turn's board is already recorded, the turn is another actor's, or a selected document is not readable. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The named turn's board is already recorded, the turn is another actor's, or a selected document is not readable. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Context-board hydration failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
