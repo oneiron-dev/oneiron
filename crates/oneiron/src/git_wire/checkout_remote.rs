@@ -37,15 +37,18 @@ impl GitWire<'_> {
         Ok(self)
     }
 
+    /// The custody remote policy every leased materialization passes, door
+    /// or none (FIX 8785): a door checkout's source is this vault's origin
+    /// store, and no checkout inherits a remote or credential it could push
+    /// through outside the door.
     pub(super) fn preflight_checkout_remote(&self, repo: &GitWireRepo) -> GitWireResult<()> {
-        if self.checkout_door.is_none() {
-            return Ok(());
-        }
-        let serving_root = crate::origin::smart_http::origin_serving_root(self.vault)?;
-        if repo.common_dir().parent() != Some(serving_root.as_path()) {
-            return Err(invalid(
-                "door checkout requires this vault's origin repository",
-            ));
+        if self.checkout_door.is_some() {
+            let serving_root = crate::origin::smart_http::origin_serving_root(self.vault)?;
+            if repo.common_dir().parent() != Some(serving_root.as_path()) {
+                return Err(invalid(
+                    "door checkout requires this vault's origin repository",
+                ));
+            }
         }
         // A linked worktree inherits common config. Refuse a source carrying
         // remote/credential/include/rewrite config instead of shadowing it:
@@ -76,7 +79,7 @@ impl GitWire<'_> {
             .any(|prefix| key.starts_with(prefix))
             {
                 return Err(invalid(
-                    "door checkout refuses inherited remote or credential configuration",
+                    "leased checkout refuses inherited remote or credential configuration",
                 ));
             }
         }
@@ -89,11 +92,11 @@ impl GitWire<'_> {
         tree: &Path,
         lease: &CheckoutLeaseAct,
     ) -> GitWireResult<()> {
+        let _guard = lock_repository(repo.common_dir())?;
+        self.preflight_checkout_remote(repo)?;
         if self.checkout_door.is_none() {
             return Ok(());
         }
-        let _guard = lock_repository(repo.common_dir())?;
-        self.preflight_checkout_remote(repo)?;
         self.configure_checkout_remote_named(repo, tree, lease, served_repo_name(repo)?)
     }
 
