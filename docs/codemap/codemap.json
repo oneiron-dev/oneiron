@@ -32462,7 +32462,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/embed/routing.rs",
-     "purpose": "Which embedder a leased row goes to, by the verdict of the reconciler's rung on it (FIX 10009)",
+     "purpose": "Which embedder a leased row goes to, by the verdict of the reconciler's rung on it (FIX 10009) and the row's…",
      "surface": {
       "crate-vis": 2
      }
@@ -46886,7 +46886,7 @@
      "surface": {
       "crate-vis": 2,
       "enum": 3,
-      "fn": 2,
+      "fn": 3,
       "struct": 3,
       "trait": 1
      }
