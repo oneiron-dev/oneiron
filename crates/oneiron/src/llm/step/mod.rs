@@ -57,6 +57,7 @@ pub use self::trap::{
     trap_park_owner,
 };
 pub(crate) use self::trap_binding::{OpenTrapWait, open_trap_waits};
+pub use self::trap_sent::heal_sent_markers;
 pub use self::types::{
     DREAMER_STEP_INLINE_RESPONSE_MAX_BYTES, DREAMER_STEP_PREDICATE, DREAMER_STEP_RETRY_BACKOFF_MS,
     DREAMER_STEP_VALUE_KEYS, DREAMER_STEP_VALUE_SCHEMA_VERSION, DREAMER_TRAP_PREDICATE,

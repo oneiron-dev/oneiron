@@ -205,8 +205,9 @@ fn send_trap_signal_in_txn(
         return Err(invalid_trap("dreamer trap signal hash mismatch"));
     }
     // A matching signal for a trap already signalled is a delivery of the
-    // first one (FIX 9931): it answers the chain's head and writes nothing,
-    // so no transition or wake runs twice.
+    // first one (FIX 9931): it answers the chain's head and adds no second
+    // transition or wake. Its marker put repairs drift; pre-index Sent traps
+    // are healed by the boot/provider-recovery scan, not by redelivery.
     if matches!(
         head.state,
         DreamerTrapState::Sent | DreamerTrapState::Consumed

@@ -198,5 +198,6 @@ pub use budget::{
     RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
     VaultResidentLedger,
 };
+pub use step::heal_sent_markers;
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

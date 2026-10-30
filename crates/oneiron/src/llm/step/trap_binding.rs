@@ -164,6 +164,15 @@ pub(super) fn trap_binding_read(
     trap_binding_read_in_txn(vault, &rtxn, anchor)
 }
 
+/// Every binding in one recovery transaction's snapshot. The Sent-marker
+/// healer filters to attempt-scoped rows before it reads each trap head.
+pub(super) fn trap_binding_rows_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Vec<(EntityId, TrapBindingRow)>> {
+    TRAP_BINDING.scan(&vault.store, rtxn)
+}
+
 /// One open `dreamer.trap` wait: created, waiting or sent, not yet consumed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OpenTrapWait {

@@ -403,8 +403,8 @@ fn clear_stale_sent_marker(vault: &Vault, anchor: &EntityId) {
 /// Sent markers are walked, and consume re-checks each one against its
 /// private binding, so a synced claim never names what resumes. Delegated
 /// waits stay the peer sweep's. One trap that fails its checks is logged and
-/// left; it never stops the pass. With no vault migration, a trap Sent before
-/// this index existed gains a marker only if its signal is redelivered.
+/// left; it never stops the pass. With no migration step, the boot/provider-
+/// recovery scan writes any marker a pre-index or drifted Sent trap lacks.
 pub(crate) fn resume_signalled_steps(vault: &Vault, now_ms: u64) -> Result<usize> {
     let runner = crate::dreamer_runner::DreamerRunnerStore::new(vault);
     let mut resumed = 0;
