@@ -13,7 +13,10 @@ use super::*;
 ///
 /// The call is attributed to the authenticated credential. A request no
 /// credential authenticates is answered as before, by the handler's own
-/// refusal, and records nothing: there is nobody to scope it to.
+/// refusal, and records nothing: there is nobody to scope it to. The
+/// credential resolved here rides to the invocation claim inside, which
+/// resolves none of its own (FIX 2005). A refusal that already names its
+/// call's receipt, a replayed one naming its first call's, keeps it.
 pub(super) async fn facade_call_receipt(
     State(server): State<Arc<SyncServer>>,
     request: Request,
@@ -23,6 +26,9 @@ pub(super) async fn facade_call_receipt(
     let Ok(auth) = CoreAuth::from_request_parts(&mut parts, &server).await else {
         return next.run(Request::from_parts(parts, body)).await;
     };
+    parts
+        .extensions
+        .insert(super::invocations::ResolvedCaller(auth.clone()));
     // OF-063: the no-record exception serves only a caller verified in the
     // session, judged on arrival and again before the receipt is written.
     let principal = call_receipt::request_principal(&auth);
@@ -123,7 +129,9 @@ pub(super) async fn facade_call_receipt(
         },
     );
     if let Some(mut refusal) = refusal {
-        refusal.body.error.receipt_ref = stamp.receipt_ref().map(str::to_owned);
+        if refusal.body.error.receipt_ref.is_none() {
+            refusal.body.error.receipt_ref = stamp.receipt_ref().map(str::to_owned);
+        }
         response = refusal.reply();
     }
     stamp.stamp_header(&mut response);
