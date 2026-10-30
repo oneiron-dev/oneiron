@@ -44,6 +44,10 @@ const SELECTOR_DATA_CLASS_CEILING: &str = "data_class_ceiling";
 const SELECTOR_TOOL_DATA_CLASS: &str = "tool_data_class";
 const SELECTOR_ENDPOINT: &str = "endpoint";
 
+/// The actor a dial's own match names on both sides, where the caller
+/// matches the grant's principal itself.
+const DIAL_ACTOR: &str = "dial";
+
 /// Scope dial selected by the owner when minting a standing outbound grant.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 #[non_exhaustive]
@@ -161,14 +165,49 @@ impl StandingOutboundGrantScope {
         id: EntityId,
         policy_frontier: &[u8; 32],
     ) -> Result<GrantBound> {
+        self.bound_over(
+            principal_ref,
+            [
+                format!("{SELECTOR_GRANT}:{}", id.to_hex()),
+                format!(
+                    "{SELECTOR_POLICY_FRONTIER}:{}",
+                    crate::entity_id::bytes_to_hex_lower(policy_frontier)
+                ),
+            ],
+        )
+    }
+
+    /// Whether this dial's bound contains the effect `verb` on `channel`, to
+    /// `counterparty` inside `brief_ref`, as
+    /// [`StandingOutboundGrant::covers_effect`] decides it for a grant. The
+    /// actor axis is the caller's to match: both sides name one actor here.
+    #[must_use]
+    pub fn matches_effect(
+        &self,
+        verb: &str,
+        channel: &str,
+        counterparty: Option<&str>,
+        brief_ref: Option<&str>,
+    ) -> bool {
+        let Ok(bound) = self.bound_over(DIAL_ACTOR, std::iter::empty()) else {
+            return false;
+        };
+        effect_candidates(DIAL_ACTOR, verb, channel, counterparty, brief_ref)
+            .iter()
+            .any(|candidate| bound.contains(candidate))
+    }
+
+    /// This dial's bound for `principal_ref`, with `selectors` beside the
+    /// dial's own. Selectors no effect names never change what it contains.
+    fn bound_over(
+        &self,
+        principal_ref: &str,
+        selectors: impl IntoIterator<Item = String>,
+    ) -> Result<GrantBound> {
         self.validate()?;
-        let (class, mut selectors, target) = self.axes();
-        selectors.push(format!("{SELECTOR_GRANT}:{}", id.to_hex()));
-        selectors.push(format!(
-            "{SELECTOR_POLICY_FRONTIER}:{}",
-            crate::entity_id::bytes_to_hex_lower(policy_frontier)
-        ));
-        let mut envelope = ActionEnvelope::new(selectors)?;
+        let (class, mut dial_selectors, target) = self.axes();
+        dial_selectors.extend(selectors);
+        let mut envelope = ActionEnvelope::new(dial_selectors)?;
         if let Some(target) = target {
             envelope = envelope.with_target(target)?;
         }
