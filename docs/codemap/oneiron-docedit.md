@@ -65,7 +65,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/graphic/asset.rs` | src | s | 2 crate-vis | — | Asset admission: the binding, provenance and stored bytes, checked before any byte is interpreted; and… |
 | `src/graphic/drawingml.rs` | src | s | 1 fn | — | A compiled drawing as DrawingML: one `p:grpSp` whose child space is the viewBox, for a slide's `p:spTree` |
 | `src/graphic/geometry.rs` | src | m | 14 crate-vis | — | Geometry for the closed subset: basic shapes as presets under a kept transform, polylines, polygons and… |
-| `src/graphic/mod.rs` | src | m | 16 struct · 9 enum · 2 fn · 1 const | AssetRecord, AssetUse, Cap, CompiledGraphic, Drawing, Extent, Frame, GenerationReceipt +17 | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
+| `src/graphic/mod.rs` | src | m | 16 struct · 9 enum · 3 fn · 1 const | AssetRecord, AssetUse, Cap, CompiledGraphic, Drawing, Extent, Frame, GenerationReceipt +17 | The graphic compiler: an asset a design plan places becomes editable DrawingML shapes (an SVG in the closed… |
 | `src/graphic/path.rs` | src | m | 11 crate-vis | — | SVG number, path-data and transform grammars, strict: a string that is not in the grammar is refused whole… |
 | `src/graphic/svg.rs` | src | m | 1 crate-vis | — | The closed SVG subset compiled to native shapes |
 | `src/graphic/tests.rs` | test | L | — | — | ONE-2534 acceptance: one fixture per primitive and path command with exact EMU geometry, every refused… |
@@ -147,19 +147,19 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/pptx_comments/identities.rs` | src | m | 2 fn · 8 crate-vis | — | Imported slide/shape identities and conservative creation-ID re-binding |
 | `src/pptx_comments/links.rs` | src | m | 13 crate-vis | — | OPC link additions and modern-comment part discovery; retained XML insertion only |
 | `src/pptx_comments/mod.rs` | src | s | 3 re-export | — | Narrow, byte-preserving modern PowerPoint comment edits and the slide and shape identities they anchor to |
-| `src/pptx_comments/model.rs` | src | m | 8 struct · 5 enum · 5 fn · 17 crate-vis | PptxAnchorOutcome, PptxAuthor, PptxCommentAction, PptxCommentEdit, PptxCommentEffects, PptxCommentLimits, PptxCommentTarget, PptxDriftReason +5 | PowerPoint comment requests, inspection facts, codec limits and typed refusals |
+| `src/pptx_comments/model.rs` | src | m | 8 struct · 5 enum · 6 fn · 17 crate-vis | PptxAnchorOutcome, PptxAuthor, PptxCommentAction, PptxCommentEdit, PptxCommentEffects, PptxCommentLimits, PptxCommentTarget, PptxDriftReason +5 | PowerPoint comment requests, inspection facts, codec limits and typed refusals |
 | `src/pptx_comments/xml.rs` | src | s | 17 crate-vis | — | PPTX comment XML spans, queries and surgery |
 | `src/pptx_comments/xml/parse.rs` | src | m | 5 crate-vis | — | Namespace-aware parsing for PPTX comment XML |
-| `src/resource.rs` | src | m | 4 struct · 2 enum · 1 trait · 22 fn · 1 const | CapacityHit, Dimension, Hold, MeasuringPort, ResourcePort, ResourceRefusal, Resources | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
-| `src/retained_opc/mod.rs` | src | s | 1 enum · 2 fn · 1 type · 2 re-export · 2 crate-vis | Error | Bounded, retained OPC archives |
+| `src/resource.rs` | src | m | 4 struct · 2 enum · 1 trait · 27 fn · 1 const | CapacityHit, Dimension, Hold, MeasuringPort, ResourcePort, ResourceRefusal, Resources | The memory one document operation reserves before it allocates, and the deadline it runs within (Rule 5; FIX… |
+| `src/retained_opc/mod.rs` | src | s | 1 enum · 2 fn · 1 type · 1 re-export · 2 crate-vis | Error | Bounded, retained OPC archives |
 | `src/retained_opc/package.rs` | src | m | 2 struct · 1 enum · 8 fn · 1 re-export · 1 crate-vis | Editability, Limits, Package | Retained OPC package state and copy-through writing |
 | `src/retained_opc/package/open.rs` | src | m | 1 fn · 4 crate-vis | — | Retained ZIP admission, metadata inspection and expansion |
 | `src/retained_opc/package/parts.rs` | src | m | 1 struct · 12 fn · 7 crate-vis | Relationship | The add-part and remove-part doors |
 | `src/retained_opc/package/zip32.rs` | src | s | 6 crate-vis | — | Classic ZIP's little-endian record fields, and the compressed length a part takes, for the package's reader… |
 | `src/retained_opc/xml/ffi.rs` | src | s | 17 crate-vis | — | Minimal Expat C ABI |
-| `src/retained_opc/xml/mod.rs` | src | s | 1 re-export · 1 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
-| `src/retained_opc/xml/patch.rs` | src | s | 2 crate-vis | — | Private checked edit authority |
-| `src/retained_opc/xml/retained.rs` | src | m | 1 struct · 4 crate-vis | XmlLimits | One authoritative parse |
+| `src/retained_opc/xml/mod.rs` | src | s | 2 crate-vis | — | Bounded source-indexed XML part, with checked semantic patches |
+| `src/retained_opc/xml/patch.rs` | src | s | 3 crate-vis | — | Private checked edit authority |
+| `src/retained_opc/xml/retained.rs` | src | m | 4 crate-vis | — | One authoritative parse |
 | `src/xlfn.rs` | src | s | 2 fn | — | Excel's storage qualifiers for post-2007 worksheet functions |
 | `src/xlsx_body.rs` | src | m | 8 re-export | — | SpreadsheetML workbook read and projection seam |
 | `src/xlsx_body/attachments.rs` | src | m | 5 crate-vis | — | Drawing, note, table and slicer changes after an axis edit |
