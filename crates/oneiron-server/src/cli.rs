@@ -60,6 +60,10 @@ pub use owner_args::{
     LegalHoldsCommand, SecretSourceArgs, UnlockMethod, VaultKeyAddDeviceArgs, VaultKeyArgs,
     VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
+pub use owner_args::{
+    PackRemoveArgs, PacksCommand, SubscriptionListArgs, SubscriptionPutArgs,
+    SubscriptionRevokeArgs, SubscriptionsCommand,
+};
 pub use recovery_kit_args::{
     KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
     RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
@@ -136,6 +140,13 @@ pub enum Command {
     /// Register and rotate read the value from stdin.
     #[command(subcommand)]
     Secrets(SecretsCommand),
+    /// Remove an installed pack from a stopped vault.
+    #[command(subcommand)]
+    Packs(PacksCommand),
+    /// An agent's subscriptions to a built-in channel's messages: put one,
+    /// list them, or revoke one.
+    #[command(subcommand)]
+    Subscriptions(SubscriptionsCommand),
     /// A stopped vault's data key: its wraps (password, passkey, escrow,
     /// device), this install's checkpoint signer and a passkey's PRF input.
     #[command(subcommand)]
@@ -998,6 +1009,8 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Export(args) => commands::export(*args),
         Command::SecretScan(args) => commands::secret_scan(*args),
         Command::Secrets(command) => commands::secrets(command),
+        Command::Packs(command) => commands::packs(command),
+        Command::Subscriptions(command) => commands::subscriptions(command),
         Command::VaultKey(command) => commands::vault_key(command),
         Command::RecoveryKit(command) => commands::recovery_kit(command),
         Command::Import(command) => commands::import(command),
