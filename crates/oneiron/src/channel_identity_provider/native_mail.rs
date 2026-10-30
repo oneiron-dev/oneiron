@@ -3,10 +3,17 @@ mod canonical;
 mod host_pass;
 mod mailbox;
 pub mod pack;
+mod skipped;
 pub(crate) use canonical::{CanonicalMailSend, approval_digest_from_frozen_payload};
 pub use host_pass::NativeMailInboxPass;
 pub use mailbox::PREDICATE_NATIVE_MAIL_MAILBOX;
 pub use pack::{NativeMailPack, PreparedNativeMailSend};
+pub use skipped::{
+    NATIVE_MAIL_SET_ASIDE_AFTER_STOPS, NativeMailSkippedMessage, native_mail_skipped_messages,
+};
+pub(crate) use skipped::{
+    drop_native_mail_skipped_messages_in_txn, record_native_mail_skipped_message,
+};
 
 use super::shared_validate::{
     normalize_domain, normalize_email_address, split_email_address,

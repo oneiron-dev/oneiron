@@ -96,12 +96,14 @@ pub(crate) use self::assignment::{
 use self::codec::validate_channel_identity_body_bytes;
 pub(crate) use self::codec::validate_channel_identity_claim_structure;
 pub(crate) use self::codec::validate_channel_identity_put_carrier;
+pub(crate) use self::keys::SHIPPED_OUTBOUND_SEND_POSTURE;
 #[cfg(test)]
 use self::record::StoredIdentityParts;
 pub use self::sender::ChannelIdentityFaceClassifier;
 pub(crate) use self::sender::channel_identity_selection_candidates_in_txn;
 pub(crate) use self::sender::channel_identity_send_holder_in_txn;
 pub(crate) use self::sender::enrich_dispatch_channel_identity;
+pub(crate) use self::sender::outbound_send_runs_under_shipped_posture_in_txn;
 pub(crate) use self::sender::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::transition::{
     IdentityTransition, REASON_QUARANTINE_SHIPPED_WAIT_POLICY,

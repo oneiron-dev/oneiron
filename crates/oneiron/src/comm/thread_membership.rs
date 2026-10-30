@@ -293,6 +293,7 @@ pub(super) fn apply_thread_membership_in_txn(
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
                 heads,
+                source_stamped: false,
             })
         }
         ProjectorAction::LeaveThread => {
@@ -358,6 +359,7 @@ pub(super) fn apply_thread_membership_in_txn(
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
                 heads,
+                source_stamped: false,
             })
         }
         _ => Err(CommError::InvalidRecord),

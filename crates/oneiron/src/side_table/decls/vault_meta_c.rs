@@ -390,6 +390,9 @@ side_tables! {
     /// An inbound STOP this replica has not projected yet: its party and channel, which hold a
     /// send until the projection that releases it or the event's delete. Key: id16 (the event).
     COMM_PENDING_STOP: VaultMeta b"comm.pending_stop.v1:" Named;
+    /// A durable send receipt the comm projector's import skipped, written when it first warned
+    /// about it: the reason and when. Node-local. Key: id16 (the receipt's TASK).
+    COMM_SKIPPED_SEND_RECEIPT: VaultMeta b"comm.skipped_send_receipt.v1:" Named;
     /// Time-ordered commitment due-index row. Key: u64be + u8 + id16 + id16.
     COMMITMENT_DUE_PRIMARY: VaultMeta b"commitment_due:v1:" Raw;
     /// Instance and phase to primary due-row key. Key: id16 + u8.

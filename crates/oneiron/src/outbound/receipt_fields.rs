@@ -391,6 +391,16 @@ pub(super) fn dispatch_result_receipt(
         APPROVAL_DIGEST_FIELD,
         approval_digest.as_deref(),
     );
+    // The sender's send ran under the posture the default manifest ships:
+    // the vault's manifests name no act row for its pairing.
+    if request.sender_posture_fallback {
+        receipt.fields.insert(
+            SEND_POSTURE_FALLBACK_FIELD.to_owned(),
+            crate::channel_identity::SHIPPED_OUTBOUND_SEND_POSTURE
+                .as_str()
+                .to_owned(),
+        );
+    }
     // The provider's own stated cool-down, normalized to whole seconds and
     // stamped beside the gate evidence rather than mixed into it. Only a
     // well-formed value is promoted: the connector's raw string still
@@ -512,6 +522,10 @@ pub(super) fn dispatch_result_receipt(
         budget_pool,
     }
 }
+
+/// Receipt field naming the posture a send ran under when the vault's
+/// manifests name no act row for its sender's pairing: the shipped one.
+pub(crate) const SEND_POSTURE_FALLBACK_FIELD: &str = "send_posture_fallback";
 
 /// Receipt field naming the kind of provider wait a queued send keeps (FIX
 /// 8818).

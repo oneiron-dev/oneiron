@@ -11,11 +11,14 @@ use reqwest::header::HeaderValue;
 mod caldav;
 mod feed_poll;
 mod ics;
+mod safeguard;
 mod transcript_drain;
 mod xml;
 pub(crate) use caldav::HttpCalDav;
 pub(crate) use feed_poll::spawn_ics_feed_polls;
 pub(crate) use ics::HttpIcsFeed;
+pub(crate) use safeguard::calendar_body_screener;
+pub use safeguard::install_calendar_label_head;
 pub(crate) use transcript_drain::spawn_pending_transcript_drain;
 
 /// How long one calendar read or submission may take in all: a feed or a
