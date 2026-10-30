@@ -344,6 +344,14 @@ pub trait HeldOutReplayNotes {
         receipts: &[String],
     ) -> Result<crate::skill_optimize::SkillReplayResponses>;
 
+    /// The common judge rubric (the active shared `judge` skill) and its pin,
+    /// which the tradeoff question reads beside the axes it weighs (FIX
+    /// 3584); `None` while none is in force. A host whose judge reads a
+    /// rubric overrides this; the default supplies none.
+    fn rubric(&self) -> Result<Option<crate::skill_optimize::JudgeRubric>> {
+        Ok(None)
+    }
+
     /// Persist every typed question and receipt, including abstentions, in
     /// the host's ordinary decision journal. Failure aborts scoring.
     fn record_decision(
