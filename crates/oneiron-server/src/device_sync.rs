@@ -130,7 +130,9 @@ impl DeviceSyncHost {
         admit: HousekeepingAdmission,
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396).
-        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, admit);
+        // An import the reap freeze refused goes again at its thaw (FIX 12154).
+        let freeze = server.ai.dreamer_control().map(|control| control.pause);
+        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, admit, freeze);
         match open(server, dial, mesh, admission).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {

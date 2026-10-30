@@ -13,7 +13,9 @@
 //! taken in before its first session, and deletes the file of each one taken
 //! in before. On a managed vault each import runs under an
 //! admission of the reap freeze (FIX 11796): a frozen vault takes none, and
-//! the archive waits on disk for the next start. A live member's device
+//! the archive waits on disk until the freeze lifts, when the receiver takes
+//! in the kept archives again in the same run (FIX 12154), or until the next
+//! start. A live member's device
 //! holds the same sessions, and a removal wakes them. A failed session is
 //! tried again after a wait that doubles from
 //! [`REMOVAL_DELIVERY_RETRY_FIRST`] to [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs
@@ -22,12 +24,13 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use oneiron::federation::RemovalExportCopy;
 use oneiron::sync::SyncTransportCredential;
 use serde::Deserialize;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::DeviceSyncHost;
@@ -48,6 +51,62 @@ const ARCHIVE_DIR: &str = "removal-archives";
 const DELIVERY_PATH: &str = "/v1/shared/removal-delivery";
 const ACK_PATH: &str = "/v1/shared/removal-delivery/ack";
 
+/// The reap freeze's current epoch, as the Dreamer's control reads it
+/// (FIX 6909): `true` once frozen, and closed by the thaw that starts the
+/// next.
+pub(super) type FreezeEpoch = Arc<dyn Fn() -> watch::Receiver<bool> + Send + Sync>;
+
+/// The admission each import takes (FIX 11796), noting each import the
+/// reap freeze refuses, and the freeze's epoch, whose thaw takes those
+/// archives in again in the same run (FIX 12154).
+struct ImportGate {
+    admit: HousekeepingAdmission,
+    refused: Arc<AtomicBool>,
+    freeze: Option<FreezeEpoch>,
+}
+
+impl ImportGate {
+    /// `admit`, the host's gate, with each refusal noted; `freeze`, the
+    /// host's freeze epoch where it has one.
+    fn new(admit: HousekeepingAdmission, freeze: Option<FreezeEpoch>) -> Self {
+        let refused = Arc::new(AtomicBool::new(false));
+        let noted = Arc::clone(&refused);
+        let admit: HousekeepingAdmission = Arc::new(move || {
+            let admission = admit();
+            if admission.is_none() {
+                noted.store(true, Ordering::SeqCst);
+            }
+            admission
+        });
+        Self {
+            admit,
+            refused,
+            freeze,
+        }
+    }
+
+    /// Returns once an import the freeze refused may be tried again: the
+    /// freeze has lifted. Pending while none was refused, or with no epoch
+    /// to watch. Cancel-safe: it only reads the epoch.
+    async fn thawed(&self) {
+        match &self.freeze {
+            Some(epoch) if self.refused.load(Ordering::SeqCst) => {
+                // A thaw closes the frozen epoch; an epoch that reads
+                // unpaused holds no freeze.
+                let _ = epoch().wait_for(|paused| !*paused).await;
+            }
+            _ => std::future::pending().await,
+        }
+    }
+
+    /// Takes in again, the freeze lifted, the archives kept on disk.
+    async fn retry(&self, vault: &Arc<oneiron::Vault>, credential_file: &Path, archives: &Path) {
+        self.refused.store(false, Ordering::SeqCst);
+        tracing::info!("the reap freeze lifted; kept removal archives are taken in again");
+        import_kept(vault, &self.admit, credential_file, archives).await;
+    }
+}
+
 /// The running receiver.
 pub(super) struct Receiver {
     stop: oneshot::Sender<()>,
@@ -60,13 +119,15 @@ impl Receiver {
     /// off the mesh), else over the mesh to the home machine where the link
     /// has a mesh host (FIX 11196). `None` where neither is in reach. What
     /// it receives goes into `vault`, this device's own, each import under an
-    /// admission `admit` grants.
+    /// admission `admit` grants; an import it refuses is tried again when
+    /// `freeze`, the host's reap freeze epoch, thaws (FIX 12154).
     #[cfg(feature = "mesh")]
     pub(super) fn start(
         dial: &Dial,
         mesh: Option<&MeshHost>,
         vault: &Arc<oneiron::Vault>,
         admit: HousekeepingAdmission,
+        freeze: Option<FreezeEpoch>,
     ) -> Option<Self> {
         use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
 
@@ -75,11 +136,12 @@ impl Receiver {
             .parent()
             .map_or_else(|| PathBuf::from(ARCHIVE_DIR), |dir| dir.join(ARCHIVE_DIR));
         let vault = Arc::clone(vault);
+        let gate = ImportGate::new(admit, freeze);
         let (stop, stopped) = oneshot::channel();
         if super::direct(&dial.url).is_ok() {
             let base = http_base(&dial.url)?;
             let task =
-                tokio::spawn(receive(base, vault, admit, credential_file, archives, stopped));
+                tokio::spawn(receive(base, vault, gate, credential_file, archives, stopped));
             return Some(Self { stop, task });
         }
         let mesh = mesh?;
@@ -90,7 +152,7 @@ impl Receiver {
             dialer,
             host,
             vault,
-            admit,
+            gate,
             credential_file,
             archives,
             stopped,
@@ -106,6 +168,7 @@ impl Receiver {
         _mesh: Option<&MeshHost>,
         _vault: &Arc<oneiron::Vault>,
         _admit: HousekeepingAdmission,
+        _freeze: Option<FreezeEpoch>,
     ) -> Option<Self> {
         None
     }
@@ -170,19 +233,22 @@ fn mesh_host(url: &str) -> String {
 }
 
 /// Sessions back to back until `stop`, waiting after each failed one, once
-/// the archives an earlier run kept but did not import are taken in.
+/// the archives an earlier run kept but did not import are taken in. When
+/// the reap freeze that refused an import lifts, the session in flight is
+/// dropped and the kept archives are taken in again (FIX 12154).
 async fn receive(
     base: reqwest::Url,
     vault: Arc<oneiron::Vault>,
-    admit: HousekeepingAdmission,
+    gate: ImportGate,
     credential_file: PathBuf,
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
 ) {
+    let admit = &gate.admit;
     tokio::select! {
         biased;
         _ = &mut stop => return,
-        () = import_kept(&vault, &admit, &credential_file, &archives) => {}
+        () = import_kept(&vault, admit, &credential_file, &archives) => {}
     }
     // FIX 6969: a redirect is answered, never followed with the slip
     // headers; without a client the receiver cannot run.
@@ -201,9 +267,18 @@ async fn receive(
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
-            session = session(&client, &base, &vault, &admit, &credential_file, &archives) => {
-                session
+            () = gate.thawed() => None,
+            session = session(&client, &base, &vault, admit, &credential_file, &archives) => {
+                Some(session)
             }
+        };
+        let Some(session) = session else {
+            tokio::select! {
+                biased;
+                _ = &mut stop => return,
+                () = gate.retry(&vault, &credential_file, &archives) => {}
+            }
+            continue;
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -222,35 +297,46 @@ async fn receive(
 
 /// Sessions over the mesh back to back until `stop`, waiting after each
 /// failed one, as at the home's URL, once the archives an earlier run kept
-/// but did not import are taken in.
+/// but did not import are taken in, and again when the reap freeze that
+/// refused an import lifts (FIX 12154).
 #[cfg(feature = "mesh")]
 async fn receive_mesh(
     dialer: Arc<dyn oneiron::sync::SyncDialer>,
     host: String,
     vault: Arc<oneiron::Vault>,
-    admit: HousekeepingAdmission,
+    gate: ImportGate,
     credential_file: PathBuf,
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
 ) {
+    let admit = &gate.admit;
     tokio::select! {
         biased;
         _ = &mut stop => return,
-        () = import_kept(&vault, &admit, &credential_file, &archives) => {}
+        () = import_kept(&vault, admit, &credential_file, &archives) => {}
     }
     let mut wait = REMOVAL_DELIVERY_RETRY_FIRST;
     loop {
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
+            () = gate.thawed() => None,
             session = session_mesh(
                 dialer.as_ref(),
                 &host,
                 &vault,
-                &admit,
+                admit,
                 &credential_file,
                 &archives,
-            ) => session,
+            ) => Some(session),
+        };
+        let Some(session) = session else {
+            tokio::select! {
+                biased;
+                _ = &mut stop => return,
+                () = gate.retry(&vault, &credential_file, &archives) => {}
+            }
+            continue;
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
