@@ -496,6 +496,7 @@ pub(in crate::batch) fn apply_put(
 
     let mut body_changed = true;
     let mut consolidation_dirty = true;
+    let mut stored_before = false;
     let mut previous_skill_record = None;
     // ONE-1449 MATERIAL-6 R1: the optimizer-birth marker this create must
     // either match or be born with. Computed by the SKILL create arm below
@@ -507,6 +508,7 @@ pub(in crate::batch) fn apply_put(
     if let Some(old_record) =
         crate::ports::EntityStoreRead::port_entity_raw_wiped(store, wtxn, &id)?
     {
+        stored_before = true;
         let (old_type, old_occurred, old_learned) = parse_entity_metadata(&old_record)?;
         previous_skill_record = super::decode_previous_skill_record(old_type, &old_record)?;
         // ONE-1141 + ONE-1168 (ARCH-0031 amendment): body-changing overwrites
@@ -837,7 +839,15 @@ pub(in crate::batch) fn apply_put(
     if entity_type == crate::registry::ENTITY_TYPE_TURN && consolidation_dirty {
         crate::dreamer_consolidation::admit_turn_position_in_txn(store, wtxn, &id)?;
     }
-    crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, replicated)?;
+    // A row stored before this put takes no first position from it (FIX 11925).
+    let row_put = if replicated {
+        crate::federation::record_scope::RowPut::Replicated
+    } else if stored_before {
+        crate::federation::record_scope::RowPut::LocalReput
+    } else {
+        crate::federation::record_scope::RowPut::Birth
+    };
+    crate::federation::record_scope::stamp_put(store, wtxn, id, entity_type, data, row_put)?;
     if entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::person_substrate::ensure_person_substrate(
             store, wtxn, id, occurred, learned_at,
