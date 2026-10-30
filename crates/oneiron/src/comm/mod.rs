@@ -58,8 +58,10 @@ pub(crate) use self::descriptor::{
     check_claim_against_descriptor_in_txn, is_restrictive_comm_predicate,
     seed_claim_class_descriptors,
 };
-pub(crate) use self::generic_put_routing::route_projector_only_batch_puts_in_txn;
 pub use self::generic_put_routing::route_projector_only_comm_put_in_txn;
+pub(crate) use self::generic_put_routing::{
+    route_projector_only_batch_puts_in_txn, take_projector_only_batch_puts_in_txn,
+};
 pub use self::parties::resolve_or_create_comm_party;
 pub(crate) use self::parties::{
     CommParties, comm_party_keys_in_txn, count_active_party_claims_in_txn,
@@ -386,12 +388,15 @@ impl CommProjectorIndex {
     }
 }
 
-/// Index changes one committed event authorizes. Empty for events that mutate
-/// no indexed row.
+/// Index changes one committed event authorizes, and the comm heads its rule
+/// wrote. Empty for events that mutate no indexed row and write no head.
 #[derive(Debug, Default)]
 struct ProjectorIndexDelta {
     consumed_gate_ids: Vec<(PartyChannelKey, EntityId)>,
     projected_thread_transition: Option<(PartyThreadKey, (u64, bool))>,
+    /// The heads the rule minted, superseded or retracted. The index reads
+    /// none of them; an in-write projection reports them to its writer.
+    heads: Vec<EntityId>,
 }
 
 /// One source COMM_RECORD event, resolved to the projector rule it fires.

@@ -1,5 +1,7 @@
 //! Ordered idempotent projector pass and the record verbs that feed it.
 
+use std::collections::BTreeSet;
+
 use super::claims::{
     CommClaimValue, CommError, CommResult, PREDICATE_COMM_LAST_TOUCH, PREDICATE_COMM_OPT_OUT,
     PREDICATE_COMM_THREAD_MEMBER,
@@ -9,8 +11,7 @@ use super::parties::{
     reconcile_comm_party_twins, resolve_actor_party_in_txn, resolve_or_create_party_in_txn,
 };
 use super::projection_writes::{
-    latest_claim_transition_boundary, matching_claims_in_txn, projected_comm_claim_id,
-    put_projected_comm_claim_in_txn,
+    latest_claim_transition_boundary, matching_claims_in_txn, put_projected_comm_claim_in_txn,
 };
 use super::receipt_import::import_delivered_send_receipts;
 use super::records::{
@@ -18,7 +19,8 @@ use super::records::{
     put_comm_record_in_txn, read_comm_record_in_txn, validate_channel_class, validate_key_string,
 };
 use super::stop_hold::{
-    holds_pending_stop_in_txn, pending_stop_ids_in_txn, release_pending_stop_in_txn,
+    holds_pending_stop_in_txn, peer_stop_projection_in_txn, pending_stop_ids_in_txn,
+    release_pending_stop_in_txn,
 };
 use super::thread_membership::apply_thread_membership_in_txn;
 use super::{
@@ -161,14 +163,17 @@ fn projector_index_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> CommResult<Co
 #[derive(Default)]
 pub(super) struct RecordedEventProjection {
     index: Option<CommProjectorIndex>,
+    /// The source events projected so far and the heads their rules wrote.
+    written: BTreeSet<EntityId>,
 }
 
 impl RecordedEventProjection {
     /// Projects `event_id`, a `kind` source event this write recorded,
-    /// through the pass's own step in a savepoint of `wtxn`. An event the
-    /// pass leaves waiting (its party not here yet, or a refusal) rolls the
-    /// savepoint back and stays pending for the housekeeping pass; a storage
-    /// failure fails the write.
+    /// through the pass's own step in a savepoint of `wtxn`, and notes the
+    /// event and the heads its rule writes. An event the pass leaves waiting
+    /// (its party not here yet, or a refusal) rolls the savepoint back and
+    /// stays pending for the housekeeping pass; a storage failure fails the
+    /// write.
     pub(super) fn project_in_txn(
         &mut self,
         vault: &Vault,
@@ -176,17 +181,26 @@ impl RecordedEventProjection {
         event_id: EntityId,
         kind: CommEventKind,
     ) -> CommResult<()> {
-        if !rule_reads_index(kind) {
+        self.written.insert(event_id);
+        let heads = if rule_reads_index(kind) {
+            let mut index = match self.index.take() {
+                Some(index) => index,
+                None => projector_index_in_txn(vault, &*wtxn)?,
+            };
+            let projected = project_in_savepoint(vault, wtxn, event_id, &mut index);
+            self.index = Some(index);
+            projected?
+        } else {
             let mut unread = CommProjectorIndex::default();
-            return project_in_savepoint(vault, wtxn, event_id, &mut unread);
-        }
-        let mut index = match self.index.take() {
-            Some(index) => index,
-            None => projector_index_in_txn(vault, &*wtxn)?,
+            project_in_savepoint(vault, wtxn, event_id, &mut unread)?
         };
-        let projected = project_in_savepoint(vault, wtxn, event_id, &mut index);
-        self.index = Some(index);
-        projected
+        self.written.extend(heads);
+        Ok(())
+    }
+
+    /// The source events projected and the heads their rules wrote.
+    pub(super) fn into_written(self) -> BTreeSet<EntityId> {
+        self.written
     }
 }
 
@@ -203,18 +217,19 @@ fn project_in_savepoint(
     wtxn: &mut heed::RwTxn<'_>,
     event_id: EntityId,
     index: &mut CommProjectorIndex,
-) -> CommResult<()> {
+) -> CommResult<Vec<EntityId>> {
     let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
     match project_event_in_txn(vault, &mut savepoint, event_id, index) {
-        Ok(delta) => {
+        Ok(mut delta) => {
             savepoint.commit()?;
+            let heads = std::mem::take(&mut delta.heads);
             index.apply_committed(delta);
-            Ok(())
+            Ok(heads)
         }
         Err(CommError::Engine(error)) if storage_failure(&error) => Err(CommError::Engine(error)),
         Err(_) => {
             index.forget_accounted_txn();
-            Ok(())
+            Ok(Vec::new())
         }
     }
 }
@@ -510,6 +525,7 @@ fn project_event_in_txn(
                         },
                         (occurred_at, kind == CommEventKind::ThreadLeft),
                     )),
+                    heads: Vec::new(),
                 }
             }
             _ => ProjectorIndexDelta::default(),
@@ -558,47 +574,6 @@ fn project_event_in_txn(
     }
     index.expect_own_commit();
     Ok(delta)
-}
-
-/// What a peer's projection of a STOP left on this replica: `Some(true)`
-/// when the STOP's own opt-out stands here, so the rule only consumes gates
-/// and refreshes contacts; `Some(false)` when that opt-out arrived closed, or
-/// a head after the STOP moved the slot; `None` until one of them arrives.
-///
-/// The rule never mints for a peer's STOP. Its own opt-out, or the later head
-/// that answers it, arrives with the peer's state, and a copy minted here
-/// first could stand against a clear the peer's human already made. An older
-/// head standing here is no answer: its clear may be in flight (R1-F1).
-fn peer_stop_projection_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    event: &ProjectedCommEvent<'_>,
-) -> CommResult<Option<bool>> {
-    let channel = event.channel_class.ok_or(CommError::InvalidRecord)?;
-    let own = projected_comm_claim_id(
-        event.source_event_id,
-        &CommClaimValue::OptOut {
-            party_ref: event.party_ref,
-            channel_class: Some(channel.to_owned()),
-            reason: OPT_OUT_REASON_STOP.to_owned(),
-            occurred_at: event.occurred_at,
-        },
-    )?;
-    let history = matching_claims_in_txn(
-        vault,
-        rtxn,
-        event.party_ref,
-        PREDICATE_COMM_OPT_OUT,
-        Some(channel),
-        None,
-        false,
-    )?;
-    if let Some((_, claim)) = history.iter().find(|(id, _)| *id == own) {
-        return Ok(Some(claim.is_standing()));
-    }
-    let answered_later = latest_claim_transition_boundary(&history)
-        .is_some_and(|boundary| event.occurred_at < boundary);
-    Ok(answered_later.then_some(false))
 }
 
 fn apply_projector_rule_in_txn(
@@ -654,12 +629,17 @@ fn apply_projector_rule_in_txn(
                 .copied()
                 .reduce(|best, head| if head.1 > best.1 { head } else { best })
                 .unwrap_or((new_id, occurred_at));
-            for (id, _) in heads {
+            for &(id, _) in &heads {
                 if id != winner {
                     vault.supersede_claim_in_txn(wtxn, &winner, &id, close_at)?;
                 }
             }
-            Ok(ProjectorIndexDelta::default())
+            // Each head on the slot was written: minted, superseded, or the
+            // winner its supersessions point from.
+            Ok(ProjectorIndexDelta {
+                heads: heads.into_iter().map(|(id, _)| id).collect(),
+                ..ProjectorIndexDelta::default()
+            })
         }
         ProjectorAction::SetOptOut => {
             let channel = channel_class.ok_or(CommError::InvalidRecord)?;
@@ -712,7 +692,10 @@ fn apply_projector_rule_in_txn(
                     channel,
                     occurred_at,
                 )?;
-                Ok(ProjectorIndexDelta::default())
+                Ok(ProjectorIndexDelta {
+                    heads: minted.then_some(claim_id).into_iter().collect(),
+                    ..ProjectorIndexDelta::default()
+                })
             } else {
                 // The pass index only NARROWS the candidates for this slot; the
                 // decision to consume is made from the resident row read back
@@ -770,6 +753,7 @@ fn apply_projector_rule_in_txn(
                 Ok(ProjectorIndexDelta {
                     consumed_gate_ids,
                     projected_thread_transition: None,
+                    heads: Vec::new(),
                 })
             }
         }
