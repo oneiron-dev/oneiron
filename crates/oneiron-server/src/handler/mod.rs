@@ -7,6 +7,7 @@
 //! 4. Ongoing: bidirectional incremental sync via WindowSync + ephemeral state
 
 mod app_tier;
+mod asset_bodies;
 mod conn_state;
 mod connection;
 mod documents;
@@ -16,6 +17,7 @@ mod hello;
 mod lag_resync;
 #[cfg(test)]
 mod lag_resync_tests;
+mod leaf_keys;
 mod lfs_chunks;
 mod mcp_socket;
 pub(crate) mod mesh;
@@ -33,6 +35,7 @@ pub(crate) mod window_row_tests;
 mod window_sync;
 
 pub(crate) use self::connection::ws_routes;
+pub(crate) use self::leaf_keys::LeafKeyRelay;
 pub(crate) use self::mcp_socket::{MCP_RPC_METHOD, MCP_SUBPROTOCOL};
 pub(crate) use self::window_sync::selector_grant_scope;
 

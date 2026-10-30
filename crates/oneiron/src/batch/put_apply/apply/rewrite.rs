@@ -10,7 +10,6 @@ pub(super) struct Rewrite {
     pub(super) short_id_plan: Option<crate::batch::short_id::ShortIdPlan>,
     pub(super) authority_first_seen_key: Option<String>,
     pub(super) escalated_skill_body: Option<Vec<u8>>,
-    pub(super) reconciled_critical_claim_body: Option<Vec<u8>>,
 }
 
 /// P3: reject the envelope, evict a dominated squatter, then rewrite the body
@@ -111,19 +110,9 @@ pub(super) fn rewrite_put_body(
     // discarded counters.
     let data = task_body_without_streaks.as_deref().unwrap_or(data);
     let data = pad_stored_body.as_deref().unwrap_or(data);
-    let reconciled_critical_claim_body =
-        if fixed.replicated && fixed.entity_type == ENTITY_TYPE_CLAIM {
-            reconcile_replicated_critical_confirm(
-                store,
-                wtxn,
-                &fixed.id,
-                data,
-                &mut dispatch.decoded_claim_body,
-            )?
-        } else {
-            None
-        };
-    let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
+    if fixed.replicated && fixed.entity_type == ENTITY_TYPE_CLAIM {
+        reconcile_replicated_critical_confirm(store, wtxn, &fixed.id, data)?;
+    }
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = dispatch
@@ -168,6 +157,5 @@ pub(super) fn rewrite_put_body(
         short_id_plan,
         authority_first_seen_key,
         escalated_skill_body,
-        reconciled_critical_claim_body,
     })
 }
