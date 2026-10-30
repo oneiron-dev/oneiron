@@ -83,6 +83,23 @@ pub(super) fn queue_source_root(vault: &Vault, store: &str) -> Result<PathBuf> {
 }
 
 impl Vault {
+    /// The host-local directory the queue checker records each guest it
+    /// starts in until that guest ends (FIX 7233): `<vault env>/merge-queue/
+    /// guests`. A record left there names a guest a stopped host never
+    /// ended; the next pass resolves it by name before work is queued again.
+    ///
+    /// # Errors
+    /// A vault environment path that does not resolve.
+    pub fn queue_check_guest_dir(&self) -> Result<PathBuf> {
+        Ok(self
+            .store
+            .env
+            .path()
+            .canonicalize()?
+            .join(QUEUE_SOURCE_DIR)
+            .join("guests"))
+    }
+
     /// Object store `store`'s checked configuration, read by its key: no
     /// root opens, so an init's need stays readable before its source.
     ///

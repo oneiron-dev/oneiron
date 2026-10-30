@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use super::check_store::QueueCheckConfiguration;
 use super::{
     BatchState, CheckPhase, MergeBatch, MergeProposal, MergeQueue, QueueBatchDrive, QueueDriveHold,
-    QueueDriveHoldReason, QueueDriverTarget, QueueStageOverlap,
+    QueueDriveHoldReason, QueueDriveOutcome, QueueDriverTarget, QueueStageOverlap,
 };
 use crate::EntityId;
 use crate::codebase::RepoRef;
@@ -69,8 +69,55 @@ impl MergeQueue<'_> {
         self.stage_with(id, &mut |batch| self.pin_batch(&wire, batch))
     }
 
+    /// Releases a settled batch's staged-path keep-refs (FIX 7305): its
+    /// speculative commits, which nothing reads once it is sealed green,
+    /// rolled back, cancelled or its survivors decided. Its base and landed
+    /// commits stay pinned, and so does a commit another pinned batch still
+    /// names; its drive record is no longer pinned.
+    pub(super) fn release_batch_pins(&self, id: &str) -> Result<QueueDriveOutcome> {
+        let _guard = lock_repository(self.repo.common_dir())?;
+        let queue = self.queue()?;
+        let mut batch = self.batch(id)?;
+        if !super::driver::pins_releasable(&batch) {
+            return Ok(QueueDriveOutcome::Done);
+        }
+        let kept: BTreeSet<String> = {
+            let txn = self.vault.store.env.read_txn()?;
+            self.repo_batches_in_txn(&txn)?
+                .into_iter()
+                .filter(|other| {
+                    other.id != batch.id && other.drive.as_ref().is_some_and(|drive| drive.pinned)
+                })
+                .flat_map(|other| {
+                    let mut objects = vec![other.expected_head];
+                    objects.extend(other.paths.into_iter().map(|path| path.commit));
+                    objects.extend(other.landed_head);
+                    objects
+                })
+                .collect()
+        };
+        let wire = GitWire::new(self.vault)?;
+        for path in &batch.paths {
+            if path.commit == batch.expected_head
+                || batch.landed_head.as_ref() == Some(&path.commit)
+                || kept.contains(&path.commit)
+            {
+                continue;
+            }
+            let _released =
+                wire.delete_keep_ref(&self.repo, &GitOid::parse_hex(path.commit.clone())?, 0)?;
+        }
+        batch
+            .drive
+            .get_or_insert_with(QueueBatchDrive::default)
+            .pinned = false;
+        self.save(&queue, &[&batch])?;
+        Ok(QueueDriveOutcome::Changed)
+    }
+
     /// Pins `batch`'s base, staged and landed commits with protected
-    /// keep-refs and marks its drive record pinned. No pin is released here.
+    /// keep-refs and marks its drive record pinned. A settled batch's
+    /// staged paths are released by [`Self::release_batch_pins`].
     pub(super) fn pin_batch(&self, wire: &GitWire<'_>, batch: &mut MergeBatch) -> Result<()> {
         let mut objects = vec![batch.expected_head.clone()];
         objects.extend(batch.paths.iter().map(|path| path.commit.clone()));

@@ -27,9 +27,10 @@ use crate::git_wire::{GitWire, lock_repository};
 impl MergeQueue<'_> {
     /// What the driver does next on this queue, in priority order. A queue
     /// with an effect intent answers its recovery alone; a HEAD that moved
-    /// without a receipt answers nothing (HeldDiverged is read, never
-    /// reset). A held check is asked again only on a tick, and one that
-    /// needed host configuration only on the first pass after a start.
+    /// without a receipt answers only the HeldDiverged hold of each live
+    /// batch, written on its drive record (FIX 7310) and never reset. A
+    /// held check is asked again only on a tick, and one that needed host
+    /// configuration only on the first pass after a start.
     ///
     /// # Errors
     /// A store failure.
@@ -40,15 +41,16 @@ impl MergeQueue<'_> {
         if queue.intent.is_some() {
             return Ok(vec![QueueWork::Recover]);
         }
-        if self.head()? != queue.pointers.head {
-            return Ok(Vec::new());
-        }
         let batches = {
             let txn = self.vault.store.env.read_txn()?;
             self.repo_batches_in_txn(&txn)?
         };
+        let diverged = self.head()? != queue.pointers.head;
+        let mut works = diverged_work(&batches, diverged);
+        if diverged {
+            return Ok(works);
+        }
         let oracle = ContractOracle::new(self.vault);
-        let mut works = Vec::new();
         let (mut red, mut first_settled) = (false, false);
         for (position, id) in queue.pointers.pending_slow.iter().enumerate() {
             let Some(batch) = batches.iter().find(|batch| &batch.id == id) else {
@@ -120,6 +122,10 @@ impl MergeQueue<'_> {
                         order,
                     });
                 }
+                _ if pins_releasable(batch) => works.push(QueueWork::ReleasePins {
+                    batch: batch.id.clone(),
+                    order,
+                }),
                 _ => {}
             }
         }
@@ -186,7 +192,35 @@ impl MergeQueue<'_> {
             QueueWork::LandReviewed { batch, .. } => self.drive_land(batch, pass),
             QueueWork::HandoffOverlap { batch, .. } => self.drive_handoff(config, batch, pass),
             QueueWork::SealTested { target, .. } => self.drive_seal(target),
+            QueueWork::RecordDiverged { batch, .. } => self.drive_diverged(batch),
+            QueueWork::ReleasePins { batch, .. } => self.release_batch_pins(batch),
         }
+    }
+
+    /// Writes HeldDiverged on a live batch's drive record while HEAD has
+    /// moved without a receipt, or clears that hold once HEAD is back at
+    /// the queue's (FIX 7310). Nothing is reset or rebased.
+    fn drive_diverged(&self, id: &str) -> Result<QueueDriveOutcome> {
+        let _guard = lock_repository(self.repo.common_dir())?;
+        let queue = self.queue()?;
+        let batch = self.batch(id)?;
+        let held = batch
+            .drive
+            .as_ref()
+            .and_then(|drive| drive.hold.as_ref())
+            .is_some_and(|hold| hold.reason == QueueDriveHoldReason::HeldDiverged);
+        if self.head()? != queue.pointers.head {
+            if !held && live(&batch) {
+                self.record_hold(id, Some(diverged_hold()))?;
+                return Ok(QueueDriveOutcome::Changed);
+            }
+            return Ok(diverged());
+        }
+        if held {
+            self.record_hold(id, None)?;
+            return Ok(QueueDriveOutcome::Changed);
+        }
+        Ok(QueueDriveOutcome::Done)
     }
 
     /// A staged batch's next fast work: custody and missing paths first,
@@ -594,6 +628,53 @@ impl MergeQueue<'_> {
     }
 }
 
+/// Whether `batch` still moves: unlanded, or landed and awaiting its slow
+/// settlement.
+fn live(batch: &MergeBatch) -> bool {
+    matches!(
+        batch.state,
+        BatchState::Queued | BatchState::Staged | BatchState::Ready | BatchState::HeadAdvanced
+    )
+}
+
+/// The HeldDiverged records to write while HEAD has moved (`diverged`), or
+/// to clear once it is back (FIX 7310).
+fn diverged_work(batches: &[MergeBatch], diverged: bool) -> Vec<QueueWork> {
+    batches
+        .iter()
+        .enumerate()
+        .filter(|(_, batch)| {
+            let held = batch
+                .drive
+                .as_ref()
+                .and_then(|drive| drive.hold.as_ref())
+                .is_some_and(|hold| hold.reason == QueueDriveHoldReason::HeldDiverged);
+            if diverged { live(batch) && !held } else { held }
+        })
+        .map(|(index, batch)| QueueWork::RecordDiverged {
+            batch: batch.id.clone(),
+            order: index as u64,
+        })
+        .collect()
+}
+
+/// Whether `batch` is settled with its staged paths still pinned (FIX
+/// 7305): green and sealed, rolled back, cancelled, or quarantined with its
+/// survivors decided.
+pub(super) fn pins_releasable(batch: &MergeBatch) -> bool {
+    let Some(drive) = batch.drive.as_ref().filter(|drive| drive.pinned) else {
+        return false;
+    };
+    match batch.state {
+        BatchState::GreenAdvanced => {
+            matches!(drive.tested, Some(super::QueueRevisionLink::Sealed { .. }))
+        }
+        BatchState::RolledBack | BatchState::Cancelled => true,
+        BatchState::Quarantined => drive.survivor.is_some(),
+        _ => false,
+    }
+}
+
 fn recovery_first() -> QueueDriveOutcome {
     QueueDriveOutcome::Waiting(QueueDriveHold::new(
         QueueDriveHoldReason::HeldRecovery,
@@ -602,8 +683,12 @@ fn recovery_first() -> QueueDriveOutcome {
 }
 
 fn diverged() -> QueueDriveOutcome {
-    QueueDriveOutcome::Waiting(QueueDriveHold::new(
+    QueueDriveOutcome::Waiting(diverged_hold())
+}
+
+fn diverged_hold() -> QueueDriveHold {
+    QueueDriveHold::new(
         QueueDriveHoldReason::HeldDiverged,
         "the repository HEAD moved without a queue receipt; nothing resets or rebases it",
-    ))
+    )
 }

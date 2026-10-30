@@ -37,8 +37,9 @@ pub(super) enum ExportGap {
     Unreviewed(String),
     /// The provenance claim is gone or no longer active.
     Provenance(EntityId),
-    /// The author's record is gone.
-    Author(EntityId),
+    /// The author's record is gone; `None` when the author was erased
+    /// before the seal (FIX 7348).
+    Author(Option<EntityId>),
 }
 
 /// One loaded export revision: the persisted record, its canonical
@@ -109,7 +110,11 @@ impl Vault {
                 ExportPromotion::Readiness => gaps.push(ExportGap::Provenance(provenance)),
             }
         }
-        if self.get_entity_type(&metadata.author)?.is_none() {
+        let readable = match &metadata.author {
+            Some(author) => self.get_entity_type(author)?.is_some(),
+            None => false,
+        };
+        if !readable {
             match promotion {
                 ExportPromotion::Stored => return Err(Error::EntityNotFound),
                 ExportPromotion::Readiness => gaps.push(ExportGap::Author(metadata.author)),

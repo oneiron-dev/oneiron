@@ -13218,7 +13218,7 @@ class QueueReviewThresholds(TypedDict):
 class QueueReviewPolicy(TypedDict):
     catalog: LensCatalog
     thresholds: QueueReviewThresholds
-    set_by: EntityId
+    set_by: NotRequired[EntityId | None]
     set_at: int
 class QueueReviewPolicyView(TypedDict):
     state: QueueReviewPolicyState

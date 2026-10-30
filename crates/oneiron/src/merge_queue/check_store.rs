@@ -415,37 +415,42 @@ impl MergeQueue<'_> {
     }
 
     /// The earlier passing receipt of this store whose inputs digest is
-    /// `digest`, that a refresh-free check may stand on.
+    /// `digest`, that a refresh-free check may stand on, read by index
+    /// (FIX 7349).
     pub(super) fn reusable_receipt(&self, digest: &str) -> Result<Option<QueueCheckReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
-        let prefix = format!("{}:", self.repo.identity().as_hex());
-        Ok(CHECK_WORK
-            .scan_from(&self.vault.store, &txn, prefix.as_bytes())?
-            .into_iter()
-            .flat_map(|(_, work)| work.receipts)
-            .find(|receipt| {
-                receipt.inputs_digest == digest
-                    && receipt.run.is_some()
-                    && receipt.tests_passed == Some(true)
-                    && receipt.verdict_ref.is_some()
-            }))
+        Ok(super::receipt_index::indexed_receipts_in_txn(
+            &self.vault.store,
+            &txn,
+            &self.repo.identity().as_hex(),
+            digest,
+            None,
+        )?
+        .into_iter()
+        .find(|receipt| {
+            receipt.run.is_some()
+                && receipt.tests_passed == Some(true)
+                && receipt.verdict_ref.is_some()
+        }))
     }
 
-    /// The stored receipt whose digest and verdict a bound verdict names.
+    /// The stored receipt whose digest and verdict a bound verdict names,
+    /// read by index (FIX 7349).
     pub(super) fn bound_receipt(
         &self,
         digest: &str,
         verdict: &str,
     ) -> Result<Option<QueueCheckReceipt>> {
         let txn = self.vault.store.env.read_txn()?;
-        let prefix = format!("{}:", self.repo.identity().as_hex());
-        Ok(CHECK_WORK
-            .scan_from(&self.vault.store, &txn, prefix.as_bytes())?
-            .into_iter()
-            .flat_map(|(_, work)| work.receipts)
-            .find(|receipt| {
-                receipt.inputs_digest == digest && receipt.verdict_ref.as_deref() == Some(verdict)
-            }))
+        Ok(super::receipt_index::indexed_receipts_in_txn(
+            &self.vault.store,
+            &txn,
+            &self.repo.identity().as_hex(),
+            digest,
+            Some(Some(verdict)),
+        )?
+        .into_iter()
+        .find(|receipt| receipt.verdict_ref.as_deref() == Some(verdict)))
     }
 
     /// Whether `work` still runs under its lease and its owner's approval:
@@ -467,18 +472,22 @@ impl MergeQueue<'_> {
 }
 
 impl Vault {
-    /// The keys of every queued checker work row, in key order.
+    /// The keys of every queued checker work row, oldest request first: in
+    /// the order their attempts were queued, which is time order (FIX
+    /// 7232).
     ///
     /// # Errors
     /// A store failure.
     pub fn pending_queue_checks(&self) -> Result<Vec<String>> {
         let txn = self.store.env.read_txn()?;
-        Ok(CHECK_WORK
+        let mut pending: Vec<(Option<AttemptId>, String)> = CHECK_WORK
             .scan(&self.store, &txn)?
             .into_iter()
             .filter(|(_, work)| work.status == QueueCheckStatus::Queued)
-            .map(|(key, _)| key)
-            .collect())
+            .map(|(key, work)| (work.attempt, key))
+            .collect();
+        pending.sort();
+        Ok(pending.into_iter().map(|(_, key)| key).collect())
     }
 
     /// Queues again every work row left running by an executor that is no
@@ -723,11 +732,13 @@ fn queue_attempt_in_txn(
 }
 
 /// Writes `work`'s row whatever its retained receipts and diagnosis weigh:
-/// no row size refuses the next receipt or verdict (FIX 9978).
+/// no row size refuses the next receipt or verdict (FIX 9978). Its
+/// receipts' index rows go in the same writer (FIX 7349).
 pub(super) fn put_work(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     work: &QueueCheckWork,
 ) -> Result<()> {
-    CHECK_WORK.put(store, txn, &work.key, work)
+    CHECK_WORK.put(store, txn, &work.key, work)?;
+    super::receipt_index::put_receipt_index(store, txn, work)
 }
