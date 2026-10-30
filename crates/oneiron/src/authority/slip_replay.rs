@@ -402,7 +402,12 @@ fn unmarked_not_before(oldest: Option<u64>, now: u64) -> u64 {
 ///
 /// A nonce an admission spent in memory is spent, its row landed or not
 /// (FIX 12023 W0), and this writer's own spend is staged there until its
-/// transaction is decided, so no admission spends the nonce beside it.
+/// transaction is decided, so no admission spends the nonce beside it. In a
+/// process that holds no writer lease on the vault, the spend holds the
+/// lease while it spends, so no process spends the nonce in memory beside
+/// it; the lease another process holds refuses it with
+/// [`Error::VaultServedElsewhere`] (P1-b). Every door that spends a
+/// request's nonce in a writer spends it here.
 pub(super) fn record_nonce(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -413,6 +418,7 @@ pub(super) fn record_nonce(
 ) -> Result<()> {
     request_challenge(timestamp, nonce, clock)?;
     let spent = SpentKey::of(binding_key, nonce, timestamp);
+    let _lease = spent_nonces::writer_spend_lease(vault)?;
     if !vault.spent_nonces.stage(vault, spent) {
         return Err(invalid_authority());
     }

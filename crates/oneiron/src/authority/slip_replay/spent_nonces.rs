@@ -32,7 +32,7 @@ use rmpv::Value;
 
 use super::{NonceKey, REPLAY_NONCE, WINDOW_SECS, admission_now_in_txn, put_nonce_row_in_txn};
 use crate::authority::{AUTHORITY_FIRST_SEEN, FoldedSlip, authority_first_seen_sidecar_key};
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::self_heal::{
     DiagnosticCriticality, DiagnosticEvent, DiagnosticEventClass, DiagnosticReplayCoordinate,
@@ -42,7 +42,7 @@ use crate::store::{
     AfterCommit, DetachedWrite, active_write_txn_guard, release_vault_handle,
     with_idempotency_intent,
 };
-use crate::{Vault, VaultWriterLease};
+use crate::{VAULT_WRITER_LEASE_HELD, Vault, VaultWriterLease};
 
 /// The tries of one in-memory spend's rows before it files its healer item
 /// and is tried no more (FIX 12023 W0).
@@ -148,6 +148,30 @@ fn holds_writer_lease(vault: &Vault) -> bool {
         .is_some_and(VaultWriterLease::held_by_current_process)
 }
 
+/// The writer lease a writer's nonce spend on `vault` holds while it spends,
+/// in a process that holds none (FIX 12023 W0, P1-b): taken without waiting
+/// ([`Vault::try_acquire_writer_lease`]), so no process spends a nonce in
+/// memory beside it, since only a lease holder does. `None` when this
+/// process holds the lease already, and on a target without one, where no
+/// process can hold it. The lease another process holds refuses with
+/// [`Error::VaultServedElsewhere`]: that process serves the vault and may
+/// have spent this nonce in memory, its row not landed yet.
+///
+/// It is let go before the spend's writer commits, and that is enough: a
+/// process that takes the lease after it opens its vault after, and so
+/// spends in memory only a slip first seen after that open, never the one
+/// this writer read.
+pub(super) fn writer_spend_lease(vault: &Vault) -> Result<Option<VaultWriterLease>> {
+    if holds_writer_lease(vault) || cfg!(not(unix)) {
+        return Ok(None);
+    }
+    match vault.try_acquire_writer_lease() {
+        Ok(lease) => Ok(Some(lease)),
+        Err(Error::ConcurrentWrite(VAULT_WRITER_LEASE_HELD)) => Err(Error::VaultServedElsewhere),
+        Err(error) => Err(error),
+    }
+}
+
 impl SpentNonces {
     fn lock(&self) -> MutexGuard<'_, Nonces> {
         self.nonces.lock().unwrap_or_else(PoisonError::into_inner)
@@ -240,7 +264,9 @@ impl SpentNonces {
     /// writer commits as, so no admission spends it while that writer may
     /// still commit; the spends of every earlier writer, all decided by now,
     /// leave. A handle that does not hold its writer lease spends nothing
-    /// here and stages nothing.
+    /// here and stages nothing: its writer holds the lease for the spend
+    /// instead ([`writer_spend_lease`]), so no process spends in memory
+    /// beside it.
     pub(super) fn stage(&self, vault: &Vault, key: SpentKey) -> bool {
         if !holds_writer_lease(vault) {
             return true;
@@ -366,6 +392,11 @@ impl SpendDoor {
         }
         .queue(served);
         served.spent_nonces.note_queued();
+        // FIX 12023 P1-a (open, for L02's design call): the reply goes out
+        // here, with the rows queued but not durable. A crash before their
+        // group commits loses the spend, and after the restart its slip is
+        // minted before the open, so a replay takes the writer's path,
+        // finds no row and is admitted.
         true
     }
 }
