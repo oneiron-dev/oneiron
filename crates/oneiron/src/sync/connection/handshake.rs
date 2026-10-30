@@ -122,6 +122,8 @@ impl SyncConnection {
         client: SyncClient,
         shutdown_rx: tokio::sync::oneshot::Receiver<()>,
     ) -> crate::error::Result<()> {
+        // Under the host's admission, set by now (FIX 12036).
+        self.collect_left_env_bodies();
         let directives = self.run_residence_directives(client.event_tx.clone());
         let home_handoff = self.run_home_handoff(client.event_tx.clone());
         let residence_mode = self.run_residence_mode(client.event_tx.clone());

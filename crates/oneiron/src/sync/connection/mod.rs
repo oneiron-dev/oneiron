@@ -143,7 +143,6 @@ impl SyncConnection {
             )?
         };
         let left = crate::sync::shared_leave::has_left(manager.vault())?;
-        crate::sync::shared_leave::collect_left_env_bodies_at_open(manager.vault());
         // The topology moves residence reads to the elected home when the
         // host names the candidates' endpoints.
         if config.client_config.home_node_topology.is_some()
