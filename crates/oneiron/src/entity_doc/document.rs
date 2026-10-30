@@ -81,7 +81,15 @@ impl EntityDoc {
         born: Option<&MadeBy>,
     ) -> Result<Self> {
         let birth = BirthCommit::Stamp(writer.1, born);
-        Self::open_with(LoroDoc::new(), entity, initial, writer.0, at, |_| Ok(()), birth)
+        Self::open_with(
+            LoroDoc::new(),
+            entity,
+            initial,
+            writer.0,
+            at,
+            |_| Ok(()),
+            birth,
+        )
     }
 
     pub(super) fn open_with_metadata(

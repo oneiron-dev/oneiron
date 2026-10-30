@@ -137,7 +137,16 @@ impl Vault {
                 // The edit's commit names the actor's stamp token (FIX 10930).
                 let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
                 let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
-                let place = apply(&mut doc, *entity, edit, stamp, &text.stored, at, &[], &lifted)?;
+                let place = apply(
+                    &mut doc,
+                    *entity,
+                    edit,
+                    stamp,
+                    &text.stored,
+                    at,
+                    &[],
+                    &lifted,
+                )?;
                 if let Some(place) = place {
                     let slot = format!("/edits/{index}/text");
                     let said = LandedProse::anchored(actor, slot, &doc, place, &text, &lifted);
