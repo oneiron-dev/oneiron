@@ -25,6 +25,7 @@ pub(crate) use actor_erase::{
 };
 pub(crate) use authorize::training_run_job_input;
 pub use connector::{TrainOutput, TrainRequest, TrainingConnector, TrainingFuture};
+pub use custody::stream::{CheckpointFileStream, CheckpointStream};
 pub use detector_corpus::DetectorCorpusRef;
 pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
 pub(crate) use promotion::{

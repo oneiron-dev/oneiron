@@ -16,6 +16,8 @@ use super::{
     SourcePin, hash_json, invalid,
 };
 
+pub(super) mod stream;
+
 impl SourcePin {
     pub(super) fn validate(&self) -> Result<()> {
         if self.repository.trim().is_empty()
