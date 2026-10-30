@@ -39,11 +39,13 @@ use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::replay_judge::{self, JournalRow, ServeAxisBandit};
 use crate::server::SyncServer;
 
+mod tradeoff_resolve;
+
 /// Most journal rows one read returns.
 const MAX_JOURNAL_ROWS: usize = 500;
 
 pub(super) fn owner_table() -> OwnerTable {
-    vec![
+    let mut table = vec![
         (
             OwnerRoute {
                 method: "get",
@@ -215,7 +217,9 @@ pub(super) fn owner_table() -> OwnerTable {
             },
             post(set_swap_policy),
         ),
-    ]
+    ];
+    table.extend(tradeoff_resolve::owner_table());
+    table
 }
 
 /// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s body (FIX 11611):

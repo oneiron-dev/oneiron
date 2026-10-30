@@ -250,7 +250,12 @@ fn slice_meet(a: &Scope, b: &Scope) -> Option<Scope> {
     Some(Scope {
         world: axis(a.world, b.world)?,
         facet: axis(a.facet, b.facet)?,
-        relationship: axis(a.relationship, b.relationship)?,
+        // A relationship set meets as one value: equal sets stay, two
+        // different sets meet to nothing.
+        relationship: match (&a.relationship, &b.relationship) {
+            (Some(left), Some(right)) if left != right => return None,
+            (left, right) => left.clone().or_else(|| right.clone()),
+        },
         project: axis(a.project, b.project)?,
         readable: a.readable.intersection(&b.readable).cloned().collect(),
         writable: a.writable.intersection(&b.writable).cloned().collect(),
@@ -265,9 +270,19 @@ pub(super) fn authority_fits(authority: &ProjectAuthority, parent: &ProjectEffec
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectWitness {
     pub head: ProjectRevisionHash,
-    /// The head's authority and the proof that signed it, nested anchors
-    /// included: exactly what a new live revision signs over.
-    pub anchor: ProjectAnchor,
+    /// The chain up to the head, root first, the head's authority and the
+    /// proof that signed it last: exactly what a new live revision signs over.
+    pub anchor: Vec<ProjectAnchorLink>,
+}
+
+impl ProjectWitness {
+    /// The head's authority fields: the anchor's last link.
+    pub fn authority(&self) -> Result<&ProjectAuthority> {
+        self.anchor
+            .last()
+            .map(|link| &link.authority)
+            .ok_or_else(invalid)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -696,17 +711,15 @@ pub(super) fn unsigned_frontier(
     Ok(match verdict {
         ProjectVerdict::Visible => {
             let authority = stored.authority();
-            let head = revision::revisions_of(id, &stored.anchor())?
+            let anchor = stored.anchor()?;
+            let head = revision::revisions_of(id, &anchor)?
                 .last()
                 .map(|(hash, _)| *hash);
             let seats = stored.members().into_iter().collect();
             ProjectFrontier {
                 id,
                 disposition: ProjectDisposition::Unsigned,
-                witness: head.map(|head| ProjectWitness {
-                    head,
-                    anchor: stored.anchor(),
-                }),
+                witness: head.map(|head| ProjectWitness { head, anchor }),
                 effective: Some(ProjectEffective::of(
                     &authority,
                     seats,

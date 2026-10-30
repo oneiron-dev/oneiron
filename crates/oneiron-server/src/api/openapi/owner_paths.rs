@@ -33,10 +33,31 @@ pub(crate) const CHANGED: (&str, &str) = (
 /// document teaches a client the fields the route takes, with no SDK row
 /// added.
 pub(crate) struct RestShape {
-    /// The JSON body the route reads; `None` when it reads none (FIX 11613).
-    body: Option<fn() -> Value>,
+    /// The body the route reads; `None` when it reads none (FIX 11613).
+    body: Option<RestBody>,
     answer: RestAnswer,
     refusals: &'static [(&'static str, &'static str)],
+}
+
+/// What a shaped route reads as its request body.
+enum RestBody {
+    /// A JSON body of this schema.
+    Json(fn() -> Value),
+    /// Raw bytes, named by a JSON manifest in one request header (FIX 12086).
+    Bytes(ByteBody),
+}
+
+/// A route's raw byte body, not JSON, and the request header whose JSON
+/// manifest names what the bytes hold (FIX 12086).
+pub(crate) struct ByteBody {
+    /// What the bytes are.
+    pub(crate) description: &'static str,
+    /// The request header that carries the manifest.
+    pub(crate) header: &'static str,
+    /// What the manifest names.
+    pub(crate) header_description: &'static str,
+    /// The manifest's schema.
+    pub(crate) header_schema: fn() -> Value,
 }
 
 /// What a shaped route answers on success.
@@ -51,7 +72,17 @@ impl RestShape {
     /// A route that reads a JSON body and answers typed JSON.
     pub(crate) fn json(body: fn() -> Value, answer: fn() -> Value) -> Self {
         Self {
-            body: Some(body),
+            body: Some(RestBody::Json(body)),
+            answer: RestAnswer::Json(answer),
+            refusals: &[],
+        }
+    }
+
+    /// A route that reads a raw byte body, named by the manifest in one
+    /// request header, and answers typed JSON (FIX 12086).
+    pub(crate) fn bytes(body: ByteBody, answer: fn() -> Value) -> Self {
+        Self {
+            body: Some(RestBody::Bytes(body)),
             answer: RestAnswer::Json(answer),
             refusals: &[],
         }
@@ -71,7 +102,7 @@ impl RestShape {
     /// (FIX 11613).
     pub(crate) fn png(body: fn() -> Value) -> Self {
         Self {
-            body: Some(body),
+            body: Some(RestBody::Json(body)),
             answer: RestAnswer::Png,
             refusals: &[],
         }
@@ -85,12 +116,33 @@ impl RestShape {
 
     /// Writes the route's request body (or drops it when the route reads
     /// none), its 200 response and its refusals into `operation`, over what
-    /// the generic operation wrote.
+    /// the generic operation wrote. A byte body also adds its manifest
+    /// header to the operation's parameters.
     fn bind(&self, operation: &mut Value) {
-        match self.body {
-            Some(body) => {
+        match &self.body {
+            Some(RestBody::Json(body)) => {
                 operation["requestBody"] =
                     json!({"required": true, "content": {"application/json": {"schema": body()}}});
+            }
+            Some(RestBody::Bytes(body)) => {
+                operation["requestBody"] = json!({
+                    "required": true,
+                    "description": body.description,
+                    "content": {"application/octet-stream": {"schema": {"type": "string", "format": "binary"}}}
+                });
+                let mut parameters = operation
+                    .get("parameters")
+                    .and_then(Value::as_array)
+                    .cloned()
+                    .unwrap_or_default();
+                parameters.push(json!({
+                    "name": body.header,
+                    "in": "header",
+                    "required": true,
+                    "description": body.header_description,
+                    "content": {"application/json": {"schema": (body.header_schema)()}}
+                }));
+                operation["parameters"] = Value::Array(parameters);
             }
             None => {
                 if let Some(operation) = operation.as_object_mut() {

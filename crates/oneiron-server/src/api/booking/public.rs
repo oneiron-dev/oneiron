@@ -186,7 +186,14 @@ fn public_booking_page_json(
         hint.and_then(|hint| oneiron::booking::booking_suggested_slot(&mask.slots, hint));
     let card = BookingPageLens::card_with_actions(&model, &token, &[PublicBookingAction::Hold])
         .map_err(|_| ApiError::internal_server_error("public booking lens assembly failed"))?;
-    Ok(serde_json::json!({ "model": model, "card": card, "suggested_slot": selected }))
+    // The form's hidden honeypot input answers under this intake key on
+    // confirm (FIX 7861); the page names it so the form can render it.
+    Ok(serde_json::json!({
+        "model": model,
+        "card": card,
+        "suggested_slot": selected,
+        "form_honeypot_field_key": super::constants::PUBLIC_FORM_HONEYPOT_FIELD_KEY,
+    }))
 }
 
 async fn public_booking_availability(

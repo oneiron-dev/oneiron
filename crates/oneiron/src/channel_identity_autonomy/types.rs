@@ -1,7 +1,11 @@
 //! Schema version, vault-meta predicates, the autonomy rung, envelope/candidate/mode/request/state shapes and the graduation shapes.
 
+use std::collections::BTreeMap;
+
 use crate::access_grant::AccessGrant;
-use crate::channel_identity_selection::RelationshipContext;
+use crate::channel_identity_selection::{
+    ChannelIdentityFace, RelationshipContext, SelectionRuleScope,
+};
 use crate::entity_id::EntityId;
 use crate::outbound_grant::StandingOutboundGrant;
 
@@ -51,11 +55,18 @@ impl ChannelIdentityAutonomyRung {
     }
 }
 
+/// What one read grant may see in one mailbox. A scoped envelope names at
+/// least one label or thread; a full-mailbox envelope names none and says so.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MailboxReadEnvelope {
     pub identity_ref: EntityId,
     pub label_allowlist: Vec<String>,
     pub thread_allowlist: Vec<String>,
+    /// The owner's explicit grant of the whole mailbox: every item inside the
+    /// date bounds, so with both bounds set it is a date-only scope. Both
+    /// allowlists stay empty when it is set; when it is not, at least one
+    /// allowlist names the scope.
+    pub full_mailbox: bool,
     /// Inclusive lower bound on mailbox item time, not a volume-window clock.
     pub not_before: Option<u64>,
     /// Inclusive upper bound on mailbox item time.
@@ -102,6 +113,13 @@ pub struct SendAutonomyContext {
     /// None is an unclassified counterparty: as on an envelope, it matches
     /// only an unclassified envelope, never a class-pinned one.
     pub counterparty_class: Option<String>,
+    /// The selection scope keys that apply to this send.
+    pub applicable_scopes: Vec<SelectionRuleScope>,
+    /// The host's face for each identity of the sending actor it offers on
+    /// this send: its face classifier's answers. An unpinned send with faces
+    /// selects its sender by the vault's selection law; with none it takes
+    /// the connector's unique identity.
+    pub identity_faces: BTreeMap<EntityId, ChannelIdentityFace>,
 }
 
 impl SendAutonomyContext {
@@ -112,7 +130,23 @@ impl SendAutonomyContext {
         Self {
             relationship,
             counterparty_class: send_counterparty_class(explicit_class),
+            applicable_scopes: Vec::new(),
+            identity_faces: BTreeMap::new(),
         }
+    }
+
+    /// This context with the scope keys and identity faces the host's
+    /// selection query used, so the send's dispatch selects its sender by
+    /// the same law.
+    #[must_use]
+    pub fn with_selection(
+        mut self,
+        applicable_scopes: Vec<SelectionRuleScope>,
+        identity_faces: BTreeMap<EntityId, ChannelIdentityFace>,
+    ) -> Self {
+        self.applicable_scopes = applicable_scopes;
+        self.identity_faces = identity_faces;
+        self
     }
 }
 
@@ -123,12 +157,6 @@ impl SendAutonomyContext {
 #[must_use]
 pub fn send_counterparty_class(explicit_class: Option<&str>) -> Option<String> {
     explicit_class.map(str::to_owned)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ChannelIdentityGrantWindowUsage {
-    pub window_started_at: u64,
-    pub used_actions: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

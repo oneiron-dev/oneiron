@@ -13,6 +13,7 @@ mod settle;
 mod stop;
 
 pub use self::claim_authoring::{BoundClaimAuthoringSelector, ClaimAuthoringSelection};
+use self::observe::WakePassClock;
 pub(crate) use self::park_cause::{llm_waits_on_owner_act, waits_on_owner_act};
 pub(crate) use self::rewrite::check_host_wake_rewrite;
 use self::settle::Settlement;
@@ -227,6 +228,7 @@ impl<'a> DreamerWakeDriver<'a> {
         exec: &mut E,
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
+        let clock = WakePassClock::start(&input);
         let hooks = match self.pre_wake_hooks(&input)? {
             Ok(hooks) => hooks,
             Err(skipped) => return Ok(skipped),
@@ -236,6 +238,7 @@ impl<'a> DreamerWakeDriver<'a> {
         self.finish_wake_observation(report.as_ref());
         let report = report?;
         self.post_wake_hooks(hooks, &report);
+        clock.log(&report);
         Ok(report)
     }
 

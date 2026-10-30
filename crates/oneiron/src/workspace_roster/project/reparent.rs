@@ -63,7 +63,7 @@ impl Vault {
             return Err(unresolved(id, "a re-parent builds on the current head"));
         };
         let mut next = reader.stored_row(id)?.ok_or(Error::EntityNotFound)?;
-        let head = witness.anchor.authority;
+        let head = witness.authority()?.clone();
         next.claims_scope_ref = head.claims_scope_ref;
         next.slice = head.slice;
         next.depth_limit = head.depth_limit;
@@ -84,7 +84,7 @@ impl Vault {
             else {
                 return Err(refused("a re-parent's parent serves no authority"));
             };
-            let leader = EntityId::from_hex(&seen.anchor.authority.leader)?;
+            let leader = EntityId::from_hex(&seen.authority()?.leader)?;
             if !next.board.contains(&leader.to_hex()) {
                 next.board.push(leader.to_hex());
             }

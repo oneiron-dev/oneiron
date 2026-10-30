@@ -156,7 +156,9 @@ impl BrokerContext {
         header
             .check(body)
             .map_err(|_| LlmError::from(FatalLlmError::InvalidRequest))?;
-        let client = self.client(wait)?;
+        // The reply timeout runs a frame past `wait`, so the broker answers
+        // `Timeout` before the daemon gives up (FIX 8559).
+        let client = self.client(wait.saturating_add(oneiron_broker::FRAME_DEADLINE))?;
         let reply = call_with_key(&client, &self.inner.keys, secret, header, body).await?;
         let (status, _) = answered(reply.outcome)?;
         Ok(BrokerAnswer {

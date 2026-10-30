@@ -11,6 +11,7 @@ mod editor_budget;
 pub(crate) mod hold_worker;
 mod ingress;
 pub(crate) mod notice_worker;
+mod parse_lease;
 mod presentation;
 #[cfg(unix)]
 pub(crate) mod seal_worker;

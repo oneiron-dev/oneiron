@@ -68,6 +68,10 @@ impl ManagedState {
                 vm_outbox_revision: self.vm_outbox_revision(),
                 relay_delete_revision: Some(RELAY_DELETE_REVISION),
                 engine_instance: Some(self.relay_delete.instance().to_owned()),
+                // The vault's deletion, kept once read present (FIX 11710):
+                // the supervisor withdraws what served it. An unreadable
+                // marker reports none; no state of it turns `ok` false.
+                deletion: self.vault_deletion(),
             }),
             CtlRequest::Shed {
                 cause,

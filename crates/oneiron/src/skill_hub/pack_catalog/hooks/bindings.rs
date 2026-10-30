@@ -108,7 +108,8 @@ pub(crate) fn is_hook_binding(body: &crate::ClaimBody) -> bool {
 
 impl Vault {
     /// Every live hook binding, enabled or not. The hook runner reads these.
-    /// A hub hook whose publisher's Grant was revoked is not live.
+    /// A hub hook whose publisher's Grant was revoked is not live, nor is a
+    /// binding whose owner has not yet answered its critical confirm.
     pub fn pack_hook_bindings(&self) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let txn = self.store.env.read_txn()?;
         self.pack_hook_bindings_in_txn(&txn)
@@ -121,6 +122,9 @@ impl Vault {
     ) -> Result<Vec<(EntityId, PackHookBinding)>> {
         let mut live = Vec::new();
         for (id, row) in bindings_in_txn(&self.store, txn)? {
+            if !crate::gate::claim_critical_confirm_settled_in_txn(&self.store, txn, &id)? {
+                continue;
+            }
             if let HookAuthor::ForeignActor { grant, .. } = &row.author
                 && !crate::consent::standing_grant_is_active_in_txn(&self.store, txn, grant)?
             {

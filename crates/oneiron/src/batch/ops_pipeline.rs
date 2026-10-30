@@ -194,8 +194,8 @@ pub(super) fn check_decode_point_taint_guard(
             if let Some(world) = candidate.world() {
                 check(&world)?;
             }
-            if let Some(relationship) = candidate.relationship() {
-                check(&relationship)?;
+            for relationship in candidate.relationship().into_iter().flatten() {
+                check(relationship)?;
             }
             check_claim_subject_refs(candidate.subject(), &check)?;
             check(&envelope.actor().entity_ref())?;
@@ -242,8 +242,8 @@ pub(super) fn check_claim_body_refs(
     if let Some(world) = body.world {
         check(&world)?;
     }
-    if let Some(rel) = body.rel {
-        check(&rel)?;
+    for rel in body.rel.iter().flatten() {
+        check(rel)?;
     }
     Ok(())
 }
@@ -391,6 +391,7 @@ pub(crate) fn apply_ops_session(
                 vectors.insert(*id);
                 id
             }
+            BatchOp::Delete { id } => id,
             _ => continue,
         };
         if !rows.insert(*id) {
@@ -571,9 +572,15 @@ pub(crate) fn apply_ops_session(
                     provenance.as_ref(),
                 )?;
             }
+            // FIX 10763: a bound raw handle's delete of a row only the room
+            // staged. Its own row is its scope's turn, so no promote or save
+            // replays it.
+            BatchOp::Delete { id } => {
+                super::session_delete::stage_session_delete(view, wtxn, id)?;
+            }
             _ => {
                 return Err(Error::InvariantViolation(
-                    "session witness stages only put, edge, text, vector, and media vector ops",
+                    "session witness stages only put, edge, text, vector, media vector and room-row delete ops",
                 ));
             }
         }

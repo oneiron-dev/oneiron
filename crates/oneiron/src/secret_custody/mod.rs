@@ -75,6 +75,7 @@ mod floor;
 mod found_keys;
 pub(crate) mod holder_export;
 mod known_values;
+mod leaf_delivery;
 mod masked_files;
 mod owner_door;
 mod pending_restore;
@@ -117,7 +118,7 @@ pub(crate) use self::control::input::{
     keep_input_in_txn, keep_witness_in_txn,
 };
 pub(crate) use self::control::{
-    ActiveChange, Material, custody_work_executor, drop_revoked_copies_in_txn,
+    ActiveChange, EraseOwnerAct, Material, custody_work_executor, drop_revoked_copies_in_txn,
     erase_pending_revoke_actor_in_txn, refuse_revoked_use_in_txn,
 };
 pub use self::control::{
@@ -143,6 +144,12 @@ pub(crate) use self::found_keys::{
 };
 pub use self::known_values::KNOWN_VALUE_MIN_BYTES;
 pub(crate) use self::known_values::{KnownSource, KnownSweep, KnownValues};
+// FIX 7402: live carrier key delivery, the L02 halves of L03's sync frame.
+pub(crate) use self::leaf_delivery::CustodyLeafSession;
+pub use self::leaf_delivery::{
+    LEAF_KEY_REFUSED_BACKOFF_MS, LEAF_KEY_REQUEST_TTL_MS, LeafKeyAnswer, LeafKeyFailureCause,
+    LeafKeyRequest,
+};
 pub use self::masked_files::SecretSight;
 pub(crate) use self::masked_files::{
     KeyPlaces, KeySpan, MASKED_FILE_BAND, MaskedFile, MemberStep, PlaceHandles, filled,
@@ -172,6 +179,7 @@ pub(crate) use self::reveal::{
     RepoFileRevealTarget, RepoFileSight, RevealAsker, RevealAuthority, SecretRevealWait,
     erase_reveal_actor_in_txn, parse_secret_handle, reveal_value_in_txn,
 };
+pub(crate) use self::run_bound::run_secret_effector;
 pub use self::run_bound::{RUN_SECRET_FOUND_REASON, RunSecretHolder, RunSecretSeat};
 pub(crate) use self::storage_seal::{
     ArchiveSameId, CredentialDisposition, CredentialRoute, ImageCredentialRow, PlannedCredentials,
@@ -200,10 +208,10 @@ pub use self::types::{
 };
 pub use self::use_handle::{
     KeptSentValue, SECRET_BIND_DOOR, SECRET_BIND_REASON, SECRET_USE_CLEAR_VALUE_SOURCE,
-    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SecretBindRequest,
-    SecretBound, SecretClearValueSource, SecretReleasePolicy, SecretUseDecision,
-    SecretUseOperation, SecretUseOutcome, SecretUseReceipt, SecretUseSend, SentPresentation,
-    SentValue,
+    SECRET_USE_CONNECTOR_CALL, SECRET_USE_OPERATIONS, SECRET_USE_REASON, SECRET_USE_SEAL_EFFECTOR,
+    SECRET_USE_SEAL_SIGN, SecretBindRequest, SecretBound, SecretClearValueSource,
+    SecretReleasePolicy, SecretUseDecision, SecretUseOperation, SecretUseOutcome, SecretUseReceipt,
+    SecretUseSend, SentPresentation, SentValue,
 };
 pub(crate) use self::use_handle::{
     SecretUseConsumed, SecretUseContext, SecretUser, handle_record_in_txn,

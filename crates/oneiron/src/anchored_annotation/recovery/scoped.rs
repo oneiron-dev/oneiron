@@ -91,19 +91,21 @@ impl Vault {
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
         let limits = self.text_limits_in_txn(&rtxn)?;
-        Ok(unattached
+        // A resource refusal is the engine's error (FIX 10587), never empty offers.
+        let mut offers = Vec::new();
+        for (thread_id, words) in unattached
             .iter()
             .filter_map(|thread| Some((thread.thread.thread_id, thread.snapshot.as_deref()?)))
-            .flat_map(|(thread_id, words)| {
-                find_text(&bytes, format, words, &limits)
-                    .into_iter()
-                    .map(move |locator| ReattachOffer {
-                        thread_id,
-                        version: head.version,
-                        locator,
-                    })
-            })
-            .collect())
+        {
+            for locator in find_text(&bytes, format, words, &limits)? {
+                offers.push(ReattachOffer {
+                    thread_id,
+                    version: head.version,
+                    locator,
+                });
+            }
+        }
+        Ok(offers)
     }
 
     /// The Unattached list as `admits` serves it, read in `rtxn`.
@@ -138,11 +140,18 @@ impl Vault {
             }
             let row = UNATTACHED.get(&self.store, rtxn, &(*artifact_id, thread.thread_id))?;
             // Read again as this reader sees the pinned version: the stored
-            // snapshot holds the raw words.
+            // snapshot holds the raw words. A resource refusal is the
+            // engine's error (FIX 10587), never a missing snapshot.
             let snapshot = match row.as_ref().and_then(|row| row.snapshot.as_ref()) {
-                Some(_) => self
-                    .read_blob_artifact_version_sighted_in_txn(rtxn, artifact_id, pinned, sight)?
-                    .and_then(|bytes| anchor_text(&bytes, &thread.anchor.locator, &limits)),
+                Some(_) => match self.read_blob_artifact_version_sighted_in_txn(
+                    rtxn,
+                    artifact_id,
+                    pinned,
+                    sight,
+                )? {
+                    Some(bytes) => anchor_text(&bytes, &thread.anchor.locator, &limits)?,
+                    None => None,
+                },
                 None => None,
             };
             let held_task = match newest_thread_brief(*artifact_id, &claims, &thread.thread_id) {

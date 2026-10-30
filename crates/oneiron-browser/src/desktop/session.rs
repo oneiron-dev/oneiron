@@ -103,6 +103,10 @@ impl DesktopSession {
             guest: lease,
             manifest,
             policy: config.policy.clone(),
+            presses: PressBook::new(config.policy.clone()),
+            press_holds: super::press_holds::PressHolds::default(),
+            unread: None,
+            input_sent: false,
             receipts: Vec::new(),
             receipt_seq: 0,
             decider: None,
@@ -150,11 +154,21 @@ impl DesktopSession {
         self.receipt_sink = Some(sink);
     }
 
+    /// Gives the session the host's live read of the vault's grants: each
+    /// classified send reads them again, as a browser session's do (FIX
+    /// 4613, 12133).
+    pub fn set_press_grants(&mut self, grants: Box<dyn PressGrants>) {
+        self.presses.set_live(grants);
+    }
+
     /// Sets the press each effect class runs under, as the vault's grants
     /// stand now: a desktop that outlives one door of its run takes the
-    /// next door's policy.
+    /// next door's policy. The sends a batch press already paid stay paid:
+    /// a door that binds the session again never refills them, as a
+    /// browser session's stay paid (FIX 4615, 12133).
     pub fn set_policy(&mut self, policy: SendPolicy) {
-        self.policy = policy;
+        self.presses.set_granted(policy);
+        self.policy = self.presses.policy();
     }
 
     /// What the guest's container proved, for the run's receipt.

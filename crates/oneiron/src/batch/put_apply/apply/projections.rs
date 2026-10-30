@@ -14,6 +14,7 @@ pub(super) fn stage_put_projections(
     revision: &super::admission::RevisionSlot,
     body_changed: bool,
     consolidation_dirty: bool,
+    stored_before: bool,
     previous_skill_record: &Option<crate::skill::SkillRecord>,
     short_id_plan: Option<crate::batch::short_id::ShortIdPlan>,
     authority_first_seen_key: Option<String>,
@@ -103,13 +104,21 @@ pub(super) fn stage_put_projections(
     if fixed.entity_type == crate::registry::ENTITY_TYPE_TURN && consolidation_dirty {
         crate::dreamer_consolidation::admit_turn_position_in_txn(store, wtxn, &fixed.id)?;
     }
+    // A row stored before this put takes no first position from it (FIX 11925).
+    let row_put = if fixed.replicated {
+        crate::federation::record_scope::RowPut::Replicated
+    } else if stored_before {
+        crate::federation::record_scope::RowPut::LocalReput
+    } else {
+        crate::federation::record_scope::RowPut::Birth
+    };
     crate::federation::record_scope::stamp_put(
         store,
         wtxn,
         fixed.id,
         fixed.entity_type,
         data,
-        fixed.replicated,
+        row_put,
     )?;
     if fixed.entity_type == crate::registry::ENTITY_TYPE_PERSON {
         super::super::super::person_substrate::ensure_person_substrate(

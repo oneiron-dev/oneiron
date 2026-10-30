@@ -544,6 +544,7 @@ impl RefusalReceipt {
             actor_ref: self.actor_ref,
             actor_class: self.actor_class,
             credential_ref: self.credential_ref,
+            carrier_machine: None,
             outcome: CallOutcome::Refused {
                 code: code.to_owned(),
             },

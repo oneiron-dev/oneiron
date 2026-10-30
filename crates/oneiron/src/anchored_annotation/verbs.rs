@@ -19,7 +19,7 @@ use crate::write_envelope::WriteActor;
 
 impl Memory<'_> {
     fn annotation_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor(), self.actor_class())
+        self.write_actor()
     }
 
     fn annotation_moment(&self) -> (TimeRange, u64) {
@@ -60,7 +60,8 @@ impl Memory<'_> {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
         };
-        let units = unit_texts(&file.bytes, format, &limits)
+        // A resource refusal is the engine's error (FIX 10587), never unreadable units.
+        let units = unit_texts(&file.bytes, format, &limits)?
             .ok_or_else(|| MemoryError::bad_request("artifact units could not be read"))?
             .into_iter()
             .map(|(locator, quote)| ArtifactUnitView {
@@ -91,11 +92,12 @@ impl Memory<'_> {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             self.vault().text_limits_in_txn(&txn)?
         };
+        // A resource refusal is the engine's error (FIX 10587), never a missing quote.
         Ok(AnnotationAnchorView {
             artifact_id: anchor.artifact_id,
             version: anchor.version,
             locator: (&anchor.locator).into(),
-            quote: anchor_text(&file.bytes, &anchor.locator, &limits),
+            quote: anchor_text(&file.bytes, &anchor.locator, &limits)?,
         })
     }
 

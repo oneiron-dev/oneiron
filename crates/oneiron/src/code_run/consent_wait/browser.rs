@@ -6,7 +6,10 @@
 //! act and its own input, the row it resolved to, and the page, tab,
 //! document and guest it ran in. The wait asks the vault's owner, and the
 //! run parks on it. A payment, which only a person's press in the browser
-//! runs, binds none: it stays the person's, as before.
+//! runs, binds none: it stays the person's, as before. The press it asks
+//! for names the send's own approve-once digest: the Gate's composer over
+//! its facts (`crate::consent::browser_approve_once_digest`), its caller,
+//! run, call position, act, project, page and row.
 //!
 //! An approving answer is driven by the served host
 //! ([`super::CodeConsentEffectHost`]). It admits the act once, in the writer
@@ -27,8 +30,10 @@
 use serde_json::{Value, json};
 
 use crate::Vault;
-use crate::consent::{ComposedEffect, EffectDigest, EffectFacts, UndoFidelity};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::consent::{
+    BrowserConsentFacts, BrowserSendScope, EffectDigest, browser_approve_once_digest,
+};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
 use crate::task_verb::sdk::AgentVerb;
@@ -121,7 +126,28 @@ impl Memory<'_> {
         if !verb.is_browser() || !code_consent_binds(verb) {
             return Ok(None);
         }
-        let class = action.class.clone();
+        // The press the wait asks for is this send's own: the Gate's
+        // composer over its facts, the digest its admission spends (FIX
+        // 10423).
+        let vault = self.vault();
+        let facts = BrowserConsentFacts {
+            scope: BrowserSendScope {
+                actor: self.actor(),
+                actor_class: self.actor_class(),
+                project: vault.browser_run_project(site.run_id)?,
+                audience: None,
+            },
+            run: site.run_id,
+            attempt: site.write_receipt_id,
+            ordinal: site.bridge_seq,
+            class: action.class.clone(),
+            verb: action.act.clone(),
+            page: action.page.clone(),
+            revision: action.document.clone(),
+            target: action.locator.clone(),
+            operands: action.operands.clone(),
+        };
+        let digest = *browser_approve_once_digest(&facts)?.as_bytes();
         let draft = CodeConsentDraft {
             site,
             verb,
@@ -131,11 +157,8 @@ impl Memory<'_> {
             hold_reasons: vec![hold.to_owned()],
             remember_offer: None,
         };
-        let vault = self.vault();
         let minted = vault.with_write_txn(|txn| {
-            mint_code_consent_wait_in_txn(vault, txn, draft, |binding| {
-                browser_approval_digest(&class, binding)
-            })
+            mint_code_consent_wait_in_txn(vault, txn, draft, |_| Some(digest))
         })?;
         let Some(wait_id) = minted else {
             return Ok(None);
@@ -327,10 +350,11 @@ impl Vault {
         })
     }
 
-    /// The wording of a held browser act's question: the act, its row and
-    /// page, the wait, why its grant gave no press, the choices it offers,
-    /// and that nothing is clicked until the owner answers. It sets no
-    /// deadline: silence never approves.
+    /// The wording of a held act's question: the act (a desktop act's is
+    /// named by its own verb, FIX 11499), its row and page, the wait, why
+    /// its grant gave no press, the choices it offers, and that nothing
+    /// is done until the owner answers. It sets no deadline: silence
+    /// never approves.
     fn browser_question_text(&self, wait_id: EntityId) -> Result<String> {
         let txn = self.store.env.read_txn()?;
         let row =
@@ -350,9 +374,16 @@ impl Vault {
         } else {
             "a person's press for each send"
         };
+        let (does, done) = if action.act.ends_with(".type") {
+            ("types into", "typed")
+        } else if action.act.ends_with(".key") || action.act.ends_with(".hotkey") {
+            ("presses", "pressed")
+        } else {
+            ("clicks", "clicked")
+        };
         Ok(format!(
-            "A code run asks before it clicks the {role} \"{name}\" on {page} (code consent wait \
-             {wait}). Its {class} grant needs {need}. Answer one of: {choices}. Nothing is clicked \
+            "A code run asks before it {does} the {role} \"{name}\" on {page} (code consent wait \
+             {wait}). Its {class} grant needs {need}. Answer one of: {choices}. Nothing is {done} \
              until you answer.",
             role = clip(&action.role),
             name = clip(&action.name),
@@ -445,18 +476,6 @@ fn settle_browser_in_txn(
         object.insert("press".into(), Value::Object(press));
     }
     settle_with_reply_in_txn(vault, txn, row, settled, reasons, &reply, None)
-}
-
-/// The code-bound approval digest a held browser act's answer names: the
-/// consent vocabulary's own digest of an outwardly observed, undoless act of
-/// `class`, bound to its wait's binding digest, so the approve-once marker an
-/// answer writes covers that wait's act alone.
-fn browser_approval_digest(class: &str, binding_digest: &[u8; 32]) -> Option<[u8; 32]> {
-    let kind = format!("{class}:code_wait:{}", bytes_to_hex_lower(binding_digest));
-    let mut facts = EffectFacts::new(kind).ok()?;
-    facts.external_observers = true;
-    facts.undo_fidelity = UndoFidelity::None;
-    Some(*ComposedEffect::new(facts).digest().as_bytes())
 }
 
 /// `text`, cut to [`QUESTION_TEXT_MAX_CHARS`] characters.

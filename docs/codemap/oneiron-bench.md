@@ -117,13 +117,21 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/interface_bench/tests_a.rs` | src | s | 2 crate-vis | — | Taskgen, config, and memo tests |
 | `src/interface_bench/tests_b.rs` | src | s | — | — | Pinned-model tests |
 | `src/interface_bench/wire_and_scoring.rs` | src | m | 13 crate-vis | — | Request hashing, memo keys, and provider wire calls |
-| `src/load/client.rs` | src | s | 7 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
+| `src/load/client.rs` | src | s | 10 crate-vis | — | One agent on the facade doors: its signed slip, a fresh holder proof per request, and the three verbs the… |
 | `src/load/corpus.rs` | src | m | 16 crate-vis | — | The synthetic corpus: invented words drawn with Zipf frequencies from a fixed seed, so two runs of one plan… |
+| `src/load/corpus_recall.rs` | src | m | 1 crate-vis | — | `load corpus-recall` — warm recall latency on a vault seeded from a recorded conversation corpus, on the… |
+| `src/load/dream.rs` | src | m | 1 crate-vis | — | `load dream` — one Dreamer cycle end to end on the shipped server binary (L07 DREAM-BENCH) |
+| `src/load/dream/cycle.rs` | src | m | 16 crate-vis | — | The cycle itself: the session hints that open and end the sitting (`POST /v1/ai/session`, `api/ai/mod.rs`)… |
+| `src/load/dream/proof.rs` | src | s | 4 crate-vis | — | Whether a recall finds what the cycle landed: the landed claim ids (the stage lines' `landed_ids`, else the… |
+| `src/load/dream/report.rs` | src | m | 3 crate-vis | — | The `load dream` result: the JSON report and the 15-line summary on stdout |
+| `src/load/dream/server_log.rs` | src | s | 12 crate-vis | — | The server log as `load dream` reads it: the lines written since the last read, the Dreamer's `dreamer… |
+| `src/load/dream/setup.rs` | src | s | 7 crate-vis | — | What `load dream` sets up before the server starts: the model check, the `[models]` section that routes… |
+| `src/load/dream/turns.rs` | src | m | 12 crate-vis | — | The recorded corpus `load dream` seeds: one JSON line per turn (world, person, day, conversation_ref… |
 | `src/load/embedder.rs` | src | s | 9 crate-vis | — | A stand-in embedder on loopback: the plain OpenAI `/v1/embeddings` wire, answering bag-of-words vectors |
 | `src/load/mod.rs` | src | m | 2 crate-vis | — | `load` subcommand — the engine's load bench on the shipped server binary |
 | `src/load/phases.rs` | src | m | 13 crate-vis | — | The measured cells: ingest by one and by many callers, recall at each grade and agent count, the mixed and… |
 | `src/load/report.rs` | src | m | 10 crate-vis | — | The result file, and `load compare`, which reads two of them |
-| `src/load/server.rs` | src | m | 21 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
+| `src/load/server.rs` | src | m | 22 crate-vis | — | The shipped `oneiron-server` binary as a child process: `init`, `whoami`, `token agent` on the stopped… |
 | `src/load/startup.rs` | src | s | 1 crate-vis | — | `load startup`: the server's memory while the shipped local embedding model loads, which is where its… |
 | `src/load/stats.rs` | src | s | 4 crate-vis | — | Latency summaries: nearest-rank percentiles over completed requests, with failures counted beside them and… |
 | `src/main.rs` | src | m | — | — | oneiron-bench — benchmark harness skeleton |

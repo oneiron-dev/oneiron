@@ -11,6 +11,7 @@ use serde::Serialize;
 pub(crate) mod confined;
 mod files;
 mod markdown;
+mod present_links;
 mod reader;
 mod source;
 #[cfg(unix)]
@@ -22,7 +23,7 @@ pub(crate) use reader::{
     LinkCounts, NoteCounts, TitleCounts, choose_title, crossed_rows, earlier_titles, read_folder,
     resolve_links,
 };
-pub(crate) use source::{canonical_folder, files_attached, files_rescan, rescanned};
+pub(crate) use source::{Rescanned, canonical_folder, files_attached, files_rescan, rescanned};
 #[cfg(unix)]
 pub(crate) use worker::spawn_rescans;
 

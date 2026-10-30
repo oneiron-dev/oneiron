@@ -176,6 +176,11 @@ pub struct LoroDocInner {
 /// The version of the loro crate
 pub const LORO_VERSION: &str = include_str!("../VERSION");
 
+/// Loro SnapshotAt exports this process has made; a fork_at is one (Oneiron vendor patch).
+pub fn snapshot_at_exports() -> u64 {
+    crate::loro::SNAPSHOT_AT_EXPORTS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Drop for LoroDoc {
     fn drop(&mut self) {
         if Arc::strong_count(&self.inner) == 1 {

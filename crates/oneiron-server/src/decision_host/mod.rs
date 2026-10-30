@@ -266,12 +266,16 @@ impl DecisionHost {
         self.person_start = None;
         self.think_start = None;
         let Some((door, meter)) = read else {
+            // No house read: the ladder's paired is none, and the bound
+            // big model tracks it (FIX 11466).
+            self.update_big_paired(None);
             return self;
         };
         let Some(probe) = door.probe() else {
             tracing::warn!(
                 "the decision read's recipe names no paired question; the escalation rung stays empty"
             );
+            self.update_big_paired(None);
             return self;
         };
         // Q2: the house read asks it jointly; a generated read asks the
@@ -319,6 +323,9 @@ impl DecisionHost {
             }
         }
         self.ladder.paired.clone_from(&paired);
+        // The bound big model reads the rebuilt paired question jointly
+        // (FIX 1557); a rebuild binds it to the new one, or none (FIX 11466).
+        self.update_big_paired(paired.clone());
         let Some(paired) = paired else {
             return self;
         };
@@ -341,6 +348,15 @@ impl DecisionHost {
             }
         }
         self
+    }
+
+    /// The bound big model reads `paired` jointly from now on: a house-read
+    /// rebuild reaches the rung `with_big` bound, which keeps no copy of its
+    /// own (FIX 11466). Nothing bound, nothing to update.
+    fn update_big_paired(&self, paired: Option<DecisionQuestion>) {
+        if let Some(big) = self.big_model.as_ref() {
+            big.set_paired(paired);
+        }
     }
 
     /// The Local-vision seat on the Local rung, when

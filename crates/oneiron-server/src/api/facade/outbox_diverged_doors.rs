@@ -167,6 +167,35 @@ mod carrier {
                 recorded,
                 read,
             },
+            VmOutboxMemberStatus::KeptAside {
+                kind,
+                member,
+                held_by,
+                held,
+                length,
+                aside,
+                kept_at_ms,
+                removing,
+                failed,
+            } => OutboxMemberStatus::KeptAside {
+                kind,
+                member,
+                held_by,
+                held,
+                length,
+                aside,
+                kept_at_ms,
+                removing,
+                failed,
+            },
+        }
+    }
+
+    /// The end that holds a copy, as a card names it.
+    const fn end_name(held_by: VmOutboxSide) -> &'static str {
+        match held_by {
+            VmOutboxSide::Guest => "The vault VM",
+            VmOutboxSide::Host => "The vault's host",
         }
     }
 
@@ -188,17 +217,15 @@ mod carrier {
                 answer,
                 ..
             } => {
-                let end = match held_by {
-                    VmOutboxSide::Guest => "The vault VM",
-                    VmOutboxSide::Host => "The vault's host",
-                };
+                let end = end_name(*held_by);
                 let (headline, body, actions) = match answer {
                     None => (
                         format!("A {kind} outbox copy waits for your answer"),
                         format!(
                             "{end} keeps a copy of {member} that the carrier never agreed on, \
                              after the agreed version was retired. Nothing removes it without your \
-                             answer: remove it, or keep it."
+                             answer: remove it, or keep it under its own name, out of the way of \
+                             the member's next version."
                         ),
                         vec![
                             action("Remove this copy", OutboxDivergedAnswer::Remove),
@@ -208,9 +235,10 @@ mod carrier {
                     Some(OutboxDivergedAnswer::Keep) => (
                         format!("A {kind} outbox copy kept"),
                         format!(
-                            "You kept {end}'s copy of {member}, one the carrier never agreed on."
+                            "You kept {end}'s copy of {member}, one the carrier never agreed on: \
+                             it moves aside under its own name, listed until you have it removed."
                         ),
-                        vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
+                        Vec::new(),
                     ),
                     Some(OutboxDivergedAnswer::Remove) => (
                         format!("A {kind} outbox copy is being removed"),
@@ -224,6 +252,47 @@ mod carrier {
                 OutboxOwnerCard {
                     kind: OutboxCardKind::OutboxDiverged,
                     headline,
+                    body,
+                    actions,
+                }
+            }
+            OutboxMemberStatus::KeptAside {
+                kind,
+                member,
+                held_by,
+                aside,
+                removing,
+                failed,
+                ..
+            } => {
+                let end = end_name(*held_by);
+                let (body, actions) = match (*removing, failed) {
+                    (true, _) => (
+                        format!(
+                            "You had {end}'s kept copy of {member} removed; the carrier carries it \
+                             out at its next session."
+                        ),
+                        Vec::new(),
+                    ),
+                    // The failure names itself: a removal that did not
+                    // delete, or a host move aside that did not go through
+                    // (FIX 12010).
+                    (false, Some(failed)) => (
+                        format!("{end}'s kept copy of {member}, under its own name {aside}: {failed}"),
+                        vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
+                    ),
+                    (false, None) => (
+                        format!(
+                            "{end} keeps the copy of {member} you kept under its own name, \
+                             {aside}, out of the way of the member's versions. It stays until you \
+                             have it removed."
+                        ),
+                        vec![action("Remove this copy", OutboxDivergedAnswer::Remove)],
+                    ),
+                };
+                OutboxOwnerCard {
+                    kind: OutboxCardKind::OutboxKeptAside,
+                    headline: format!("A {kind} outbox copy is kept aside"),
                     body,
                     actions,
                 }

@@ -198,8 +198,9 @@ pub(crate) fn queue_pad_tombstone_window(store: &Store, txn: &RwTxn<'_>, window:
     });
 }
 
-/// The rows `ops` write: each put, and the source of each edge they write,
-/// whose window carries the edge.
+/// The rows `ops` write: each put, and the source of each edge they write or
+/// remove, whose window carries the edge: an edge-only batch wakes the live
+/// mirror too (FIX 9599).
 pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
     ops.iter()
         .filter_map(|op| match op {
@@ -208,7 +209,22 @@ pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
             | BatchOp::PublicEdgeWithCreatedAt { src, .. }
             | BatchOp::EdgeWithCreatedAt { src, .. }
             | BatchOp::SetEdgeWeight { src, .. }
-            | BatchOp::SetEdgeVad { src, .. } => Some(*src),
+            | BatchOp::SetEdgeVad { src, .. }
+            | BatchOp::DeleteEdge { src, .. } => Some(*src),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The edges `ops` remove, each as `(src, kind, tgt)`: the window that holds
+/// one loses its copy only by an exact removal (FIX 9599).
+#[cfg(feature = "sync")]
+pub(super) fn ops_removed_edges(
+    ops: &[BatchOp],
+) -> Vec<(EntityId, crate::edge::EdgeKind, EntityId)> {
+    ops.iter()
+        .filter_map(|op| match op {
+            BatchOp::DeleteEdge { src, kind, tgt } => Some((*src, *kind, *tgt)),
             _ => None,
         })
         .collect()

@@ -76,13 +76,28 @@ impl Memory<'_> {
         target: TakeTarget,
         markdown: impl Into<String>,
     ) -> MemoryResult<EntityRefReceipt> {
-        self.author_note(&NoteWriteEnvelope {
-            kind: NoteKind::parse("opinion/take").expect("shipped kind"),
-            scope: NoteScope::About(target),
-            markdown: markdown.into(),
-            source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
-            mask: None,
-        })
+        self.author_take_in_world(target, markdown, None)
+    }
+
+    /// [`Self::author_take`] born in `world`, as
+    /// [`Self::author_note_in_world`] places it: a writer that knows its
+    /// source's world passes it, and `None` is base reality.
+    pub(crate) fn author_take_in_world(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+        world: Option<crate::EntityId>,
+    ) -> MemoryResult<EntityRefReceipt> {
+        self.author_note_in_world(
+            &NoteWriteEnvelope {
+                kind: NoteKind::parse("opinion/take").expect("shipped kind"),
+                scope: NoteScope::About(target),
+                markdown: markdown.into(),
+                source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
+                mask: None,
+            },
+            world,
+        )
     }
 
     /// A reviewer's preserved dissent on `target` (OF-352): an opinion like
@@ -106,6 +121,18 @@ impl Memory<'_> {
     /// Diary requests are actor-private and owner-only to write. A scope/kind
     /// mismatch or a foreign owner is refused before any row is staged.
     pub fn author_note(&self, envelope: &NoteWriteEnvelope) -> MemoryResult<EntityRefReceipt> {
+        self.author_note_in_world(envelope, None)
+    }
+
+    /// [`Self::author_note`] placed in `world`: the NOTE's birth writes
+    /// `NOTE ─InWorld→ world` in the same content transaction as its body and
+    /// attribution edges, as a notes import does. `None` writes no placement
+    /// edge, so the NOTE is base reality.
+    pub fn author_note_in_world(
+        &self,
+        envelope: &NoteWriteEnvelope,
+        world: Option<crate::EntityId>,
+    ) -> MemoryResult<EntityRefReceipt> {
         // OF-063 prose links (FIX 1228): the one engine write every take,
         // dissent and diary entry passes through reads its markdown for links
         // its writer cannot resolve, once per write, whatever door it came
@@ -175,19 +202,27 @@ impl Memory<'_> {
                     &["Use TakeTarget::Subject to take a position on a non-claim entity."],
                 ));
             }
-            content.apply_batch(
-                self.vault
-                    .batch_in()
-                    .mask(envelope.mask)
-                    .put_authored_note(&note_id, &self.actor, occurred, at, &body)
-                    .edge(
-                        &note_id,
-                        EdgeKind::AuthoredBy,
-                        &self.actor,
-                        registered_edge_weight(EdgeKind::AuthoredBy),
-                    )
-                    .edge(&note_id, link, &target_id, registered_edge_weight(link)),
-            )?;
+            let mut birth = self
+                .vault
+                .batch_in()
+                .mask(envelope.mask)
+                .put_authored_note(&note_id, &self.actor, occurred, at, &body)
+                .edge(
+                    &note_id,
+                    EdgeKind::AuthoredBy,
+                    &self.actor,
+                    registered_edge_weight(EdgeKind::AuthoredBy),
+                )
+                .edge(&note_id, link, &target_id, registered_edge_weight(link));
+            if let Some(world) = &world {
+                birth = birth.edge(
+                    &note_id,
+                    EdgeKind::InWorld,
+                    world,
+                    registered_edge_weight(EdgeKind::InWorld),
+                );
+            }
+            content.apply_batch(birth)?;
             Ok(())
         })?;
         receipt_landed_prose(self, &unlinked_prose);
@@ -239,7 +274,7 @@ impl Memory<'_> {
                 input.source_id.clone(),
                 id,
                 ImportedEvidenceEntityResolution::subject(subject),
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 occurred,
                 learned_at,
             )

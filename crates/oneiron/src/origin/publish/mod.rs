@@ -229,7 +229,7 @@ impl Vault {
         }
         let authority =
             match self.admit_publish_act_in_txn(&txn, caller, &member, target, || {
-                Ok(built.paths.clone())
+                Ok(built.grant_paths())
             })? {
                 Ok(authority) => authority,
                 Err(denial) => {

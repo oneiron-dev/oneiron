@@ -299,7 +299,13 @@ pub(super) fn delivery_read_in(
         }
         Err(_) => return Ok(DeliveryRead::Waits(EsignDeliveryWait::SendUnreadable)),
     };
-    let call = match crate::outbound::esign_delivery_call_in_txn(vault, txn, dispatch_ref)? {
+    let ledger_identity = marker.ledger_identity_ref.as_deref();
+    let call = match crate::outbound::esign_delivery_call_in_txn(
+        vault,
+        txn,
+        dispatch_ref,
+        ledger_identity,
+    )? {
         Ok(Some(call)) => call,
         Ok(None) => {
             return Ok(DeliveryRead::Held(

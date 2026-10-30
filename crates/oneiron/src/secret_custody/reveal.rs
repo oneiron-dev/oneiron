@@ -15,7 +15,8 @@
 //! A granted reveal is a T1 lease whose effector is the model connection
 //! ([`crate::secret_lease::stamp_reveal_lease_in_txn`]): the materialization
 //! receipt lands before the lease, and the value goes back to the caller and
-//! nowhere else. A reveal delivers its value once.
+//! nowhere else. A reveal delivers its value once, and again only to the
+//! step that collected it, under its lease (FIX 2360, FIX 11683).
 //!
 //! The owner reads a value on their own surface: an owner-tier proof and a
 //! reason, and the reveal row is the receipt. No lease is stamped, as no
@@ -73,8 +74,8 @@ pub use self::types::{
 /// house ceiling for an ask that waits on the owner.
 pub const REVEAL_ASK_TTL_SECS: u64 = 3600;
 
-/// The life of the T1 lease a delivered reveal stamps, in seconds. Canon
-/// names none.
+/// The life of the T1 lease a delivered reveal stamps, and of the lease a
+/// PERSON reveal keeps on its row (FIX 11683), in seconds. Canon names none.
 pub const REVEAL_LEASE_TTL_SECS: u64 = 900;
 
 /// The longest `why`, or owner reason, a reveal keeps, in bytes after
@@ -138,6 +139,9 @@ pub(crate) struct RevealAsker {
     /// The task the asker's run works, its leased try's task ref: what a
     /// grant of this task names (FIX 2354); `None` for an asker no task binds.
     task: Option<String>,
+    /// The durable code-mode step the asker's call is, as its run's
+    /// dispatcher named it (FIX 11683); `None` for any other call.
+    step: Option<crate::runtime_hooks::InvocationId>,
 }
 
 impl RevealAsker {
@@ -150,7 +154,14 @@ impl RevealAsker {
             reader: None,
             attempt: None,
             task: None,
+            step: None,
         }
+    }
+
+    /// This asker with the code-mode step its call is, as the host bound it.
+    pub(crate) fn with_step(mut self, step: Option<crate::runtime_hooks::InvocationId>) -> Self {
+        self.step = step;
+        self
     }
 
     /// This asker with the task its leased try works, as the host bound it.
@@ -311,6 +322,10 @@ struct RevealRow {
     /// The reach of the standing grant that answered it (FIX 2354).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<RevealGrantScope>,
+    /// The step whose wait collected the value, and a PERSON reveal's lease
+    /// window (FIX 11683): what a replay of that step reads again under.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    collected: Option<replay::RevealCollection>,
 }
 
 /// The file an agent's read names: the artifact, its stored bytes' hash, and

@@ -13,6 +13,7 @@ use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
+use oneiron::memory::DreamerDecidedCandidateView;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner, owner_error};
@@ -27,6 +28,16 @@ const DEFAULT_LIMIT: usize = 100;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/candidate-decisions",
+                summary: "Every candidate one Dreamer attempt decided a correction for, with its kept decisions: ids and decisions only.",
+                row: None,
+                shape: None,
+            },
+            get(candidate_decisions),
+        ),
         (
             OwnerRoute {
                 method: "get",
@@ -77,6 +88,14 @@ pub(super) fn owner_table() -> OwnerTable {
             post(resume_dreamer),
         ),
     ]
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateDecisionsQuery {
+    /// The attempt, as `vault.consolidation.status` names it (`job:`
+    /// prefix allowed).
+    job_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,6 +235,30 @@ fn reverted_view(receipt: DreamerRevertReceipt) -> ChangeReverted {
         left_alone: reverted.left_alone,
         receipt_ref: receipt.receipt_ref,
     }
+}
+
+/// `GET /v1/owner/dreamer/candidate-decisions?job_ref=<ref>`: every
+/// candidate the Dreamer attempt decided a correction for, with its kept
+/// decisions. Ids and decisions only, never a candidate's value.
+async fn candidate_decisions(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CandidateDecisionsQuery>, QueryRejection>,
+) -> OwnerReply<Vec<DreamerDecidedCandidateView>> {
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let locality = auth.locality();
+    let read = blocking(move || -> OwnerResult<Vec<DreamerDecidedCandidateView>> {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        vault
+            .memory(actor, EdgeActorClass::Human)
+            .at(locality)
+            .dreamer_candidate_decisions(Some(&owner), &query.job_ref)
+            .map_err(memory_refused)
+    })
+    .await?;
+    Ok(Json(read))
 }
 
 /// `GET /v1/owner/dreamer/changes` (optionally `?limit=<n>`): the Dreamer's

@@ -198,7 +198,7 @@ impl Memory<'_> {
             needs,
             ops,
             attachments: RoomRowAttachments::note(
-                crate::WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 "vault.notes.create",
                 evidence,
                 at,
@@ -243,14 +243,11 @@ impl Memory<'_> {
         let project = self.resolve_ref(&input.scope.scope_project_id)?;
         let relationship = match &input.scope.scope_relationship_id {
             ClaimRelationships::All(AllRelationships::All) => None,
-            ClaimRelationships::Relationships(ids) if ids.len() == 1 => {
-                Some(self.resolve_ref(&ids[0])?)
-            }
-            ClaimRelationships::Relationships(_) => {
-                return Err(MemoryError::bad_request(
-                    "a claim relationship position is all or exactly one relationship",
-                ));
-            }
+            ClaimRelationships::Relationships(ids) => Some(
+                ids.iter()
+                    .map(|id| self.resolve_ref(id))
+                    .collect::<Result<std::collections::BTreeSet<EntityId>, _>>()?,
+            ),
         };
         if input.sensitivity.is_some_and(|band| band > 3) {
             return Err(MemoryError::bad_request("sensitivity must be in 0..=3"));
@@ -274,7 +271,9 @@ impl Memory<'_> {
             confidence: input.confidence,
             source: input.source.clone(),
             world_ref: (world != crate::claim::base_world_id()).then(|| world.to_hex()),
-            relationship_ref: relationship.map(|id| id.to_hex()),
+            relationship_ref: relationship
+                .as_ref()
+                .map(|ids| ids.iter().map(|id| id.to_hex()).collect()),
             scope: Some(scope.clone()),
             valid_from: input.valid_from,
             valid_to: input.valid_to,
@@ -313,9 +312,7 @@ impl Memory<'_> {
         if world != crate::claim::base_world_id() {
             candidate = candidate.with_world(world);
         }
-        if let Some(relationship) = relationship {
-            candidate = candidate.with_relationship(relationship);
-        }
+        candidate = candidate.with_relationships(relationship);
         let rows = |approval: ClaimApprovalStatus| -> crate::Result<(Vec<BatchOp>, Vec<EntityId>)> {
             let envelope = self.claim_envelope(source, "vault.claims.upsert", approval)?;
             self.session_claim_rows(

@@ -5,12 +5,15 @@
 //!
 //! The secret is borrowed for this call only. It never enters
 //! [`OpenOptions`], the [`SharedVault`] or the registry, so it takes no part
-//! in the I9 same-vault test, and the issuer derived from it is dropped
-//! (zeroized) before the handle returns. The handle gets no owner proof, no
-//! root signer and no actor beyond the generic embedded owner every open
-//! binds: the open only profiles the install, as `Unanswered`.
+//! in the I9 same-vault test. Without the caller's opt-in the install's
+//! issuer is dropped (zeroized) before the handle returns, and the handle
+//! gets no owner proof, no root signer and no actor beyond the generic
+//! embedded owner every open binds: the open only profiles the install, as
+//! `Unanswered`. With `OpenOptions::hold_checkpoint_root_signer` the handle
+//! holds that issuer as its checkpoint signer for its life (FIX 5343).
 
 use std::path::Path;
+use std::sync::Arc;
 
 use oneiron::authority::{AuthorityTier, LocalOpenProfile, ROLE_CLOUD};
 use oneiron::memory::MemoryError;
@@ -30,8 +33,8 @@ const SDK_HOST_ROOT_OPEN_ROOTS: bool = false;
 /// owner-local convenience. It refuses a vault open under the managed or
 /// relay posture, and a given root whose roster row the log marks as the
 /// provider's (`ROLE_CLOUD` or `CloudCustodial`), whatever posture the opener
-/// chose. A managed host profiles its own node at serving start, and its
-/// owner acts through his credential.
+/// chose. A managed host profiles its own node
+/// at serving start, and its owner acts through his credential.
 const SDK_HOST_ROOT_REFUSES_HOSTED: bool = true;
 
 impl EmbeddedClient {
@@ -59,6 +62,16 @@ impl EmbeddedClient {
         let profile = shared
             .vault()
             .profile_local_open(Some(host_root_secret), SDK_HOST_ROOT_OPEN_ROOTS)?;
+        // The caller's explicit opt-in (FIX 5343): with it on, the handle
+        // holds this install's loaded issuer as its checkpoint signer for
+        // its life, as a served host does, so the device sync's steady pass
+        // attests with it the images its home writes. A secret that went
+        // unused is never held: over a wrong root the open stands under the
+        // settled root as before, with no signer.
+        if options.hold_checkpoint_root_signer && !profile.wrong_root() {
+            let issuer = shared.vault().load_host_slip_issuer()?;
+            shared.vault().hold_checkpoint_root_signer(Arc::new(issuer));
+        }
         let actor = shared.vault().ensure_embedded_owner_actor()?;
         let client = Self {
             shared,
@@ -67,6 +80,7 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open: None,
+            read_proof: None,
         };
         Ok((client, HostRootProfile::from_core(profile)))
     }
@@ -105,6 +119,8 @@ impl HostRootProfile {
 /// provider's, naming why. Marks are read as the fold holds them, never
 /// relabelled: a hosted root is stamped `ROLE_CLOUD` and `CloudCustodial`
 /// when it is minted, and the opener's local default does not erase that.
+/// A root in the provider's custody (one a marked key admitted) is refused
+/// the same way, whatever its own marks say (FIX 5344).
 fn refuse_hosted_root(shared: &SharedVault) -> Result<(), MemoryError> {
     let vault: &Vault = shared.vault();
     match vault.privacy_posture() {
@@ -132,9 +148,13 @@ fn refuse_hosted_root(shared: &SharedVault) -> Result<(), MemoryError> {
         return Ok(());
     };
     let fold = vault.authority_fold()?;
-    let provider_held = fold.roster.get(&issuer.public_key()).is_some_and(|row| {
+    let key = issuer.public_key();
+    // A successor root a provider-marked key admitted is the provider's too,
+    // even when it dropped the marks (FIX 5344): the fold's custody walk
+    // names it.
+    let provider_held = fold.roster.get(&key).is_some_and(|row| {
         row.roles & ROLE_CLOUD != 0 || row.tier == AuthorityTier::CloudCustodial
-    });
+    }) || vault.authority_key_in_host_custody(&key)?;
     if provider_held {
         return Err(forbidden(
             "the given host root is a hosted root the provider holds, so this owner-local \

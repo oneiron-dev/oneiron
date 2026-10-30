@@ -50,6 +50,7 @@ mod checkpoint_fact;
 mod custody;
 pub(crate) mod finalize;
 mod handoff;
+mod payload_retention;
 mod rehearse;
 mod relay_hold;
 mod restore;
@@ -57,7 +58,7 @@ mod scratch;
 pub(crate) mod write_budget;
 
 pub(crate) use self::custody::{
-    CustodyAnchorCredentials, custody_recovery, custody_status, take_publishing,
+    CustodyAnchorCredentials, custody_from_home, custody_recovery, custody_status, take_publishing,
 };
 #[cfg(test)]
 use self::rehearse::Owned;
@@ -303,6 +304,8 @@ pub(crate) fn prune(
         return Ok(Vec::new());
     }
     checkpoint_fact::sweep(vault, plan);
+    // So do payload inventories no backup names (KS7-5).
+    payload_retention::sweep(vault, plan);
     // FIX 7607: stage acks whose artifact is gone go with the prune; pinned
     // acks whose artifact exists stay.
     handoff::sweep_orphan_stage_acks(plan);
@@ -313,6 +316,9 @@ pub(crate) fn prune(
     let keep = plan.keep.max(1) - usize::from(spared.is_some());
     let excess = records.len().saturating_sub(keep);
     let excess: Vec<_> = records.into_iter().take(excess).collect();
+    // Where each payload inventory sits, read while its backup is there
+    // (KS7-5).
+    let inventories = payload_retention::inventories_of(&excess);
     let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
         let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
             let mut pruned = Vec::new();
@@ -345,6 +351,8 @@ pub(crate) fn prune(
                 );
             }
         }
+        // A payload leaf the kept backups no longer name may retire now.
+        payload_retention::settle(vault, plan, &gone, inventories);
         return Ok(gone);
     };
     let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
@@ -375,6 +383,7 @@ pub(crate) fn prune(
         return Ok(Vec::new());
     };
     handoff::check_backlog(vault, &plan.backlog_checked, &pending);
+    payload_retention::settle(vault, plan, &pruned, inventories);
     Ok(pruned)
 }
 
@@ -401,6 +410,8 @@ pub(crate) fn prune_deleted_vault_backups(
         return Ok(Some(Vec::new()));
     }
     let records = list(plan)?;
+    // Where each payload inventory sits, read while its backup is there.
+    let inventories = payload_retention::inventories_of(&records);
     let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
         let mut dropped = Vec::new();
         if holds.keeps_backups() {
@@ -429,6 +440,10 @@ pub(crate) fn prune_deleted_vault_backups(
             );
         }
     }
+    // Their inventories go, and the payload leaves no backup keeps now may
+    // retire, as after any prune; then any inventory no backup names.
+    payload_retention::settle(vault, plan, &gone, inventories);
+    payload_retention::sweep(vault, plan);
     handoff::sweep_orphan_stage_acks(plan);
     Ok(Some(gone))
 }

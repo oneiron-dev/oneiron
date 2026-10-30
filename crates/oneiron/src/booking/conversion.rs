@@ -18,7 +18,7 @@ pub struct BookingLandingContent {
     pub intro: String,
     pub faq: Vec<BookingFaq>,
     pub prep_path: Option<String>,
-    /// The small pre-confirm subset; a host collects other intake after confirm.
+    /// The pre-confirm subset; a host collects other intake after confirm.
     pub preconfirm_field_keys: Vec<String>,
 }
 
@@ -33,15 +33,15 @@ impl BookingLandingContent {
     /// Checked both when the owner writes and when a public page is read.
     pub fn validate(&self) -> Result<(), BookingError> {
         let bounded = |text: &str, limit: usize| text.len() <= limit;
+        // Every configured FAQ and pre-confirm field is kept; only each item
+        // and the encoded whole are bounded.
         if !bounded(&self.intro, 2048)
-            || self.faq.len() > 8
             || self.faq.iter().any(|faq| {
                 faq.question.trim().is_empty()
                     || faq.answer.trim().is_empty()
                     || !bounded(&faq.question, 256)
                     || !bounded(&faq.answer, 1024)
             })
-            || self.preconfirm_field_keys.len() > 3
             || self
                 .preconfirm_field_keys
                 .iter()

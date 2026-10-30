@@ -9,12 +9,14 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use axum::body::Bytes;
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{Query, State};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::response::Json;
 use oneiron::EntityId;
 use oneiron::skill_hub::pack_catalog::{
-    PackInstallDisposition, PackInstallReceipt, PackOrganBuild, PackOrganEntry, hub_pin,
+    PackInstallDisposition, PackInstallReceipt, PackLensComponent, PackLensEntry, PackOrganBuild,
+    PackOrganEntry, hub_pin,
 };
 use oneiron::skill_hub::{HubFile, HubPin, HubRef, HubSyncPolicy, MODEL_PACK_NAME, TrackedHubRef};
 use oneiron::task_verb::sdk::{HubHookBindingRow, PackFileInput, decode_pack_files};
@@ -28,6 +30,7 @@ use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
 mod line_chats;
+mod native_mail_identities;
 pub(crate) mod schema;
 mod setup_routes;
 mod skill_routes;
@@ -452,6 +455,17 @@ async fn pack_organs(
     Ok(Json(organs))
 }
 
+/// `GET /v1/owner/packs/lenses`: every lens of every Active installation,
+/// each bound to the skill its slot names.
+async fn pack_lenses(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<Vec<PackLensEntry>> {
+    owner(&auth, &server)?;
+    let lenses = blocking(move || Ok(server.vault().pack_lenses()?)).await?;
+    Ok(Json(lenses))
+}
+
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PutOrganBuild {
@@ -490,6 +504,26 @@ async fn put_organ_build(
     })
     .await?;
     Ok(Json(build))
+}
+
+/// `POST /v1/owner/packs/sources/{source_id}/lenses/{lens}/component`: hold
+/// one lens component build for a staged pack source. The body's raw bytes
+/// must match the source's pin; holding grants nothing.
+async fn put_pack_lens_component(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    UrlPath((source_id, lens)): UrlPath<(String, String)>,
+    body: Bytes,
+) -> OwnerReply<PackLensComponent> {
+    let owner = owner(&auth, &server)?;
+    let component = blocking(move || {
+        let source = entity_id(&source_id, "source_id")?;
+        Ok(server
+            .vault()
+            .put_pack_lens_component(&owner, source, &lens, &body)?)
+    })
+    .await?;
+    Ok(Json(component))
 }
 
 fn entity_id(hex: &str, what: &str) -> Result<EntityId, OwnerError> {

@@ -246,6 +246,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
+        // The skills and other runs' result rows its earlier steps' callables
+        // answered from, so this step judges its results with them too
+        // (FIX 5763).
+        self.callable_rows.1 = record.callable_rows.clone();
         self.storage = Some(storage);
         Ok(self)
     }
@@ -282,6 +286,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 impl JsCodeModeHost for RecordingJsHost<'_, '_> {
     fn start_callable_check(&mut self, seq: u64, program: CallableProgram<'_>) {
         self.start_callable_check_at(seq, program);
+    }
+
+    fn caller_entity(&self) -> Option<EntityId> {
+        Some(self.gated_write.actor().entity_ref())
     }
 
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {

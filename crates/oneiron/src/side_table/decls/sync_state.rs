@@ -188,6 +188,11 @@ side_tables! {
     /// Claim-then-finalize dedupe marker for one polled LinkedIn inbox message. Key: hex16 (truncated
     /// blake3 of receiving address/session/thread/message).
     LINKEDIN_INBOX_SYNC_SEEN: SyncState b"linkedin:inbox_sync:seen:v1:" Raw;
+    /// Durable pending-mirror marker a local write leaves in its own transaction (FIX 7957, FIX
+    /// 9599): the window owes the row's carrier, or the removal of the edge's key, until that
+    /// change is durable there. Value: u64be stamp of the write. Key: window key ":" (hex32
+    /// (entity id) | hex32 ":" kk ":" hex32 (edges-map key)).
+    SYNC_PENDING_MIRROR: SyncState b"lm:w:" Raw;
     /// Local mirror of one device's REDACTION_AUDIT-stream lease-registry entry from the root doc's
     /// leases map. Key: hex16 (vault_id) ":" hex16 (client_id).
     SYNC_LEASE: SyncState b"ls:" Raw;

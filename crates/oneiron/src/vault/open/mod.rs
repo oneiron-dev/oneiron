@@ -552,6 +552,7 @@ impl Vault {
             writer_lease: None,
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -591,6 +592,7 @@ impl Vault {
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
             managed_owner_check: Default::default(),
+            served_transports: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -630,6 +632,7 @@ impl Vault {
                 if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                     vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
                 }
+                crate::agent_def::ensure_seeded_agent_persons_in_txn(&vault, wtxn)?;
                 Ok(())
             })?;
             // An untouched seeded policy manifest takes the one this build
@@ -651,6 +654,7 @@ impl Vault {
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::comm::seed_claim_class_descriptors(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;

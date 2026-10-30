@@ -109,7 +109,6 @@ fn pin_record_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) ->
 /// body and edges still read, and its thread's cached projection goes stale.
 /// A soft capture: nothing is torn down and no HEAD moves, since the row
 /// keeps its header and its edges.
-#[cfg(feature = "sync")]
 pub(crate) fn capture_withdrawn_record_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,

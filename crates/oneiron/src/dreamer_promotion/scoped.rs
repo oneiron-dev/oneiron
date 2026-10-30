@@ -3,6 +3,7 @@
 //! evidence: its value, approval, source and original attribution stay intact.
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::writer::{GateCodes, PromotionRejection};
 use super::*;
 use super::{corrections, resolved_outputs};
 use crate::dreamer_consolidation::evidence::VerifiedEvidenceSet;
@@ -30,6 +31,7 @@ pub fn promote_scoped_consolidation(
         None => checker.clone(),
     });
     let checker = checker.as_ref();
+    let landing = write.landing;
     let mut outcome = PromotionOutcome::default();
     // The open markers this write's outputs answer (FIX 7325), and each head
     // the write landed or met again with the evidence its candidate cited.
@@ -80,9 +82,15 @@ pub fn promote_scoped_consolidation(
                 outcome.landed.push(head);
             }
             Err(error) => {
-                log_rejected(run, index, "attach_evidence", Some(error.kind()));
-                outcome.rejected_kinds.push((head, error.kind()));
-                outcome.rejected.push((head, error.to_string()));
+                let rejection = PromotionRejection::engine(error);
+                log_rejected(
+                    run,
+                    index,
+                    "attach_evidence",
+                    rejection.kind,
+                    rejection.gate.as_ref(),
+                );
+                rejection.record(head, &mut outcome);
             }
         }
     }
@@ -156,7 +164,7 @@ pub fn promote_scoped_consolidation(
                 }
             }
             Ok(_) => {
-                log_rejected(run, index, "promote_not_auto", None);
+                log_rejected(run, index, "promote_not_auto", None, None);
                 outcome
                     .rejected
                     .push((id, "scoped promotion was not Auto".into()));
@@ -164,13 +172,17 @@ pub fn promote_scoped_consolidation(
             // The promotion door's refusal keeps its text for the outcome
             // and its kind beside it (FIX 9429); the log takes the kind of
             // the engine error behind it, when one refused it (FIX 7271),
+            // and the gate's codes when the gate refused it (FIX 10355),
             // and never the text.
             Err(rejection) => {
-                log_rejected(run, index, "promote", rejection.kind);
-                if let Some(kind) = rejection.kind {
-                    outcome.rejected_kinds.push((id, kind));
-                }
-                outcome.rejected.push((id, rejection.reason));
+                log_rejected(
+                    run,
+                    index,
+                    "promote",
+                    rejection.kind,
+                    rejection.gate.as_ref(),
+                );
+                rejection.record(id, &mut outcome);
             }
         }
     }
@@ -182,26 +194,36 @@ pub fn promote_scoped_consolidation(
     answers.sort();
     answers.dedup();
     resolved_outputs::close_resolved_outputs(vault, run, &write.fence, &answers, &stood, &unmet);
+    if let Some(landing) = landing {
+        landing.record(&outcome.landed, outcome.rejected.len());
+    }
     Ok(outcome)
 }
 
 /// Logs one candidate of `run`'s sealed write the door rejected, before the
 /// rejections fold into the write's one error (FIX 7271): its index in its
-/// list, a static code for where it was rejected and its error's kind when
-/// the rejection carries one. Never the rejection's text.
+/// list, a static code for where it was rejected, its error's kind when
+/// the rejection carries one, and the gate's outcome and reason codes when
+/// the gate refused it (FIX 10355). Never the rejection's text.
 fn log_rejected(
     run: &DreamerRunContext,
     index: usize,
     stage: &'static str,
     kind: Option<crate::error::ErrorKind>,
+    gate: Option<&GateCodes>,
 ) {
     let attempt_id = crate::entity_id::bytes_to_hex_lower(run.attempt_id.as_bytes());
+    let (gate_outcome, reason_codes) = gate.map_or(("", &[][..]), |(outcome, codes)| {
+        (*outcome, codes.as_slice())
+    });
     match kind {
         Some(kind) => tracing::warn!(
             attempt_id = %attempt_id,
             candidate = index,
             stage,
             error_kind = ?kind,
+            gate_outcome,
+            reason_codes = ?reason_codes,
             "a scoped consolidation candidate was rejected"
         ),
         None => tracing::warn!(

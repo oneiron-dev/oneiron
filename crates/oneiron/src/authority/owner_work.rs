@@ -33,6 +33,10 @@
 //! before it joins them, and an admitted revoke is terminal for its secret
 //! (`custody`).
 //!
+//! A custody request whose permits ride in pieces has effect only once its
+//! signer's pieces of its commitment join at its parents, and the fold keeps
+//! it with them joined (`permit_pieces`, FIX 11866).
+//!
 //! As for every act kind, an owner the request's parents hold removed carries
 //! no say-so ([`super::owner_act::owner_live_at`], mesh contract §4), and the
 //! writer and the executor each check the owner live in their own
@@ -46,6 +50,7 @@
 mod cancel;
 mod custody;
 mod kit_custody;
+mod permit_pieces;
 mod privacy_basis;
 mod root_basis;
 
@@ -104,6 +109,10 @@ pub(super) struct OwnerWorkState {
     /// Each root request's cancels with effect, by the request's entry
     /// (`cancel`).
     cancels: BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    /// Each custody permit piece, by its signer, commitment and place: what
+    /// a request in pieces joins its permits from (`permit_pieces`, FIX
+    /// 11866).
+    permit_pieces: BTreeMap<permit_pieces::PermitPieceKey, Arc<CustodyPermitPiece>>,
 }
 
 /// One admitted request as this install reads it.
@@ -286,7 +295,9 @@ impl AuthorityFold {
 /// The owner work transitions, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: each is signed by an install key, never a roster key (FIX 2222:
-/// the host root acts as nobody), a cancel's too. `None` for any other op.
+/// the host root acts as nobody), a cancel's too, and a custody permit
+/// piece's, but for a kit request's, which its anchor signs (FIX 11866).
+/// `None` for any other op.
 pub(super) fn apply_owner_work(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -303,6 +314,9 @@ pub(super) fn apply_owner_work(
         AuthorityOp::OwnerWorkCancel(owner_cancel) => {
             Some(cancel::apply_cancel(state, entry, owner_cancel, hash, view))
         }
+        AuthorityOp::CustodyPermitPiece(piece) => Some(permit_pieces::apply_permit_piece(
+            state, entry, piece, hash, view,
+        )),
         _ => None,
     }
 }
@@ -359,6 +373,13 @@ fn apply_request(
     let narrow_only =
         !standing.admits_owner_act_signer(request.carrier, &key, StandingView::Install);
     drop(standing);
+    // A custody request in pieces is kept with its permits joined from its
+    // signer's pieces at its parents; one whose pieces do not join there is
+    // valid without effect (FIX 11866).
+    let Some(request) = permit_pieces::joined_request(&state.owner_work, &key, request) else {
+        state.owner_work.refused.insert(hash);
+        return Ok(());
+    };
     // A carrier the one rule does not admit, or an owner the request's
     // parents hold removed (mesh contract §4), records a valid request
     // without effect; so does key work whose settings edit basis the parents
@@ -367,10 +388,10 @@ fn apply_request(
     let live = admitted
         && match &request.privacy_basis {
             None => super::owner_act::owner_live_at(state, request.act.owner),
-            Some(basis) => privacy_basis::privacy_key_work_basis_admits(state, request, basis),
+            Some(basis) => privacy_basis::privacy_key_work_basis_admits(state, &request, basis),
         };
     let work = &mut state.owner_work;
-    if !live || !custody::custody_request_lands(work, request) {
+    if !live || !custody::custody_request_lands(work, &request) {
         work.refused.insert(hash);
         return Ok(());
     }
@@ -381,11 +402,11 @@ fn apply_request(
     let replaced = std::mem::take(&mut heads.live);
     heads.superseded.extend(replaced);
     heads.live.insert(hash);
-    custody::note_custody_revoke(work, request);
+    custody::note_custody_revoke(work, &request);
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: request.clone(),
+            request: request.into_owned(),
             key,
             marks,
             narrow_only,
@@ -444,7 +465,8 @@ fn apply_result(
 /// union, a request superseded on either side is superseded, and of two
 /// different results of one request the lesser entry hash stands, the other
 /// is without effect. Two copies of one request that disagree never count
-/// here.
+/// here. Custody permit pieces join by union, the lesser of two kept for one
+/// place standing (FIX 11866).
 pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkState) {
     for (hash, request) in &right.requests {
         merged
@@ -461,6 +483,9 @@ pub(super) fn merge_owner_work(merged: &mut OwnerWorkState, right: &OwnerWorkSta
     }
     merged.refused.extend(right.refused.iter().copied());
     merged.revoked.extend(right.revoked.iter().copied());
+    for (key, piece) in &right.permit_pieces {
+        permit_pieces::keep_piece(&mut merged.permit_pieces, *key, piece);
+    }
     for (request, cancels) in &right.cancels {
         merged
             .cancels

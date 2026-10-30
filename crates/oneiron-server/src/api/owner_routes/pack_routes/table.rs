@@ -18,11 +18,11 @@ use super::schema::{
 };
 use super::{
     activate_candidate, approve_skill_activation, approve_skill_permissions, bind_hooks,
-    hook_bindings, import_skill, install_from_hub, installed, line_chats, pack_organs,
-    place_agent_world, prepare_skill_activation, put, put_organ_build, qualify_hooks, ref_sync,
-    remove_pack, restore_default_skills, restore_skill, set_hook_enabled, set_ref_sync,
-    setup_answer, setup_prepare, setup_verify, setup_view, skill_receipts, slack_install,
-    slack_manifest, sync_pack, sync_skill,
+    hook_bindings, import_skill, install_from_hub, installed, line_chats, native_mail_identities,
+    pack_lenses, pack_organs, place_agent_world, prepare_skill_activation, put, put_organ_build,
+    put_pack_lens_component, qualify_hooks, ref_sync, remove_pack, restore_default_skills,
+    restore_skill, set_hook_enabled, set_ref_sync, setup_answer, setup_prepare, setup_verify,
+    setup_view, skill_receipts, slack_install, slack_manifest, sync_pack, sync_skill,
 };
 
 pub(in super::super) fn owner_table() -> OwnerTable {
@@ -272,6 +272,26 @@ pub(in super::super) fn owner_table() -> OwnerTable {
         ),
         (
             OwnerRoute {
+                method: "get",
+                path: "/packs/lenses",
+                summary: "Every lens of every Active installation, bound to its skill.",
+                row: None,
+                shape: None,
+            },
+            get(pack_lenses),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/sources/{source_id}/lenses/{lens}/component",
+                summary: "Hold one lens component build for a staged pack source.",
+                row: None,
+                shape: None,
+            },
+            post(put_pack_lens_component),
+        ),
+        (
+            OwnerRoute {
                 method: "post",
                 path: "/packs/skills/import",
                 summary: "Import a shipped library skill, or a hub skill at a pin.",
@@ -358,5 +378,6 @@ pub(in super::super) fn owner_table() -> OwnerTable {
         ),
     ];
     table.extend(line_chats::owner_table());
+    table.extend(native_mail_identities::owner_table());
     table
 }

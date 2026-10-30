@@ -54,6 +54,7 @@ use self::publication_sync::mark_publication_in_txn;
 pub(crate) use self::publication_sync::{
     ArtifactPublicationCursor, ArtifactPublicationPart, ArtifactPublicationStep,
 };
+pub(crate) use self::serving_blob::retire_released_version_in_txn;
 pub use self::vocabulary::{
     ARTIFACT_POINTER_CHANNELS, ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel,
     ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus,

@@ -35,7 +35,13 @@
 //! here unchanged. Nothing here carries a key, a credential or an unsealed
 //! backup. Port 1030 and the 64 KiB chunk are LC's co-signed terms, as was
 //! wire revision 1; revision 2 adds the backup-label registration and the
-//! `diverged_unagreed` answer to a retirement (FIX 11074). This
+//! `diverged_unagreed` answer to a retirement (FIX 11074); revision 3 adds
+//! the guest's [`VmOutboxFrame::DivergenceCleared`] notice of the owner's
+//! answer to a diverged copy (FIX 11736, FIX 11737); revision 4 adds the
+//! notice's [`VmOutboxNoticeAction`] and the host's
+//! [`VmOutboxFrame::AsideRemoved`] answer to a removal of its kept-aside copy
+//! (FIX 11985) and [`VmOutboxFrame::AsideKept`] answer to a keep of one
+//! (FIX 12010). This
 //! extension rides contract version 3 with a build floor, and a vault reports
 //! it on `Ping` (`vm_outbox_revision`).
 
@@ -48,7 +54,7 @@ use serde::{Deserialize, Serialize};
 
 /// The carrier's wire revision, which every frame names and a vault VM
 /// reports on `Ping` (`vm_outbox_revision`) once its carrier is complete.
-pub const VM_OUTBOX_WIRE_REVISION: u32 = 2;
+pub const VM_OUTBOX_WIRE_REVISION: u32 = 4;
 /// The most bytes one data chunk carries: a buffering choice, not a bound on
 /// any file.
 pub const VM_OUTBOX_CHUNK_BYTES: usize = 64 * 1024;
@@ -369,6 +375,43 @@ pub enum VmOutboxFrame {
     /// engine registered its backup plan: that plan's label, which the host
     /// keeps for the vault its attachment is bound to (FIX 7046).
     BackupRegistered { label: String },
+    /// Guest to host, at the start of a guest turn after the owner answered
+    /// a diverged copy of `kind`'s `member` hashing to `held`, which
+    /// `held_by` keeps (FIX 11736, FIX 11737). A guest copy was removed or
+    /// moved aside, so a refusal the host gave its own version for that
+    /// copy no longer holds and its next scan offers it again. A host copy
+    /// the owner kept moves aside on the host under its own name, so the
+    /// guest's next version lands, and the host answers [`Self::AsideKept`]
+    /// with its move's result (FIX 12010). With `remove_aside`, the owner had the
+    /// host's kept-aside copy removed: the host deletes its side copy and
+    /// answers [`Self::AsideRemoved`] (FIX 11985). The host acts only on a
+    /// copy its own record keeps with that digest.
+    DivergenceCleared {
+        kind: VmOutboxKind,
+        member: String,
+        held: String,
+        held_by: VmOutboxSide,
+        action: VmOutboxNoticeAction,
+    },
+    /// Host to guest, first in the host's turn: its kept-aside copy of
+    /// `kind`'s `member` hashing to `held`, which a `remove_aside` notice
+    /// named, is deleted, or `failed` says why it is not (FIX 11985).
+    AsideRemoved {
+        kind: VmOutboxKind,
+        member: String,
+        held: String,
+        failed: Option<String>,
+    },
+    /// Host to guest, first in the host's turn: its copy of `kind`'s
+    /// `member` hashing to `held`, which a keep notice named, moved aside
+    /// under its own name, or `failed` says why it did not, while the copy
+    /// stays at the member's name (FIX 12010).
+    AsideKept {
+        kind: VmOutboxKind,
+        member: String,
+        held: String,
+        failed: Option<String>,
+    },
     /// One transfer; a put's data chunks follow its line.
     Transfer(VmOutboxDescriptor),
     /// The answer to one transfer, after its set.
@@ -377,6 +420,23 @@ pub enum VmOutboxFrame {
     Pull,
     /// Host to guest: the host's sets are sent; the guest's turn.
     Done,
+}
+
+/// What a [`VmOutboxFrame::DivergenceCleared`] notice tells the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VmOutboxNoticeAction {
+    /// The owner answered a diverged copy, remove or keep (FIX 11737).
+    Answered,
+    /// The owner had the host's kept-aside copy removed (FIX 11985).
+    RemoveAside,
+}
+
+/// `detail` as an aside answer's failure carries it: short and free of
+/// control characters, as a refusal's detail.
+#[must_use]
+pub fn vm_outbox_detail(detail: &str) -> String {
+    clip(detail)
 }
 
 /// One frame as the line the carrier carries.

@@ -11,6 +11,14 @@
 //! off-record session (ARCH-0052): a call inside one writes no row, and its
 //! reply says so, rather than carrying a ref.
 //!
+//! A transport's reply does not wait for that row's commit (Engine ruling
+//! 10-30 23:09, [`Vault::record_call_receipt_deferred_commit`]): the row is
+//! staged in the vault's group commit, in arrival order and through the
+//! side-row wall, before the reply, and commits with that group after it. A
+//! crash can lose the last receipts of calls whose answers already went out;
+//! a clean close keeps them, and a lookup of a ref reads its row once that
+//! commit is decided.
+//!
 //! A reply no credential attributed (a pre-auth refusal, a protocol-only
 //! reply) is recorded too, attributed to the connection it arrived on: its
 //! `actor_ref` is that connection's id and its class is
@@ -48,6 +56,7 @@ use crate::memory::{
 };
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Rows;
 use crate::vault::{ReadMode, RevisionRef};
 use crate::{EntityId, Result, Vault};
 
@@ -117,6 +126,11 @@ pub struct CallReceipt {
     /// The presented credential's revocable id (a slip's id), when it has
     /// one; [`ERASED_CALL_IDENTITY`] once its actor is erased.
     pub credential_ref: Option<String>,
+    /// The linked machine that carried a forwarded call (FIX 3550), as
+    /// canonical hex, when the caller named above is the one a device
+    /// forwarded to its home; `None` for a call its own connection made.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub carrier_machine: Option<String>,
     pub outcome: CallOutcome,
     /// BLAKE3 of the canonical input JSON, lowercase hex.
     pub request_digest: String,
@@ -155,6 +169,9 @@ pub struct CallReceiptInput {
     pub actor_ref: String,
     pub actor_class: String,
     pub credential_ref: Option<String>,
+    /// The forwarding machine of a call a device forwarded for its caller
+    /// (FIX 3550), canonical hex; `None` otherwise.
+    pub carrier_machine: Option<String>,
     pub outcome: CallOutcome,
     pub request_digest: String,
     pub result_digest: Option<String>,
@@ -429,6 +446,35 @@ impl Vault {
         self.with_write_txn_grouped(|txn| self.record_call_receipt_in_txn(txn, input))
     }
 
+    /// [`Self::record_call_receipt`] for a transport's reply path, without
+    /// waiting for the row's commit and its data sync (Engine ruling 10-30
+    /// 23:09). The row is staged in the vault's group commit in arrival
+    /// order, its id, time and side-row wall included, and the ref comes back
+    /// once it is staged: a receipt refused there is refused before the
+    /// reply, as before. The group's leader commits it after the reply. A
+    /// crash before that commit loses the receipt of a call whose answer
+    /// already went out; a clean close keeps it, and a lookup of the ref
+    /// waits for it ([`Memory::call_receipt`]).
+    ///
+    /// The write carries its own row only: the general write door's
+    /// per-write work (waiting scan checks, found-key notices, owed rederives
+    /// and VADs, the commit's wakes) rides the next write through that door
+    /// or the next timer pass.
+    ///
+    /// # Errors
+    ///
+    /// The clock's, the side-row wall's and storage errors met while the row
+    /// is staged.
+    pub fn record_call_receipt_deferred_commit(&self, input: CallReceiptInput) -> Result<String> {
+        self.store.group_write_deferred_commit(|txn| {
+            let _active_write_txn = crate::store::active_write_txn_guard();
+            match self.record_call_receipt_in_txn(txn, input) {
+                Ok(receipt_ref) => Rows::Commit(receipt_ref),
+                Err(error) => Rows::Discard(Err(error)),
+            }
+        })
+    }
+
     /// [`Self::record_call_receipt`] inside `txn`, for a writer whose own
     /// row and the receipt commit together: the drain's refusal of a
     /// credential call and its receipt (ARCH-0080 §3 Ask).
@@ -452,6 +498,7 @@ impl Vault {
             actor_ref: bounded(input.actor_ref),
             actor_class: bounded(input.actor_class),
             credential_ref: input.credential_ref.map(bounded),
+            carrier_machine: input.carrier_machine.map(bounded),
             outcome: match input.outcome {
                 CallOutcome::Ok => CallOutcome::Ok,
                 CallOutcome::Refused { code } => CallOutcome::Refused {
@@ -564,11 +611,16 @@ impl Memory<'_> {
     /// actor: it reads a receipt only when it is that receipt's actor (same
     /// id, same class) or the vault's live owner. Every other receipt, a
     /// malformed ref and a ref that names nothing all read `None` alike.
+    ///
+    /// A reply's receipt commits after the reply (Engine ruling 10-30 23:09):
+    /// the read waits until the commits of the receipts already answered are
+    /// decided, so a ref a reply carried reads back.
     pub fn call_receipt(&self, receipt_ref: &str) -> MemoryResult<Option<CallReceipt>> {
         let Some(id) = call_receipt_id(receipt_ref) else {
             return Ok(None);
         };
         let vault = self.vault();
+        vault.store.wait_for_deferred_commits();
         let txn = vault
             .store
             .env
