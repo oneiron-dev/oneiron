@@ -187,7 +187,7 @@ pub struct ReplyHeader {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Outcome {
     /// The provider answered (any status). The headers are stripped, and so
-    /// is a buffered body; a streamed body is checked and passed unchanged.
+    /// is the body: a buffered one whole, a streamed one as it passes.
     Answered {
         /// The HTTP status.
         status: u16,
