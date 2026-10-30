@@ -50,5 +50,5 @@ pub use runtime::{
 };
 pub use serde_bytes::ByteBuf;
 #[cfg(unix)]
-pub use shape::{MAX_FRAME_DEPTH, MAX_FRAME_VALUES};
+pub use shape::{MAX_FRAME_DEPTH, MAX_FRAME_VALUES, decoded_len};
 pub use wire::*;
