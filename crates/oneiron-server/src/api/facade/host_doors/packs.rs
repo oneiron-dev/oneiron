@@ -24,16 +24,24 @@ use crate::server::SyncServer;
 
 /// `vault.packs.put`: the owner installs a pack folder, or replaces the one
 /// installed under its name, under the proof `/v1/owner` takes from the
-/// request. The put is the consent for the pack's hooks.
+/// request. The put is the consent for the pack's hooks. An agent acting for
+/// the owner puts the `local` pack alone, its hooks bound as its own.
 pub(super) async fn vault_packs_put_answer(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: PackPutRequest,
 ) -> MemoryResult<PackPutReceipt> {
-    let owner = owner_proof(auth, server, "vault.packs.put")?;
+    let proof = setup_proof(server, auth, "vault.packs.put")?;
     let server = Arc::clone(server);
-    clock_ingress::run_blocking(move || {
-        oneiron::task_verb::sdk::put_pack_as_owner(server.vault(), &owner, input)
+    clock_ingress::run_blocking(move || match proof {
+        SetupProof::Owner(owner) => {
+            oneiron::task_verb::sdk::put_pack_as_owner(server.vault(), &owner, input)
+        }
+        // An agent's own put of `local` (ARCH-0080 §7); any other pack refuses.
+        SetupProof::Agent(agent) => Ok(server
+            .vault()
+            .put_local_pack_as_agent(&agent, input.into_files()?)?
+            .into()),
     })
     .await
     .map_err(|_| internal("vault.packs.put"))?
@@ -239,7 +247,7 @@ pub(super) fn setup_proof(
         )));
     }
     refusal.suggestions.push(
-        "Or present an agent's own slip: an agent acting for the owner works the owner's setup."
+        "Or present an agent's own slip: an agent acting for the owner may call this door."
             .to_owned(),
     );
     Err(refusal)

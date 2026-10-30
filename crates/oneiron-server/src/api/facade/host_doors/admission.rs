@@ -115,7 +115,6 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.identity.events.get"
         | "vault.identity.proposals.resolve"
         | "vault.identity.proposals.for_pair"
-        | "vault.packs.put"
         | "vault.packs.preview"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"
@@ -741,9 +740,10 @@ pub(in crate::api::facade) fn door_admits(
             .map(drop)
             .map_err(crate::api::facade::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
-        // The pack setup doors (OF-378): the owner's proof, or an agent
-        // acting for the owner on the owner's session.
-        "vault.packs.setup.prepare"
+        // The pack setup doors (OF-378) and the pack put: the owner's proof,
+        // or an agent acting for the owner (an agent puts `local` alone).
+        "vault.packs.put"
+        | "vault.packs.setup.prepare"
         | "vault.packs.setup.get"
         | "vault.packs.setup.answer"
         | "vault.packs.setup.verify" => super::packs::setup_admits(server, auth, verb),
