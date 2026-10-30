@@ -49,10 +49,12 @@ pub(crate) async fn execute_booking_operation(
 /// publication claim and the event-type claims it validated) and its
 /// solve's (the calendar binding's claims and every row the listing oracle
 /// read), or the cached solve's, whose entry kept them; a silent admission
-/// answer lists the publication's alone. A hold, confirm, reschedule or
-/// cancel lists unknown (`None`): its home-node writer and its replayed
-/// receipt keep no set of the rows they read. So does a public HTTP
-/// request, which no listing door serves.
+/// answer lists the publication's alone. A hold lists the publication's and
+/// its offerability solve's (FIX 5483): the hold writer reads only
+/// node-local rows beside them. A confirm, reschedule or cancel lists
+/// unknown (`None`): its home-node writer and its replayed receipt keep no
+/// set of the rows they read. So does a public HTTP request, which no
+/// listing door serves.
 ///
 /// # Errors
 ///
@@ -87,7 +89,11 @@ async fn execute(
     } else {
         (None, None)
     };
-    if !matches!(&request, BookingOperationRequest::Availability(_)) {
+    if !matches!(
+        &request,
+        BookingOperationRequest::Availability(_)
+            | BookingOperationRequest::Book(BookingBookInput::Hold(_))
+    ) {
         listed = None;
     }
     let page_ref = match &public_authority {
@@ -210,9 +216,13 @@ async fn execute(
             Ok((response, listed))
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            execute_hold(server, page_ref, input, now, public_authority)
-                .await
-                .map(|response| (response, None))
+            let (response, sources) =
+                execute_hold(server, page_ref, input, now, public_authority).await?;
+            let listed = listed.map(|mut rows| {
+                rows.extend(sources);
+                rows
+            });
+            Ok((response, listed))
         }
         BookingOperationRequest::Book(BookingBookInput::Confirm(mut input)) => {
             admission::strip_form_honeypot(&transport, &mut input.intake);
