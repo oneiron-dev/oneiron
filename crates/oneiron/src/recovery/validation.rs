@@ -81,6 +81,7 @@ pub(crate) fn trusted_soft_addressing_edge(
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     validate_manifest_and_order(snapshot)?;
     validate_window_rows(snapshot)?;
+    snapshot.validate_asset_body_refs()?;
     validate_documents(snapshot)?;
     validate_entity_documents(snapshot)
 }
@@ -90,7 +91,7 @@ fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
         return Err(invalid("window key"));
     }
     if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
-        || snapshot.schema_manifest.container_schema_version != 1
+        || snapshot.schema_manifest.container_schema_version != 2
         || snapshot.schema_manifest.loro_version.is_empty()
     {
         return Err(invalid("unsupported schema manifest"));

@@ -14,6 +14,7 @@ use crate::ports::{
 };
 use crate::{EntityId, Vault};
 
+mod asset_body_refs;
 mod budget;
 mod capture;
 mod peer_origins;
@@ -22,6 +23,7 @@ mod row_births;
 mod snapshot_ops;
 mod vocabulary;
 mod withdrawn_cutoffs;
+pub use asset_body_refs::CanonicalAssetBodyRef;
 pub(super) use budget::ByteBudget;
 pub use budget::RecoveryBudgetOverrun;
 #[cfg(test)]
@@ -145,6 +147,7 @@ impl CanonicalSnapshot {
             "peer_origins",
             "row_births",
             "withdrawn_cutoffs",
+            "asset_body_refs",
         ] {
             rows.push(CanonicalContainerManifest {
                 container_id: name.to_owned(),
