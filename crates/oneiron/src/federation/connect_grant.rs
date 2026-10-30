@@ -34,6 +34,9 @@ use crate::registry::{
 };
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
+mod standing;
+pub(crate) use standing::{connect_grant_stands_in_txn, connect_guest_standing_in_txn};
+
 /// Scope kind of a Connect guest grant on disk.
 pub(super) const SCOPE_KIND_CONNECT: &str = "connect";
 
@@ -491,26 +494,7 @@ impl Vault {
     /// Connect guest actor here.
     pub fn connect_guest_origin_vault(&self, actor: &EntityId) -> Result<Option<AuthorityVaultId>> {
         let txn = self.store.env.read_txn()?;
-        let LiveEntityRow::Live {
-            entity_type: ENTITY_TYPE_PERSON,
-            body,
-        } = live_entity_row_in_txn(&self.store, &txn, actor)?
-        else {
-            return Ok(None);
-        };
-        let Ok(Value::Map(entries)) = rmpv::decode::read_value(&mut body.as_slice()) else {
-            return Ok(None);
-        };
-        let field = |key: &str| {
-            entries
-                .iter()
-                .find(|(name, _)| name.as_str() == Some(key))
-                .and_then(|(_, value)| value.as_str())
-        };
-        if field(GUEST_ACTOR_KEYS[1]) != Some(GUEST_ACTOR_KIND) {
-            return Ok(None);
-        }
-        Ok(field(GUEST_ACTOR_KEYS[3]).and_then(canonical_vault_id))
+        standing::guest_actor_origin_in_txn(self, &txn, actor)
     }
 }
 
