@@ -174,6 +174,19 @@ impl AuthorityFold {
             .map(|folded| folded.request.as_ref())
     }
 
+    /// The admitted request signed as entry `hash`, counted here or not, as
+    /// the fold's own shared body: a reader that outlives the fold view
+    /// holds it without copying its permits (FIX 12138).
+    pub(crate) fn shared_owner_work_request(
+        &self,
+        hash: &AuthorityEntryHash,
+    ) -> Option<Arc<OwnerWorkRequest>> {
+        self.owner_work
+            .requests
+            .get(hash)
+            .map(|folded| Arc::clone(&folded.request))
+    }
+
     /// The admitted request signed as entry `hash` when it counts here,
     /// answered or not: what a bundle published for it proves (CALLS
     /// BUNDLE_PUBLISH_PROOF).
