@@ -520,6 +520,15 @@ pub(in crate::live) fn settle_chart(
         }
         _ => *view,
     };
+    // A chart part holds multi-level categories only as a reference into a
+    // workbook (a `c:multiLvlStrRef` needs its `c:f`), so a literal chart
+    // that draws them moves its data into one (FIX 9166).
+    let levelled = any_category
+        && (categories.depth() > 1
+            || lines
+                .iter()
+                .filter_map(|line| line.categories.as_ref())
+                .any(|own| own.depth() > 1));
     let mut settled = NodePayload::Chart {
         family: first,
         categories,
@@ -546,7 +555,7 @@ pub(in crate::live) fn settle_chart(
                     done.push(Conversion::ExternalDataEmbedded);
                     ChartSource::Workbook
                 }
-                (ChartSource::Literal, ChartSource::Workbook) => {
+                (ChartSource::Literal, asked) if asked == ChartSource::Workbook || levelled => {
                     done.push(Conversion::LiteralDataEmbedded);
                     ChartSource::Workbook
                 }

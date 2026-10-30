@@ -14954,6 +14954,11 @@ class DeckNativeRefusalInvalid(TypedDict):
     detail: str
 class DeckNativeRefusalCacheMismatch(TypedDict):
     kind: Literal["cache_mismatch"]
+class DeckNativeRefusalMemoryFloor(TypedDict):
+    kind: Literal["memory_floor"]
+    detail: str
+    needed: NotRequired[int | None]
+    available: NotRequired[int | None]
 class DeckNativeRefusalOutsideAllowedParts(TypedDict):
     kind: Literal["outside_allowed_parts"]
     part: str
@@ -14966,7 +14971,7 @@ class DeckNativeRefusalPackage(TypedDict):
 class DeckNativeRefusalXml(TypedDict):
     kind: Literal["xml"]
     detail: str
-DeckNativeRefusal = DeckNativeRefusalExternalChartSource | DeckNativeRefusalFormulaBackedSeries | DeckNativeRefusalAmbiguousChartData | DeckNativeRefusalSharedChartData | DeckNativeRefusalUnsupportedChartFamily | DeckNativeRefusalMergedContinuationCell | DeckNativeRefusalUnsupportedMergeTopology | DeckNativeRefusalLengthChange | DeckNativeRefusalStale | DeckNativeRefusalInvalid | DeckNativeRefusalCacheMismatch | DeckNativeRefusalOutsideAllowedParts | DeckNativeRefusalWorkbook | DeckNativeRefusalPackage | DeckNativeRefusalXml
+DeckNativeRefusal = DeckNativeRefusalExternalChartSource | DeckNativeRefusalFormulaBackedSeries | DeckNativeRefusalAmbiguousChartData | DeckNativeRefusalSharedChartData | DeckNativeRefusalUnsupportedChartFamily | DeckNativeRefusalMergedContinuationCell | DeckNativeRefusalUnsupportedMergeTopology | DeckNativeRefusalLengthChange | DeckNativeRefusalStale | DeckNativeRefusalInvalid | DeckNativeRefusalCacheMismatch | DeckNativeRefusalMemoryFloor | DeckNativeRefusalOutsideAllowedParts | DeckNativeRefusalWorkbook | DeckNativeRefusalPackage | DeckNativeRefusalXml
 class DeckStepRefusalTargetChanged(TypedDict):
     kind: Literal["target_changed"]
 class DeckStepRefusalAmbiguousAnchor(TypedDict):
