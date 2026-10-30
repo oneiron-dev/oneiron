@@ -14,11 +14,15 @@
 //! An ask of an artifact that has a live body reads its units there, at the
 //! head, with the pin it reads them at (FIX 11981): a sheet's cells, a
 //! document's paragraphs, a file's whole text, a deck as it renders.
+//!
+//! An export version holds the body as it stood at the frontier its record
+//! names, so the same units compare up to that frontier in place of the
+//! head when a split asks what an export changed (FIX 12017).
 
 use super::*;
 use crate::edit_roundtrip::{CellRef, CellValue};
 use crate::secret_custody::SecretSight;
-use oneiron_docedit::live::{LiveDeck, NodeId, NodeKind, TextBody};
+use oneiron_docedit::live::{DeckNode, LiveDeck, NodeId, NodeKind, TextBody};
 use std::collections::BTreeMap;
 
 /// Where one live office body stood: its head's frontier and the commits on
@@ -153,7 +157,18 @@ impl Vault {
         artifact: &EntityId,
         then: Option<&LivePin>,
     ) -> Result<Option<LiveUnits<String>>> {
-        let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Docx, then)? else {
+        self.live_paragraphs_until(artifact, then, None)
+    }
+
+    /// [`Self::live_paragraphs`] at the frontier `until` in place of the head
+    /// when one is given.
+    pub(crate) fn live_paragraphs_until(
+        &self,
+        artifact: &EntityId,
+        then: Option<&LivePin>,
+        until: Option<&[u8]>,
+    ) -> Result<Option<LiveUnits<String>>> {
+        let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Docx, then, until)? else {
             return Ok(None);
         };
         let blocks = |doc: &LoroDoc| -> Result<BTreeMap<String, [u8; 32]>> {
@@ -182,7 +197,19 @@ impl Vault {
         then: Option<&LivePin>,
         sheet: &str,
     ) -> Result<Option<LiveSheet>> {
-        let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Xlsx, then)? else {
+        self.live_sheet_until(artifact, then, sheet, None)
+    }
+
+    /// [`Self::live_sheet`] at the frontier `until` in place of the head when
+    /// one is given.
+    pub(crate) fn live_sheet_until(
+        &self,
+        artifact: &EntityId,
+        then: Option<&LivePin>,
+        sheet: &str,
+        until: Option<&[u8]>,
+    ) -> Result<Option<LiveSheet>> {
+        let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Xlsx, then, until)? else {
             return Ok(None);
         };
         let (was, now) = (xlsx::read(&was)?, xlsx::read(&now)?);
@@ -219,15 +246,19 @@ impl Vault {
     }
 
     /// What each slide of `artifact`'s live deck shows at `then` and at its
-    /// head, by its slide part and slide id: the slide's tree, its texts and
-    /// the parts it renders through. `None` when the deck has not moved
-    /// since `then`.
+    /// head, or at the frontier `until` when one is given, by its slide part
+    /// and slide id: the slide's tree, its texts and the parts it renders
+    /// through. `None` when the deck has not moved since `then`.
     pub(crate) fn live_slides(
         &self,
         artifact: &EntityId,
         then: Option<&LivePin>,
+        until: Option<&[u8]>,
     ) -> Result<Option<LiveUnits<(String, u32)>>> {
-        if self.live_span(artifact, OfficeBodyKind::Pptx, then)?.is_none() {
+        if self
+            .live_span(artifact, OfficeBodyKind::Pptx, then, until)?
+            .is_none()
+        {
             return Ok(None);
         }
         let at = match then {
@@ -240,7 +271,7 @@ impl Vault {
         };
         Ok(Some(LiveUnits {
             then: deck_slides(&self.read_pptx_body(artifact, Some(at.as_slice()))?.deck)?,
-            now: deck_slides(&self.read_pptx_body(artifact, None)?.deck)?,
+            now: deck_slides(&self.read_pptx_body(artifact, until)?.deck)?,
         }))
     }
 
@@ -251,6 +282,17 @@ impl Vault {
         artifact: &EntityId,
         then: Option<&LivePin>,
     ) -> Result<bool> {
+        self.live_body_changed_until(artifact, then, None)
+    }
+
+    /// [`Self::live_body_changed`] at the frontier `until` in place of the
+    /// head when one is given.
+    pub(crate) fn live_body_changed_until(
+        &self,
+        artifact: &EntityId,
+        then: Option<&LivePin>,
+        until: Option<&[u8]>,
+    ) -> Result<bool> {
         let kind = {
             let txn = self.store.env.read_txn()?;
             match SOURCES.get(&self.store, &txn, artifact)? {
@@ -259,7 +301,7 @@ impl Vault {
             }
         };
         Ok(self
-            .live_span(artifact, kind, then)?
+            .live_span(artifact, kind, then, until)?
             .is_some_and(|(was, now)| was.get_deep_value() != now.get_deep_value()))
     }
 
@@ -409,16 +451,17 @@ impl Vault {
         }))
     }
 
-    /// `artifact`'s live body of `kind` at `then` and at its head, when it
-    /// moved since. `None` when it has no such body, has not moved, or its
-    /// history no longer reads at `then`, which compares as unmoved, as an
-    /// unpinned body did before. With no pin, the body as imported stands
-    /// for `then`.
+    /// `artifact`'s live body of `kind` at `then` and at its head, or at the
+    /// frontier `until` when one is given, when it moved between them. `None`
+    /// when it has no such body, has not moved, or its history no longer
+    /// reads at `then` or `until`, which compares as unmoved, as an unpinned
+    /// body did before. With no pin, the body as imported stands for `then`.
     fn live_span(
         &self,
         artifact: &EntityId,
         kind: OfficeBodyKind,
         then: Option<&LivePin>,
+        until: Option<&[u8]>,
     ) -> Result<Option<(LoroDoc, LoroDoc)>> {
         let txn = self.store.env.read_txn()?;
         if SOURCES
@@ -437,25 +480,37 @@ impl Vault {
         else {
             return Ok(None);
         };
+        let end = until.unwrap_or(head.frontier.as_slice());
         let at = match then {
-            Some(pin) if pin.frontier == head.frontier && pin.commits == head.commits => {
+            Some(pin)
+                if pin.frontier.as_slice() == end
+                    && (until.is_some() || pin.commits == head.commits) =>
+            {
                 return Ok(None);
             }
             Some(pin) => pin.frontier.clone(),
-            None if head.frontier == head.birth => return Ok(None),
-            None => head.birth,
+            None if head.birth.as_slice() == end => return Ok(None),
+            None => head.birth.clone(),
         };
-        let was = typed_body_in_txn(&self.store, &txn, artifact, kind.schema(), Some(at.as_slice()))
-            .ok()
-            .flatten();
-        Ok(was.map(|(_, was)| (was, now)))
+        let read = |frontier: &[u8]| {
+            typed_body_in_txn(&self.store, &txn, artifact, kind.schema(), Some(frontier))
+                .ok()
+                .flatten()
+                .map(|(_, doc)| doc)
+        };
+        let now = match until {
+            Some(until) => read(until),
+            None => Some(now),
+        };
+        Ok(read(at.as_slice()).zip(now))
     }
 }
 
 /// Each slide of `deck` by its slide part and slide id, hashed over the
 /// slide's node, every node under it with its text, and the deck's opaque
 /// parts (masters, layouts, themes, media), which any slide may render
-/// through.
+/// through. A node's binding to the retained package is left out: an
+/// export's rebind moves it and changes nothing the slide shows (FIX 12017).
 fn deck_slides(deck: &LiveDeck) -> Result<BTreeMap<(String, u32), [u8; 32]>> {
     let mut slides = BTreeMap::new();
     for (id, node) in &deck.nodes {
@@ -467,7 +522,13 @@ fn deck_slides(deck: &LiveDeck) -> Result<BTreeMap<(String, u32), [u8; 32]>> {
         };
         let tree: Vec<_> = std::iter::once(*id)
             .chain(deck.descendants(*id))
-            .map(|node| (node, deck.nodes.get(&node), deck.texts.get(&node)))
+            .map(|node| {
+                let shown = deck.nodes.get(&node).map(|read| DeckNode {
+                    binding: None,
+                    ..read.clone()
+                });
+                (node, shown, deck.texts.get(&node))
+            })
             .collect();
         let bytes = serde_json::to_vec(&(tree, &deck.opaque_parts))
             .map_err(|_| Error::InvariantViolation("live slide encoding"))?;
