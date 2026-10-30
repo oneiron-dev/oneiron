@@ -512,6 +512,7 @@ impl Memory<'_> {
                 &self.vault().store,
                 txn,
                 bytes,
+                Some(&metadata.content_hash),
                 sight,
             )?;
             if *blake3::hash(&sighted).as_bytes() != metadata.content_hash {
