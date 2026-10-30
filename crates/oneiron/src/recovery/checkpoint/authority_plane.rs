@@ -39,7 +39,6 @@ use crate::counterparty_contact::{
 };
 use crate::llm::{ModelId, ModelTierRef};
 use crate::note::{NoteActor, NoteKind};
-use crate::outbound_grant::StandingOutboundGrant;
 use crate::registry::{ENTITY_TYPE_AUTHORITY_LOG, ENTITY_TYPE_PERSON};
 use crate::skill::{SkillDependency, SkillGovernanceTier, SkillLifecycle};
 use crate::skill_hub::ScanRiskLevel;
@@ -603,8 +602,6 @@ enum Compared {
         budget: Option<String>,
         budget_share: Option<ProjectBudgetShare>,
     },
-    /// A grant as it authorizes, without its last use.
-    OutboundGrant(Box<StandingOutboundGrant>),
     /// An authority fact about a task.
     TaskFact(Box<TaskAuthorityFact>),
     /// Who owns a task, whom it is assigned to, and its ask class.
@@ -813,17 +810,9 @@ fn project(projection: Projection, raw: &[u8]) -> Option<Compared> {
             Err(_) => crate::task_verb::task_binding(body)
                 .map_or(Compared::TaskUnbound, Compared::TaskBinding),
         },
-        Projection::OutboundGrant => {
-            crate::outbound_grant::decode_standing_outbound_grant_body(body).map_or_else(
-                |_| whole(),
-                |grant| {
-                    Compared::OutboundGrant(Box::new(StandingOutboundGrant {
-                        last_used_at: None,
-                        ..grant
-                    }))
-                },
-            )
-        }
+        // A standing outbound grant is a standing consent Grant row, compared
+        // with the standing grants; an entity of this kind is compared whole.
+        Projection::OutboundGrant => whole(),
     })
 }
 
