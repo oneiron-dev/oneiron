@@ -254,6 +254,7 @@ pub enum AgentVerb {
     VaultSkillsOptimizePreferencesSet,
     VaultSkillsOptimizeTradeoffAsks,
     VaultSkillsOptimizeTradeoffAsksPick,
+    VaultSkillsOptimizeTradeoffAsksResolve,
     VaultSkillsGovernanceGet,
     VaultSkillsGovernanceSet,
     VaultPacksHooksBind,
@@ -1488,6 +1489,7 @@ impl AgentVerb {
         Self::VaultSkillsOptimizePreferencesSet,
         Self::VaultSkillsOptimizeTradeoffAsks,
         Self::VaultSkillsOptimizeTradeoffAsksPick,
+        Self::VaultSkillsOptimizeTradeoffAsksResolve,
         Self::VaultSkillsGovernanceGet,
         Self::VaultSkillsGovernanceSet,
         Self::VaultPacksHooksBind,
@@ -2725,6 +2727,9 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => "vault.skills.optimize.preferences.set",
             Self::VaultSkillsOptimizeTradeoffAsks => "vault.skills.optimize.tradeoff_asks",
             Self::VaultSkillsOptimizeTradeoffAsksPick => "vault.skills.optimize.tradeoff_asks.pick",
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => {
+                "vault.skills.optimize.tradeoff_asks.resolve"
+            }
             Self::VaultSkillsGovernanceGet => "vault.skills.governance.get",
             Self::VaultSkillsGovernanceSet => "vault.skills.governance.set",
             Self::VaultPacksHooksBind => "vault.packs.hooks.bind",
@@ -3989,6 +3994,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -5252,6 +5258,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -6647,6 +6654,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsks
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceGet
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
@@ -7703,6 +7711,7 @@ impl AgentVerb {
                 | Self::VaultSkillsOptimizeGoalBind
                 | Self::VaultSkillsOptimizePreferencesSet
                 | Self::VaultSkillsOptimizeTradeoffAsksPick
+                | Self::VaultSkillsOptimizeTradeoffAsksResolve
                 | Self::VaultSkillsGovernanceSet
                 | Self::VaultPacksHooksBind
                 | Self::VaultPacksHooksGrantSet
@@ -8586,6 +8595,7 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -9821,6 +9831,7 @@ impl AgentVerb {
             Self::VaultSkillsOptimizePreferencesSet => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsks => &["spec"],
             Self::VaultSkillsOptimizeTradeoffAsksPick => &["spec"],
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => &["spec"],
             Self::VaultSkillsGovernanceGet => &["spec"],
             Self::VaultSkillsGovernanceSet => &["spec"],
             Self::VaultPacksHooksBind => &["spec"],
@@ -11548,6 +11559,9 @@ impl AgentVerb {
             }
             Self::VaultSkillsOptimizeTradeoffAsksPick => {
                 "Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."
+            }
+            Self::VaultSkillsOptimizeTradeoffAsksResolve => {
+                "The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."
             }
             Self::VaultSkillsGovernanceGet => {
                 "Reads one skill governance tier as the owner, resolved fail-closed, and whether the automated edit loop may consider it."

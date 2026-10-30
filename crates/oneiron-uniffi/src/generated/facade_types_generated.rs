@@ -3,8 +3,8 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1209 facade rows, 4374 generated types.
-// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1161.
+// UniFFI census: 1210 facade rows, 4375 generated types.
+// Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1162.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), ProjectRecord.write_proof (the recursive type ProjectWriteProof), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
 #![allow(
@@ -17453,6 +17453,20 @@ pub struct SkillOptimizeTradeoffPickRequest {
     pub proposal: String,
     #[serde(rename = "question_digest")]
     pub question_digest: String,
+    #[serde(rename = "choice")]
+    pub choice: TradeoffChoice,
+}
+
+/// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffResolveRequest`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+#[serde(deny_unknown_fields)]
+pub struct SkillOptimizeTradeoffResolveRequest {
+    #[serde(rename = "proposal")]
+    pub proposal: String,
+    #[serde(rename = "pending")]
+    pub pending: String,
+    #[serde(rename = "evidence")]
+    pub evidence: String,
     #[serde(rename = "choice")]
     pub choice: TradeoffChoice,
 }
@@ -50258,6 +50272,8 @@ pub struct ProposalDeltaSettleRequest {
         skip_serializing_if = "Option::is_none"
     )]
     pub attempt_receipt: Option<String>,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
     #[serde(
         rename = "artifact_ref",
         default,
@@ -50367,6 +50383,22 @@ pub struct AmendmentJudgmentView {
     pub engine_ver: String,
     #[serde(rename = "at")]
     pub at: u64,
+    #[serde(rename = "rejected")]
+    pub rejected: bool,
+    #[serde(rename = "executor", default, skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(rename = "type_ref", default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<CellTypeRef>,
+    #[serde(rename = "judge", default, skip_serializing_if = "Option::is_none")]
+    pub judge: Option<String>,
+    #[serde(
+        rename = "judge_model",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judge_model: Option<String>,
+    #[serde(rename = "on_judge_model")]
+    pub on_judge_model: bool,
 }
 
 /// `oneiron::verbs::skill_attribution::ProposalDeltaSettlement`.

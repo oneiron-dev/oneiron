@@ -513,3 +513,37 @@ pub fn skill_optimize_tradeoff_pick_by(
         verdicts: vec![view],
     })
 }
+
+/// The owner's decision on one exact pending tradeoff (FIX 9125): the
+/// proposal, the pending verdict the ask names, the bounded decision
+/// evidence reference, and approve or reject.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkillOptimizeTradeoffResolveRequest {
+    pub proposal: EntityId,
+    pub pending: EntityId,
+    pub evidence: String,
+    pub choice: optimize::TradeoffChoice,
+}
+
+/// Applies the owner's tradeoff decision: an approval writes an
+/// accepted-tradeoff permission (or a deferred row the next scored cycle
+/// admits through), a rejection writes the refusal. It learns no
+/// preference; an A/B pick does. Only the owner resolves; agents answer
+/// asks through [`skill_optimize_tradeoff_pick_by`].
+pub fn skill_optimize_tradeoff_resolve_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: &SkillOptimizeTradeoffResolveRequest,
+) -> MemoryResult<SkillOptimizeResultView> {
+    optimize::resolve_skill_edit_tradeoff(
+        vault,
+        &input.proposal,
+        input.pending,
+        owner,
+        &input.evidence,
+        input.choice,
+        vault.now_recorded_at(),
+    )?;
+    result(vault, owner, input.proposal)
+}

@@ -1997,6 +1997,9 @@ class Oneiron:
         def pick(self, spec):
             """Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."""
             return json.loads(_translate(lambda: self._client.vault_skills_optimize_tradeoff_asks_pick(json.dumps(spec))))
+        def resolve(self, spec):
+            """The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_tradeoff_asks_resolve(json.dumps(spec))))
     class _VaultSkillsGovernanceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
