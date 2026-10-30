@@ -127,9 +127,26 @@ credential.
   member record until a turn sends it (FIX 11737). For a guest copy, the
   host drops its refusal of its own version, so its next scan sends that
   version again. For a host copy the owner kept, the host moves its copy
-  aside, so the guest's next version lands. The host acts only on a copy
-  its own record keeps with that digest. This frame is outbox wire revision
-  3, and each end refuses revision 2 at the hello.
+  aside, so the guest's next version lands. When that move fails, the host
+  says so once, keeps the owner's keep on its record, and moves the copy
+  aside when it blocks the guest's next put (FIX 11986). The host acts only
+  on a copy its own record keeps with that digest.
+- Copies kept aside (FIX 11985). A kept copy that moved aside is recorded
+  on the end that holds it, and on the guest for a host copy. The
+  companion's `member_status` lists each one as `kept_aside` (kind, member,
+  the end that holds it, digest, length, side name, `kept_at_ms`,
+  `removing`, `failed`), and its card offers "Remove this copy". The owner's
+  `remove` naming that digest deletes the side copy. On the guest, the
+  companion deletes it at its next turn. For a host copy, the guest sends
+  `divergence_cleared` with `action` `remove_aside` at each turn, and the
+  host deletes its side copy and answers `aside_removed` (kind, member,
+  digest, `failed`) first in its next turn. The entry goes once the side
+  copy is deleted. A delete that fails is logged once and keeps the entry,
+  with `failed` saying why, so the owner can answer again. A keep whose side
+  name is already there, with the same bytes, counts as aside, and the twin
+  at the member's name is deleted. Other notices carry `action` `answered`.
+  These frames are outbox wire revision 4, and each end refuses revision 3
+  at the hello.
 
 ## The channel
 
