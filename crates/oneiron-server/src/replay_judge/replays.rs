@@ -17,6 +17,7 @@ use oneiron::skill_optimize::{
     SkillReplayResponses, judge_rubric, skill_edit_goal,
 };
 use oneiron::{EntityId, Result, Vault};
+use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -299,6 +300,11 @@ impl ServeReplayJudge {
             }
             if let Some(rubric) = &rubric {
                 state["judge_rubric"] = json!(rubric.text);
+                state["judge_rubric_pin"] = json!({
+                    "skill": rubric.skill.to_hex(),
+                    "version": rubric.version,
+                    "digest": bytes_to_hex_lower(&rubric.digest),
+                });
             }
             cut_at(state, at)
         };
