@@ -123,7 +123,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // #ov-custody): its sealed artifacts derive from it, and each escrow
     // recipient the node's operator installed keeps a copy of it.
     vault.admit_vault_key(&credentials.dek)?;
-    escrow_vault_key(&vault, &managed)?;
+    escrow_vault_key(
+        &vault,
+        &managed,
+        restore.as_ref().map(|restore| restore.checked_recipients()),
+    )?;
     let spooled = spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;

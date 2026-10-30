@@ -58,7 +58,9 @@ pub(crate) struct DesktopWorkers {
 /// until every call it made has settled (FIX 7303). Without it, embedded
 /// serve's, tagging is aborted with the other workers: the app never waits
 /// on a model call to stop, and a marker it left leased is tagged again at
-/// the next start.
+/// the next start. On plain serve the tagging, Dreamer, connector,
+/// embedding, resident pump and housekeeping passes stop at the vault's
+/// deletion (FIX 11979); embedded serve admits every pass as today.
 pub(crate) async fn start_desktop_workers(
     sync_server: SyncServer,
     config: &ServeConfig,
@@ -85,13 +87,32 @@ pub(crate) async fn start_desktop_workers(
     if !config.hooks {
         sync_server.vault().suppress_verb_hooks();
     }
+    // The vault's deletion gate over plain serve's background passes (FIX
+    // 11979): once the marker is present each gated pass is refused,
+    // logged once, while the backup schedule and custody publication run
+    // on; embedded serve keeps every pass admitted as today.
+    let deletion = Arc::new(crate::server::DeletionMarker::default());
+    let deletion_vault = Arc::clone(sync_server.vault());
+    let plain_serve = drain_tagging;
+    let admitted = || -> crate::server::HousekeepingAdmission {
+        if !plain_serve {
+            return crate::server::admit_every_pass();
+        }
+        deletion.gate(&deletion_vault, crate::server::admit_every_pass())
+    };
     // The owner's own Dreamer pause works on a plain host too, held in
     // memory (FIX 11573); managed serve installs its reap freeze instead.
+    // On plain serve the Dreamer's passes stop at the vault's deletion.
+    let mut dreamer_control = crate::ai_host::DreamerControl::local();
+    if plain_serve {
+        dreamer_control.admission =
+            deletion.gate(&deletion_vault, dreamer_control.admission.clone());
+    }
     let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
         sync_server,
         config.models.as_ref(),
         device,
-        Some(crate::ai_host::DreamerControl::local()),
+        Some(dreamer_control),
     )
     .await;
     let sync_server = Arc::new(sync_server);
@@ -113,7 +134,15 @@ pub(crate) async fn start_desktop_workers(
         crate::server::admit_every_pass(),
     )
     .await?;
-    let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admission());
+    // The lifecycle's passes stop at the vault's deletion on plain serve;
+    // the caller's admission, and its awake hold, is kept inside the gate.
+    let lifecycle_admit = lifecycle_admission();
+    let lifecycle_admit = if plain_serve {
+        deletion.gate(&deletion_vault, lifecycle_admit)
+    } else {
+        lifecycle_admit
+    };
+    let lifecycle = sync_server.spawn_lifecycle_scheduler(lifecycle_admit);
     // An answered code consent wait's effect runs on this server, whatever
     // hooks or models it serves, before the connector settler starts
     // (DOOR-079 1a).
@@ -123,21 +152,26 @@ pub(crate) async fn start_desktop_workers(
     let (mut workers, tagging) = if drain_tagging {
         // The slot workers `spawn_slot_workers` starts, in its order, with
         // tagging's own handle kept apart: it stops on serve's stop.
-        let embedding = sync_server.spawn_embedding_worker();
+        let embedding = sync_server.spawn_embedding_worker_admitted(admitted());
         let mut tagging_stopped = stopped.clone();
         let tagging = sync_server.spawn_tagging_worker_until(
-            crate::server::PassControl::unpaused(crate::server::admit_every_pass()),
+            crate::server::PassControl::unpaused(admitted()),
             async move {
                 let _ = tagging_stopped.wait_for(|stop| *stop).await;
             },
         );
         let slots = [
             embedding,
-            sync_server.spawn_media_embedding_worker(),
-            sync_server.spawn_resident_pump(),
+            sync_server.spawn_media_embedding_worker_admitted(admitted()),
+            // Each pass stops at the vault's deletion; a run is the owner's
+            // foreground work and stays admitted, as on a managed host.
+            sync_server.spawn_resident_pump_admitted(
+                admitted(),
+                crate::server::admit_every_pass(),
+            ),
             // The official CLIs' runs, on the person's own runtime (FIX 4552).
             sync_server.spawn_seat_host(),
-            Some(sync_server.spawn_connector_settler()),
+            Some(sync_server.spawn_connector_settler_admitted(admitted())),
         ];
         let tagging = tagging.map(|handle| (handle, stopping.clone()));
         (slots.into_iter().flatten().collect::<Vec<_>>(), tagging)
@@ -220,16 +254,18 @@ pub(crate) async fn start_desktop_workers(
         &config.self_heal,
         crate::server::admit_every_pass(),
     ));
-    workers.push(sync_server.spawn_connector_event_worker(crate::server::admit_every_pass()));
+    workers.push(sync_server.spawn_connector_event_worker(admitted()));
     // Approved sends leave through the connector executor (OF-187).
-    workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
+    workers.push(sync_server.spawn_connector_send_worker(admitted()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
-    workers.push(sync_server.spawn_connector_reply_worker(crate::server::admit_every_pass()));
+    workers.push(sync_server.spawn_connector_reply_worker(admitted()));
     // Checked built-in channels and their provider webhooks (OF-519).
     workers.push(crate::builtin_host::spawn(
         &sync_server,
         crate::server::admit_every_pass(),
     ));
+    // Past the vault's deletion these two run on, to let its backups go at
+    // their deadline (FIX 11979): every pass admitted, as today.
     workers.extend(sync_server.spawn_backup_schedule(crate::owner::schedule::SCHEDULE_TICK));
     // The custody head beside the backups, and its anchor (KS-4A1).
     workers.extend(sync_server.spawn_custody_publication());

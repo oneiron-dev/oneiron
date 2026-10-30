@@ -57,6 +57,14 @@ pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
     Path::new(VM_GUEST_OUTBOX_DIR).join("recipients").join(file)
 }
 
+/// Where the watch's recipient files come from, as its warns word them: a
+/// vault VM's carrier, or a process host's argv (FIX 11990).
+#[derive(Clone, Copy)]
+enum RecipientSource {
+    Carrier,
+    Argv,
+}
+
 /// How the outbox companion stands, as the engine last heard.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompanionState {
@@ -126,6 +134,7 @@ pub(super) fn spawn(
                     &mut recipients,
                     &files,
                     plan.as_deref(),
+                    RecipientSource::Carrier,
                 );
                 recipients
             });
@@ -179,6 +188,7 @@ pub(super) fn spawn_argv_watch(
                     &mut recipients,
                     &files,
                     plan.as_deref(),
+                    RecipientSource::Argv,
                 );
                 recipients
             });
@@ -256,7 +266,8 @@ fn note_companion(state: &ManagedState, revision: Option<u32>) {
 /// under a background admission, held through each report and its mark, so
 /// a vault frozen for reap seals and spools nothing until it thaws. A
 /// recipient that does not seal, and a spool that does not go through, is
-/// said once and tried again at each look.
+/// said once and tried again at each look. `source` is where the watched
+/// files come from, as the warns word it (FIX 11990).
 fn seal_watched_recipients(
     state: &ManagedState,
     vault: &oneiron::Vault,
@@ -264,6 +275,7 @@ fn seal_watched_recipients(
     recipients: &mut Recipients,
     files: &[(EscrowRole, PathBuf)],
     plan: Option<&[FreshRecipient]>,
+    source: RecipientSource,
 ) {
     let mut fresh = Vec::new();
     for (role, path) in files {
@@ -302,18 +314,27 @@ fn seal_watched_recipients(
         return;
     };
     if !fresh.is_empty() {
-        seal_fresh(vault, fresh, recipients);
+        seal_fresh(vault, fresh, recipients, source);
     }
     if let Some(outbox) = outbox {
         match spool_escrow_capsules(vault, managed, outbox, &mut BTreeSet::new()) {
             Ok(()) => recipients.unspooled_said = false,
             Err(error) => {
                 if !std::mem::replace(&mut recipients.unspooled_said, true) {
+                    let waiting = match source {
+                        RecipientSource::Carrier => {
+                            "an escrow capsule is not spooled yet; the next look spools it, and \
+                             the vault serves on"
+                        }
+                        RecipientSource::Argv => {
+                            "an escrow capsule of an argv recipient is not spooled yet; the next \
+                             look spools it, and the vault serves on"
+                        }
+                    };
                     tracing::warn!(
                         reason = "vm_escrow_capsule_unspooled",
                         error = %format!("{error:#}"),
-                        "an escrow capsule is not spooled yet; the next look spools it, and \
-                         the vault serves on"
+                        "{waiting}"
                     );
                 }
             }
@@ -325,12 +346,21 @@ fn seal_watched_recipients(
 /// Seals the vault's data key to each `fresh` recipient, by role, with its
 /// fingerprint and bytes, and notes which sealed. A recipient a look cannot
 /// seal, because the seal failed or the key wraps did not read, is said once
-/// per version of it; the vault serves on either way.
+/// per version of it; the vault serves on either way. `source` is where the
+/// watched files come from, as the warns word it (FIX 11990).
 fn seal_fresh(
     vault: &oneiron::Vault,
     fresh: Vec<(&'static str, blake3::Hash, Vec<u8>)>,
     recipients: &mut Recipients,
+    source: RecipientSource,
 ) {
+    let (waiting, unsealed) = match source {
+        RecipientSource::Carrier => (
+            "a carrier's escrow recipient",
+            "an escrow recipient the carrier delivered",
+        ),
+        RecipientSource::Argv => ("an argv escrow recipient", "an escrow recipient argv names"),
+    };
     let present = match vault.vault_key_wraps() {
         Ok(present) => present,
         Err(error) => {
@@ -340,7 +370,7 @@ fn seal_fresh(
                         reason = "vm_escrow_recipient_unsealed",
                         role,
                         %error,
-                        "the vault's key wraps do not read; a carrier's escrow recipient waits"
+                        "the vault's key wraps do not read; {waiting} waits"
                     );
                 }
             }
@@ -360,8 +390,7 @@ fn seal_fresh(
                         reason = "vm_escrow_recipient_unsealed",
                         role,
                         error = %format!("{error:#}"),
-                        "an escrow recipient the carrier delivered is not sealed to yet; the \
-                         vault serves on"
+                        "{unsealed} is not sealed to yet; the vault serves on"
                     );
                 }
             }
