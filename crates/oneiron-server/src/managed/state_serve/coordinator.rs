@@ -349,6 +349,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         state.background_admission(WriteKind::BackgroundOther),
     )
     .await?;
+    // A cold restore's fresh recipients, for the carrier watch's first look
+    // (FIX 11851): captured before `verified` spends the restore. `None`
+    // without a restore, and the watch's first look is then unplanned as
+    // today.
+    #[cfg(target_os = "linux")]
+    let restore_fresh = restore
+        .as_ref()
+        .map(|restore| restore.fresh_recipients().to_vec());
     // Every fallible step is done: a cold restore's receipt and `verified`
     // go out before ctl serves or ready is said.
     if let Some(restore) = restore {
@@ -382,6 +390,17 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&vault),
             managed.clone(),
             shutdown.clone(),
+            restore_fresh.clone(),
+        );
+    } else if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A process host's argv escrow recipient files as they stand later: a
+        // file replaced after the start seals at the next look (FIX 11852).
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
         );
     }
 
