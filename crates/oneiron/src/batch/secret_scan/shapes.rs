@@ -3,6 +3,7 @@
 mod blocklist_entries;
 // A recovery phrase's spans (FIX 1099).
 mod mnemonic_spans;
+mod phrase_run;
 pub(super) use mnemonic_spans::mnemonic_spans;
 
 use std::ops::Range;
@@ -68,10 +69,10 @@ const MAX_LIST_WORD_LEN: usize = 8;
 /// run of list words inside a sentence is prose, a markdown list of short
 /// phrases is prose, and a run with a wrong checksum is no wallet.
 /// Seed-labelled fields are separately refused even when incomplete or
-/// misspelled.
+/// misspelled. Text without a phrase-long run of list words stops at once.
 pub(super) fn mnemonic(text: &str) -> bool {
     let mut stream = MnemonicStream::default();
-    stream.feed(text) || stream.finish()
+    phrase_run::holds_list_word_run(text) && (stream.feed(text) || stream.finish())
 }
 
 /// [`mnemonic`] over text read in parts, in order: it finds what one read of
