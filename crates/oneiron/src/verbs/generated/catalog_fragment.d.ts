@@ -4141,7 +4141,7 @@ declare namespace Sdk {
   type DeliveryWindowLadderRung = "HumanExplicitInstant" | "Ambient" | "InterruptDegraded" | "InterruptHeld" | "MissingLocalMinute";
   type DeliveryWindowResolution = { observed: DeliveryWindowDecision; effective: DeliveryWindowDecision; matched: DeliveryWindowMatch[]; rung: DeliveryWindowLadderRung };
   type DeliveryWindowPreview = { policy_refs: EntityId[]; resolution: DeliveryWindowResolution };
-  type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null };
+  type OutboundScheduleRequest = { verb: string; channel: string; target: string; on_behalf_of?: string | null; content_ref?: string | null; idempotency_key?: string | null; dedupe_key?: string | null; trigger: string; trigger_ref: string; job_ref?: string | null; occurred_at?: number | null; mention?: MentionProvenance | null; selection?: ChannelSelectionRequest | null; counterparty_class?: string | null };
   type SummaryPath = "canonical" | { branch: string } | { branch_span: { after: string; through: string } } | { sub_session: string };
   type SummaryScope = { conversation_ref: string; path: SummaryPath; session?: string | null; include_forks?: boolean };
   type SummaryCreateRequest = { scope?: SummaryScope | null; note_refs?: string[]; purpose?: string | null; land_on?: string | null; as_record?: boolean };

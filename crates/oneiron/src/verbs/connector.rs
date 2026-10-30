@@ -139,6 +139,14 @@ pub struct OutboundScheduleRequest {
     /// `self.identity.settle` first.
     #[serde(default)]
     pub mention: Option<crate::outbound::MentionProvenance>,
+    /// The sender-selection question this send answers: the gate dispatch
+    /// selects its sender by the vault's selection rules over its identity
+    /// faces.
+    #[serde(default)]
+    pub selection: Option<crate::memory::channel_doors::ChannelSelectionRequest>,
+    /// The counterparty class passed explicitly on this send.
+    #[serde(default)]
+    pub counterparty_class: Option<String>,
 }
 
 impl From<OutboundScheduleRequest> for OutboundDraftInput {
@@ -165,5 +173,22 @@ pub fn connector_outbound_schedule_draft(
     memory: &Memory<'_>,
     input: OutboundScheduleRequest,
 ) -> MemoryResult<OutboundIntentReceipt> {
-    memory.schedule_outbound(&input.into())
+    if let Some(selection) = input.selection.clone() {
+        let continuation = crate::outbound::OutboundScheduleContinuation {
+            selection: Some(crate::outbound::OutboundSendSelection {
+                request: selection,
+                counterparty_class: input.counterparty_class.clone(),
+            }),
+            ..Default::default()
+        };
+        let draft = OutboundDraftInput::from(input);
+        memory.schedule_outbound_with_continuation(
+            &draft,
+            &crate::memory::OutboundScheduleContext::default(),
+            &continuation,
+            None,
+        )
+    } else {
+        memory.schedule_outbound(&input.into())
+    }
 }
