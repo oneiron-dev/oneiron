@@ -27,9 +27,9 @@ use super::txn::read_connector_key_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{Error, Result};
 use crate::skill_hub::pack_catalog::{
-    MAX_SETUP_PERMISSIONS, PackSetupActor, PackSetupAuth, PackSetupCheckRecord,
-    PackSetupConnection, PackSetupConnectionState, PackSetupGrantRef, PackSetupKeyRef,
-    PackSetupPermission, PackSetupSecret, PackSetupSession, PackSetupView, live_custody_in_txn,
+    PackSetupActor, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
+    PackSetupConnectionState, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission,
+    PackSetupSecret, PackSetupSession, PackSetupView, live_custody_in_txn,
     pin_connection_custody_in_txn,
 };
 use crate::{EntityId, Vault};
@@ -596,9 +596,7 @@ fn declared_connection<'a>(
 }
 
 fn check_allowed(connection: &PackSetupConnection, allowed: &[String]) -> Result<()> {
-    if allowed.len() > MAX_SETUP_PERMISSIONS
-        || allowed.iter().any(|id| connection.permission(id).is_none())
-    {
+    if allowed.iter().any(|id| connection.permission(id).is_none()) {
         return Err(invalid("the connection asks for no such permission"));
     }
     if connection

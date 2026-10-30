@@ -39,8 +39,8 @@ pub use organs::{
 };
 pub use screening::PackInstallRules;
 pub use setup::{
-    MAX_SETUP_PERMISSIONS, PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection,
-    PackSetupPermission, PackSetupRisk, PackSetupSecret,
+    PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
+    PackSetupRisk, PackSetupSecret,
 };
 pub use setup_actor::PackSetupActor;
 pub use setup_cards::PackSetupCardAction;

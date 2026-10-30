@@ -14,8 +14,6 @@ use super::{PackKind, invalid};
 use crate::error::Result;
 use crate::skill_hub::HubFile;
 
-/// Most permissions one allow answer may name (`connector_key::setup`).
-pub const MAX_SETUP_PERMISSIONS: usize = 32;
 const MAX_SETUP_TOKEN_BYTES: usize = 64;
 const MAX_SETUP_REF_BYTES: usize = 256;
 const MAX_SETUP_LABEL_BYTES: usize = 256;
