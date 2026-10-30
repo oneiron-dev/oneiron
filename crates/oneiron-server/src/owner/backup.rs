@@ -304,6 +304,8 @@ pub(crate) fn prune(
         return Ok(Vec::new());
     }
     checkpoint_fact::sweep(vault, plan);
+    // So do payload inventories no backup names (KS7-5).
+    payload_retention::sweep(vault, plan);
     // FIX 7607: stage acks whose artifact is gone go with the prune; pinned
     // acks whose artifact exists stay.
     handoff::sweep_orphan_stage_acks(plan);
@@ -408,6 +410,8 @@ pub(crate) fn prune_deleted_vault_backups(
         return Ok(Some(Vec::new()));
     }
     let records = list(plan)?;
+    // Where each payload inventory sits, read while its backup is there.
+    let inventories = payload_retention::inventories_of(&records);
     let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
         let mut dropped = Vec::new();
         if holds.keeps_backups() {
@@ -436,6 +440,10 @@ pub(crate) fn prune_deleted_vault_backups(
             );
         }
     }
+    // Their inventories go, and the payload leaves no backup keeps now may
+    // retire, as after any prune; then any inventory no backup names.
+    payload_retention::settle(vault, plan, &gone, inventories);
+    payload_retention::sweep(vault, plan);
     handoff::sweep_orphan_stage_acks(plan);
     Ok(Some(gone))
 }
