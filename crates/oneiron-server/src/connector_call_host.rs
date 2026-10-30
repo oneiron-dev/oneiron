@@ -72,6 +72,7 @@ use crate::connector_elicitation::{
 };
 use crate::server::SyncServer;
 
+mod json_wire;
 mod live_exchange;
 mod presenting;
 mod remote_task;
@@ -79,7 +80,8 @@ mod reply_read;
 mod resume;
 mod sent;
 mod stream_pump;
-use live_exchange::{Continuation, KeptWire, LiveSession, hand_over, post_json};
+use json_wire::{KeptWire, post_json};
+use live_exchange::{Continuation, LiveSession, hand_over};
 use presenting::{KeptRound, KeyAliases, clear_event, clear_questions};
 use reply_read::{Reply, StreamEvent, open_reply, read_reply, tool_result};
 use resume::RoundResume;
