@@ -190,7 +190,13 @@ pub(super) fn recalc_xlsx(
         u64::from_le_bytes(seed),
     )
     .ok_or_else(|| invalid("office body recalc clock"))?;
-    match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
+    match FormualizerEngine::new().recalculate_xlsx(
+        bytes,
+        limits,
+        &clock,
+        None,
+        &crate::office_body::document_resources(),
+    ) {
         Ok(report) => Ok((
             report.bytes,
             Some(CalcEngineStamp::new(

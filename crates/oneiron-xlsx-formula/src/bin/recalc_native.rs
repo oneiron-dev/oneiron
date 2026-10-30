@@ -53,11 +53,14 @@ fn main() -> Result<ExitCode, Box<dyn Error>> {
     if output.symlink_metadata().is_ok() {
         return Err(io::Error::new(io::ErrorKind::AlreadyExists, "output already exists").into());
     }
+    // A standalone host: measure explicitly (FIX 10588).
+    let measuring = oneiron_docedit::resource::Resources::measuring();
     let report = match FormualizerEngine::new().recalculate_xlsx(
         &fs::read(input)?,
         LIMITS,
         &RecalcClock::system(),
         location.as_ref(),
+        &measuring,
     ) {
         Ok(report) => report,
         Err(error) => {
