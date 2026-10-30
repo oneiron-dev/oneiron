@@ -9353,7 +9353,11 @@ class CustodyRegisterCheckUnchecked(TypedDict):
     reason: CustodyUncheckedReason
     refs: list[str]
 CustodyRegisterCheck = CustodyRegisterCheckChecked | CustodyRegisterCheckUnchecked
-BundleHomeWarning = Literal["home_does_not_keep_sealed_bundles", "home_profile_unknown"]
+class BundleHomeWarningAwaitingReaderBody(TypedDict):
+    worlds: list[EntityId]
+class BundleHomeWarningAwaitingReader(TypedDict):
+    awaiting_reader: BundleHomeWarningAwaitingReaderBody
+BundleHomeWarning = Literal["home_does_not_keep_sealed_bundles", "home_profile_unknown"] | BundleHomeWarningAwaitingReader
 OwnerWorkCancelState = Literal["cancelled", "already_enacted", "already_refused"]
 class OwnerWorkCancelNote(TypedDict):
     entries: list[str]
