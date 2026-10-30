@@ -77,8 +77,9 @@ pub use home_handoff::{
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
-    KIT_PAD_INDEX_FETCH_PATH, KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitPadIndexFetch,
-    KitPadIndexPage, kit_bundle_fetch_origin, kit_sealed_bundle_index, kit_sealed_bundle_part,
+    KIT_CUSTODY_FETCH_PATH, KIT_CUSTODY_REPLY_MAX, KIT_PAD_INDEX_FETCH_PATH,
+    KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitCustodyFetch, KitPadIndexFetch, KitPadIndexPage,
+    kit_bundle_fetch_origin, kit_custody_page, kit_sealed_bundle_index, kit_sealed_bundle_part,
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,

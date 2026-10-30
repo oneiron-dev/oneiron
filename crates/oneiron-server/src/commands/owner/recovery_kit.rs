@@ -44,7 +44,7 @@ mod custody;
 mod issue;
 mod live;
 
-pub(super) use self::custody::kit_custody_root;
+pub(super) use self::custody::{kit_custody_root, kit_custody_seed};
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
 const PIECE_LIMIT: usize = 1024;
@@ -628,5 +628,6 @@ pub(super) fn kit_unlock_with(
     Ok(HostUnlock::Escrow {
         label: WORLD_KIT_ESCROW.to_owned(),
         secret: seed.recovery_secret()?,
+        kit_seed: Some(seed),
     })
 }
