@@ -2,7 +2,8 @@
 //! family, by its declaration's `(SideDb, prefix)`, for every manifest
 //! database and for every entity kind. Nothing has a class by default and
 //! nothing registers itself: a family declared later has none until it is
-//! named here, and an enabled capture refuses until then ([`check`]).
+//! named here, and until then a capture keeps its rows in the image, named
+//! ([`super::preflight`]).
 //!
 //! A family an owner getter reads is that getter's, and the getter places
 //! each of its rows: in an owner's compartment, as structure, with another
@@ -17,16 +18,13 @@
 //! receipt ([`super::NOT_COMPARTMENTED`]). A not-imaged family's rows are
 //! runtime or derived: tier filtering leaves them out of every image first.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::ops::Bound;
 
-use super::super::{StorageTier, storage_tier};
 use super::{Carrier, Getter};
-use crate::error::{Error, Result};
-use crate::registry::ENTITY_TYPE_REGISTRY;
 use crate::side_table::{self, SideDb, SideTableDecl};
 use crate::store::checkpoint_payload::rows::OtherClient;
-use crate::store::{CustodyKind, DB_MANIFEST, ResponseDb, ResponseFamily};
+use crate::store::{CustodyKind, ResponseDb, ResponseFamily};
 
 /// Where a family's rows go: its one class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -140,7 +138,7 @@ families! {
     Class::Owner(Getter::Note) => SYNC_NC_E NOTE_PROPOSAL_DOC NOTE_RECEIPT_BY_REQUEST;
     Class::Structure => DELETION_ARCHIVE_MARKER DELETION_ROW_FENCE DELETION_HARD_DELETE_MARKER
         DELETION_IDENTITY_SOFT_DELETE_MARKER SYNC_M_U_SEQ_E SYNC_M_U_SEQ_W
-        DELETION_WITHDRAWN_GENERATION_FENCE;
+        DELETION_WITHDRAWN_GENERATION_FENCE SYNC_PENDING_MIRROR;
     Class::Other(Client::Dispatch(OtherClient::Response)) => HTTP_IDEMPOTENCY_REPLY INVOCATION_CLAIM
         MODEL_MEDIA_JOB;
     Class::Mixed(Carrier::WindowSnapshot) => WINDOW_SNAPSHOT;
@@ -664,74 +662,26 @@ pub(super) fn kind_class(kind: &str) -> Option<Class> {
 }
 
 /// A family's identity: its database and prefix.
-fn identity(decl: &SideTableDecl) -> (bool, &'static [u8]) {
+pub(super) fn identity(decl: &SideTableDecl) -> (bool, &'static [u8]) {
     (decl.db == SideDb::SyncState, decl.prefix)
 }
 
-fn db_name(db: SideDb) -> &'static str {
+pub(super) fn db_name(db: SideDb) -> &'static str {
     match db {
         SideDb::VaultMeta => "vault_meta",
         SideDb::SyncState => "sync_state",
     }
 }
 
-fn incomplete(what: &'static str) -> Error {
-    Error::InvariantViolation(what)
+/// Every family the registry names, by class, as written: the preflight
+/// reads it whole ([`super::preflight`]).
+pub(super) fn families() -> &'static [(Class, &'static [&'static SideTableDecl])] {
+    FAMILIES
 }
 
-/// Refuses unless the registry names every declared family once and no
-/// family that is not declared, every manifest database once and every
-/// entity kind once, and unless each not-imaged family is one tier
-/// filtering leaves out whole. Only an enabled capture runs it.
-pub(super) fn check() -> Result<()> {
-    let mut named = BTreeSet::new();
-    for (class, decls) in FAMILIES {
-        for decl in *decls {
-            if !named.insert(identity(decl)) {
-                return Err(incomplete("a checkpoint payload family is named twice"));
-            }
-            if *class == Class::NotImaged
-                && storage_tier(db_name(decl.db), decl.prefix) == StorageTier::Canonical
-            {
-                return Err(incomplete("a not-imaged payload family is canonical"));
-            }
-        }
-    }
-    let declared: BTreeSet<_> = side_table::declared().map(identity).collect();
-    if named != declared {
-        return Err(incomplete(
-            "the checkpoint payload registry does not name every declared family",
-        ));
-    }
-    let databases: BTreeSet<&str> = DATABASES.iter().map(|(name, _)| *name).collect();
-    if databases.len() != DATABASES.len()
-        || databases
-            != DB_MANIFEST
-                .iter()
-                .map(|entry| entry.name)
-                .collect::<BTreeSet<_>>()
-    {
-        return Err(incomplete(
-            "the checkpoint payload registry does not name every database",
-        ));
-    }
-    let kinds: Vec<&str> = KINDS
-        .iter()
-        .flat_map(|(_, kinds)| kinds.iter().copied())
-        .collect();
-    let registered: BTreeSet<&str> = kinds.iter().copied().collect();
-    if registered.len() != kinds.len()
-        || registered
-            != ENTITY_TYPE_REGISTRY
-                .iter()
-                .map(|entry| entry.kind)
-                .collect::<BTreeSet<_>>()
-    {
-        return Err(incomplete(
-            "the checkpoint payload registry does not name every entity kind",
-        ));
-    }
-    Ok(())
+/// Every entity kind the registry names, by class, as written.
+pub(super) fn kinds() -> &'static [(Class, &'static [&'static str])] {
+    KINDS
 }
 
 /// The class of one image row of `database`: `declared`, its family's or

@@ -21,6 +21,18 @@ use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
+/// The default inbound WebSocket frame bound (Engine 10:44 for parked L14):
+/// the sync protocol's frame floor as base64 carries it, plus a window pad
+/// envelope's header allowance and a window frame's lead (tag, key length,
+/// key, sub-tag), so no frame the protocol sends within its floor is refused
+/// at the socket.
+const DEFAULT_MAX_FRAME_SIZE: usize = oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES
+    .div_ceil(3)
+    * 4
+    + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
+    + 3
+    + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
+
 /// The two configs' redacting `Debug`.
 mod debug;
 
@@ -28,8 +40,10 @@ mod debug;
 ///
 /// Server-side enforcement status of the per-client limits (ONE-1129
 /// OWNER-DECISION, recorded in the PR body):
-/// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint
-///   (oversized updates close the connection before any state mutates).
+/// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint on
+///   each frame or part a peer sends (an oversized frame closes the
+///   connection before any state mutates); a payload joined from parts is
+///   bounded by its envelope (FIX 8247, L14 s45 10:34).
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
 /// - `max_messages_per_sec` — retained for configuration compatibility only.
 ///   RC42 counters ask typed questions and never refuse calls for rate.
@@ -98,9 +112,11 @@ pub struct SyncServerConfig {
     /// Hosted deployments must set a distinct value per tenant/vault; `0`
     /// preserves the legacy local single-vault scope.
     pub lease_vault_id: u64,
-    /// Maximum WebSocket frame size in bytes.
+    /// Maximum inbound WebSocket frame size in bytes; the default holds the
+    /// sync protocol's frame floor with its framing (`DEFAULT_MAX_FRAME_SIZE`).
     pub max_frame_size: usize,
-    /// Maximum CRDT update payload in bytes (enforced on WindowSync UPDATE).
+    /// Maximum CRDT update bytes in one received frame or part (enforced on
+    /// WindowSync UPDATE); the default is the frame floor.
     pub max_update_payload: usize,
     /// Window subscriptions one v13 connection keeps before it forgets the least recently
     /// requested, and the count past which a connection's windows or documents ask the row's
@@ -201,8 +217,9 @@ impl Default for SyncServerConfig {
             artifact_internal_vault_id: None,
             trusted_proxies: Vec::new(),
             lease_vault_id: 0,
-            max_frame_size: 4 * 1024 * 1024,     // 4 MB
-            max_update_payload: 2 * 1024 * 1024, // 2 MB
+            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+            // The frame floor (L14 s45 10:34).
+            max_update_payload: oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES,
             max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,

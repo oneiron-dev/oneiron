@@ -149,6 +149,8 @@ impl Vault {
         if staged {
             crate::authority::history_repair::clear_stage_in_txn(&self.store, &mut txn)?;
         }
+        #[cfg(feature = "sync")]
+        self.mark_pending_mirrors_in_txn(&mut txn, &ids.iter().copied().collect())?;
         txn.commit()?;
         watch.finish()?;
         self.store.notify_proactivity_changes();

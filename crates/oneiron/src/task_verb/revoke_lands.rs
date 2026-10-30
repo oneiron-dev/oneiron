@@ -506,6 +506,33 @@ impl Landing {
         })
     }
 
+    /// The parts of this landing a held call's wait keeps (FIX 11497).
+    pub(crate) fn snapshot_parts(&self) -> (&'static str, &Value, &[String]) {
+        (self.verb, &self.original, &self.notes)
+    }
+
+    /// The landing a kept snapshot rebuilds on the answered pass (FIX
+    /// 11497), as [`Landing::of`] judges it but for the polymorphic rows,
+    /// which no held call carries; its batch withdrawals rebuild empty.
+    pub(crate) fn from_snapshot(verb: &str, original: Value, notes: Vec<String>) -> Option<Self> {
+        let row = restrictive(verb, &original)?;
+        Some(Self {
+            verb: row.verb,
+            pins: row
+                .pins
+                .iter()
+                .map(|pin| Pinned {
+                    path: pin.path.iter().map(|key| (*key).to_owned()).collect(),
+                    parse: pin.parse,
+                })
+                .collect(),
+            check: row.check,
+            puts: Vec::new(),
+            original,
+            notes,
+        })
+    }
+
     /// The args a hook's rewrite `next` leaves after `prior`: a changed
     /// pinned field that fails the door's parse, or any one while
     /// [`RESTRICTIVE_TARGETS_PINNED`], back at its prior value, the rest as
