@@ -1,17 +1,44 @@
 //! Bounded-page adapters for authority-scoped app subscription channels.
+//!
+//! Each read returns one scoped page, of any size its caller asks, and the
+//! continuation its next page starts from (FIX 8859): a subscription of any
+//! count reads page after page, and no count is refused.
 use crate::entity_id::bytes_to_hex_lower;
 use crate::memory::{MemoryReceipt, PendingWrite};
 use crate::settings::ReadDestination;
+use crate::store::GateDecisionId;
 use crate::{EntityId, Error, Result, Vault};
 
+/// The rows one scan step reads from the ledger.
 const PAGE_SIZE: usize = 256;
-const MAX_RESULTS: usize = 1000;
 
 fn validate_limit(limit: usize) -> Result<()> {
-    if limit == 0 || limit > MAX_RESULTS {
+    if limit == 0 {
         return Err(Error::CorruptedIndex("invalid app subscription limit"));
     }
     Ok(())
+}
+
+/// Where the next page of a scoped subscription read starts: just past the
+/// last row the page before it returned, in the read's own order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ScopedContinuation(Position);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Position {
+    /// Receipts go newest decision first: the next page reads older ones.
+    Receipt(GateDecisionId),
+    /// Pending consents go by created at, decision and claim: the next page
+    /// reads the ones past this key.
+    Pending(u64, GateDecisionId, [u8; 16]),
+}
+
+/// One page of a scoped subscription read, and where the next page starts:
+/// `None` once the read holds no more.
+#[derive(Debug, Clone)]
+pub struct ScopedPage<T> {
+    pub rows: Vec<T>,
+    pub next: Option<ScopedContinuation>,
 }
 
 /// Whether a caller whose rows go to `destination` may learn of `claim` at
@@ -41,17 +68,27 @@ fn in_world(vault: &Vault, claim: Option<[u8; 16]>, world: Option<&str>) -> Resu
 }
 
 /// Apply principal and world predicates before the output limit, across all
-/// pages, for a caller whose rows go to `destination`.
+/// pages, for a caller whose rows go to `destination`: up to `limit` rows
+/// from `after` on, and the continuation past the last one.
 pub fn scoped_subscription_receipts(
     vault: &Vault,
     actor: &str,
     world: Option<&str>,
     destination: impl Into<ReadDestination>,
     limit: usize,
-) -> Result<Vec<MemoryReceipt>> {
+    after: Option<ScopedContinuation>,
+) -> Result<ScopedPage<MemoryReceipt>> {
     validate_limit(limit)?;
     let destination: ReadDestination = destination.into();
-    let mut before = None;
+    let mut before = match after {
+        Some(ScopedContinuation(Position::Receipt(decision))) => Some(decision),
+        Some(ScopedContinuation(Position::Pending(..))) => {
+            return Err(Error::CorruptedIndex(
+                "receipt read continued from a consent page",
+            ));
+        }
+        None => None,
+    };
     let mut output = Vec::new();
     loop {
         let page = vault.store.gate_decisions_page(before, PAGE_SIZE)?;
@@ -78,32 +115,52 @@ pub fn scoped_subscription_receipts(
                 claim: None,
             });
             if output.len() == limit {
-                return Ok(output);
+                return Ok(ScopedPage {
+                    rows: output,
+                    next: Some(ScopedContinuation(Position::Receipt(row.decision_id))),
+                });
             }
         }
         if exhausted {
-            return Ok(output);
+            return Ok(ScopedPage {
+                rows: output,
+                next: None,
+            });
         }
     }
 }
 
-/// Scan stable sequence pages and retain only the requested scoped top-k.
-/// Ordering matches the facade's created-at / decision / claim ordering.
-/// Off this device a claim a world withholds from one of the machines the
-/// rows go to is skipped, judged in the scan's snapshot (mesh PR2b).
+/// Scan stable sequence pages and retain only the requested scoped top-k
+/// past `after`, with the continuation past the last row kept. Ordering
+/// matches the facade's created-at / decision / claim ordering. Off this
+/// device a claim a world withholds from one of the machines the rows go to
+/// is skipped, judged in the scan's snapshot (mesh PR2b).
 pub fn scoped_subscription_pending(
     vault: &Vault,
     actor: &str,
     world: Option<&str>,
     destination: impl Into<ReadDestination>,
     limit: usize,
-) -> Result<Vec<PendingWrite>> {
+    after: Option<ScopedContinuation>,
+) -> Result<ScopedPage<PendingWrite>> {
     validate_limit(limit)?;
+    let after = match after {
+        Some(ScopedContinuation(Position::Pending(at, decision, claim))) => {
+            Some((at, decision.as_bytes(), claim))
+        }
+        Some(ScopedContinuation(Position::Receipt(_))) => {
+            return Err(Error::CorruptedIndex(
+                "consent read continued from a receipt page",
+            ));
+        }
+        None => None,
+    };
     let destination: ReadDestination = destination.into();
     let txn = vault.store.env.read_txn()?;
     let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination)?;
     let mut cursor = None;
     let mut selected = Vec::new();
+    let mut more = false;
     loop {
         let page = vault
             .store
@@ -127,27 +184,37 @@ pub fn scoped_subscription_pending(
             {
                 continue;
             }
-            selected.push(row);
-            selected.sort_by(|a, b| {
-                a.created_at
-                    .cmp(&b.created_at)
-                    .then_with(|| a.decision_id.as_bytes().cmp(&b.decision_id.as_bytes()))
-                    .then_with(|| a.claim_id.cmp(&b.claim_id))
-            });
-            selected.truncate(limit);
+            let key = (row.created_at, row.decision_id.as_bytes(), row.claim_id);
+            if after.is_none_or(|after| key > after) {
+                selected.push(row);
+            }
         }
+        // Once per scan step, not per row: the kept top-k stays in order.
+        selected.sort_by_key(|row| (row.created_at, row.decision_id.as_bytes(), row.claim_id));
+        more |= selected.len() > limit;
+        selected.truncate(limit);
         if exhausted {
             break;
         }
     }
-    Ok(selected
-        .into_iter()
-        .map(|row| PendingWrite {
-            claim_ref: bytes_to_hex_lower(&row.claim_id),
-            decision_ref: format!("gate:{}", row.decision_id.to_hex()),
-            created_at: row.created_at,
-            reason_codes: row.reason_codes,
-            dreamer_run_id: row.dreamer_run_id,
-        })
-        .collect())
+    let next = selected.last().filter(|_| more).map(|row| {
+        ScopedContinuation(Position::Pending(
+            row.created_at,
+            row.decision_id,
+            row.claim_id,
+        ))
+    });
+    Ok(ScopedPage {
+        rows: selected
+            .into_iter()
+            .map(|row| PendingWrite {
+                claim_ref: bytes_to_hex_lower(&row.claim_id),
+                decision_ref: format!("gate:{}", row.decision_id.to_hex()),
+                created_at: row.created_at,
+                reason_codes: row.reason_codes,
+                dreamer_run_id: row.dreamer_run_id,
+            })
+            .collect(),
+        next,
+    })
 }

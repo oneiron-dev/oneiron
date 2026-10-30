@@ -378,6 +378,9 @@ impl Vault {
         self.finish_credential_retirements_after_commit();
         // FIX 8875: an erased actor's erasable keys.
         self.finish_erasable_retirements_after_commit();
+        // KS7-4: an erased owner's checkpoint payload leaves.
+        self.store
+            .finish_checkpoint_payload_retirements_after_commit();
     }
 
     /// Post-commit door for an erase that staged a world's pad retirements

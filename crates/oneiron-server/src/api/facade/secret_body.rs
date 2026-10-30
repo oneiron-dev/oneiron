@@ -1,19 +1,27 @@
 //! The wiping body path for the custody rows that carry a secret's value in
 //! plaintext over the HTTP facade (FIX 11442): `vault.secrets.register` and
-//! `vault.secrets.rotate`.
+//! `vault.secrets.rotate`, plus the sealed input on `vault.secrets.custody.submit`
+//! (FIX 11668).
 //! `read_middleware_body`, `scope_secret` and `current_secret` are its call surface.
 //! The owner's routes (`owner::secrets`) define the wiping reader this follows.
 //!
-//! A body for either verb is read once, here, into the one buffer the call
+//! A body for each verb is read once, here, into the one buffer the call
 //! owns: each frame is wiped as it is copied, the buffer is wiped on every
 //! path, and the value is borrowed as a `RawValue`, never unescaped into a
-//! `Value`. What runs on carries a redacted body whose `value_base64` is
-//! empty: the receipt and invocation readers, the row's input check, its verb
-//! hooks and their records. The real encoding rides the request's extensions
-//! to the route, which scopes it for the door; the door puts it back into the
-//! typed input it decodes from the redacted args. The rows keep no call
-//! receipt (`NO_RECORD_ROWS`), and the invocation claim states the arrival's
-//! own digest, so a retry naming another value still names another call.
+//! `Value`. What runs on carries a redacted body whose `value_base64` (or
+//! submit's `input_base64`) is empty: the receipt and invocation readers,
+//! the row's input check, its verb hooks and their records. The real encoding
+//! rides the request's extensions to the route, which scopes it for the door;
+//! the door puts it back into the typed input it decodes from the redacted
+//! args. The rows keep no call receipt (`NO_RECORD_ROWS`), and the invocation
+//! claim states the arrival's own digest, so a retry naming another value
+//! still names another call.
+//!
+//! A transport that hands the facade's dispatch an input already decoded
+//! (the held socket's `rpc.req`, an MCP `tools/call`, a code-mode invoke)
+//! has its value lifted out the same way before any hook reads it
+//! (`lift_custody_secret`, FIX 11665), and scoped for the door
+//! (`with_custody_secret`).
 
 use std::future::Future;
 
@@ -26,13 +34,18 @@ use serde_json::Value;
 use serde_json::value::RawValue;
 use zeroize::{Zeroize, Zeroizing};
 
-/// The verbs whose body carries `value_base64` in plaintext.
+/// The verbs whose body carries a wiped encoding: `value_base64` in plaintext
+/// on register and rotate, `input_base64` (sealed ciphertext) on custody submit.
 fn needs_wipe(verb: &str) -> bool {
-    matches!(verb, "vault.secrets.register" | "vault.secrets.rotate")
+    matches!(
+        verb,
+        "vault.secrets.register" | "vault.secrets.rotate" | "vault.secrets.custody.submit"
+    )
 }
 
-/// The real `value_base64` a wiping read carried, unescaped. Rides the
-/// request's extensions from the outer middleware to the route.
+/// The real wiped encoding (`value_base64` or submit's `input_base64`) a
+/// wiping read carried, unescaped. Rides the request's extensions from the
+/// outer middleware to the route.
 #[derive(Clone)]
 pub(super) struct FacadeSecret(Zeroizing<String>);
 
@@ -68,7 +81,44 @@ pub(super) fn current_secret() -> Option<Zeroizing<String>> {
     SECRET.try_with(|secret| secret.clone()).ok()
 }
 
-/// Reads a middleware body for `verb`: a custody value's through the wiping
+/// Takes a custody row's value out of an input that arrived decoded, before
+/// any hook reads it (FIX 11665): `value_base64` on register and rotate,
+/// `input_base64` on custody submit. The member is left empty, as an HTTP
+/// body's redaction leaves it, and the value comes back, moved and never
+/// copied, for [`with_custody_secret`] to scope for the door. `None` for any
+/// other verb, and for a member that is absent, no string or empty: an HTTP
+/// body's value arrives lifted and scoped already.
+pub(crate) fn lift_custody_secret(verb: &str, input: &mut Value) -> Option<Zeroizing<String>> {
+    if !needs_wipe(verb) {
+        return None;
+    }
+    let key = if verb == "vault.secrets.custody.submit" {
+        "input_base64"
+    } else {
+        "value_base64"
+    };
+    let Some(Value::String(held)) = input.get_mut(key) else {
+        return None;
+    };
+    if held.is_empty() {
+        return None;
+    }
+    Some(Zeroizing::new(std::mem::take(held)))
+}
+
+/// Runs `call` with `secret`, when a dispatch lifted one, as its custody
+/// door's value (FIX 11665); with none, as it is.
+pub(crate) async fn with_custody_secret<F: Future>(
+    secret: Option<Zeroizing<String>>,
+    call: F,
+) -> F::Output {
+    match secret {
+        Some(secret) => SECRET.scope(secret, call).await,
+        None => call.await,
+    }
+}
+
+/// Reads a middleware body for `verb`: a wiped verb's through the wiping
 /// reader, redacted, with its value and arrival digest on `extensions`; any
 /// other verb's as `to_bytes` reads it today. A body already redacted
 /// upstream reads as it arrived.
@@ -102,12 +152,17 @@ pub(super) async fn read_middleware_body(
         let bytes = Bytes::from(serde_json::to_vec(&redacted).unwrap_or_default());
         return (bytes, Some(redacted));
     }
-    // No `value_base64` string to carry: the body as it arrived, value-free.
-    let value = serde_json::from_slice(&owned.0).ok();
-    (Bytes::copy_from_slice(&owned.0), value)
+    // No `value_base64` or `input_base64` string to carry: the body as it arrived, value-free.
+    // Unparseable bodies forward empty (FIX 11667): the route's `Json`
+    // extractor still refuses them as malformed, as it refused the arrival.
+    let Some(value) = serde_json::from_slice(&owned.0).ok() else {
+        return (Bytes::new(), None);
+    };
+    (Bytes::copy_from_slice(&owned.0), Some(value))
 }
 
-/// The redacted body and its value, when `body` carries a `value_base64`
+/// The redacted body and its wiped encoding, when `body` carries a
+/// `value_base64` (register, rotate) or `input_base64` (custody submit)
 /// string for `verb`: the typed `RawValue` read first, then a generic
 /// `Value` read whose string is wiped once saved, so a body the row refuses
 /// still keeps its value out of what runs on.
@@ -115,18 +170,24 @@ fn redacted_body(verb: &str, body: &[u8]) -> Option<(Value, Zeroizing<String>)> 
     if let Some(redacted) = typed_redacted(verb, body) {
         return Some(redacted);
     }
+    let key = if verb == "vault.secrets.custody.submit" {
+        "input_base64"
+    } else {
+        "value_base64"
+    };
     let mut value: Value = serde_json::from_slice(body).ok()?;
-    let secret = Zeroizing::new(value.get("value_base64")?.as_str()?.to_owned());
-    if let Some(Value::String(held)) = value.get_mut("value_base64") {
+    let secret = Zeroizing::new(value.get(key)?.as_str()?.to_owned());
+    if let Some(Value::String(held)) = value.get_mut(key) {
         held.zeroize();
         *held = String::new();
     }
     Some((value, secret))
 }
 
-/// The typed redaction: the value borrowed as a `RawValue`, the caller's
-/// other fields carried as they arrived, `value_base64` empty. `None` when
-/// the body is not the verb's shape, or its value is no string.
+/// The typed redaction: the wiped encoding borrowed as a `RawValue`, the
+/// caller's other fields carried as they arrived, `value_base64` (or submit's
+/// `input_base64`) empty. `None` when the body is not the verb's shape, or
+/// its wiped string is no string.
 fn typed_redacted(verb: &str, body: &[u8]) -> Option<(Value, Zeroizing<String>)> {
     match verb {
         "vault.secrets.register" => {
@@ -139,13 +200,18 @@ fn typed_redacted(verb: &str, body: &[u8]) -> Option<(Value, Zeroizing<String>)>
             let secret = secret_text(fields.value_base64)?;
             Some((rotate_redacted(fields), secret))
         }
+        "vault.secrets.custody.submit" => {
+            let fields: SubmitFields<'_> = serde_json::from_slice(body).ok()?;
+            let secret = secret_text(fields.input_base64)?;
+            Some((submit_redacted(fields)?, secret))
+        }
         _ => None,
     }
 }
 
-/// The `value_base64` string, unescaped into a wiped buffer. Base64 needs no
-/// escapes, but the facade keeps what it admitted: a value carrying one
-/// unescapes here, into this buffer alone.
+/// The wiped string (`value_base64` or submit's `input_base64`), unescaped
+/// into a wiped buffer. Base64 needs no escapes, but the facade keeps what it
+/// admitted: a value carrying one unescapes here, into this buffer alone.
 fn secret_text(raw: &RawValue) -> Option<Zeroizing<String>> {
     serde_json::from_str::<String>(raw.get())
         .ok()
@@ -205,6 +271,30 @@ struct ManifestFields {
     git_ref: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitFields<'a> {
+    change: String,
+    secret_id: String,
+    generation: u32,
+    seen: String,
+    holder: String,
+    recipients: Vec<SubmitPermitFields>,
+    #[serde(default)]
+    manifest_ref: Option<String>,
+    /// Raw, as in [`RotateFields`].
+    #[serde(borrow)]
+    input_base64: &'a RawValue,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SubmitPermitFields {
+    machine: String,
+    profile: String,
+    encryption_key_digest: String,
+}
+
 /// The rotate body without its value: the caller's fields, `value_base64`
 /// empty. A field the caller omitted stays omitted, so the redacted body
 /// decodes as the arrival did.
@@ -252,6 +342,30 @@ fn register_redacted(fields: RegisterFields<'_>) -> Option<Value> {
             Value::Array(fields.recipients.into_iter().map(Value::String).collect()),
         );
     }
+    Some(Value::Object(redacted))
+}
+
+/// The submit body without its sealed input, as [`rotate_redacted`]: the
+/// caller's fields, `input_base64` empty. A field the caller omitted stays
+/// omitted, so the redacted body decodes as the arrival did.
+fn submit_redacted(fields: SubmitFields<'_>) -> Option<Value> {
+    let mut redacted = serde_json::Map::new();
+    redacted.insert("change".to_owned(), Value::String(fields.change));
+    redacted.insert("secret_id".to_owned(), Value::String(fields.secret_id));
+    redacted.insert(
+        "generation".to_owned(),
+        Value::Number(fields.generation.into()),
+    );
+    redacted.insert("seen".to_owned(), Value::String(fields.seen));
+    redacted.insert("holder".to_owned(), Value::String(fields.holder));
+    redacted.insert(
+        "recipients".to_owned(),
+        serde_json::to_value(fields.recipients).ok()?,
+    );
+    if let Some(manifest_ref) = fields.manifest_ref {
+        redacted.insert("manifest_ref".to_owned(), Value::String(manifest_ref));
+    }
+    redacted.insert("input_base64".to_owned(), Value::String(String::new()));
     Some(Value::Object(redacted))
 }
 

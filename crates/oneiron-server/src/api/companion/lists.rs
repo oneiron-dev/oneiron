@@ -69,6 +69,9 @@ pub(crate) async fn list_profiles(
         .authorized_companion_profile_facets(&principal, &person)
         .map_err(|e| companion_engine_error("profile grant list failed", e))?;
     let destination = auth.destination();
+    // The caller's own read lane judges each profile's world and sources
+    // (FIX 11174); one that cannot be built leaves the listing as it was.
+    let reader = crate::api::scoped_read_for_core_auth(&server.vault, &auth).ok();
     let mut items = Vec::with_capacity(facets.len());
     for facet in facets {
         let key = PsychProfileKey {
@@ -81,7 +84,13 @@ pub(crate) async fn list_profiles(
         // a profile kept from this destination lists with no tier.
         let admission = server
             .vault
-            .companion_profile_snapshot_admitted(&principal, &key, &destination, None)
+            .companion_profile_snapshot_admitted(
+                &principal,
+                &key,
+                &destination,
+                reader.as_ref(),
+                None,
+            )
             .map_err(|error| companion_engine_error("profile read failed", error))?;
         let compact = match admission {
             CompanionProfileAdmission::Admitted {

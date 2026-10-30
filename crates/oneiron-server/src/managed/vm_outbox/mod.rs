@@ -19,12 +19,17 @@
 //! held directories, never through a link ([`local`]), syncs, records and only
 //! then acks. A put whose bytes did not hash to its digest on arrival goes
 //! again at its set's pacing, its file read again first, and a file damaged
-//! at its source waits, typed, until it changes ([`source_check`]). Nothing
+//! at its source waits, typed, until it changes ([`source_check`]). A copy
+//! of a member the carrier never agreed on, kept as the member's origin
+//! retired the agreed version, waits, typed, for its owner to remove or keep
+//! it ([`diverged`]); the guest's lifecycle endpoint reads both states and
+//! takes his answers. Nothing
 //! here carries a key or a credential, decides a business receipt, schedules
 //! or prunes a backup, ages anything out, or caps a file, a set or an
 //! outbox; a full disk or an absent host is a typed deferral that keeps the
 //! work on both ends and never stops the vault.
 
+mod diverged;
 mod endpoint;
 mod guest;
 mod host;
@@ -35,11 +40,14 @@ mod source_check;
 mod store;
 mod transfer;
 
+pub(crate) use self::diverged::{DIVERGED_ANSWER_ROUTE, DivergedOwnerAnswer, VmOutboxMemberStatus};
+pub(crate) use self::endpoint::{answer_diverged, companion_member_statuses};
 pub(super) use self::endpoint::{
     companion_revision, park_companion, register_backup, resume_companion,
 };
 pub use self::guest::run_vm_outbox;
 pub use self::host::{VmOutboxAttachment, VmOutboxHostRoots, read_vm_backup_label};
+pub(crate) use self::store::DivergedAnswer;
 
 use self::local::Owner;
 use self::store::{MemberRecord, Store};
@@ -100,6 +108,10 @@ struct Carrier {
     /// sessions until each kept record is written again and a scan of the
     /// kind writes its own.
     record_wait: HashMap<VmOutboxKind, RecordWait>,
+    /// The guest's, shared with its lifecycle endpoint: its members'
+    /// statuses and the owner's answers to its diverged copies; `None` on
+    /// the host.
+    board: Option<diverged::Board>,
 }
 
 /// Why a kind waits on this end's carrier records, and when its next scan
@@ -136,18 +148,24 @@ impl Carrier {
             paced: HashMap::new(),
             backup_wait: None,
             record_wait: HashMap::new(),
+            board: None,
         }
     }
 
     /// Says `what` of `kind`'s `member` once, until something else is said
     /// of it or it goes through.
     fn say(&mut self, kind: VmOutboxKind, member: &str, what: &str) {
+        self.say_as("vm_outbox_deferred", kind, member, what);
+    }
+
+    /// [`Self::say`] under its own `reason` (FIX 11244).
+    fn say_as(&mut self, reason: &'static str, kind: VmOutboxKind, member: &str, what: &str) {
         let key = (kind, member.to_owned());
         if self.said.get(&key).map(String::as_str) == Some(what) {
             return;
         }
         tracing::warn!(
-            reason = "vm_outbox_deferred",
+            reason,
             side = ?self.side,
             %kind,
             member,

@@ -25,7 +25,9 @@
 //! egress (`mirror_plan`, `mirror_review`), sends it in claimed, leased
 //! batches (`mirror_plan_dispatch`) and reconciles before any resend
 //! (`mirror_plan_reconcile`), in the LIVE store `ORIGIN_MIRROR_WORK`
-//! (`mirror_plan_store`).
+//! (`mirror_plan_store`); an open plan keeps what it sends pinned
+//! (`mirror_plan_pins`), and any plan the mirror keeps is read with
+//! `vault.code.origin.mirror.plan` (`mirror_plan_view`).
 
 mod approval;
 mod authority;
@@ -34,11 +36,13 @@ mod inputs;
 mod lifecycle;
 mod mirror_plan;
 mod mirror_plan_dispatch;
+mod mirror_plan_pins;
 mod mirror_plan_reconcile;
 mod mirror_plan_remote;
 mod mirror_plan_run;
 mod mirror_plan_store;
 mod mirror_plan_types;
+mod mirror_plan_view;
 mod mirror_review;
 mod reconcile;
 mod review;
@@ -60,7 +64,11 @@ pub use mirror_plan_reconcile::{
 };
 pub(crate) use mirror_plan_run::MirrorPlanSummary;
 pub(crate) use mirror_plan_store::erase_mirror_work_actor_in_txn;
-pub use reconcile::ORIGIN_PUBLISH_DISPATCH_SETTLE_SECS;
+pub use mirror_plan_types::{MirrorBatchClaim, MirrorObservedTip, MirrorRefOutcome};
+pub use mirror_plan_view::{
+    OriginMirrorPlanBatchView, OriginMirrorPlanRecord, OriginMirrorPlanRefView,
+    OriginMirrorPlanRequest, OriginMirrorPlanView,
+};
 pub use review::ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS;
 pub(crate) use store::erase_publish_request_actor_in_txn;
 pub use types::*;
@@ -73,7 +81,7 @@ use crate::Vault;
 use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo};
+use crate::git_wire::{GitOid, GitRefName, GitWire, GitWireRepo, lock_repository};
 use crate::origin::smart_http::origin_repo_dir;
 
 /// The branch namespace a request may name.
@@ -201,6 +209,10 @@ impl Vault {
             )));
         }
         let built = self.build_publish_review(&scope.wire, &handle, &commit, base.as_ref())?;
+        // The coordinator spans the pin and the row, as a publication's
+        // does: the census drops a request pin with no row only under it, so
+        // never the pin of a request still being recorded (FIX 7009).
+        let _coordinator = lock_repository(handle.common_dir())?;
         self.pin_publish_commit(&scope, &handle, request_id, &commit)?;
         let now = self.now_recorded_at();
         let mut txn = self.store.env.write_txn()?;

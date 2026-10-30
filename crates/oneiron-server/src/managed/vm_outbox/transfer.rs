@@ -20,6 +20,8 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::sync::Arc;
 
+mod local_check;
+
 /// One transfer the other end sent, taken and waiting for its set.
 struct Taken {
     descriptor: VmOutboxDescriptor,
@@ -33,6 +35,10 @@ enum Plan {
     /// Boxed: a staged put holds its running hasher.
     Put(Box<Staged>),
     Remove,
+    /// A retirement by the member's origin taken for the agreed version,
+    /// this end's own copy, which the carrier never agreed on, kept
+    /// (FIX 11074).
+    Keep(Version),
 }
 
 impl Carrier {
@@ -62,6 +68,7 @@ impl Carrier {
             if !self.gate.proceed() {
                 return Ok(());
             }
+            self.member_turn();
             if let Some(label) = self.roots.backup_label() {
                 link.send(&VmOutboxFrame::BackupRegistered { label })?;
             }
@@ -323,6 +330,8 @@ impl Carrier {
     /// it and writes nothing, a refusal drops it and is not sent again until
     /// the member changes, but a put whose bytes did not hash to its digest
     /// on arrival is read again and resent at its set's pacing (FIX 11075).
+    /// A retirement the other end took while it keeps its own copy stands,
+    /// and that copy is recorded for its owner's answer (FIX 11074).
     /// A durable or refused answer that does not record stands, and its exact
     /// record is kept to write again: the kind waits on its carrier records
     /// both ways until that record is written, before its next scan, and the
@@ -341,7 +350,15 @@ impl Carrier {
                 });
                 record.pending = None;
                 record.refused = None;
+                record.diverged = None;
                 self.settled(kind, member);
+            }
+            VmOutboxOutcome::DivergedUnagreed { held, length } => {
+                let held = Version {
+                    blake3: held,
+                    length,
+                };
+                self.peer_kept(&mut record, transfer, held);
             }
             VmOutboxOutcome::Deferred {
                 code,
@@ -356,7 +373,16 @@ impl Carrier {
                 return;
             }
             VmOutboxOutcome::Refused { code, detail } => {
-                self.say(kind, member, &format!("refused ({code:?}): {detail}"));
+                let reason = match code {
+                    VmOutboxRefusal::DigestMismatch => "vm_outbox_digest_mismatch",
+                    _ => "vm_outbox_deferred",
+                };
+                self.say_as(
+                    reason,
+                    kind,
+                    member,
+                    &format!("refused ({code:?}): {detail}"),
+                );
                 record.pending = None;
                 if !source_check::recheck(&mut record, transfer, code) {
                     record.refused = Some(format!(
@@ -507,7 +533,7 @@ impl Carrier {
         {
             let same = received.blake3 == transfer.blake3 && received.revision == transfer.revision;
             return Some(if same {
-                VmOutboxOutcome::Durable
+                self.taken_answer(transfer, &record)
             } else {
                 VmOutboxOutcome::refused(
                     VmOutboxRefusal::IdentityConflict,
@@ -567,7 +593,7 @@ impl Carrier {
         &mut self,
         kind: VmOutboxKind,
         root: Option<File>,
-        taken: Vec<Taken>,
+        mut taken: Vec<Taken>,
     ) -> Vec<VmOutboxAck> {
         let gate = Arc::clone(&self.gate);
         let held = gate.hold();
@@ -585,17 +611,19 @@ impl Carrier {
             Some(self.io_outcome(kind, error))
         } else {
             taken.iter().find_map(|item| match &item.plan {
-                Plan::Answer(VmOutboxOutcome::Durable) => None,
+                Plan::Answer(
+                    VmOutboxOutcome::Durable | VmOutboxOutcome::DivergedUnagreed { .. },
+                ) => None,
                 Plan::Answer(_) => Some(VmOutboxOutcome::deferred(
                     VmOutboxDeferral::SetIncomplete,
                     &format!("the set's member {}", item.descriptor.member),
                     "another transfer of the set was not taken",
                 )),
-                Plan::Put(_) | Plan::Remove => None,
+                Plan::Put(_) | Plan::Remove | Plan::Keep(_) => None,
             })
         };
         let checked = match (&blocked, &root) {
-            (None, Some(root)) => self.check_local(root, &taken),
+            (None, Some(root)) => self.check_local(root, &mut taken),
             _ => Vec::new(),
         };
         let mismatch = checked.iter().any(Option::is_some);
@@ -650,42 +678,6 @@ impl Carrier {
         acks
     }
 
-    /// Per transfer, a refusal when this end holds a version of its member
-    /// the transfer does not name and the carrier never agreed on.
-    fn check_local(&self, root: &File, taken: &[Taken]) -> Vec<Option<VmOutboxOutcome>> {
-        taken
-            .iter()
-            .map(|item| {
-                if matches!(item.plan, Plan::Answer(_)) {
-                    return None;
-                }
-                let transfer = &item.descriptor;
-                let record = self.store.get(transfer.kind, &transfer.member);
-                let held = match local::open_member(root, &transfer.member, None) {
-                    Ok(Some((file, stamp))) => match &record.cached {
-                        Some(cached) if cached.stamp == stamp => {
-                            Some(cached.version.blake3.clone())
-                        }
-                        _ => local::digest(&file).ok().map(|version| version.blake3),
-                    },
-                    _ => return None,
-                }?;
-                let known = Some(&held) == transfer.expected_digest.as_ref()
-                    || record
-                        .agreed
-                        .as_ref()
-                        .is_some_and(|agreed| agreed.blake3 == held)
-                    || (transfer.operation == VmOutboxOperation::Put && held == transfer.blake3);
-                (!known).then(|| {
-                    VmOutboxOutcome::refused(
-                        VmOutboxRefusal::ExpectedDigestMismatch,
-                        "this end holds a version of the member the transfer does not name",
-                    )
-                })
-            })
-            .collect()
-    }
-
     /// Makes one checked change and records it before it is acked. When its
     /// record does not write, the change stays made, the transfer is
     /// deferred on this end's carrier records and its kind waits on them
@@ -698,9 +690,14 @@ impl Carrier {
         plan: Plan,
     ) -> VmOutboxOutcome {
         let protected = member.is_some_and(|member| member.protected);
+        let mut kept = None;
         let published = match plan {
             Plan::Put(staged) => (*staged).publish(self.owner, protected).map(Some),
             Plan::Remove => local::remove(root, transfer.kind, &transfer.member).map(|()| None),
+            Plan::Keep(held) => {
+                kept = Some(self.kept(transfer, held));
+                Ok(None)
+            }
             Plan::Answer(outcome) => return outcome,
         };
         let stamp = match published {
@@ -730,13 +727,14 @@ impl Carrier {
             record.pending = None;
         }
         record.refused = None;
+        record.diverged = kept;
         match self
             .store
             .put(transfer.kind, &transfer.member, record.clone())
         {
             Ok(()) => {
                 self.received_written(transfer.kind, &transfer.member);
-                VmOutboxOutcome::Durable
+                self.taken_answer(transfer, &record)
             }
             Err(error) => {
                 self.received_failed(transfer.kind, &transfer.member, record, &error);

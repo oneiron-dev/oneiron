@@ -11,6 +11,12 @@
 //! still needs history, or fails, the snapshot's own refusal stands, as
 //! before: an unknown never admits.
 //!
+//! A door that copies a whole import, the selector's, offers the import's
+//! other authority rows too ([`RowsBeside`]): where the fold with the judged
+//! row alone still needs history, the fold with all of them in judges it, as
+//! a local append's fold judges its whole batch, so history that arrives in
+//! two or more rows together lands there too (FIX 2535, 2989).
+//!
 //! A local append on a vault that adopted a checkpoint image runs the same
 //! fold with its batch in before it stores the batch ([`pending`], FIX
 //! 2989).
@@ -68,6 +74,12 @@ impl std::ops::Deref for AuthorityAdmissionView {
     }
 }
 
+/// The rows an import carries beside the ones a door judges (FIX 2535,
+/// 2989), read only where the fold with the judged rows alone needs history.
+/// A row already stored, or one the judged rows hold, is left out.
+pub(crate) type RowsBeside<'a> =
+    &'a dyn Fn() -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>>;
+
 /// The fold `rows` are judged against in `txn` under `posture` (see the
 /// module doc). The snapshot's fold is read first and returned whenever it
 /// answers; its history refusal stands wherever the fold with `rows` in does
@@ -77,6 +89,22 @@ pub(crate) fn preflight_authority_rows_in_txn(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+) -> Result<AuthorityAdmissionView> {
+    preflight_authority_rows_beside_in_txn(store, posture, txn, rows, &|| Ok(BTreeMap::new()))
+}
+
+/// [`preflight_authority_rows_in_txn`] for rows an import carries with
+/// others (`beside`): where the fold with `rows` alone still needs history,
+/// the fold with every row beside them in judges them where it answers. A
+/// fault reading the rows beside, or a fold with them that does not answer,
+/// leaves the snapshot's refusal standing (CALLS
+/// AUTHORITY_ADMISSION_UNKNOWN).
+pub(crate) fn preflight_authority_rows_beside_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    rows: &[(AuthorityEntryHash, &AuthorityLogEntry)],
+    beside: RowsBeside<'_>,
 ) -> Result<AuthorityAdmissionView> {
     let refusal = match authority_view_readonly_for_store_in_txn(store, posture, txn) {
         Ok(view) => {
@@ -88,10 +116,34 @@ pub(crate) fn preflight_authority_rows_in_txn(
     match AUTHORITY_ADMISSION_UNKNOWN {
         AdmissionUnknown::KeepCurrent => {}
     }
-    let arriving: BTreeMap<_, _> = rows
+    let mut arriving: BTreeMap<_, _> = rows
         .iter()
         .map(|(hash, entry)| (*hash, (*entry).clone()))
         .collect();
+    match authority_view_with_rows_for_store_in_txn(store, posture, txn, &arriving) {
+        Ok(ArrivingFold::Complete(view)) => return Ok(AuthorityAdmissionView { view }),
+        Ok(ArrivingFold::NeedHistory(_)) => {}
+        Err(_) => return Err(refusal),
+    }
+    let Ok(beside) = beside() else {
+        return Err(refusal);
+    };
+    let mut grew = false;
+    for (hash, entry) in beside {
+        if arriving.contains_key(&hash)
+            || !matches!(
+                super::retired_signers::authority_row_resident(store, txn, &entry),
+                Ok(false)
+            )
+        {
+            continue;
+        }
+        arriving.insert(hash, entry);
+        grew = true;
+    }
+    if !grew {
+        return Err(refusal);
+    }
     match authority_view_with_rows_for_store_in_txn(store, posture, txn, &arriving) {
         Ok(ArrivingFold::Complete(view)) => Ok(AuthorityAdmissionView { view }),
         Ok(ArrivingFold::NeedHistory(_)) | Err(_) => Err(refusal),

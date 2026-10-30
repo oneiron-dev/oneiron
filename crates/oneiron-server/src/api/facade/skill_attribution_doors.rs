@@ -33,9 +33,12 @@ pub(crate) async fn vault_skills_attribution_read(
     input: ProposalDeltaReadRequest,
 ) -> MemoryResult<ProposalDeltaRead> {
     let owner = owner_proof(auth, server, "vault.skills.attribution.read")?;
+    // The artifact's texts are judged as the owner reads where this caller
+    // sits (FIX 11351).
+    let locality = auth.locality();
     let server = Arc::clone(server);
     tokio::task::spawn_blocking(move || {
-        sdk::skill_attribution_read_as_owner(server.vault(), &owner, &input)
+        sdk::skill_attribution_read_as_owner(server.vault(), &owner, locality, &input)
     })
     .await
     .map_err(|_| internal("vault.skills.attribution.read"))?

@@ -13,10 +13,14 @@ use std::sync::Arc;
 
 mod adopted;
 mod arriving;
+#[cfg(feature = "sync")]
+mod stored_records;
 
 pub(super) use adopted::adopted_history_request_in_txn;
 use adopted::fold_adopted_in_txn;
 pub(super) use arriving::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use stored_records::folded_vault_id_of_records;
 
 /// The generation belongs to the snapshot, not to the most recent process-wide
 /// write. An abort discards its generation update with its authority row.
@@ -428,7 +432,8 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
 /// withdrawal, from whichever replica minted it, confers nothing. Every
 /// view of this vault's own log takes it, cached or not; the base a later
 /// generation resumes from and a checkpoint image, which folds the log
-/// afresh, never do: a local withdrawal is no row of the log.
+/// afresh, never do: a local withdrawal is no row of the log. The signed
+/// `SlipGrantRevoke` the same withdrawal logs is, and carries it to both.
 fn fold_authority_checkpoint_tail_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,

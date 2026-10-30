@@ -497,13 +497,16 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
             if !forks.insert(fork.fork) {
                 return Err(invalid("entity document fork duplicated"));
             }
-            let (len, settled, actor, members) = proposals.entry(fork.proposal).or_insert((
-                fork.proposal_len,
-                fork.proposal_settled,
-                fork.actor,
-                BTreeSet::new(),
-            ));
+            let (len, settled, actor, lineage, members) =
+                proposals.entry(fork.proposal).or_insert((
+                    fork.proposal_len,
+                    fork.proposal_settled,
+                    fork.actor,
+                    &fork.proposal_opener_lineage,
+                    BTreeSet::new(),
+                ));
             if (*len, *settled, *actor) != (fork.proposal_len, fork.proposal_settled, fork.actor)
+                || **lineage != fork.proposal_opener_lineage
                 || !members.insert(fork.proposal_index)
             {
                 return Err(invalid("entity document proposal bundle"));
@@ -512,7 +515,7 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
     }
     if proposals
         .values()
-        .any(|(len, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
+        .any(|(len, _, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
     {
         return Err(invalid(
             "entity document proposal spans entities outside the snapshot",

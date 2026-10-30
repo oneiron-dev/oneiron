@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
+use crate::origin::publish::{OriginMirrorPlanRequest, OriginMirrorPlanView};
 
 impl Memory<'_> {
     pub fn origin_register_as(
@@ -33,6 +34,17 @@ impl Memory<'_> {
             mirror: self.vault.served_origin_mirror(&input.repo)?,
             repo: input.repo,
         })
+    }
+
+    /// One automatic push plan of the mirror, with each ref's outcome and
+    /// one page of its review (FIX 7175), as the owner.
+    pub fn origin_mirror_plan_as(
+        &self,
+        owner: &AuthenticatedOwner,
+        input: OriginMirrorPlanRequest,
+    ) -> MemoryResult<OriginMirrorPlanView> {
+        self.origin_owner(owner)?;
+        Ok(self.vault.origin_mirror_plan(input)?)
     }
 
     pub fn origin_mirror_set_as(

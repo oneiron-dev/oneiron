@@ -86,6 +86,9 @@ pub struct ProposalBundle {
     pub author: DocActor,
     pub forks: Vec<ForkRecord>,
     pub settled: bool,
+    /// Slip ids (hex) of the credential chains its owner openings were
+    /// carried under, frozen as they opened: none settles it (FIX 10931).
+    pub opener_lineage: Vec<String>,
 }
 impl ProposalBundle {
     /// Forks still waiting for the bundle's single verdict.
@@ -410,6 +413,7 @@ impl Vault {
                     outcome: "settled",
                 }));
             }
+            super::proposal_lineage::refuse_opener_verdict(self, txn, authorization, &bundle)?;
             for fork in bundle.pending() {
                 let entity = EntityId::from_hex(&fork.entity)?;
                 authorize(self, txn, authorization, &entity, actor)?;
@@ -461,6 +465,7 @@ pub(super) fn open_proposal_in_txn(
     }
     // The proposal's prose is admitted with one plan (OF-067; FIX 2371).
     let mut plan = crate::batch::secret_scan::Lifted::default();
+    let lineage = super::proposal_lineage::opening_lineage(vault, txn, authorization)?;
     let mut landed = Vec::new();
     for (index, req) in requests.iter().enumerate() {
         validate_actor(vault, txn, req.actor)?;
@@ -512,6 +517,7 @@ pub(super) fn open_proposal_in_txn(
             &fork,
             ForkStatus::Pending,
             at,
+            &lineage,
         )?;
         if req.rewrite.is_none() && covered(vault, txn, authorization, &req.entity, req.actor)? {
             settle_one(vault, txn, &id.to_hex(), SettleVerb::Merge, req.actor, at)?;
@@ -544,6 +550,7 @@ pub(super) fn retain_fork(
     doc: &EntityDoc,
     status: ForkStatus,
     at: u64,
+    opener_lineage: &[[u8; 32]],
 ) -> Result<()> {
     let key = proposal.to_hex();
     let mut bundle = match ENTITY_DOC_PROPOSAL_BUNDLE.get(&vault.store, txn, &key)? {
@@ -553,6 +560,7 @@ pub(super) fn retain_fork(
             author: DocActor::Actor(req.actor.entity_ref()),
             forks: Vec::new(),
             settled: false,
+            opener_lineage: Vec::new(),
         },
     };
     if bundle.settled || !bundle.author.is(req.actor.entity_ref()) {
@@ -581,6 +589,7 @@ pub(super) fn retain_fork(
         &doc.shallow_snapshot(&req.base)?,
     )?;
     bundle.forks.push(record);
+    super::proposal_lineage::freeze(&mut bundle, opener_lineage);
     ENTITY_DOC_PROPOSAL_BUNDLE.put(&vault.store, txn, &key, &bundle)?;
     Ok(())
 }

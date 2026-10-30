@@ -158,11 +158,12 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
-        self.actor_key.proof.as_ref().is_none_or(|proof| {
-            let claims = proof.claims();
-            self.credential_channel_allows(claims)
-                && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
-        })
+        self.record_bound_allows(id)
+            && self.actor_key.proof.as_ref().is_none_or(|proof| {
+                let claims = proof.claims();
+                self.credential_channel_allows(claims)
+                    && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+            })
     }
 
     /// The credential's channel caveat, apart from its records caveat

@@ -85,6 +85,28 @@ impl ConnectorManifestQualifier for ProbeManifestQualifier<'_> {
     }
 }
 
+/// CONNECTOR-QUALIFY = A (owner ruling 2026-10-30 05:52 JST): the owner's
+/// attestation in place of the probe suite, for a connector the suite cannot
+/// grade (one that returns no `oneiron/probe` evidence). Only an
+/// authenticated owner act constructs it; its report hash names that act and
+/// the exact manifest, so it never reads as a suite run.
+pub struct OwnerAttestedManifestQualifier<'a> {
+    pub owner: &'a AuthenticatedOwner,
+}
+
+impl ConnectorManifestQualifier for OwnerAttestedManifestQualifier<'_> {
+    fn qualify(&self, manifest: &ResolvedConnectorManifest, revision: &str) -> Result<String> {
+        validate_protocol_revision(revision)?;
+        manifest.validate_snapshot()?;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"connector-manifest-owner-attestation-v1");
+        hasher.update(&manifest.hash()?);
+        hasher.update(revision.as_bytes());
+        hasher.update(self.owner.decision_id().to_hex().as_bytes());
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+}
+
 fn probe_failure() -> Error {
     invalid_body("connector qualification probes failed")
 }
@@ -133,6 +155,27 @@ impl Vault {
         suite: &dyn ConnectorManifestQualifier,
         at: u64,
     ) -> Result<Option<ConnectorManifestDrift>> {
+        let mut counts = None;
+        let staged =
+            self.stage_counted_connector_manifest(id, manifest, revision, suite, at, &mut counts);
+        // Measured once its writer ends, so an asking port never runs in it.
+        for (quota, measured) in counts.into_iter().flatten() {
+            self.measure_connector_manifest_entries(quota, measured);
+        }
+        staged
+    }
+
+    /// [`Self::stage_connector_manifest`], leaving the manifest's counts
+    /// against the vault policy's quotas in `counts` (FIX 8758).
+    fn stage_counted_connector_manifest(
+        &self,
+        id: &EntityId,
+        manifest: ResolvedConnectorManifest,
+        revision: &str,
+        suite: &dyn ConnectorManifestQualifier,
+        at: u64,
+        counts: &mut Option<[(u64, u64); 3]>,
+    ) -> Result<Option<ConnectorManifestDrift>> {
         let manifest_hash = validate_staged_manifest(&manifest, revision)?;
         let mut txn = self.store.env.write_txn()?;
         let record =
@@ -145,7 +188,9 @@ impl Vault {
             return Err(invalid_body("connector admission policy is unavailable"));
         }
         let holder = record.actor_entity_ref.as_ref().map(EntityId::to_hex);
-        manifest.validate_admission(policy.connector_admission.effective(holder.as_deref()))?;
+        *counts = Some(
+            manifest.admission_counts(policy.connector_admission.effective(holder.as_deref())),
+        );
         let drift = match (&record.retained_manifest, &record.protocol_revision) {
             (Some(old), Some(old_revision)) => {
                 ConnectorManifestDrift::between(old, &manifest, old_revision, revision)

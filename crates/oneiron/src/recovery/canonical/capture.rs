@@ -14,6 +14,28 @@ pub fn capture_canonical_window(
     capture_canonical_window_within(vault, window, doc, usize::MAX)
 }
 
+/// Publishes into current custody each pad a row holds that custody lacks,
+/// and reads it back, before a Layer-1 artifact is captured or a rebuilt
+/// window keeps its pad rows, so each names its pad by reference (KS-5, FIX
+/// 7313, 7293). A pad custody still does not hold the same keeps its
+/// carrier there, warned by count; a fault preparing them is warned and
+/// never stops the capture.
+pub(crate) fn prepare_artifact_pads(vault: &Vault) {
+    match vault.prepare_image_pads() {
+        Ok(0) => {}
+        Ok(unprepared) => tracing::warn!(
+            unprepared,
+            "world key pads current custody does not hold the same keep their carriers in this \
+             capture"
+        ),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "world key pads were not prepared for this capture; any custody lacks keeps its \
+             carrier"
+        ),
+    }
+}
+
 /// [`capture_canonical_window`] holding at most `limit` bytes of copies: the
 /// window's rows and their keys, documents, receipts and NOTE workflows. A
 /// copy that would pass `limit` is refused with

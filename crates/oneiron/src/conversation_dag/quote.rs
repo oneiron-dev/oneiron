@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 mod body_pins;
 mod reply_target;
-pub(crate) use body_pins::{pin_arrived_body_quotes_in_txn, turn_body_quotes};
+pub(crate) use body_pins::{message_body_quotes, pin_arrived_body_quotes_in_txn, turn_body_quotes};
 pub(crate) use reply_target::QuotedReply;
 pub(super) use reply_target::{
     MESSAGE_REPLY_KEY, append_target_in_txn, message_text, reply_pointer_in_txn, stored_target,
@@ -380,6 +380,18 @@ pub(crate) fn pin_body_quotes_at_message_birth_in_txn(
         if let Some(row) = crate::workspace_roster::replicated_turn_in(vault, txn, turn)? {
             for (citer, quote) in row.quotes {
                 anchors.push((EntityId::from_hex(&citer)?, quote.anchor));
+            }
+        }
+        // FIX 11084: a door-added MESSAGE keeps its quote in its metadata.
+        for message in graph::counted_edge_ids(&vault.store, txn, &turn, EdgeKind::PartOf, true)? {
+            if let LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_MESSAGE,
+                body,
+            } = live_entity_row_in_txn(&vault.store, txn, &message)?
+            {
+                if let Some((_, anchor)) = body_pins::message_body_quotes(&body) {
+                    anchors.push((message, anchor));
+                }
             }
         }
         for (citation, anchor) in anchors {

@@ -225,6 +225,11 @@ objc2-core-ml = { version = "=0.3.2", default-features = false, features = [
     "MLMultiArray", "MLMultiArrayConstraint",
 ] }
 
+# The console echo guard (`commands/owner/secret_input.rs`, FIX 11387),
+# through the binding the workspace already locks; no SDK at build time.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 [dev-dependencies]
 oneiron-remote = { path = "../oneiron-remote" }
 tempfile = "3"

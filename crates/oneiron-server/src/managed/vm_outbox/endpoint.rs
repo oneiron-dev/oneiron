@@ -1,19 +1,26 @@
 //! The companion's local lifecycle endpoint, `/run/oneiron-outbox/
 //! lifecycle.sock`: a root-owned socket only root and the vault's UID can
 //! reach (root:UID 0660 in a root:UID 0750 directory, and the peer's UID
-//! checked), for exactly four requests from the engine. `status` reports the
+//! checked), for exactly six requests from the engine. `status` reports the
 //! carrier's wire revision once its storage is laid out and its carrier runs;
+//! `member_status` its members' typed statuses, and `answer_diverged` takes
+//! the owner's answer to a diverged copy for the carrier's next turn
+//! ([`super::diverged`], FIX 11074);
 //! `park` and `resume` bracket an idle report, so no commit is in flight when
 //! the host snapshots the VM; `register_backup` names the engine's actual
 //! backup plan, its directory and label.
 //!
-//! None of them is a root operation on the engine's say-so. A registered
+//! None of them is a root operation on the engine's say-so but one: the
+//! owner's answer `remove` to a diverged copy, which removes only a copy the
+//! carrier itself recorded as kept unagreed after its origin retired it,
+//! while it still hashes to the digest he answered. A registered
 //! directory is taken only inside the vault's encrypted storage, reached part
 //! by part without following a link, owned by the vault's UID, with its
 //! label's handoff policy installed; the companion then writes there only the
 //! host's stage acks, as that UID's 0600 files.
 
 use super::Gate;
+use super::diverged::{Board, DivergedOwnerAnswer, VmOutboxMemberStatus};
 use super::local::{open_dir_at, open_dir_path};
 use oneiron_vault_contract::backup_handoff::{
     BACKUP_HANDOFF_DIR, BACKUP_HANDOFF_POLICY_FILE, BACKUP_HANDOFF_SCHEMA_VERSION,
@@ -38,6 +45,9 @@ const ENDPOINT_LEAF: &str = "lifecycle.sock";
 const ENDPOINT: &str = "/run/oneiron-outbox/lifecycle.sock";
 /// One request or reply line: the bound of this local codec only.
 const MAX_LINE: u64 = 4096;
+/// The member status reply line, which lists every typed member: the bound
+/// of this local codec only, not a cap on what the carrier keeps.
+const MAX_STATUS_LINE: u64 = 16 * 1024 * 1024;
 /// The longest handoff policy file read back.
 const MAX_POLICY_BYTES: u64 = 4096;
 
@@ -48,6 +58,8 @@ enum Request {
     Park,
     Resume,
     RegisterBackup { dir: PathBuf, label: String },
+    MemberStatus,
+    AnswerDiverged(DivergedOwnerAnswer),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -57,6 +69,8 @@ enum Reply {
     Parked,
     Resumed,
     Registered,
+    MemberStatus { members: Vec<VmOutboxMemberStatus> },
+    Answered,
     Refused { detail: String },
 }
 
@@ -96,12 +110,14 @@ pub(super) fn serve(
     uid: u32,
     gate: Arc<Gate>,
     registry: Registry,
+    board: Board,
 ) -> std::io::Result<()> {
     std::thread::Builder::new()
         .name("vm-outbox-endpoint".into())
         .spawn(move || {
             for stream in listener.incoming() {
-                let answered = stream.and_then(|stream| answer(stream, uid, &gate, &registry));
+                let answered =
+                    stream.and_then(|stream| answer(stream, uid, &gate, &registry, &board));
                 if let Err(error) = answered {
                     tracing::warn!(
                         reason = "vm_outbox_endpoint_failed",
@@ -114,7 +130,13 @@ pub(super) fn serve(
     Ok(())
 }
 
-fn answer(stream: UnixStream, uid: u32, gate: &Gate, registry: &Registry) -> std::io::Result<()> {
+fn answer(
+    stream: UnixStream,
+    uid: u32,
+    gate: &Gate,
+    registry: &Registry,
+    board: &Board,
+) -> std::io::Result<()> {
     let peer = peer_uid(&stream)?;
     let mut line = String::new();
     BufReader::new(stream.try_clone()?)
@@ -142,6 +164,20 @@ fn answer(stream: UnixStream, uid: u32, gate: &Gate, registry: &Registry) -> std
                     *registry.lock().unwrap_or_else(PoisonError::into_inner) = Some(plan);
                     Reply::Registered
                 }
+                Err(detail) => Reply::Refused { detail },
+            },
+            Ok(Request::MemberStatus) => Reply::MemberStatus {
+                members: board
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .statuses(),
+            },
+            Ok(Request::AnswerDiverged(answer)) => match board
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .answer(answer)
+            {
+                Ok(()) => Reply::Answered,
                 Err(detail) => Reply::Refused { detail },
             },
             Err(_) => Reply::Refused {
@@ -240,14 +276,16 @@ fn register(dir: &Path, label: &str, uid: u32) -> Result<BackupPlanRoot, String>
 
 /// One request to the companion, from the engine.
 fn call(request: &Request) -> std::io::Result<Reply> {
+    let bound = match request {
+        Request::MemberStatus => MAX_STATUS_LINE,
+        _ => MAX_LINE,
+    };
     let mut stream = UnixStream::connect(ENDPOINT)?;
     let mut line = serde_json::to_string(request).map_err(std::io::Error::other)?;
     line.push('\n');
     stream.write_all(line.as_bytes())?;
     let mut reply = String::new();
-    BufReader::new(stream)
-        .take(MAX_LINE)
-        .read_line(&mut reply)?;
+    BufReader::new(stream).take(bound).read_line(&mut reply)?;
     serde_json::from_str(reply.trim_end()).map_err(std::io::Error::other)
 }
 
@@ -257,6 +295,25 @@ pub(in crate::managed) fn companion_revision() -> Option<u32> {
     match call(&Request::Status) {
         Ok(Reply::Status { revision }) => Some(revision),
         _ => None,
+    }
+}
+
+/// The carrier's typed member statuses the companion reports, or `None`
+/// when no companion answers (FIX 11074, FIX 11242).
+pub(crate) fn companion_member_statuses() -> Option<Vec<VmOutboxMemberStatus>> {
+    match call(&Request::MemberStatus) {
+        Ok(Reply::MemberStatus { members }) => Some(members),
+        _ => None,
+    }
+}
+
+/// Passes the owner's answer to one diverged copy to the companion, which
+/// carries it out at its carrier's next turn.
+pub(crate) fn answer_diverged(answer: DivergedOwnerAnswer) -> anyhow::Result<()> {
+    match call(&Request::AnswerDiverged(answer))? {
+        Reply::Answered => Ok(()),
+        Reply::Refused { detail } => anyhow::bail!("the outbox companion refused: {detail}"),
+        _ => anyhow::bail!("the outbox companion answered another request"),
     }
 }
 

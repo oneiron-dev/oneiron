@@ -75,6 +75,7 @@ mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;
 mod critical_confirm_doors;
+mod custody_drain_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
@@ -113,6 +114,7 @@ mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod inbox_group_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;
@@ -148,6 +150,7 @@ mod release;
 mod reply_doors;
 mod repo_doors;
 mod research_doors;
+mod reservoir_source_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
@@ -164,6 +167,7 @@ mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
+mod self_actor_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -189,6 +193,11 @@ mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
+#[expect(
+    dead_code,
+    reason = "the trusted MFA step-up verifier (FIX 9431) binds the served Admin route to these"
+)]
+mod weave_admin_doors;
 mod weave_doors;
 mod web_connector_doors;
 mod web_fetch_doors;
@@ -202,13 +211,13 @@ use call_context::{VerbContext, context_required, facade_invocation_id};
 pub(crate) use connector_call_doors::{
     connector_answer_as, connector_call_listing_as, connector_call_listing_on,
 };
-pub(crate) use export_transfer::ExportTransfers;
+pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
     ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
-    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_run, ai_video_poll_as_owner,
-    ai_video_poll_for_run, vault_hooks_replay_as_owner,
+    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
+    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
@@ -217,6 +226,7 @@ pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
 pub(crate) use release::*;
+pub(crate) use secret_body::{lift_custody_secret, with_custody_secret};
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;

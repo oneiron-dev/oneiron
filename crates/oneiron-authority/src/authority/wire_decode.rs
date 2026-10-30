@@ -61,6 +61,17 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 AuthorityOp::SlipConsume { slip_id }
             })
         }
+        OP_KIND_SLIP_GRANT_REVOKE => {
+            validate_keys(entries, &[OP_KEY_KIND, SLIP_KEY_GRANT_REF])?;
+            let grant_ref_hex = required(entries, SLIP_KEY_GRANT_REF)?
+                .as_str()
+                .ok_or_else(invalid_authority)?;
+            let grant_ref = EntityId::from_hex(grant_ref_hex).map_err(|_| invalid_authority())?;
+            if grant_ref.to_hex() != grant_ref_hex {
+                return Err(invalid_authority());
+            }
+            Ok(AuthorityOp::SlipGrantRevoke { grant_ref })
+        }
         OP_KIND_GENESIS => {
             validate_keys(
                 entries,

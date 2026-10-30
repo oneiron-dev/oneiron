@@ -17,7 +17,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/bridge.rs` | src | s | 2 struct · 5 fn · 1 crate-vis | ActorScopedVault, VaultBridge | VaultBridge root and ActorScopedVault handle plus the facade() accessor |
 | `src/facade/client.rs` | src | m | 4 struct · 13 fn | NapiHostRootProfile, NapiPaired, NapiWitnessTurnInput, NativeClient | Remote-backed NativeClient SDK seam with its stamped-turn input |
 | `src/facade/client/embedded_engine.rs` | src | m | 6 struct · 13 fn | NapiEngineHeader, NapiEngineOptions, NapiEngineReply, NapiEngineRequest, NativeEngine, NativeEngineConnection | The engine-backed served client (OF-237), behind the default-off `engine` feature: the full server `oneiron… |
-| `src/facade/client/generated/agent_verbs.rs` | src | generated | 1191 fn | — | — |
+| `src/facade/client/generated/agent_verbs.rs` | src | generated | 1207 fn | — | — |
 | `src/facade/convert.rs` | src | m | 20 crate-vis | — | DTO to/from engine converters plus the forget paging helper |
 | `src/facade/custody_seal.rs` | src | s | 1 fn | — | The client's own seal for `vault.secrets.custody.submit` (FIX 11441): the input sealed to the holder on the… |
 | `src/facade/dtos.rs` | src | L | 61 struct · 2 crate-vis | NapiAdmitImportedClaimInput, NapiBlobArtifactInput, NapiBlobVersionView, NapiCalendarEventRead, NapiCalendarEventView, NapiCalendarEvents, NapiCalendarFreebusy, NapiCalendarFreebusyInterval +53 | All napi(object) DTO structs for the actor-scoped surface |
@@ -31,11 +31,11 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/facade/tests.rs` | test | s | — | — | Boundary regression tests for the napi facade surface |
 | `src/facade/verbs_claims.rs` | src | m | 13 fn | — | Core claim/witness/read verbs of the actor-scoped surface |
 | `src/facade/verbs_services.rs` | src | m | 17 fn | — | Structural/blob/retrieval/outbound/calendar verbs of the actor surface |
-| `src/lib/boundary.rs` | src | s | 33 crate-vis | — | Shared caps, parse/validate helpers and napi error mapping for the legacy surface |
-| `src/lib/codebase.rs` | src | s | 4 crate-vis | — | Codebase snapshot conversion and codebase-scoped query filters |
+| `src/lib/boundary.rs` | src | s | 32 crate-vis | — | Shared caps, parse/validate helpers and napi error mapping for the legacy surface |
+| `src/lib/codebase.rs` | src | s | 6 crate-vis | — | Codebase snapshot conversion and codebase-scoped query filters |
 | `src/lib/email.rs` | src | s | 2 fn · 2 crate-vis | — | Email identity adapter conversion and inbound surface-event parsing |
 | `src/lib/host_root.rs` | src | s | 1 struct · 3 crate-vis | HostRootOpenOptions | The host root secret the raw openers take (FIX 4730): `NapiVault` and `VaultBridge` opens that profile this… |
 | `src/lib/mod.rs` | src | s | 3 re-export · 1 crate-vis | — | The raw N-API addon root: module registrations and the crate-level native exports |
 | `src/lib/vault.rs` | src | m | 1 struct · 30 fn · 1 crate-vis | NapiVault | Legacy buffer-oriented NapiVault binding and all its verbs |
-| `src/lib/vault/reads.rs` | src | s | 5 crate-vis | — | The content reads a bound [`NapiVault`] makes inside the off-record session it names (FIX 8119): the room's… |
+| `src/lib/vault/reads.rs` | src | s | 13 crate-vis | — | The content reads a bound [`NapiVault`] makes inside the off-record session it names (FIX 8119, 10759): the… |
 | `src/types.rs` | src | s | 7 struct · 1 crate-vis | NapiCodebaseFileEntry, NapiCodebaseSnapshot, NapiEdgeInfo, NapiEmailIdentityAdapterConfig, NapiEmailInboundEvent, NapiScoredEntity, NapiSubtreeEntry | Legacy `NapiVault` DTOs: edges, scored entities, subtrees, batches, codebase snapshots, email |

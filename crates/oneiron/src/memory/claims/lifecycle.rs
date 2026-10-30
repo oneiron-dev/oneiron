@@ -35,7 +35,8 @@ fn carried_proposal_admitted(
         || !claims.records.is_empty()
         || !claims.channels.is_empty()
         || !granted
-        || !required.is_narrowing_of(proof.scope())
+        // A guest's cached view meets its grant's current scope (FIX 9117).
+        || !required.is_narrowing_of(&vault.current_view_scope_in_txn(txn, claims))
         || !vault.capability_slip_is_live_in_txn(txn, proof)?
     {
         return Err(Error::Claim(

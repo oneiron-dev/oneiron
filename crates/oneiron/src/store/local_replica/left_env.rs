@@ -55,6 +55,9 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_SLIP_PROOF_CLOCK,
     &side_table::AUTHORITY_SLIP_PROOF_NOT_BEFORE,
     &side_table::AUTHORITY_SLIP_REPLAY_NONCE,
+    // A Grant withdrawn here stays withdrawn over any later row at its id
+    // (FIX-LIST 5107, 10772).
+    &side_table::AUTHORITY_WITHDRAWN_GRANT,
     &side_table::AUTHORITY_CHECKPOINT_V2_HEAD,
     &side_table::AUTHORITY_CHECKPOINT_V2_IMAGE,
     &side_table::AUTHORITY_CHECKPOINT_PROGRESS,
@@ -83,6 +86,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::VAULT_KEY_ESCROW_RECIPIENT,
     &side_table::VAULT_KEY_ESCROW_RETIRED,
     &side_table::RECOVERY_KIT,
+    // The removal archives this device received, and which it imported
+    // (FIX 11197): a leave is when the person reads them.
+    &side_table::SHARED_ACT_REMOVAL_EXPORT,
+    &side_table::SHARED_ACT_REMOVAL_IMPORT,
     // Monotonic counters and floors, so no sequence or id is ever reused.
     &side_table::SYNC_M_U_SEQ_W,
     &side_table::SYNC_M_U_SEQ_E,

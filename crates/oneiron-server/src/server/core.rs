@@ -9,7 +9,7 @@ use oneiron::SyncEngineContext;
 use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
-    add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
+    add_window_to_root, init_window_list, insert_root_schema_version, read_window_list,
 };
 use oneiron::sync::server_state;
 use oneiron::sync::{EphemeralStore, WindowManager};

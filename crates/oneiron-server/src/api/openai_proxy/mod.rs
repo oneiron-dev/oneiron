@@ -122,7 +122,7 @@ pub(crate) async fn ai_chat_completions(
     auth: &crate::auth::CoreAuth,
     session: Option<EntityId>,
     chat: ChatCompletionRequest,
-) -> super::facade::host_doors::Listed<ChatCompletionResponse> {
+) -> super::facade::host_doors::support::Listed<ChatCompletionResponse> {
     let clock = choices::CallerClock::starting(tokio::time::Instant::now(), chat.deadline_ms);
     let actor = super::mcp_gateway::resolve_mcp_actor_for_auth(server, auth, session).await;
     let mut listed = Vec::new();
@@ -179,6 +179,9 @@ async fn complete_as(
         // Just before the message it was recalled for.
         request.messages.insert(newest, memory);
     }
+    // Every call the answer makes carries the rows its prompt was read
+    // from (FIX 11312); with nothing injected the run stays unsourced.
+    let run = run.sourced(injected.then(|| producers.to_vec()));
 
     // The exchange names the model id the call resolved to, never an alias.
     let model = request.model.to_string();

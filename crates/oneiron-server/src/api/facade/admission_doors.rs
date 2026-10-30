@@ -39,15 +39,22 @@ impl Drop for Flight {
 /// durable active fence prevents a second worker for the same intent even
 /// when the outer transport's in-memory invocation claim has gone away. An
 /// owner's erase or revoke keeps the restriction-only clock in its detached
-/// worker too (FIX 11201).
+/// worker too (FIX 11201). A custody row's value, on a transport that hands
+/// its input decoded, leaves the args before any hook reads them and rides
+/// to its door scoped (FIX 11665).
 pub(crate) fn call_verb<'a>(
     server: &'a Arc<SyncServer>,
     call: &'a FacadeCall<'a>,
     verb: &'a str,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Pin<Box<dyn Future<Output = Result<FacadeCallOutput, FacadeApiError>> + Send + 'a>> {
+    let mut input = input;
+    let secret = input
+        .as_mut()
+        .ok()
+        .and_then(|value| super::secret_body::lift_custody_secret(verb, value));
     let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
-    Box::pin(super::clock_ingress::scoped(restrictive, async move {
+    let admitted = super::clock_ingress::scoped(restrictive, async move {
         let named = call.invocation()?;
         // No receipt of an off-record sitting is ever kept. Session-bound
         // calls retain their original door and its own recording policy.
@@ -79,7 +86,7 @@ pub(crate) fn call_verb<'a>(
         );
         let fingerprint = blake3::Hash::from_bytes(fingerprint).to_hex().to_string();
         let (server, call, verb) = (Arc::clone(server), call.owned(), verb.to_owned());
-        tokio::spawn(super::clock_ingress::scoped(restrictive, async move {
+        let worker = super::clock_ingress::scoped(restrictive, async move {
             // The receipt and worker start inside the same detached task:
             // hanging up during the durable write cannot orphan an intent.
             let vault = Arc::clone(server.vault());
@@ -108,8 +115,12 @@ pub(crate) fn call_verb<'a>(
             finish?;
             flight.settled = true;
             result
-        }))
-        .await
-        .map_err(|_| super::host_doors::support::internal("admission"))?
-    }))
+        });
+        // A code run's or an action's call keeps its origin and run writes
+        // in the detached worker (FIX 10748).
+        tokio::spawn(super::host_doors::support::carrying_calling_run(worker))
+            .await
+            .map_err(|_| super::host_doors::support::internal("admission"))?
+    });
+    Box::pin(super::secret_body::with_custody_secret(secret, admitted))
 }

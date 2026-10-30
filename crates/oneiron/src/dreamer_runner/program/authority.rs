@@ -55,13 +55,17 @@ enum Proof {
     /// request presented, which is no authority on its own: each judgment
     /// verifies it again in its own snapshot (FIX 8717). The erase of the
     /// actor takes the instrument out (`None`, FIX 10668); the witnesses
-    /// stay, and an authority with no instrument no longer stands.
+    /// stay, and an authority with no instrument no longer stands. A rebind
+    /// (FIX 11429) seals the live successor the same way and keeps each slip
+    /// it stood on before in `rebound_from`, oldest first.
     Slip {
         slip_id: [u8; 32],
         parent: Option<[u8; 32]>,
         grant: Option<EntityId>,
         scope_digest: [u8; 32],
         instrument: Option<InvocationSlipBinding>,
+        #[serde(default)]
+        rebound_from: Vec<[u8; 32]>,
     },
     /// A self-hosted vault's host credential acting as the vault's owner
     /// (FIX 2222): the host root by id, or the explicit local dev mode.
@@ -118,8 +122,49 @@ impl TurnProgramAuthority {
                 grant,
                 scope_digest,
                 instrument: Some(instrument.clone()),
+                rebound_from: Vec::new(),
             },
         })
+    }
+
+    /// The signed instrument this sealed authority keeps, when it is a
+    /// slip's and no erase took it out.
+    pub(super) fn slip_instrument(&self) -> Option<&InvocationSlipBinding> {
+        match &self.proof {
+            Proof::Slip { instrument, .. } => instrument.as_ref(),
+            Proof::HostAction { .. } | Proof::Native | Proof::AttestedOwner { .. } => None,
+        }
+    }
+
+    /// This slip's authority rebound to `successor` (FIX 11429), once
+    /// [`Vault::rebind_invocation_slip_in_txn`] proved the rebind in the
+    /// writer that swaps it: sealed from the successor's live, verified
+    /// `proof` as a turn seals a slip ([`Self::slip`]), with the slip it
+    /// stood on before kept in its lineage. `None` for an authority that is
+    /// no slip's, or a successor a turn would seal nothing for.
+    pub(super) fn rebound_to(
+        &self,
+        proof: &VerifiedSlip,
+        successor: &InvocationSlipBinding,
+    ) -> Option<Self> {
+        let Proof::Slip {
+            slip_id,
+            rebound_from,
+            ..
+        } = &self.proof
+        else {
+            return None;
+        };
+        let mut rebound = Self::slip(self.actor, self.class().ok()?, proof, successor)?;
+        if let Proof::Slip {
+            rebound_from: lineage,
+            ..
+        } = &mut rebound.proof
+        {
+            lineage.extend_from_slice(rebound_from);
+            lineage.push(*slip_id);
+        }
+        Some(rebound)
     }
 
     /// A self-hosted host credential acting as the owner `actor`, under the
