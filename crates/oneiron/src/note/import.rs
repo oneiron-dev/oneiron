@@ -43,8 +43,17 @@ const REVIEW: &str = "notes.import.review";
 /// The name a note-import MACHINE's body carries.
 const IMPORT_MACHINE_NAME: &str = "notes folder importer";
 
+/// The door a folder import writes through: the births of its notes, and of
+/// its MACHINE, name it.
+const IMPORT_DOOR: &str = "note.import";
+
 /// The longest path a note keeps as its name in the folder.
 const MAX_PATH_BYTES: usize = 4096;
+
+mod machine;
+pub(crate) use machine::{
+    folder_import_creator_in_txn, imported_note_source_in_txn, note_importer_in_txn,
+};
 
 /// One file of the folder, as it will land.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -445,7 +454,7 @@ impl Vault {
             }
             content.apply_batch(birth.made_by(
                 id,
-                RowBirth::written(actor, MadeByClass::Stated, "note.import", &[], &[], at),
+                RowBirth::written(actor, MadeByClass::Stated, IMPORT_DOOR, &[], &[], at),
             ))?;
             content.update_note(*id, |txn| {
                 let doc = super::document_store::load(self, txn, *id)?;
@@ -489,6 +498,7 @@ impl Vault {
     /// The import MACHINE of `folder`, created on its first import. Its body
     /// names the folder, the source and trust the files enter under, and the
     /// owner it imports for, so the notes it writes stay that owner's to read.
+    /// Its birth names that owner as the actor who made it.
     fn import_machine_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -540,6 +550,16 @@ impl Vault {
                 body,
             },
         )?;
+        let birth = RowBirth::written(
+            WriteActor::new(importer, EdgeActorClass::Human),
+            MadeByClass::Stated,
+            IMPORT_DOOR,
+            &[],
+            &[],
+            at,
+        )
+        .ok_or(Error::InvariantViolation("a stated birth names its actor"))?;
+        crate::provenance::birth::stamp_row_birth_in_txn(&self.store, txn, &machine, &birth)?;
         Ok(machine)
     }
 
@@ -563,75 +583,6 @@ impl Vault {
             Ok(receipt)
         })
     }
-}
-
-/// The owner `author` imports for, when it is a folder's note-import
-/// MACHINE: the reader its notes are written for. `None` for every other
-/// author.
-///
-/// # Errors
-/// A storage error.
-pub(crate) fn note_importer_in_txn(
-    store: &impl crate::store::ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    author: &EntityId,
-) -> Result<Option<EntityId>> {
-    Ok(import_machine_field(store, txn, author, "importer")?
-        .and_then(|hex| EntityId::from_hex(&hex).ok()))
-}
-
-/// The claim source the words of a note `author` wrote carry as evidence,
-/// when it is a folder's note-import MACHINE: the trust its source's
-/// registry row gave it, `Imported` for every folder source (G2). `None` for
-/// every other author, whose notes are their own words.
-///
-/// # Errors
-/// A storage error.
-pub(crate) fn imported_note_source_in_txn(
-    store: &impl crate::store::ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    author: &EntityId,
-) -> Result<Option<ClaimSource>> {
-    Ok(import_machine_field(store, txn, author, "trust")?
-        .and_then(|trust| ClaimSource::parse(&trust)))
-}
-
-/// The string `name` holds in `author`'s body, when `author` is a folder's
-/// note-import MACHINE: the one its folder derives, never another MACHINE
-/// that copies its fields.
-fn import_machine_field(
-    store: &impl crate::store::ManifestDbs,
-    txn: &heed::RoTxn<'_>,
-    author: &EntityId,
-    name: &str,
-) -> Result<Option<String>> {
-    use crate::ports::EntityStoreRead;
-    let Some(record) = store.port_entity_record(txn, author)? else {
-        return Ok(None);
-    };
-    if record.entity_type != ENTITY_TYPE_MACHINE {
-        return Ok(None);
-    }
-    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut record.body.as_slice()) else {
-        return Ok(None);
-    };
-    let field = |wanted: &str| {
-        fields
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(wanted))
-            .and_then(|(_, value)| value.as_str())
-    };
-    if field("name") != Some(IMPORT_MACHINE_NAME) {
-        return Ok(None);
-    }
-    // Only the id the folder derives is that folder's importer.
-    let Some(folder) = field("folder") else {
-        return Ok(None);
-    };
-    if Vault::imported_note_author(folder)? != *author {
-        return Ok(None);
-    }
-    Ok(field(name).map(str::to_owned))
 }
 
 /// What `batch`'s titles ask before its approval: nothing now. A title the
