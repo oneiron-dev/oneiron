@@ -373,9 +373,9 @@ impl OrganProcess {
         ours.set_nonblocking(true)?;
         let reader = ours.try_clone()?;
         let shutdown = ours.try_clone()?;
-        let mut command =
-            oneiron_spawn::command_with_fds(&spec.program, &[(theirs.as_raw_fd(), 3)]);
-        command.args(&spec.args);
+        let (program, args) = sandbox::argv(spec);
+        let mut command = oneiron_spawn::command_with_fds(&program, &[(theirs.as_raw_fd(), 3)]);
+        command.args(&args);
         let confined = sandbox::confine(&mut command, spec)?;
         let child = command.spawn()?;
         drop(theirs);
