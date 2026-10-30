@@ -33,6 +33,8 @@ mod discard;
 mod lift;
 mod receipts;
 pub(crate) mod reviewed_fork;
+#[cfg(feature = "sync")]
+pub(crate) mod sync_frame;
 pub use self::body_actor::BodyActor;
 pub(crate) use self::body_actor::{erase_fork_actor_in_txn, names_no_actor};
 pub(crate) use self::discard::{

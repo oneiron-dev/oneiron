@@ -337,6 +337,12 @@ impl EntityDocument {
                 .oplog_vv()
                 .encode());
         }
+        // FIX 2458: a typed body's peers send the operations its log lacks.
+        if let Some(vv) =
+            crate::typed_body::sync_frame::typed_body_vv_in_txn(&self.vault.store, &txn, &self.id)?
+        {
+            return Ok(vv.encode());
+        }
         Ok(entity::document_in(&self.vault, &txn, self.id)?
             .0
             .oplog_vv()
@@ -514,6 +520,19 @@ impl EntityDocument {
         self.vault.with_write_txn_grouped(|txn| {
             eligible(&self.vault, txn, self.id)?;
             admit(txn)?;
+            // FIX 2458: a typed body rides as its frontiers and the
+            // operations the peer lacks, never as a state copy.
+            if let Some(payload) = crate::typed_body::sync_frame::typed_body_frame_in_txn(
+                &self.vault,
+                txn,
+                &self.id,
+                &peer,
+                &crate::entity_doc::office::OFFICE_BODY_OWNER,
+            )? {
+                return encode_document(self.id, document_sub_tags::UPDATE, &payload)
+                    .into_result()
+                    .map_err(|_| Error::InvariantViolation("document export exceeds wire limit"));
+            }
             let mut note_head = None;
             let (text, slot) = if self.vault.get_entity_type_in_txn(txn, &self.id)?
                 == Some(crate::registry::ENTITY_TYPE_NOTE)
