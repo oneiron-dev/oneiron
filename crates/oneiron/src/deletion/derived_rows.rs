@@ -65,6 +65,8 @@ const ERASERS: &[EntitySideRowEraser] = &[
     crate::counterparty_contact::erase_trusted_contact_rows_in_txn,
     // FIX 11952: a TASK's comm receipt-import skip marker.
     crate::comm::erase_skipped_send_receipt_in_txn,
+    // FIX 12004: meeting cards whose EVENT or copied source row is erased.
+    crate::calendar::inbox_card::erase_inbox_cards_in_txn,
     #[cfg(feature = "sync")]
     crate::sync::selector::erase_carried_born_with_in_txn,
     // FIX 7998: retained federation and maintenance copies of the row.

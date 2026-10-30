@@ -1,6 +1,6 @@
 //! Ranked prep-pack assembly under the word ceiling.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -208,6 +208,25 @@ pub(crate) fn build_prep_pack_scoped(
         value: pack_from_candidates(read.vault(), request, &candidates)?,
         receipt: scoped.receipt,
     })
+}
+
+/// Every vault row id a pack's rows cite, the EVENT itself excluded: the
+/// `source_refs` the rendered lens carries as its detail lines.
+pub(crate) fn prep_pack_source_refs(pack: &PrepPack) -> BTreeSet<EntityId> {
+    let mut refs = BTreeSet::new();
+    for section in &pack.sections {
+        for item in &section.items {
+            for hex in &item.source_refs {
+                if let Ok(id) = EntityId::from_hex(hex) {
+                    refs.insert(id);
+                }
+            }
+        }
+    }
+    if let Ok(event) = EntityId::from_hex(&pack.event_ref) {
+        refs.remove(&event);
+    }
+    refs
 }
 
 fn pack_from_candidates(
