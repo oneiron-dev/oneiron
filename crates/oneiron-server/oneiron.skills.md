@@ -430,7 +430,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
   - "pause this job"
   - "resume this job"
   - "cancel this subagent run"
-- safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state. With an `Idempotency-Key` the intervention runs once and a retry replays the kept effect; `tree` is null without run-tree read authority. A 409 `idempotent_outcome_unknown` means the key's first request never settled an outcome: read the job's state, or send a new key to act again.
+- safety: Mutating control endpoint; requires core write auth. Interventions are recorded as queue events and repeated pause, resume, or cancel requests are idempotent no-ops when the job is already in that state. With an `Idempotency-Key` the intervention runs once and a retry replays the kept effect; `tree` is null without run-tree read authority. A 409 `idempotent_outcome_unknown` means the key's first request never settled an outcome: read the job's state, or send a new key to act again. A 409 `idempotent_reply_not_kept` means its writes landed and its reply was not kept: read the job's state for what they wrote.
 
 #### core-context-pack - `POST /v1/core/context-pack`
 

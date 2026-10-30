@@ -37,7 +37,7 @@ pub(crate) struct CoreProposeResponse {
         (status=400,description="Invalid proposal.",body=ApiErrorEnvelope),
         (status=401,description="Authentication required.",body=ApiErrorEnvelope),
         (status=403,description="core:propose or core:write required.",body=ApiErrorEnvelope),
-        (status=409,description="The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.",body=ApiErrorEnvelope)))]
+        (status=409,description="The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.",body=ApiErrorEnvelope)))]
 pub(crate) async fn core_propose(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -86,11 +86,12 @@ pub(crate) async fn core_propose(
         confidence_details: None,
     };
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || {
+    // A keyed proposal's write counts on its intent (FIX 10379).
+    tokio::task::spawn_blocking(oneiron::store::carry_idempotency_intent(move || {
         crate::api::credential_memory(&vault, Some(&auth), proposer.actor, proposer.class)
             .at(auth.locality())
             .claim_propose(&input)
-    })
+    }))
     .await
     .map_err(|_| ApiError::internal_server_error("proposal did not finish"))??;
     Ok(Json(CoreProposeResponse {
