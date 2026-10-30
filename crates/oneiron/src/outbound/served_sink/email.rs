@@ -5,13 +5,16 @@
 //! native mail pack's own send door takes, keyed on the send's logical
 //! reference, so a retried send finds its draft and its submission.
 //!
-//! The text is the typed content's; the subject is its first line. A send
-//! from any other email identity, or on a host that names no mail server,
-//! fails as not started.
+//! The text is the typed content's; the subject is its first line. A reply
+//! to an inbound message carries that message's Message-ID as its
+//! `In-Reply-To` and in its `References`, read from the message's archive.
+//! A send from any other email identity, or on a host that names no mail
+//! server, fails as not started.
 
 use super::ServedChannelSink;
 use crate::channel_identity_provider::native_mail::is_native_mail_identity_in_txn;
 use crate::channel_identity_provider::stalwart::{NativeMailMessage, StalwartClient};
+use crate::channel_identity_provider::{EMAIL_CHANNEL, EmailThreadHeaders};
 use crate::error::Error;
 use crate::outbound::{OutboundExecutionOutcome, OutboundExecutionRequest};
 
@@ -67,6 +70,11 @@ impl ServedChannelSink<'_> {
             .idempotency_key
             .or(request.intent.idempotency_key.as_deref())
             .unwrap_or(request.intent_ref);
+        // A reply threads on the message it answers, as its archive names it.
+        let answered = self
+            .answered_provider_event(request, EMAIL_CHANNEL)
+            .and_then(|body| body.get("thread_headers").cloned())
+            .and_then(|headers| serde_json::from_value::<EmailThreadHeaders>(headers).ok());
         let secret = match self
             .vault
             .verified_pack_connection_secret(NATIVE_MAIL_PACK, NATIVE_MAIL_CONNECTION)
@@ -86,6 +94,7 @@ impl ServedChannelSink<'_> {
                         &message,
                         send_key,
                         &request.hygiene_headers,
+                        answered.as_ref(),
                     ),
                     // Discovery runs before any draft: nothing was sent.
                     Err(_) => OutboundExecutionOutcome::failed("native_mail_unreachable"),
