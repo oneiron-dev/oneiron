@@ -10,19 +10,28 @@
 //! count: absent, never invented.
 //!
 //! Only an owner or the world anchors a settlement (ARCH-0056 §5). The
-//! settled receipt names one anchor today: the reporter that settled it, an
-//! anchor when that reporter is a live owner of the vault. A worker's own
-//! Done, a default `Proceed` and a bare `criteria_verdict = met` name none,
-//! so their outcome stays absent.
+//! settled receipt names its anchor two ways: the reporter that settled it,
+//! an anchor when that reporter is a live owner of the vault, or the anchor
+//! fields beside it, an anchor when they name an owner-answered ask or an
+//! accepted review (FIX 12195). A worker's own Done, a default `Proceed`
+//! and a bare `criteria_verdict = met` name none, so their outcome stays
+//! absent.
+
+use std::collections::BTreeMap;
 
 use crate::Vault;
 use crate::edit_distance::attribution::AmendmentJudgment;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::task_verb::settlement_anchor::{
+    SETTLEMENT_ANCHOR_ASK, SETTLEMENT_ANCHOR_KIND_FIELD, SETTLEMENT_ANCHOR_REF_FIELD,
+    SETTLEMENT_ANCHOR_REVIEW,
+};
 
 /// The settled disposition of the TASK the run behind `judgment` worked, read
 /// in `txn`; `None` when the judgment names no attempt, the attempt's receipt
-/// names no TASK, no write has settled it yet, or no owner settled it.
+/// names no TASK, no write has settled it yet, or no owner stands behind its
+/// settlement, as its reporter or its anchor (FIX 12195).
 ///
 /// # Errors
 ///
@@ -45,8 +54,23 @@ pub(super) fn run_outcome_in_txn(
     else {
         return Ok(None);
     };
-    let anchored = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &settler)?;
+    let anchored = crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &settler)?
+        || owner_anchored(&settled.fields);
     Ok(anchored.then_some(settled.outcome))
+}
+
+/// Whether `fields`, a settled row's, name an owner anchor (FIX 12195): an
+/// owner-answered ask or an accepted review, as the settlement anchor writes
+/// them. An empty anchor never counts.
+fn owner_anchored(fields: &BTreeMap<String, String>) -> bool {
+    let owner_kind = matches!(
+        fields.get(SETTLEMENT_ANCHOR_KIND_FIELD).map(String::as_str),
+        Some(SETTLEMENT_ANCHOR_ASK | SETTLEMENT_ANCHOR_REVIEW)
+    );
+    owner_kind
+        && fields
+            .get(SETTLEMENT_ANCHOR_REF_FIELD)
+            .is_some_and(|reference| !reference.is_empty())
 }
 
 /// The TASK the run behind `judgment` worked: the judgment's attempt, joined
