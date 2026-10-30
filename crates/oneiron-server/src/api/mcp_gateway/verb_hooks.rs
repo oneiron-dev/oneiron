@@ -314,7 +314,8 @@ async fn rerun_saved_call(
         .map_err(|_| VerbAskRefusal::ScopeRefused)?;
     let mut served = super::McpServed::default();
     let mut board_hooks = None;
-    let ran = super::tasks_response::execute_agent_verb_input(
+    // The verb table's fan-out, on the heap (FIX 12072).
+    let ran = Box::pin(super::tasks_response::execute_agent_verb_input(
         server,
         &call.verb,
         call.args,
@@ -322,7 +323,7 @@ async fn rerun_saved_call(
         None,
         &mut served,
         &mut board_hooks,
-    )
+    ))
     .await;
     Ok(ran.map(|(output, ..)| output).map_err(mcp_saved_error))
 }

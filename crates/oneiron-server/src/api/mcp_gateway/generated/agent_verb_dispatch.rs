@@ -5438,7 +5438,8 @@ async fn execute_agent_verb_row(
     .await
 }
 
-/// [`execute_agent_verb_row`]'s row, inside the run's write envelope.
+/// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
+/// arm's door future is on the heap, so this one stays small (FIX 12072).
 async fn execute_agent_verb_row_on(
     server: &Arc<SyncServer>,
     tool: &str,
@@ -5471,8 +5472,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_create(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_create(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5487,8 +5490,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_commitments_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5503,9 +5508,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_instances(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_instances(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5520,9 +5526,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_proposals(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_proposals(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5537,9 +5544,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentFulfillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_fulfill(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_fulfill(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5554,9 +5562,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentCloseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_release(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_release(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5571,9 +5580,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::commitment_doors::CommitmentCloseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_commitments_supersede(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_commitments_supersede(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5587,13 +5597,13 @@ async fn execute_agent_verb_row_on(
             oneiron::task_verb::sdk::validate_input("fetch", &input).map_err(mcp_facade_error)?;
             let input: oneiron::web_fetch::WebFetchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::fetch(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::fetch(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "fetch"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -5608,13 +5618,13 @@ async fn execute_agent_verb_row_on(
             oneiron::task_verb::sdk::validate_input("crawl", &input).map_err(mcp_facade_error)?;
             let input: oneiron::web_fetch::WebCrawlRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::crawl(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::crawl(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "crawl"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -5633,16 +5643,15 @@ async fn execute_agent_verb_row_on(
                 .as_ref()
                 .and_then(crate::auth::CoreAuth::verified_slip)
                 .cloned();
-            let (output, listed) = server
-                .report_off_runtime_listing(
-                    actor.actor_ref,
-                    actor.actor_class,
-                    proof,
-                    actor.locality(),
-                    None,
-                    input,
-                )
-                .await;
+            let (output, listed) = Box::pin(server.report_off_runtime_listing(
+                actor.actor_ref,
+                actor.actor_class,
+                proof,
+                actor.locality(),
+                None,
+                input,
+            ))
+            .await;
             // Derived from these rows too, though it names none of them.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
@@ -5655,8 +5664,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FeedbackPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::feedback_preview(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::feedback_preview(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5671,8 +5682,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FeedbackSendSubjectRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::feedback_send(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::feedback_send(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5687,8 +5700,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ReportDisclosureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_reports_disclosure(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_reports_disclosure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5703,8 +5718,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ReportRouteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_reports_route(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_reports_route(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5719,8 +5736,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ReportOutboundRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_reports_outbound(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_reports_outbound(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -5732,25 +5751,37 @@ async fn execute_agent_verb_row_on(
         "self.focus.refresh" => {
             let input: oneiron::task_verb::sdk::BoardRefreshRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
-                oneiron::task_verb::sdk::self_focus_refresh(context, input)
-            })
+            Box::pin(execute_mcp_board_verb(
+                server,
+                actor,
+                served,
+                board_hooks,
+                |context| oneiron::task_verb::sdk::self_focus_refresh(context, input),
+            ))
             .await
         }
         "self.focus.subscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
-                oneiron::task_verb::sdk::self_focus_subscribe(context, input)
-            })
+            Box::pin(execute_mcp_board_verb(
+                server,
+                actor,
+                served,
+                board_hooks,
+                |context| oneiron::task_verb::sdk::self_focus_subscribe(context, input),
+            ))
             .await
         }
         "self.focus.unsubscribe" => {
             let input: oneiron::task_verb::sdk::BoardSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
-                oneiron::task_verb::sdk::self_focus_unsubscribe(context, input)
-            })
+            Box::pin(execute_mcp_board_verb(
+                server,
+                actor,
+                served,
+                board_hooks,
+                |context| oneiron::task_verb::sdk::self_focus_unsubscribe(context, input),
+            ))
             .await
         }
         "self.focus.wakes" => {
@@ -5760,7 +5791,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BoardWakeRequest,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::self_focus_wakes(
+            let output = Box::pin(crate::api::facade::host_doors::self_focus_wakes(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -5769,7 +5800,7 @@ async fn execute_agent_verb_row_on(
                     "self.focus.wakes",
                 ),
                 input,
-            )
+            ))
             .await
             .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -5852,7 +5883,7 @@ async fn execute_agent_verb_row_on(
             oneiron::task_verb::sdk::validate_input("self.identity.answer", &input)
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::maintenance::identity::IdentityAnswerEvidenceRequest = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_identity_answer(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_identity_answer(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -5862,7 +5893,7 @@ async fn execute_agent_verb_row_on(
                 ),
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -5983,7 +6014,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::identity_doors::PersonCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_people_create(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_people_create(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -5992,7 +6023,7 @@ async fn execute_agent_verb_row_on(
                     "vault.people.create",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -6008,15 +6039,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::identity_doors::IdentityLookupRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_entities_look_before_mint(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.entities.look_before_mint",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_entities_look_before_mint(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.entities.look_before_mint",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -6033,17 +6066,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::maintenance::identity::MentionProvenance =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_mention(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.identity.mention",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_identity_mention(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.identity.mention",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6074,12 +6108,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::vault_shape::ShapeApplyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_shape_apply(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shape_apply(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -6111,7 +6145,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_shape_groups(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shape_groups(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -6120,7 +6154,7 @@ async fn execute_agent_verb_row_on(
                     "vault.shape.groups",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -6136,17 +6170,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ShapeGroupResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_shape_groups_resolve(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.shape.groups.resolve",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_shape_groups_resolve(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.shape.groups.resolve",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6191,11 +6226,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CompanionAccessRequestAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_companions_access_requests_answer(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6210,8 +6246,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GrantAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_grants_answer(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_grants_answer(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6226,8 +6264,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PersonaSnapshotPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_personas_preview(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_personas_preview(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6242,8 +6282,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::persona_snapshot::PersonaSnapshotCopyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_personas_export(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_personas_export(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6258,8 +6300,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::persona_snapshot::PersonaSnapshotCopyEditRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_personas_edit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_personas_edit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6274,8 +6318,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::DiaryQueryRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_memory_diary_query(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_memory_diary_query(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6306,10 +6352,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             if input.get("self").and_then(Value::as_bool) == Some(true) {
                 let auth = actor.auth.as_ref().ok_or_else(invalid)?;
-                let (value, listed) =
-                    crate::api::context_board::describe_self_for_auth(server, auth, &input)
-                        .await
-                        .map_err(|_| invalid())?;
+                let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(
+                    server, auth, &input,
+                ))
+                .await
+                .map_err(|_| invalid())?;
                 // Derived from the rows its card lists, the roster it read among them.
                 served.extend(listed);
                 let output: oneiron::task_verb::TaskDescription =
@@ -6321,12 +6368,18 @@ async fn execute_agent_verb_row_on(
                 serde_json::from_value(input).map_err(|_| invalid())?;
             if let Some(key) = input.key.clone() {
                 let frame_epoch = input.frame_epoch;
-                return execute_mcp_board_verb(server, actor, served, board_hooks, |context| {
-                    oneiron::board_verb::dispatch_board_verb(
-                        context,
-                        oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch },
-                    )
-                })
+                return Box::pin(execute_mcp_board_verb(
+                    server,
+                    actor,
+                    served,
+                    board_hooks,
+                    |context| {
+                        oneiron::board_verb::dispatch_board_verb(
+                            context,
+                            oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch },
+                        )
+                    },
+                ))
                 .await;
             }
             if input.task_ref.is_none()
@@ -6350,10 +6403,11 @@ async fn execute_agent_verb_row_on(
         "tasks.create" => {
             let input: oneiron::task_verb::sdk::TaskCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
-                oneiron::task_verb::sdk::tasks_create(memory, input)
-            })
-            .await?;
+            let (output, listed) =
+                Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| {
+                    oneiron::task_verb::sdk::tasks_create(memory, input)
+                }))
+                .await?;
             // Derived from the rows its reads listed, on a refusal too.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
@@ -6366,8 +6420,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TaskWaveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::tasks_wave(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::tasks_wave(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6383,7 +6439,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::FanoutBatchInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_fanout_spawn(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_fanout_spawn(
                 server,
                 auth,
                 actor
@@ -6393,7 +6449,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -6449,8 +6505,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_lease_open(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_lease_open(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6465,8 +6523,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::SpendScopeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_lease(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_budgets_lease(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6481,9 +6541,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::TopUpSpendLeaseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_lease_top_up(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_lease_top_up(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6498,8 +6559,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::BudgetHoldRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_hold(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_budgets_hold(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6514,9 +6577,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::BudgetHoldRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_hold_resume(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_hold_resume(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6531,8 +6595,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::LocalRunnerBudgetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_local(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_budgets_local(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6547,9 +6613,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::RunnerBudgetReservationsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_reservations(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_reservations(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6564,9 +6631,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::budget_doors::RunSettlementsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_settlements(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_settlements(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6581,9 +6649,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::RsiBudgetConfig =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_rsi_configure(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_rsi_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6598,8 +6667,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::rsi_doors::RsiLineRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_rsi(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_budgets_rsi(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6614,8 +6685,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::RsiTopUp =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_rsi_top_up(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_rsi_top_up(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6630,8 +6703,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::rsi_doors::RsiLineRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_rsi_hold(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_rsi_hold(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6646,9 +6721,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::rsi_doors::RsiLineRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_rsi_hold_resume(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_rsi_hold_resume(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6663,9 +6739,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::run_admission::resident_doors::ResidentSharesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_budgets_resident_shares(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_budgets_resident_shares(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6680,11 +6757,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::run_admission::resident_doors::SetResidentShareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_budgets_resident_shares_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6699,9 +6777,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dispatch_byoa::RunnerSeatQuotasRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_runners_seats_quotas(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_runners_seats_quotas(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6716,9 +6795,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dispatch_byoa::RunnerSeatCreditTopUpRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_runners_seats_top_up(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_runners_seats_top_up(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6733,9 +6813,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dispatch_byoa::RunnerWorkResumeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_runners_seats_resume(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_runners_seats_resume(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6750,8 +6831,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutResumeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_fanout_resume(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_fanout_resume(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6766,8 +6849,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutResumeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_fanout_resume_as(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_fanout_resume_as(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6782,8 +6867,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FanoutAckRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_fanout_ack(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_fanout_ack(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6796,10 +6883,11 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::TaskUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend(oneiron::EntityId::from_hex(&input.task_ref).ok());
-            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
-                oneiron::task_verb::sdk::tasks_update(memory, input)
-            })
-            .await?;
+            let (output, listed) =
+                Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| {
+                    oneiron::task_verb::sdk::tasks_update(memory, input)
+                }))
+                .await?;
             // Derived from the rows its reads listed, on a refusal too.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
@@ -6819,10 +6907,11 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::TaskRedo =
                 serde_json::from_value(input).map_err(|_| invalid())?;
             served.extend([input.task_ref]);
-            let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| {
-                oneiron::task_verb::sdk::tasks_redo(memory, input)
-            })
-            .await?;
+            let (output, listed) =
+                Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| {
+                    oneiron::task_verb::sdk::tasks_redo(memory, input)
+                }))
+                .await?;
             // Derived from the rows its reads listed, on a refusal too.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
@@ -6942,17 +7031,16 @@ async fn execute_agent_verb_row_on(
                 .as_ref()
                 .and_then(crate::auth::CoreAuth::verified_slip)
                 .cloned();
-            let (output, listed) = server
-                .recall_home_listing(
-                    actor.actor_ref,
-                    actor.actor_class,
-                    proof,
-                    actor.destination(),
-                    None,
-                    input,
-                    actor.home_caller(),
-                )
-                .await;
+            let (output, listed) = Box::pin(server.recall_home_listing(
+                actor.actor_ref,
+                actor.actor_class,
+                proof,
+                actor.destination(),
+                None,
+                input,
+                actor.home_caller(),
+            ))
+            .await;
             // Derived from these rows too, though it names none of them.
             served.extend(listed);
             let output = output.map_err(mcp_facade_error)?;
@@ -6965,9 +7053,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_aging_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_aging_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -6982,8 +7071,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_manifest_doors::ClaimAgingProfilesConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_retrieval_aging_configure(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_aging_configure(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -7000,9 +7091,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_weights_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_weights_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7017,11 +7109,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_manifest_doors::RetrievalWeightsConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_retrieval_weights_configure(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7036,9 +7129,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::query_expansion::host::HydeHostConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_hyde_configure(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_hyde_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7053,8 +7147,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_hyde_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_hyde_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7069,9 +7165,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::query_expansion::host::HydeHostPendingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_hyde_pending(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_hyde_pending(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7086,9 +7183,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::query_expansion::host::HydeHostCompleteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_hyde_complete(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_hyde_complete(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7103,9 +7201,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::query_expansion::host::HydeHostReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_hyde_receipt(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_hyde_receipt(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7160,8 +7259,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::affect::AffectClaimConsolidateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_affect_claims_consolidate(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_affect_claims_consolidate(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -7178,9 +7279,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::coping_doors::CopingOutcomeRecordRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_affect_coping_record(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_affect_coping_record(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7195,9 +7297,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::coping_doors::CopingOutcomeUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_affect_coping_update(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_affect_coping_update(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7212,9 +7315,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::coping_doors::CopingAggregateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_affect_coping_aggregate(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_affect_coping_aggregate(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7229,11 +7333,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_affect_wellness_policy_get(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7251,11 +7356,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::wellness_doors::WellnessPolicyConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_affect_wellness_policy_configure(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7270,9 +7376,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::wellness_doors::WellnessPersonRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_affect_wellness_derive(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_affect_wellness_derive(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7287,9 +7394,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::wellness_doors::WellnessPersonRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_affect_wellness_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_affect_wellness_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7320,12 +7428,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_cluster_propose(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_cluster_propose(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -7341,12 +7449,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterMergeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_cluster_merge(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_cluster_merge(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -7362,12 +7470,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterSplitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_cluster_split(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_cluster_split(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -7383,11 +7491,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::clustering::ClusterResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_cluster_resolve_proposal(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_cluster_resolve_proposal(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -7404,8 +7514,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RecallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_recall(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_recall(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7420,8 +7532,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalRunsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_runs(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_retrieval_runs(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7436,8 +7550,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_run(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_retrieval_run(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7452,8 +7568,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalTurnRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_turn(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_retrieval_turn(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7468,9 +7586,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::store::RetrievalOutcome =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_outcomes_put(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_outcomes_put(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7485,9 +7604,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::store::RetrievalEndOutcome =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_outcomes_end(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_outcomes_end(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7502,8 +7622,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalTraceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_trace(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_retrieval_trace(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7518,8 +7640,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalDiagnosticRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_export(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_export(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7534,8 +7658,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalDiagnosticRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_replay(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_replay(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7550,9 +7676,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_policy_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_policy_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7567,9 +7694,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalPolicyPinRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_policy_pin(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_policy_pin(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7584,9 +7712,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalPolicyTrainRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_policy_train(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_policy_train(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7601,8 +7730,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalPolicyEvaluateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_retrieval_policy_evaluate(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_policy_evaluate(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -7619,9 +7750,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalPolicyAdmitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_policy_admit(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_policy_admit(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7636,9 +7768,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RetrievalPolicyTrainRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_retrieval_policy_update(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_retrieval_policy_update(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7742,9 +7875,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ExportTransferReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_export_transfer_read(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_export_transfer_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7759,9 +7893,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ExportTransferReleaseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_export_transfer_release(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_export_transfer_release(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7776,9 +7911,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CredentialAttenuationRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_credential_attenuate(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_credential_attenuate(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7793,9 +7929,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::self_actor(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::self_actor(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -7907,8 +8045,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ExplainMemoryRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_explain_memory(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_explain_memory(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7923,8 +8063,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ExplainGateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_explain_gate(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_explain_gate(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -7979,7 +8121,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::campaign::compliance::ComplianceAmendRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_campaign_compliance_install(
                     server,
                     auth,
@@ -7989,8 +8131,9 @@ async fn execute_agent_verb_row_on(
                         "vault.campaign.compliance.install",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8013,7 +8156,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::campaign::compliance::ComplianceApprovalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_campaign_compliance_approve(
                     server,
                     auth,
@@ -8023,8 +8166,9 @@ async fn execute_agent_verb_row_on(
                         "vault.campaign.compliance.approve",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8039,7 +8183,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::campaign::compliance::ComplianceApprovalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_campaign_compliance_reject(
                     server,
                     auth,
@@ -8049,8 +8193,9 @@ async fn execute_agent_verb_row_on(
                         "vault.campaign.compliance.reject",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8065,7 +8210,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::campaign::compliance::ComplianceVerifyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_campaign_compliance_verify(
                     server,
                     auth,
@@ -8075,8 +8220,9 @@ async fn execute_agent_verb_row_on(
                         "vault.campaign.compliance.verify",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8107,15 +8253,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::campaign::surface::CampaignStageEvidenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_campaign_stage_evidence(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.campaign.stage.evidence",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_campaign_stage_evidence(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.campaign.stage.evidence",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -8236,7 +8384,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::campaign::surface::SavedQueryEvaluateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::self_saved_query_evaluate(
+            let output = Box::pin(crate::api::facade::host_doors::self_saved_query_evaluate(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -8245,7 +8393,7 @@ async fn execute_agent_verb_row_on(
                     "self.saved_query.evaluate",
                 ),
                 input,
-            )
+            ))
             .await
             .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
@@ -8265,8 +8413,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveDigestRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_digest(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_weave_digest(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8282,13 +8432,13 @@ async fn execute_agent_verb_row_on(
             let owner = surface.lens_owner("vault.weave.lens", &input);
             let input: oneiron::lens::WeaveLensRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_lens(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_weave_lens(
                 server,
                 auth,
                 owner,
                 actor.client_surface.clone(),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -8304,8 +8454,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveWrongLinkRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_link_wrong(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_link_wrong(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8320,9 +8472,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveWrongLinkRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_owner_link_wrong(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_owner_link_wrong(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8337,8 +8490,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveWrongItemRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_item_wrong(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_item_wrong(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8353,9 +8508,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveWrongItemRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_weave_owner_item_wrong(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_owner_item_wrong(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8370,7 +8526,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WeaveEnqueueRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_enqueue(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_weave_enqueue(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -8379,7 +8535,7 @@ async fn execute_agent_verb_row_on(
                     "vault.weave.enqueue",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -8395,17 +8551,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_schedules_list(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.weave.schedules.list",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_weave_schedules_list(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.schedules.list",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8420,17 +8577,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveScheduleView =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_schedules_put(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.weave.schedules.put",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_weave_schedules_put(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.schedules.put",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8445,17 +8603,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveReaderRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_schedules_clear(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.weave.schedules.clear",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_weave_schedules_clear(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.schedules.clear",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8470,7 +8629,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_weave_setting_changes_list(
                     server,
                     auth,
@@ -8480,8 +8639,9 @@ async fn execute_agent_verb_row_on(
                         "vault.weave.setting_changes.list",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8496,7 +8656,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveDigestSettingAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_weave_setting_changes_answer(
                     server,
                     auth,
@@ -8506,8 +8666,9 @@ async fn execute_agent_verb_row_on(
                         "vault.weave.setting_changes.answer",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8522,7 +8683,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveDigestSettingUndo =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_weave_setting_changes_undo(
                     server,
                     auth,
@@ -8532,8 +8693,9 @@ async fn execute_agent_verb_row_on(
                         "vault.weave.setting_changes.undo",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8548,15 +8710,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::claim::WeaveDigestFeedback =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_digest_feedback_put(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.weave.digest_feedback.put",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_digest_feedback_put(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.digest_feedback.put",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -8573,15 +8737,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_weave_owner_digest_render(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.weave.owner.digest.render",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_weave_owner_digest_render(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.weave.owner.digest.render",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -8598,17 +8764,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_inbox_concerns_review(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.inbox.concerns.review",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_inbox_concerns_review(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.inbox.concerns.review",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8623,7 +8790,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_inbox_lens::InboxLensRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_inbox_lens(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_inbox_lens(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -8632,7 +8799,7 @@ async fn execute_agent_verb_row_on(
                     "vault.inbox.lens",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -8648,7 +8815,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_inbox_lens::InboxRunGroupsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_inbox_groups(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_inbox_groups(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -8657,7 +8824,7 @@ async fn execute_agent_verb_row_on(
                     "vault.inbox.groups",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -8680,17 +8847,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::inbox::InboxGroupResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_inbox_groups_resolve(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.inbox.groups.resolve",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_inbox_groups_resolve(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.inbox.groups.resolve",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8729,8 +8897,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_bootstrap(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_bootstrap(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8745,9 +8915,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skill_hubs_default_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skill_hubs_default_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8762,9 +8933,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_restoreDefaults(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_restoreDefaults(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8779,8 +8951,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillHubPutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skill_hubs_put(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skill_hubs_put(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8795,8 +8969,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillHubRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skill_hubs_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skill_hubs_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8811,11 +8987,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillPublisherRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skill_hubs_publishers_admit(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8830,11 +9007,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillPublisherRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skill_hubs_publishers_revoke(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8849,9 +9027,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skill_hubs_refs_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skill_hubs_refs_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8866,9 +9045,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubRefSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skill_hubs_refs_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skill_hubs_refs_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8883,8 +9063,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubImportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_install(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_packs_install(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8899,8 +9081,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubPackRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_sync(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_packs_sync(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8915,8 +9099,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubPackRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_packs_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8931,8 +9117,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubImportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_import(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_import(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8947,8 +9135,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubSkillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_sync(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_sync(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8963,8 +9153,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubSkillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_receipts(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_receipts(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8979,8 +9171,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillConvertRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_convert(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_convert(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -8995,8 +9189,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubSkillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9011,8 +9207,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillLibraryListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_list(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_list(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9027,8 +9225,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubSkillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_archive(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_archive(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9043,8 +9243,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillLibraryRestoreRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_restore(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_restore(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9059,8 +9261,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillLibraryForkRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_fork(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_skills_fork(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9075,8 +9279,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillHashRuleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_rules_set(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_rules_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9091,11 +9297,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillCodeAutoInstallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skills_code_auto_install_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9110,11 +9317,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubSkillPermissionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skills_permissions_approve(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9129,9 +9337,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeStartRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_start(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_start(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9146,9 +9355,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeResultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_result(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_result(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9163,11 +9373,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ProjectGoalIntakeCompleteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_projects_goal_intake_complete(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9182,8 +9393,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ProjectRefRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_projects_goal_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_projects_goal_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9198,9 +9411,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_propose(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_propose(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9215,9 +9429,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeMeasureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_measure(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_measure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9232,9 +9447,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeProposalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_score(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_score(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9249,9 +9465,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeProposalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_admit(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_admit(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9266,9 +9483,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeGoalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_optimize_goal_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_goal_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9283,8 +9501,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeGoalBindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_skills_optimize_goal_bind(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_optimize_goal_bind(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -9304,11 +9524,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeGoalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skills_optimize_preferences_get(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9326,11 +9547,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizePreferencesSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skills_optimize_preferences_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9345,11 +9567,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skills_optimize_tradeoff_asks(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9367,11 +9590,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillOptimizeTradeoffPickRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_skills_optimize_tradeoff_asks_pick(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9386,9 +9610,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubSkillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_governance_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_governance_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9403,9 +9628,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillGovernanceSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_governance_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_governance_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9420,8 +9646,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubHookBindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_hooks_bind(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_hooks_bind(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9436,8 +9664,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_hooks_list(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_hooks_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9452,9 +9682,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HookGrantSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_hooks_grant_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_hooks_grant_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9469,9 +9700,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HookGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_hooks_grant_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_hooks_grant_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9486,9 +9718,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HubHookQualifyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_hooks_qualify(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_hooks_qualify(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9503,8 +9736,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackPutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_put(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_packs_put(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9519,9 +9754,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_packs_preview(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::vault_packs_preview(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -9531,9 +9768,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackPrepareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_connector_prepare(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_connector_prepare(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9548,9 +9786,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_connector_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_connector_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9565,9 +9804,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackQualifyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_connector_qualify(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_connector_qualify(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9582,9 +9822,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackAcceptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_connector_accept(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_connector_accept(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9599,9 +9840,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_connector_update(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_connector_update(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9616,11 +9858,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackGrantsGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_packs_connector_grants_get(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9635,11 +9878,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorPackGrantsPutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_packs_connector_grants_put(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9654,8 +9898,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackRemoveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_remove(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_packs_remove(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9670,15 +9916,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::PluginSectionProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_packs_sections_propose(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.packs.sections.propose",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_sections_propose(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.propose",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -9695,17 +9943,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::PluginSectionListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_packs_sections_list(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.packs.sections.list",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_packs_sections_list(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.list",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9726,17 +9975,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::PluginSectionGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_packs_sections_grant(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.packs.sections.grant",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_packs_sections_grant(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.grant",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9751,17 +10001,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::PluginSectionRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_packs_sections_revoke(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.packs.sections.revoke",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_packs_sections_revoke(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.revoke",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9776,15 +10027,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::PluginSectionSuggestRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_packs_sections_suggest(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.packs.sections.suggest",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_sections_suggest(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.packs.sections.suggest",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -9801,7 +10054,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_packs_sections_suggestions_get(
                     server,
                     auth,
@@ -9811,8 +10064,9 @@ async fn execute_agent_verb_row_on(
                         "vault.packs.sections.suggestions.get",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9827,7 +10081,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::PluginSuggestionsSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_packs_sections_suggestions_set(
                     server,
                     auth,
@@ -9837,8 +10091,9 @@ async fn execute_agent_verb_row_on(
                         "vault.packs.sections.suggestions.set",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9853,7 +10108,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ChatCompletionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::ai_chat_completions(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_chat_completions(
                 server,
                 auth,
                 actor
@@ -9863,7 +10118,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -9879,9 +10134,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ProxyConnectorAdmitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_connectors_proxy_admit(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_connectors_proxy_admit(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9896,11 +10152,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ProxyConnectorRevokeWriteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_proxy_revoke_write(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9915,8 +10172,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorSlateRedraftRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_connectors_slates_redraft(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_connectors_slates_redraft(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -9933,15 +10192,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorSlateNarrowRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_connectors_slates_narrow(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.connectors.slates.narrow",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_connectors_slates_narrow(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.connectors.slates.narrow",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -9961,11 +10222,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorScopeOutcomeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_slates_scope_outcome(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -9983,11 +10245,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorSlateRevisionOffersRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_slates_revision_offers(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10005,11 +10268,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorSlateRevisionDeferRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_slates_defer_revision(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10027,11 +10291,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorSlateRevisionAcceptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_slates_accept_revision(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10046,11 +10311,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorIssuerReaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_slates_reask_issuer(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10065,11 +10331,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ChannelSubscriptionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_subscriptions_put(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10084,11 +10351,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ChannelSubscriptionsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_subscriptions_list(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10106,11 +10374,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ChannelSubscriptionRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_subscriptions_revoke(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10125,9 +10394,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackSetupRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_setup_prepare(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_setup_prepare(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10142,8 +10412,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackSetupRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_setup_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_packs_setup_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10158,8 +10430,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackSetupAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_setup_answer(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_setup_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10174,8 +10448,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PackSetupVerifyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_packs_setup_verify(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_packs_setup_verify(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10190,8 +10466,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::AuthorityAuditQuery =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_authority_audit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_authority_audit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10206,9 +10484,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_authority_history_export(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_authority_history_export(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10223,9 +10502,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SignedAuthorityHistory =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_authority_history_import(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_authority_history_import(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10240,9 +10520,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_authority_clock_repair(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_authority_clock_repair(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10257,11 +10538,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_wire_health_thresholds_get(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10276,11 +10558,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WireThresholds =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_wire_health_thresholds_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10295,8 +10578,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_slim_policy(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_slim_policy(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10311,8 +10596,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_slim_state(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_slim_state(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10327,8 +10614,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::slim::public::SlimResumeStepRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_slim_resume_step(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_slim_resume_step(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10343,8 +10632,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::slim::public::SlimDropRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_slim_drop_heavy(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_slim_drop_heavy(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10359,8 +10650,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_slim_resume(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_slim_resume(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10375,8 +10668,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::MeshPathReceiptsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_mesh_path_receipts(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_mesh_path_receipts(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10391,8 +10686,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_mesh_identity(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_mesh_identity(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10407,8 +10704,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::MeshMachineBinding =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_mesh_bind_machine(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_mesh_bind_machine(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10423,9 +10722,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::MeshAlpnGrant =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_mesh_set_alpn_grant(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_mesh_set_alpn_grant(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10440,9 +10740,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::MeshMachineRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_mesh_revoke_machine(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_mesh_revoke_machine(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10457,8 +10758,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::MeshDialRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_mesh_dial(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_mesh_dial(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10473,9 +10776,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_outbox_diverged_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_outbox_diverged_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10490,9 +10794,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OutboxDivergedAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_outbox_diverged_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_outbox_diverged_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10515,9 +10820,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_propose_delete(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_propose_delete(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10532,9 +10838,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedTransferRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_propose_transfer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_propose_transfer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10549,11 +10856,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedRemoveOwnerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_shared_propose_remove_owner(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10568,8 +10876,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedActRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_execute(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_execute(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10584,8 +10894,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_receipt(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_receipt(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10600,8 +10912,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_outcomes(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_outcomes(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10616,8 +10930,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_deletion(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_deletion(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10632,9 +10948,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OrgAdminConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_org_admin_configure(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_org_admin_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10649,8 +10966,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OrgAdminPowersRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_org_admin_powers(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_org_admin_powers(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10674,8 +10993,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FederationDelegateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_delegate(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_members_delegate(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10698,8 +11019,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedMemberAddRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_add(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_add(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10714,9 +11037,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::InvitationSlipRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_invitation_slip(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_members_invitation_slip(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10731,8 +11055,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedMemberRoleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_change(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_change(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10747,8 +11073,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedMemberRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_remove(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_remove(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10763,8 +11091,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_leave(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_leave(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10779,9 +11109,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_invitations(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_members_invitations(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10796,8 +11127,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedInvitationRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_accept(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_accept(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10812,8 +11145,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedInvitationRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_members_decline(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_members_decline(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10828,11 +11163,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedInvitationWithdrawRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_members_withdraw_invitation(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10847,8 +11183,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedActRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_object(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_object(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10863,8 +11201,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedActRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_shared_withdraw_objection(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_withdraw_objection(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -10881,8 +11221,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_started(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_started(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10897,8 +11239,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_matured(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shared_matured(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10913,8 +11257,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedEraseAskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_erase_ask(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_erase_ask(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10929,8 +11275,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_erase_asks(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_erase_asks(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10945,9 +11293,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedEraseAskCloseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_close_erase_ask(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_close_erase_ask(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10962,8 +11311,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_policy_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_policy_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10978,9 +11329,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedActPolicyProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_policy_propose(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_policy_propose(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -10995,9 +11347,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedActPolicyAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_policy_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_policy_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11012,9 +11365,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedActPolicyChangeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_policy_change(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_policy_change(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11029,9 +11383,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SharedVaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shared_policy_changes(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_shared_policy_changes(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11046,11 +11401,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CoreferenceLinkRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_coreference_link(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11065,11 +11421,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CoreferencePairRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_coreference_confirm(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11087,11 +11444,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CoreferenceShareConsentRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_coreference_share_consent(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11106,11 +11464,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CoreferencePairRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_coreference_unlink(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11125,8 +11484,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstPeerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_federation_burst_baseline(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_burst_baseline(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11143,9 +11504,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstPeerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_federation_burst_policy(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_burst_policy(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11160,11 +11522,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstPolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_burst_policy_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11179,9 +11542,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectDelivery =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_federation_burst_ingress(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_burst_ingress(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11196,11 +11560,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstReplayRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_burst_disposition(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11215,9 +11580,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_federation_burst_review(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_burst_review(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11235,11 +11601,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_burst_review_release(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11254,11 +11621,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_burst_review_reject(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11273,9 +11641,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::sync::federation_burst::FederationBurstReplayRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_federation_burst_replay(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_burst_replay(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11290,11 +11659,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_identity(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11309,11 +11679,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::MintConnectGrant =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_grants_mint(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11328,9 +11699,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OfferConnect =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_federation_connect_offer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_offer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11345,8 +11717,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AcceptConnect =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_accept(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_accept(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11363,8 +11737,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::NarrowConnect =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_narrow(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_narrow(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11384,11 +11760,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RescopeConnect =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_rescope_offer(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11406,11 +11783,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AcceptRescopeConnect =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_rescope_accept(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11425,11 +11803,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectPactRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_federation_connect_disconnect(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11444,8 +11823,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_export(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_export(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11462,8 +11843,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectDelivery =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_federation_connect_rejoin(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_federation_connect_rejoin(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11480,9 +11863,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactNameRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_trusted_contacts_name(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_trusted_contacts_name(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11497,9 +11881,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_trusted_contacts_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_trusted_contacts_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11514,9 +11899,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactConsentRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_trusted_contacts_consent(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_trusted_contacts_consent(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11531,9 +11917,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_trusted_contacts_revoke(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_trusted_contacts_revoke(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11548,8 +11935,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactDialRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_trusted_contacts_dial_set(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_trusted_contacts_dial_set(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11566,8 +11955,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactTierRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_trusted_contacts_tier_set(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_trusted_contacts_tier_set(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -11584,11 +11975,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactAsksRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_trusted_contacts_concern_asks(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11606,11 +11998,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactAuthorizeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_trusted_contacts_concern_authorize(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11628,7 +12021,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactConcernRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_trusted_contacts_concern_propose(
                     server,
                     auth,
@@ -11638,8 +12031,9 @@ async fn execute_agent_verb_row_on(
                         "vault.trusted_contacts.concern.propose",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11657,7 +12051,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::TrustedContactDeliverRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_trusted_contacts_concern_deliver(
                     server,
                     auth,
@@ -11667,8 +12061,9 @@ async fn execute_agent_verb_row_on(
                         "vault.trusted_contacts.concern.deliver",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11683,8 +12078,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GuestDocumentShareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_guests_share(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_guests_share(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11699,9 +12096,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GuestDocumentShareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_guests_export_envelope(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_guests_export_envelope(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11716,8 +12114,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GuestDocumentShareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_guests_reshare(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_guests_reshare(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11732,8 +12132,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GuestRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_guests_revoke(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_guests_revoke(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11748,8 +12150,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GuestSlipMintRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_guests_mint_slip(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_guests_mint_slip(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11764,9 +12168,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SupportGrantMintRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_support_grants_mint(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_support_grants_mint(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11781,9 +12186,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SupportGrantListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_support_grants_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_support_grants_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11798,9 +12204,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SupportGrantRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_support_grants_revoke(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_support_grants_revoke(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11815,9 +12222,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FilesSourceAttachRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_files_sources_attach(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_files_sources_attach(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11832,9 +12240,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FilesSourceRescanRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_files_sources_rescan(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_files_sources_rescan(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11849,9 +12258,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FilesSourceDetachRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_files_sources_detach(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_files_sources_detach(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11866,8 +12276,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FilesSourceListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_files_sources_list(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_files_sources_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11882,9 +12294,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::FilesSourceFilesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_files_sources_files(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_files_sources_files(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11899,8 +12312,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ResidenceModeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_residence_mode(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_residence_mode(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11915,8 +12330,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ResidenceOpenRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_residence_open(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_residence_open(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11931,8 +12348,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ResidenceMachineRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_residence_index(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_residence_index(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11947,8 +12366,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ResidencePruneRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_residence_prune(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_residence_prune(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11963,9 +12384,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ResidenceDirectivesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_residence_directives(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_residence_directives(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11980,8 +12402,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordStartRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_start(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_start(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -11996,8 +12420,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordSessionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_status(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_status(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12012,8 +12438,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordWitnessRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_witness(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_witness(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12028,8 +12456,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordSessionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_discard(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_discard(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12044,8 +12474,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRecallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_recall(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_recall(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12060,9 +12492,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordNoteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_notes_create(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_notes_create(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12077,9 +12510,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordClaimRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_off_record_claims_upsert(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_claims_upsert(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12094,8 +12528,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordExecuteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_off_record_execute(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_off_record_execute(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12110,9 +12546,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordResultsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_off_record_results_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_off_record_results_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12127,9 +12564,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordResultReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_off_record_results_read(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_off_record_results_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12144,9 +12582,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordWaitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_off_record_waits_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_off_record_waits_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12161,9 +12600,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordWaitAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_off_record_waits_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_off_record_waits_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12178,10 +12618,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                crate::api::facade::host_doors::vault_off_record_rooms_status(server, auth, input)
-                    .await
-                    .map_err(mcp_facade_error)?;
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_status(server, auth, input),
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -12191,10 +12632,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomStartRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                crate::api::facade::host_doors::vault_off_record_rooms_start(server, auth, input)
-                    .await
-                    .map_err(mcp_facade_error)?;
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_start(server, auth, input),
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -12204,10 +12646,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomWitnessRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                crate::api::facade::host_doors::vault_off_record_rooms_witness(server, auth, input)
-                    .await
-                    .map_err(mcp_facade_error)?;
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_witness(server, auth, input),
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -12217,10 +12660,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                crate::api::facade::host_doors::vault_off_record_rooms_save(server, auth, input)
-                    .await
-                    .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::vault_off_record_rooms_save(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -12233,8 +12677,10 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_off_record_rooms_save_from_here(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_save_from_here(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -12247,10 +12693,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                crate::api::facade::host_doors::vault_off_record_rooms_export(server, auth, input)
-                    .await
-                    .map_err(mcp_facade_error)?;
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_export(server, auth, input),
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -12260,8 +12707,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_off_record_rooms_suggest_save(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_suggest_save(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -12274,8 +12723,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_off_record_rooms_confirm_save(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_confirm_save(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -12288,8 +12739,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OffRecordRoomRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_off_record_rooms_decline_save(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_off_record_rooms_decline_save(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -12302,9 +12755,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RecordEraseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_records_erase_preview(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_records_erase_preview(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12319,9 +12773,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RecordEraseConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_records_erase_confirm(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_records_erase_confirm(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12336,9 +12791,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::erase_sweep::RecordEraseSweepRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_records_erase_sweep(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_records_erase_sweep(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12353,9 +12809,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ResearchChildWire =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_research_create_child(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_research_create_child(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12426,8 +12883,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EvalInventoryWire =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_inventory(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_evals_inventory(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12442,9 +12901,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::EvalCohortSetup =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_cohorts_setup(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_cohorts_setup(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12459,8 +12919,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalAuthorNowRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_author_now(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_author_now(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12475,9 +12937,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalAuthoringRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_authoring_result(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_authoring_result(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12492,8 +12955,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalSeatRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_families(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_evals_families(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12508,9 +12973,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalFamilyAssignRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_families_assign(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_families_assign(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12525,8 +12991,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalCasesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_cases(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_evals_cases(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12541,8 +13009,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::EvalCaseDraft =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_cases_record(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_cases_record(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12557,8 +13027,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalSeatRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_cohorts(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_evals_cohorts(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12573,8 +13045,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalCohortOpenRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_cohorts_open(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_cohorts_open(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12589,8 +13063,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalCohortRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_exposure(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_evals_exposure(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12605,8 +13081,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::SufficiencyInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_sufficiency(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_sufficiency(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12621,9 +13099,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalBlockedLabelsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_labels_blocked(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_labels_blocked(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12638,8 +13117,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::eval_doors::EvalLabelPickRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_evals_labels_pick(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_evals_labels_pick(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12654,9 +13135,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_doors::OfferListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_coach_training_offers(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_coach_training_offers(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12671,8 +13153,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_doors::OfferRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_coach_training_offers_get(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_coach_training_offers_get(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -12689,11 +13173,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_doors::OfferPassRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_trigger(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12708,11 +13193,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_doors::OfferPassRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_result(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12727,11 +13213,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_doors::OfferAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_answer(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12746,11 +13233,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_doors::OfferRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_undo(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12768,11 +13256,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_pilot::OfferCandidateQuery =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_candidates(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12790,11 +13279,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_pilot::OfferCandidateSetup =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_candidates_prepare(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12812,11 +13302,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_pilot::OfferPilotPrepare =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_pilots_prepare(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12834,11 +13325,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_pilot::OfferPilotComplete =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_pilots_complete(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12856,11 +13348,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::skill_optimize::offer_pilot::OfferPilotRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_pilots_get(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12875,11 +13368,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ReservoirSourcesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_coach_training_offers_sources(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -12934,9 +13428,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CampaignSplitWire =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_research_evaluate_split(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_research_evaluate_split(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13049,9 +13544,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_authority_handoff_alarms(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_authority_handoff_alarms(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13069,11 +13565,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HandoffAlarmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_authority_handoff_alarms_acknowledge(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13088,13 +13585,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RootRequestCancelRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_roots_requests_cancel(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_roots_requests_cancel(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13109,13 +13607,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RootRequestCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_roots_requests_create(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_roots_requests_create(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13130,9 +13629,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_roots_requests_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_roots_requests_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13147,8 +13647,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::OwnerWorkGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_owner_work_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_owner_work_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13163,8 +13665,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::vault_cleanup::surface::CleanupRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cleanup_run(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_cleanup_run(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13179,8 +13683,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::vault_cleanup::CleanupReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cleanup_review(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_cleanup_review(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13195,8 +13701,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::vault_cleanup::CleanupDecideRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_cleanup_decide(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_cleanup_decide(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13227,9 +13735,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::usage_repair::UsageRepairListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_usage_events_undecodable(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_usage_events_undecodable(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13247,14 +13756,15 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::usage_repair::UsageRepairRemoveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_usage_events_remove_undecodable(
                     server,
                     auth,
                     crate::api::facade::owner_binding::act_surface(auth),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13269,9 +13779,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::usage_repair::UsageRepairReceiptsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_usage_repair_receipts(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_usage_repair_receipts(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13286,8 +13797,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::ingest::EntityMentionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_entities_mention(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_entities_mention(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13302,8 +13815,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LegalHoldPlaceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_legal_holds_place(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_legal_holds_place(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13318,8 +13833,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LegalHoldWidenRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_legal_holds_widen(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_legal_holds_widen(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13334,8 +13851,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_legal_holds_list(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_legal_holds_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13350,8 +13869,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_legal_holds_log(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_legal_holds_log(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13366,11 +13887,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LegalHoldLiftAndEraseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_legal_holds_lift_and_erase(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13385,9 +13907,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CourtesyDeleteSendRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_courtesy_delete_send(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_courtesy_delete_send(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13402,9 +13925,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_courtesy_delete_sent(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_courtesy_delete_sent(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13419,9 +13943,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_courtesy_delete_incoming(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_courtesy_delete_incoming(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13436,9 +13961,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CourtesyDeleteAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_courtesy_delete_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_courtesy_delete_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13453,9 +13979,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_embedding_spaces_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_embedding_spaces_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13470,9 +13997,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceDeclareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_embedding_spaces_declare(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_embedding_spaces_declare(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13487,9 +14015,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceBindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_embedding_spaces_bind(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_embedding_spaces_bind(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13504,11 +14033,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_one_space(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13523,9 +14053,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_embedding_spaces_retire(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_embedding_spaces_retire(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13540,9 +14071,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceMoveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_embedding_spaces_move(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_embedding_spaces_move(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13557,11 +14089,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_move_check(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13576,11 +14109,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_move_approve(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13595,11 +14129,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_move_undo(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13614,11 +14149,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceCandidateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_move_abandon(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13633,11 +14169,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_probes_list(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13652,11 +14189,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceProbePutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_probes_put(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13671,11 +14209,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmbeddingSpaceProbeDeleteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_embedding_spaces_probes_delete(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13690,8 +14229,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_policy_owner_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_policy_owner_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13706,9 +14247,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_manifest_doors::OwnerPolicyConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_policy_owner_configure(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_policy_owner_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13723,9 +14265,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_model::doors::PolicyRowChangeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_policy_owner_row_change(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_policy_owner_row_change(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13740,21 +14283,23 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_model::doors::PolicyOutboundRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_policy_outbound_decide(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.policy.outbound.decide",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_policy_outbound_decide(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.policy.outbound.decide",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -13771,23 +14316,24 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_model::doors::PolicyOutboundRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_policy_relay_decide(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.policy.relay.decide",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_policy_relay_decide(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.policy.relay.decide",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13802,9 +14348,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::lifecycle::ApproveOnceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consent_approve_once(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_approve_once(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13819,11 +14366,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorCallApproveOnceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_calls_approve_once(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13838,8 +14386,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::lifecycle::DenyConsentRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consent_deny(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_consent_deny(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13854,11 +14404,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::lifecycle::CreateStandingGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_create_standing_grant(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13876,11 +14427,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::consent::lifecycle::AutoWeaveGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_create_auto_weave_grant(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13895,8 +14447,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::ConsentRegistryQuery =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consent_registry(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_registry(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13911,11 +14465,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_failure_signals_held(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13930,8 +14485,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::lifecycle::RevokeGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consent_revoke(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_consent_revoke(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13946,11 +14503,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::bypass_lifecycle::BypassGrantWarningRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_bypass_grant_warning(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13965,11 +14523,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::bypass_lifecycle::CreateBypassGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_create_bypass_grant(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -13984,11 +14543,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent::bypass_lifecycle::ActiveBypassGrantsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_active_bypass_grants(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14006,11 +14566,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::consent::bypass_lifecycle::BypassedEffectReceiptsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_bypassed_effect_receipts(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14025,8 +14586,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationPolicyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consent_graduation_policy(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_graduation_policy(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -14043,11 +14606,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationPolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_graduation_policy_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14065,11 +14629,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationPolicyClearRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_graduation_policy_clear(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14084,9 +14649,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationScopeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consent_graduation_stats(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_graduation_stats(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14101,11 +14667,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationOutcomeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_graduation_outcome(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14120,8 +14687,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consent_graduation_offers(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_graduation_offers(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -14138,8 +14707,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consent_graduation_answer(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_graduation_answer(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -14156,11 +14727,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_graduation_trust_table(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14178,11 +14750,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationScopeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_consent_graduation_settings_unpin(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14197,8 +14770,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::consent_graduation::api::GraduationDemoteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consent_graduation_demote(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consent_graduation_demote(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -14223,8 +14798,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_manifest_doors::PolicyManifestRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_gate_policy_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_gate_policy_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14239,8 +14816,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_manifest_doors::PolicyManifestPut =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_gate_policy_put(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_gate_policy_put(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14263,8 +14842,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_gate_checker_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_gate_checker_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14279,8 +14860,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_manifest_doors::GateCheckerSet =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_gate_checker_set(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_gate_checker_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14295,8 +14878,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::learning::doors::LearningReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_learning_read(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_learning_read(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14311,9 +14896,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::learning::doors::LearningProjectionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_learning_projection(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_learning_projection(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14328,8 +14914,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::self_heal::audit::AttemptConfession =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_seal_confess(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_seal_confess(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14344,8 +14932,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::self_heal::audit::doors::SealAttemptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_seal_audit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_seal_audit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14360,8 +14950,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::self_heal::audit::doors::SealAttemptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_seal_receipt(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_seal_receipt(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14376,8 +14968,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::self_heal::audit::doors::SealPendingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_seal_pending(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_seal_pending(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14392,8 +14986,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::self_heal::audit::doors::SealRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_seal_run(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_seal_run(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14408,8 +15004,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::self_heal::audit::doors::SealCompleteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_seal_complete(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_seal_complete(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14424,8 +15022,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::learning_setting_doors::LearningSettingsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_settings_learning(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_settings_learning(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14440,9 +15040,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::learning_setting_doors::LearningSettingPut =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_settings_learning_put(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_settings_learning_put(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14457,9 +15058,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::learning_setting_doors::LearningSettingClear =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_settings_learning_clear(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_settings_learning_clear(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14474,9 +15076,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_model::SecretLiftRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_secrets_lift_history(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_secrets_lift_history(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14491,13 +15094,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretRegisterRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_secrets_register(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_secrets_register(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14512,12 +15116,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretRotateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_secrets_rotate(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_secrets_rotate(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14533,12 +15137,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretRewrapRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_secrets_rewrap(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_secrets_rewrap(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14554,12 +15158,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_secrets_revoke(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_secrets_revoke(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14575,9 +15179,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretCustodyGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_secrets_custody_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_secrets_custody_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14592,11 +15197,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretCustodySubmitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_secrets_custody_submit(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_secrets_custody_submit(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -14613,8 +15220,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::widen_doors::WidenProposalsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_widen_proposals(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_widen_proposals(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14629,9 +15238,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_widen_proposals_approve(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_widen_proposals_approve(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14646,9 +15256,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::agent_dispatch::widen_doors::WidenProposalAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_widen_proposals_decline(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_widen_proposals_decline(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14663,7 +15274,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ClaimProposalReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_claims_review(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_claims_review(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -14672,7 +15283,7 @@ async fn execute_agent_verb_row_on(
                     "vault.claims.review",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14688,7 +15299,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ClaimSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_claims_settle(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_claims_settle(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -14697,7 +15308,7 @@ async fn execute_agent_verb_row_on(
                     "vault.claims.settle",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14713,8 +15324,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::actor_claims::CraftCandidatesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_craft_candidates(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_craft_candidates(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14729,9 +15342,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::actor_claims::CraftCandidateAnswer =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_craft_candidates_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_craft_candidates_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14746,11 +15360,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::policy_setting_doors::WakePolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_settings_wake_policy_set(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_settings_wake_policy_set(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -14767,11 +15383,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_settings_inference_defaults(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14789,14 +15406,15 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::policy_setting_doors::InferenceDefaultsReplaceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_settings_inference_defaults_replace(
                     server,
                     auth,
                     crate::api::facade::owner_binding::act_surface(auth),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14827,8 +15445,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::lens::LensActivateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_lenses_activate(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_lenses_activate(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14843,8 +15463,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::lens::LensDeactivateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_lenses_deactivate(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_lenses_deactivate(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14875,7 +15497,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::lens::LensSelectRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_lenses_select(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_lenses_select(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -14884,7 +15506,7 @@ async fn execute_agent_verb_row_on(
                     "vault.lenses.select",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14900,7 +15522,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::lens::LensSelectionResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_lenses_resolve(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_lenses_resolve(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -14909,7 +15531,7 @@ async fn execute_agent_verb_row_on(
                     "vault.lenses.resolve",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14925,15 +15547,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::lens::LensResultSetActionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_lenses_result_set_action(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.lenses.result_set.action",
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_lenses_result_set_action(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.lenses.result_set.action",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -14947,13 +15571,13 @@ async fn execute_agent_verb_row_on(
             let owner = surface.lens_owner("vault.lenses.default", &input);
             let input: oneiron::lens::LensDefaultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_lenses_default(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_lenses_default(
                 server,
                 auth,
                 owner,
                 actor.client_surface.clone(),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -14977,9 +15601,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::disclosure::DisclosureCeilingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_disclosure_ceiling_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_disclosure_ceiling_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -14994,9 +15619,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::disclosure::DisclosureCeilingSet =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_disclosure_ceiling_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_disclosure_ceiling_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15011,9 +15637,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::disclosure::DisclosureCeilingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_disclosure_ceiling_clear(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_disclosure_ceiling_clear(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15028,8 +15655,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RevealAsksRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_disclosure_reveals(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_disclosure_reveals(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15044,8 +15673,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RevealAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_disclosure_reveals_answer(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_disclosure_reveals_answer(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -15086,13 +15717,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SecretUseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_use(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_use(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.use"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15109,17 +15740,18 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::SecretGrantMintRequest,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_secrets_materialize(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.secrets.materialize",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_secrets_materialize(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.secrets.materialize",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15135,7 +15767,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::SecretGrantRenewRequest,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_secrets_renew(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_secrets_renew(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -15144,7 +15776,7 @@ async fn execute_agent_verb_row_on(
                     "self.secrets.renew",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15161,7 +15793,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::SecretGrantTeardownRequest,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_secrets_teardown(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_secrets_teardown(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -15170,7 +15802,7 @@ async fn execute_agent_verb_row_on(
                     "self.secrets.teardown",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15187,7 +15819,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::SecretGrantUseRequest,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_secrets_use(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_secrets_use(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -15196,7 +15828,7 @@ async fn execute_agent_verb_row_on(
                     "self.secrets.use",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15220,8 +15852,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ShareRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shares_revoke(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shares_revoke(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15236,8 +15870,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ShareViewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_shares_view(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_shares_view(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15252,13 +15888,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::runtime_hooks::host_doors::HostCompactRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::host_compact(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::host_compact(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "host.compact"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15274,13 +15910,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::runtime_hooks::host_doors::HostWakeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::host_wake(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::host_wake(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "host.wake"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15296,7 +15932,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::runtime_hooks::host_doors::HostBudgetHitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::host_budget_hit(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::host_budget_hit(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -15305,7 +15941,7 @@ async fn execute_agent_verb_row_on(
                     "host.budget.hit",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -15321,8 +15957,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::HooksReplayRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_hooks_replay(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_hooks_replay(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15344,8 +15982,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_hooks_regen_due(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_hooks_regen_due(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15360,8 +16000,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::hook_regen_doors::HookRegenBindingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_hooks_regen_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_hooks_regen_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15376,8 +16018,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::hook_regen_doors::HookRegenAdoptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_hooks_regen_adopt(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_hooks_regen_adopt(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15392,11 +16036,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_publish_approval(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15411,8 +16056,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_publish(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_publish(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15427,8 +16074,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPublishRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_repoint(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_repoint(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15443,8 +16092,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPointerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_pointer(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_pointer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15459,9 +16110,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPointerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_unpublish(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_unpublish(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15476,9 +16128,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_link_token(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_link_token(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15496,11 +16149,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRegisterRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_register(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15515,7 +16169,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_read(
                     server,
                     auth,
@@ -15525,8 +16179,9 @@ async fn execute_agent_verb_row_on(
                         "vault.artifacts.live_preview.read",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15541,11 +16196,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_close(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15560,11 +16216,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewInviteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_invite(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15582,11 +16239,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewInviteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_revoke_invite(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15601,11 +16259,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_share(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15623,11 +16282,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::artifact_hosting::door_types::ArtifactPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_live_preview_revoke_share(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15818,9 +16478,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeSymbolsDeclareRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_symbols_declare(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_symbols_declare(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15835,8 +16496,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeSymbolsTaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_symbols_renew(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_symbols_renew(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15851,9 +16514,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeSymbolsTaskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_symbols_release(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_symbols_release(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15868,9 +16532,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeProposalSubmitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_proposal_submit(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_proposal_submit(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15885,9 +16550,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeConflictRecordRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_conflict_record(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_conflict_record(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15902,8 +16568,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeConflictViewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_conflict_view(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_conflict_view(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15918,9 +16586,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeProposalResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_proposal_resolve(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_proposal_resolve(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15935,9 +16604,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeProposalReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_proposal_review(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_proposal_review(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15952,9 +16622,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeProposalSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_proposal_settle(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_proposal_settle(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15969,9 +16640,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeProposalSettlementRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_proposal_settlement(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_proposal_settlement(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -15986,8 +16658,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_doors::CodeRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_oplog(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_oplog(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16002,7 +16676,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::foreign_code::ForeignCodeRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::execute_code(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::execute_code(
                 server,
                 auth,
                 actor
@@ -16012,7 +16686,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -16035,9 +16709,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_run_doors::CodeRunModelHealCountRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_model_heal_count(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16052,9 +16727,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_run_doors::CodeRunTypeDiagnosticsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_type_diagnostics(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_type_diagnostics(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16069,8 +16745,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_wait_doors::CodeWaitResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_waits_resolve(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_waits_resolve(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16085,8 +16763,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_wait_doors::CodeWaitReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_waits_receipt(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_waits_receipt(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16101,8 +16781,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::result_doors::ResultRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_results_status(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_results_status(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16117,8 +16799,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::result_doors::ResultRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_results_recover(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_results_recover(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16133,8 +16817,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::result_doors::ResultOccurrenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_results_read(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_results_read(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16149,8 +16835,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::result_doors::ResultSliceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_results_slice(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_results_slice(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16173,8 +16861,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodeExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_export(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_export(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16189,17 +16879,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodeExportPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_code_export_preview(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.code.export.preview",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_code_export_preview(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.code.export.preview",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16214,15 +16905,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodeExportFileReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_code_export_preview_read(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.code.export.preview.read",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_export_preview_read(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.code.export.preview.read",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -16239,8 +16932,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodeRepoImportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_import(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_import(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16255,8 +16950,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodeRepoGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_repos_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_repos_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16271,8 +16968,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodeForkGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_forks_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_forks_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16287,9 +16986,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::ExternalImportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_imports_create(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_imports_create(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16304,8 +17004,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::ExternalImportLookup =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_imports_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_imports_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16320,8 +17022,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CodePushIngressGetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_ingress_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_ingress_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16336,9 +17040,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginRegisterRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_register(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_register(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16353,9 +17058,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_mirror_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_mirror_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16370,9 +17076,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginMirrorPlanRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_mirror_plan(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_mirror_plan(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16387,9 +17094,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginMirrorSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_mirror_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_mirror_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16404,11 +17112,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginMirrorStrategyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_mirror_strategy(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16423,9 +17132,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_mirror_clear(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_mirror_clear(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16440,9 +17150,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_mirror_push(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_mirror_push(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16457,11 +17168,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginPublishRequestInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_publish_request(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16476,11 +17188,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginPublishReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_publish_review(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16495,9 +17208,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginPublishIdRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_publish_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_publish_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16512,11 +17226,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginPublishApproveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_publish_approve(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16531,11 +17246,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginPublishIdRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_publish_execute(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16550,11 +17266,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::origin::publish::OriginPublishIdRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_origin_publish_cancel(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16569,8 +17286,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_code_origin_authority_get(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_authority_get(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -16587,8 +17306,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginAuthoritySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_code_origin_authority_set(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_authority_set(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -16605,9 +17326,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::OriginPublicationsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_origin_publications(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_origin_publications(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16622,8 +17344,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::origin_doors::CheckoutDoorBindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_bind(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_bind(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16638,9 +17362,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutClaimInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_claim(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_claim(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16655,8 +17380,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutGetInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16671,9 +17398,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutRenewInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_renew(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_renew(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16688,9 +17416,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutReclaimInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_reclaim(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_reclaim(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16705,9 +17434,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutTakeoverInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_takeover(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_takeover(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16722,9 +17452,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutPublishInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_publish(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_publish(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16739,9 +17470,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutSettleInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_settle(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_settle(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16756,9 +17488,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::checkout_doors::CheckoutTeardownInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checkout_teardown(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_checkout_teardown(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16773,9 +17506,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeViewMaterializeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_views_materialize(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_views_materialize(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16790,8 +17524,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeViewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_views_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_views_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16806,8 +17542,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeViewReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_views_read(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_views_read(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16822,8 +17560,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeViewActionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_views_action(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_views_action(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16838,8 +17578,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeViewBuildRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_views_build(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_views_build(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16854,8 +17596,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeCacheReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_cache_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_cache_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16870,8 +17614,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::code_view_doors::CodeViewBuildRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_cache_reuse(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_cache_reuse(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16886,9 +17632,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::codebase_doors::CodeSnapshotIngestRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_snapshots_ingest(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_snapshots_ingest(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16903,8 +17650,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::codebase_doors::CodeSnapshotRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_snapshots_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_snapshots_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16919,9 +17668,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::codebase_doors::CodeSnapshotReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_snapshots_read(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_snapshots_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16936,9 +17686,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::codebase_doors::CodeSnapshotDefinitionsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_symbols_definitions(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_symbols_definitions(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16953,9 +17704,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueEnqueueRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_merge_queue_enqueue(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_enqueue(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16970,9 +17722,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_merge_queue_stage(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_stage(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -16987,9 +17740,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueObserveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_merge_queue_observe(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_observe(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17007,11 +17761,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_requeue_survivors(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17026,11 +17781,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueBatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_land_reviewed(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17045,11 +17801,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_settle_slow(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17064,9 +17821,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueRepoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_merge_queue_recover(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_recover(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17081,9 +17839,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueInitializeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_merge_queue_init(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_init(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17098,9 +17857,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueCheckRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_merge_queue_check(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_check(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17115,8 +17875,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueDiagnoseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_code_merge_queue_diagnose(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_code_merge_queue_diagnose(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -17133,11 +17895,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueCheckStatusRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_check_status(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17152,8 +17915,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::CodeCheckReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_code_checks_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_code_checks_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17171,7 +17936,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_review_policy_get(
                     server,
                     auth,
@@ -17181,8 +17946,9 @@ async fn execute_agent_verb_row_on(
                         "vault.code.merge_queue.review_policy.get",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17200,7 +17966,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::QueueReviewPolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_review_policy_set(
                     server,
                     auth,
@@ -17210,8 +17976,9 @@ async fn execute_agent_verb_row_on(
                         "vault.code.merge_queue.review_policy.set",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17226,11 +17993,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::merge_queue_doors::MergeQueueGreenExportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_code_merge_queue_export_green(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17253,8 +18021,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentDefinitionCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_create(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_agents_create(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17269,8 +18039,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentDefinitionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_agents_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17285,8 +18057,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentDefinitionUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_update(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_agents_update(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17301,9 +18075,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentDreamingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_dreaming_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_agents_dreaming_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17318,9 +18093,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentDreamingSetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_dreaming_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_agents_dreaming_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17335,13 +18111,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentGrantMintRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_agents_grants_mint(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_agents_grants_mint(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17356,13 +18133,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AgentGrantRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_agents_grants_revoke(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_agents_grants_revoke(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17377,13 +18155,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GitPushGrantMintInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_git_push_mint(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_git_push_mint(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17398,13 +18177,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::GitPushGrantRevokeInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_git_push_revoke(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_git_push_revoke(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17419,11 +18199,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_read_grants_grant(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17438,11 +18219,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorWitnessReadGrantRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_connectors_read_grants_revoke(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17457,8 +18239,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::RepoAnchorBindInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_repo_anchor_bind(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_repo_anchor_bind(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17474,23 +18258,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSnapshotsGetInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_snapshots_get(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.snapshots.get",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_snapshots_get(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.snapshots.get",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17506,23 +18291,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSnapshotsReadInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_snapshots_read(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.snapshots.read",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_snapshots_read(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.snapshots.read",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17538,21 +18324,23 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSymbolsDefinitionsInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_symbols_definitions(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.symbols.definitions",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_repo_symbols_definitions(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.symbols.definitions",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -17570,7 +18358,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoViewsGetInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_views_get(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_repo_views_get(
                 server,
                 auth,
                 actor
@@ -17585,7 +18373,7 @@ async fn execute_agent_verb_row_on(
                     "vault.repo.views.get",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -17602,7 +18390,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoViewsReadInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_views_read(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_repo_views_read(
                 server,
                 auth,
                 actor
@@ -17617,7 +18405,7 @@ async fn execute_agent_verb_row_on(
                     "vault.repo.views.read",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -17634,21 +18422,23 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoMergeQueueObserveInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_merge_queue_observe(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.merge_queue.observe",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_repo_merge_queue_observe(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.merge_queue.observe",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -17666,23 +18456,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSnapshotsIngestInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_snapshots_ingest(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.snapshots.ingest",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_snapshots_ingest(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.snapshots.ingest",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17698,7 +18489,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoWorkOpenInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_work_open(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_repo_work_open(
                 server,
                 auth,
                 actor
@@ -17713,7 +18504,7 @@ async fn execute_agent_verb_row_on(
                     "vault.repo.work.open",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -17730,23 +18521,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSymbolsDeclareInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_symbols_declare(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.symbols.declare",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_symbols_declare(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.symbols.declare",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17762,23 +18554,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSymbolsRenewInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_symbols_renew(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.symbols.renew",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_symbols_renew(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.symbols.renew",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17794,23 +18587,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoSymbolsReleaseInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_symbols_release(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.symbols.release",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_symbols_release(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.symbols.release",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17826,23 +18620,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoProposalSubmitInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_proposal_submit(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.proposal_submit",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_proposal_submit(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.proposal_submit",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17858,21 +18653,23 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoMergeQueueEnqueueInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_merge_queue_enqueue(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.merge_queue.enqueue",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_repo_merge_queue_enqueue(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.merge_queue.enqueue",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -17890,23 +18687,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoCheckoutBindInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_checkout_bind(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.repo.checkout.bind",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_repo_checkout_bind(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.repo.checkout.bind",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17922,7 +18720,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::memory::repo_doors::RepoExportInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_repo_export(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_repo_export(
                 server,
                 auth,
                 actor
@@ -17937,7 +18735,7 @@ async fn execute_agent_verb_row_on(
                     "vault.repo.export",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -17953,8 +18751,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_base(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_agents_base(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -17969,8 +18769,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_standing_blocks_configure(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_standing_blocks_configure(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -17987,11 +18789,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::StandingBlockConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_standing_blocks_reconfigure(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18006,9 +18809,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::StandingBlockRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_standing_blocks_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_standing_blocks_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18023,9 +18827,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::StandingBlocksRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_standing_blocks_list(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_standing_blocks_list(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18040,8 +18845,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkflowSaveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workflows_save(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_workflows_save(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18056,8 +18863,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkflowRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workflows_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_workflows_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18072,8 +18881,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkflowUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workflows_update(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workflows_update(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18088,8 +18899,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkflowDispatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workflows_dispatch(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workflows_dispatch(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18104,15 +18917,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkflowPersonDispatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_workflows_dispatch_bound(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.workflows.dispatch_bound",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workflows_dispatch_bound(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.workflows.dispatch_bound",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -18129,8 +18944,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkflowRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workflows_status(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workflows_status(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18145,8 +18962,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::team::doors::TaskTypeTreePin =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_task_types_pin(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_task_types_pin(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18161,8 +18980,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::team::doors::TaskTypeTreeRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_task_types_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_task_types_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18177,8 +18998,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::team::doors::PlannedSpawnRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_spawn_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_agents_spawn_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18193,8 +19016,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::team::doors::SpawnIntentRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_agents_spawn(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_agents_spawn(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18209,8 +19034,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::run_doors::CancelForceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_tasks_cancel_force(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_tasks_cancel_force(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18225,15 +19052,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CommWidenRevokeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_tasks_comm_widen_revoke(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.tasks.comm_widen.revoke",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_tasks_comm_widen_revoke(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.tasks.comm_widen.revoke",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -18250,8 +19079,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::run_doors::RunBranchesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_runs_branches_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_runs_branches_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18282,8 +19113,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::run_doors::ConsultReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consults_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_consults_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18298,9 +19131,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkspacePresetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workspace_establish(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workspace_establish(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18315,8 +19149,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkspaceMemberOnboardRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_workspace_members_onboard(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workspace_members_onboard(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -18333,8 +19169,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::WorkspaceRosterRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_workspace_roster(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_workspace_roster(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18389,9 +19227,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::blob_artifact::SlideReviewSubmit =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_review_slides(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_review_slides(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18406,8 +19245,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::blob_artifact::ArtifactAskSubmit =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_ask(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_artifacts_ask(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18422,8 +19263,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::blob_artifact::ArtifactAdmitSubmit =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_artifacts_admit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_artifacts_admit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18438,8 +19281,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::critic::review::CriticReviewSubmit =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_critic_review(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_critic_review(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -18470,15 +19315,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_artifacts_keep_outline(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.artifacts.keep_outline",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_keep_outline(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.artifacts.keep_outline",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -18495,15 +19342,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::blob_artifact::deck_creation::DeckOutlineSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_artifacts_decline_outline(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.artifacts.decline_outline",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_artifacts_decline_outline(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.artifacts.decline_outline",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -18863,18 +19712,19 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::workspace_roster::ProjectCardConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_projects_confirm(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_projects_confirm(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19029,8 +19879,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::reaction::MessageReactionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_messages_react(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_messages_react(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19154,9 +20006,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillPackReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_pack_receipt(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_pack_receipt(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19171,9 +20024,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillPackOutcomeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_outcomes_project(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_outcomes_project(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19188,9 +20042,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::SkillPackCreditRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_skills_outcomes_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_skills_outcomes_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19205,9 +20060,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_manifest_read(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_manifest_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19222,9 +20078,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::manifest::doors::ModelManifestReplace =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_manifest_replace(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_manifest_replace(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19239,9 +20096,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_settings_web_connector(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_settings_web_connector(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19256,11 +20114,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::web_connector::WebConnectorSetting =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_settings_web_connector_replace(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19275,9 +20134,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::web_connector::WebConnectorUsageRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_connectors_web_usage(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_connectors_web_usage(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19292,9 +20152,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::manifest::doors::OneironerBind =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_oneironer_bind(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_oneironer_bind(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19309,8 +20170,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::manifest::doors::ModelRouteRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_routes_read(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_routes_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19325,9 +20188,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::manifest::doors::ModelRouteReplace =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_routes_replace(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_routes_replace(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19342,8 +20206,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::manifest::doors::ModelRoleRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_roles_read(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_roles_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19358,9 +20224,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::manifest::doors::ModelRoleInvoke =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_roles_invoke(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_roles_invoke(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19375,8 +20242,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ProposalDeltaSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_skills_attribution_settle(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_settle(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -19389,10 +20258,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ProposalDeltaReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output =
-                crate::api::facade::host_doors::vault_skills_attribution_read(server, auth, input)
-                    .await
-                    .map_err(mcp_facade_error)?;
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_read(server, auth, input),
+            )
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19405,8 +20275,10 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AttributionEvidenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_skills_attribution_evidence_record(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_evidence_record(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -19419,8 +20291,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AttributionProjectRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_skills_attribution_project(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_project(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -19433,8 +20307,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AttributionListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_skills_attribution_judgments(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_judgments(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -19447,8 +20323,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AttributionListRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_skills_attribution_proposals(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_proposals(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -19464,8 +20342,10 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::PositiveRetireRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::vault_skills_attribution_positive_retire(
-                server, auth, input,
+            let output = Box::pin(
+                crate::api::facade::host_doors::vault_skills_attribution_positive_retire(
+                    server, auth, input,
+                ),
             )
             .await
             .map_err(mcp_facade_error)?;
@@ -19478,8 +20358,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_step::ModelStepSubmit =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_steps_submit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_steps_submit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19494,8 +20376,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_step::ModelStepReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_steps_receipt(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_steps_receipt(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19510,9 +20394,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_stream::ModelStreamOpen =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_streams_open(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_open(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19522,9 +20408,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_stream::ModelStreamSubscribe =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_streams_subscribe(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_subscribe(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19534,9 +20422,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_stream::ModelStreamEventsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_streams_events(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_events(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19546,9 +20436,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_stream::ModelStreamDetach =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_streams_detach(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_detach(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19558,9 +20450,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_stream::ModelStreamAbort =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_streams_abort(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_abort(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19570,9 +20464,11 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_stream::ModelStreamTerminalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let output = crate::api::facade::host_doors::ai_streams_terminal(server, auth, input)
-                .await
-                .map_err(mcp_facade_error)?;
+            let output = Box::pin(crate::api::facade::host_doors::ai_streams_terminal(
+                server, auth, input,
+            ))
+            .await
+            .map_err(mcp_facade_error)?;
             let source = crate::mcp::McpPageSource::complete(1);
             mcp_agent_verb_output(output, source)
         }
@@ -19582,7 +20478,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiReplyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::ai_reply(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_reply(
                 server,
                 auth,
                 actor
@@ -19594,7 +20490,7 @@ async fn execute_agent_verb_row_on(
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "ai.reply"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -19627,8 +20523,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AsrOpenRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_asr_open(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_asr_open(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19643,8 +20541,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AsrHypothesisRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_asr_hypothesis(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::ai_voice_asr_hypothesis(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19659,8 +20559,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AsrHypothesisRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_asr_finalize(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_asr_finalize(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19675,8 +20577,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AsrCloseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_asr_close(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_asr_close(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19691,8 +20595,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceStartRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_start(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_start(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19707,8 +20613,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceAudioRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_audio(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_audio(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19723,8 +20631,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceEventsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_events(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_events(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19739,8 +20649,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceAckRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_ack(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_ack(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19755,8 +20667,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceUsageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_usage(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_usage(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19771,7 +20685,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceToolRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::ai_voice_tool(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_tool(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -19780,7 +20694,7 @@ async fn execute_agent_verb_row_on(
                     "ai.voice.tool",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -19796,8 +20710,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_end(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_end(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19812,8 +20728,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveVoiceSessionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_voice_close(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_voice_close(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19828,9 +20746,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelCatalogRefresh =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_catalog_refresh(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_catalog_refresh(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19845,8 +20764,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelCatalogGet =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_catalog_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_catalog_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19861,9 +20782,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelCatalogDiffRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_catalog_diff(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_catalog_diff(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19878,9 +20800,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelTrialNominate =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_trials_nominate(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_trials_nominate(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19895,8 +20818,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelTrialRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_trials_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_trials_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19911,9 +20836,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelTrialRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_trials_approve(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_trials_approve(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19928,8 +20854,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelTrialRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_trials_run(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_trials_run(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19944,9 +20872,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelTrialArmRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_trials_resend_arm(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_trials_resend_arm(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19961,9 +20890,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelTrialComplete =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_trials_complete(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_trials_complete(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19978,9 +20908,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelBindingPropose =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_bindings_propose(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_bindings_propose(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -19995,9 +20926,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelBindingProposalRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_bindings_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_bindings_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20012,9 +20944,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelBindingRead =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_bindings_read(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_bindings_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20029,9 +20962,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelBindingAccept =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_bindings_accept(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_bindings_accept(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20046,9 +20980,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::catalog_doors::ModelBindingProposalRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_models_bindings_deny(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_models_bindings_deny(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20063,8 +20998,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiOptionsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_options(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_options(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20079,8 +21016,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiCallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_image(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_image(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20095,8 +21034,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiCallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_speech(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_speech(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20111,8 +21052,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::VoiceBankPackPutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_voices_packs_put(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_voices_packs_put(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20127,9 +21070,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::VoiceRenderConsentRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_voices_render_consent(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_voices_render_consent(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20144,9 +21088,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::VoiceTargetProvisionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_voices_targets_provision(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_voices_targets_provision(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20161,9 +21106,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::VoiceTargetEvictRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_voices_targets_evict(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_voices_targets_evict(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20178,8 +21124,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::VoiceBankInspectRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_voices_inspect(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_voices_inspect(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20194,8 +21142,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::VoiceRenderLineageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_voices_lineage(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_voices_lineage(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20210,8 +21160,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiCallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_transcribe(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_transcribe(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20226,8 +21178,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiCallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_embed(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_embed(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20242,8 +21196,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiCallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_video(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_video(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20258,8 +21214,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiVideoJobRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_video_poll(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_video_poll(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20274,8 +21232,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiVideoJobRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_video_cancel(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_video_cancel(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20290,8 +21250,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AskImageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_ask_image(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_ask_image(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20306,8 +21268,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::AiVerdictRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::ai_verdict(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::ai_verdict(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20322,8 +21286,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::GraphAskRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_graph_ask(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_graph_ask(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20338,8 +21304,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::GraphAdmitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_graph_admit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_graph_admit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20354,8 +21322,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_create(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_create(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20370,8 +21340,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionEditRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_edit(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_questions_edit(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20386,8 +21358,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionPauseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_pause(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_questions_pause(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20402,8 +21376,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionBackfillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_backfill(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_backfill(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20418,8 +21394,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_read(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_questions_read(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20434,8 +21412,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionOutcomeWindowsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_questions_outcome_windows(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_outcome_windows(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -20452,8 +21432,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionAnswersRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_answers(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_answers(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20471,8 +21453,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionRefreshRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_refresh(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_refresh(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20487,8 +21471,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionOutcomesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_outcomes(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_outcomes(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20503,11 +21489,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionOutcomesProjectRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_questions_outcomes_project(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20522,8 +21509,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::QuestionScheduleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_questions_schedule(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_questions_schedule(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20538,9 +21527,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::decision::DecisionBandReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_decisions_bands_read(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_decisions_bands_read(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20555,9 +21545,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::decision::DecisionBandLearnRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_decisions_bands_learn(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_decisions_bands_learn(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20572,9 +21563,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::decision::DecisionBandEnforceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_decisions_bands_enforce(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_decisions_bands_enforce(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20589,9 +21581,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::DecisionAskAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_decisions_asks_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_decisions_asks_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20606,9 +21599,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::DecisionAskClimbRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_decisions_asks_climb(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_decisions_asks_climb(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20623,11 +21617,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::receipt::DecisionAskConfirmGrantRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_decisions_asks_confirm_grant(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20642,8 +21637,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::self_decisions_asks(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_decisions_asks(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20674,7 +21671,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::outbound_consent::ConnectorCallRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::connector_call(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::connector_call(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -20683,7 +21680,7 @@ async fn execute_agent_verb_row_on(
                     "connector.call",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -20747,9 +21744,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BookingAvailabilityRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_booking_availability(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_booking_availability(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20764,8 +21762,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BookingBookRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_booking_book(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_booking_book(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20780,8 +21780,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BookingRescheduleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_booking_reschedule(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_booking_reschedule(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20796,8 +21798,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BookingCancelRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_booking_cancel(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_booking_cancel(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20812,9 +21816,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BookingConstraintTurnRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_booking_constraint_turn(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_booking_constraint_turn(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20829,8 +21834,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BookingPageTokenRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_booking_page_token(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_booking_page_token(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20853,8 +21860,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_ics_configure(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_ics_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20869,8 +21878,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_ics_poll(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::calendar_ics_poll(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20885,8 +21896,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::ingest::feed_door::CalendarIcsFeedRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_ics_status(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::calendar_ics_status(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20917,9 +21930,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::connectors::door::CalendarConnectorConfigureRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_connector_configure(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_connector_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20934,8 +21948,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::connectors::door::CalendarConnectorRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_connector_get(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_connector_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20950,8 +21966,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::connectors::door::CalendarConnectorRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_connector_pull(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_connector_pull(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20966,8 +21984,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::connectors::door::CalendarConnectorWriteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_connector_write(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_connector_write(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20982,8 +22002,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::connectors::door::CalendarConnectorKillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_connector_kill(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_connector_kill(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -20998,8 +22020,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::connectors::door::CalendarImipTransportConfig =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_imip_configure(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::calendar_imip_configure(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21014,8 +22038,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::calendar_imip_get(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::calendar_imip_get(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21038,9 +22064,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::ingest::door::CalendarIcsImportRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_calendar_ics_import(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_calendar_ics_import(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21063,9 +22090,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::ingest::door::CalendarInstanceMoveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_calendar_instances_move(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_calendar_instances_move(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21120,9 +22148,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::meeting::CalendarMeetingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_calendar_check_in_due(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_calendar_check_in_due(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21137,9 +22166,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::meeting::CalendarCheckInRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_calendar_check_in_answer(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_calendar_check_in_answer(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21154,11 +22184,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_calendar_outcome_policy_get(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21173,11 +22204,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::calendar::meeting::CalendarOutcomePolicy =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_calendar_outcome_policy_set(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21251,7 +22283,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::CriticalWriteConfirmPendingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_writes_critical_confirm_pending(
                     server,
                     auth,
@@ -21261,8 +22293,9 @@ async fn execute_agent_verb_row_on(
                         "vault.writes.critical_confirm.pending",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21277,7 +22310,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::CriticalWriteConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_writes_critical_confirm_clear(
                     server,
                     auth,
@@ -21287,8 +22320,9 @@ async fn execute_agent_verb_row_on(
                         "vault.writes.critical_confirm.clear",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21306,7 +22340,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::CriticalWriteConfirmRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_writes_critical_confirm_decline(
                     server,
                     auth,
@@ -21316,8 +22350,9 @@ async fn execute_agent_verb_row_on(
                         "vault.writes.critical_confirm.decline",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21335,7 +22370,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::CriticalWriteConfirmReceiptRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_writes_critical_confirm_receipt(
                     server,
                     auth,
@@ -21345,8 +22380,9 @@ async fn execute_agent_verb_row_on(
                         "vault.writes.critical_confirm.receipt",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21409,8 +22445,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::VectorPutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_vectors_put(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_vectors_put(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21441,13 +22479,13 @@ async fn execute_agent_verb_row_on(
             let asked = (input.query.clone(), input.limit);
             let output = oneiron::task_verb::sdk::vault_search_bm25(&memory, input)
                 .map_err(mcp_facade_error)?;
-            let (output, listed) = crate::api::search::complete_bm25_with_home(
+            let (output, listed) = Box::pin(crate::api::search::complete_bm25_with_home(
                 server.vault(),
                 output,
                 &asked.0,
                 asked.1,
                 &actor.home_caller(),
-            )
+            ))
             .await;
             // The home's references, found under the caller's own proof.
             served.extend(listed);
@@ -21620,11 +22658,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::core_write::ConversationTurnCreateInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_conversations_turns_create(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21639,11 +22678,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::core_write::DagRecordAppendInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_conversations_records_append(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21658,8 +22698,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::core_write::CoreBatchWriteInput =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_batch(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_batch(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21836,11 +22878,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::office_body::DeckPreviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_artifacts_body_deck_preview(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -21895,7 +22938,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::llm::model_step::SettledStepRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_step(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_step(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -21904,7 +22947,7 @@ async fn execute_agent_verb_row_on(
                     "vault.runs.step",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -21920,7 +22963,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::engine_executor::checkpoint_read::CheckpointReadRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_checkpoint(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_checkpoint(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -21929,7 +22972,7 @@ async fn execute_agent_verb_row_on(
                     "vault.runs.checkpoint",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -21945,15 +22988,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::TurnProgramAdmissionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_turn_programs_admission(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.turn_programs.admission",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_turn_programs_admission(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.turn_programs.admission",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -21970,7 +23015,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::ProgramRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_program(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_program(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -21979,7 +23024,7 @@ async fn execute_agent_verb_row_on(
                     "vault.runs.program",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -21995,17 +23040,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::SettledProgramStepRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_program_step(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.runs.program_step",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_runs_program_step(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.runs.program_step",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22020,15 +23066,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::ProgramCheckpointRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_program_checkpoint(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.runs.program_checkpoint",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_runs_program_checkpoint(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.runs.program_checkpoint",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22045,8 +23093,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::ReleaseTurnProgramHoldRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_program_hold_release(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_runs_program_hold_release(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22063,9 +23113,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::EmptyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consolidation_home_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consolidation_home_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22080,11 +23131,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::ConsolidationHomePickRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_home_pick(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consolidation_home_pick(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22101,9 +23154,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::ConsolidationLineageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_consolidation_lineage(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consolidation_lineage(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22118,17 +23172,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::consolidation::ConsolidationPromoteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_promote(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.consolidation.promote",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_consolidation_promote(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.consolidation.promote",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22143,17 +23198,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::consolidation_frontier::ConsolidationPinRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_pin(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.consolidation.pin",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_consolidation_pin(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.consolidation.pin",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22168,15 +23224,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::consolidation_frontier::ConsolidationFrontierRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_frontier(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.consolidation.frontier",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consolidation_frontier(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.consolidation.frontier",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22193,15 +23251,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::consolidation_frontier::ConsolidationAccountingRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_accounting(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.consolidation.accounting",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consolidation_accounting(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.consolidation.accounting",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22218,15 +23278,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::consolidation::ConsolidationEvidenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_consolidation_evidence(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.consolidation.evidence",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_consolidation_evidence(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.consolidation.evidence",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22243,8 +23305,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_evidence(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_evidence(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22259,9 +23323,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_evidence::SieveEvidenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_evidence_replay(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_evidence_replay(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22276,8 +23341,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::WakeCadenceRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_cadence(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_cadence(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22292,8 +23359,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::observation::WakeSettlementsRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_settlements(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_settlements(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22308,9 +23377,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::observation::WakeSettlementRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_settlements_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_settlements_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22325,8 +23395,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_queue(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_queue(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22341,8 +23413,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_retained(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_retained(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22357,8 +23431,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SievePageRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_receipts(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_receipts(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22373,8 +23449,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SievePolicyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_policy(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_policy(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22389,8 +23467,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SievePolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_policy_set(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_policy_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22405,9 +23485,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SievePolicyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_recipe_policy(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_recipe_policy(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22422,9 +23503,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SieveRecipePolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_recipe_policy_set(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_recipe_policy_set(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22439,8 +23521,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SieveLeaseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_lease(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_sieve_lease(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22455,8 +23539,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_wake::sieve_doors::SieveLeaseRefillRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_sieve_lease_refill(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_sieve_lease_refill(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22471,9 +23557,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::FreeTimePolicyRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_free_time_policy_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_free_time_policy_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22488,13 +23575,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::FreeTimePolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_free_time_policy_set(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_free_time_policy_set(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22509,9 +23597,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::FreeTimePolicySetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_free_time_policy_set_as(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_free_time_policy_set_as(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22526,8 +23615,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::FreeTimeCyclesRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_free_time_cycles(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_free_time_cycles(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22542,8 +23633,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::dreamer_runner::FreeTimeCycleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_free_time_cycle(server, auth, input).await;
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_free_time_cycle(
+                server, auth, input,
+            ))
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22558,7 +23651,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ClaimSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_claims_vet(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_claims_vet(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -22567,7 +23660,7 @@ async fn execute_agent_verb_row_on(
                     "vault.claims.vet",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -22583,7 +23676,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::ClaimProposalReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_claims_vetting(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_claims_vetting(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -22592,7 +23685,7 @@ async fn execute_agent_verb_row_on(
                     "vault.claims.vetting",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -22608,21 +23701,23 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::SignalExtractionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_memory_signal_extraction(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.memory.signal_extraction",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_memory_signal_extraction(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.memory.signal_extraction",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22642,7 +23737,7 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::SignalExtractionResultRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_memory_signal_extraction_result(
                     server,
                     auth,
@@ -22658,8 +23753,9 @@ async fn execute_agent_verb_row_on(
                         "vault.memory.signal_extraction.result",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22682,11 +23778,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelIdentityProvisionRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_provision(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22701,9 +23798,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelIdentityBindRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_channel_identities_bind(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_channel_identities_bind(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22718,11 +23816,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelIdentityRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_fulfill(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22737,8 +23836,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelIdentityRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_channel_identities_rotate(
-                server, auth, input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_channel_identities_rotate(
+                    server, auth, input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -22755,11 +23856,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelIdentityReleaseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_release(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22777,11 +23879,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelIdentityRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_route_inbound(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22816,11 +23919,12 @@ async fn execute_agent_verb_row_on(
             .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::ChannelSelectionUpdateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_channel_identities_selection_update(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22861,11 +23965,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::DeliveryWindowPolicyPutRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_delivery_window_policy_put(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22888,11 +23993,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::channel_doors::DeliveryWindowPolicyRetractRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_delivery_window_policy_retract(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22923,17 +24029,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryCreateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_summaries_create(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.summaries.create",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_summaries_create(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.summaries.create",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -22964,7 +24071,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryKeepRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_summaries_keep(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_summaries_keep(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -22973,7 +24080,7 @@ async fn execute_agent_verb_row_on(
                     "vault.summaries.keep",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -22989,7 +24096,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryEditRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_summaries_edit(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_summaries_edit(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -22998,7 +24105,7 @@ async fn execute_agent_verb_row_on(
                     "vault.summaries.edit",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23014,7 +24121,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryPatchRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_summaries_patch(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_summaries_patch(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23023,7 +24130,7 @@ async fn execute_agent_verb_row_on(
                     "vault.summaries.patch",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23039,17 +24146,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryRegenerateRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_summaries_regenerate(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.summaries.regenerate",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_summaries_regenerate(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.summaries.regenerate",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23072,15 +24180,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryProposalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_summaries_proposals_merge(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.summaries.proposals.merge",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_summaries_proposals_merge(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.summaries.proposals.merge",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -23097,7 +24207,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryProposalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_summaries_proposals_switch(
                     server,
                     auth,
@@ -23107,8 +24217,9 @@ async fn execute_agent_verb_row_on(
                         "vault.summaries.proposals.switch",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23123,7 +24234,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::scope_summary::SummaryProposalRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_summaries_proposals_reject(
                     server,
                     auth,
@@ -23133,8 +24244,9 @@ async fn execute_agent_verb_row_on(
                         "vault.summaries.proposals.reject",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23165,9 +24277,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::BriefCitationFollowRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_notes_follow_citation(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_notes_follow_citation(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23286,9 +24399,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_notes_history_purge(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_notes_history_purge(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23303,11 +24417,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::NoteHistoryPurgeExecuteRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_notes_history_purge_execute(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23322,11 +24437,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::NoteHistoryPurgeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_notes_history_purge_receipts(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23341,17 +24457,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::note::NoteAccessRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_notes_editor_bind(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.notes.editor.bind",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_notes_editor_bind(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.notes.editor.bind",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23366,17 +24483,18 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::note::NoteEditorCloseRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_notes_editor_close(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.notes.editor.close",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_notes_editor_close(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.notes.editor.close",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23439,15 +24557,17 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::linear_sync::LinearMappingEdit =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_tasks_linear_mapping_edit(
-                server,
-                auth,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "vault.tasks.linear.mapping.edit",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_tasks_linear_mapping_edit(
+                    server,
+                    auth,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "vault.tasks.linear.mapping.edit",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -23478,7 +24598,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::RunAttachRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_run_attach(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_run_attach(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23487,7 +24607,7 @@ async fn execute_agent_verb_row_on(
                     "self.run.attach",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23503,7 +24623,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::FoldUnfoldRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_folds_describe(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_folds_describe(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23512,7 +24632,7 @@ async fn execute_agent_verb_row_on(
                     "self.folds.describe",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23528,13 +24648,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::FoldHistoryRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_history(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_history(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.history"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23550,7 +24670,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::run_review::RunReviewRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_review(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_review(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23559,7 +24679,7 @@ async fn execute_agent_verb_row_on(
                     "vault.runs.review",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23575,7 +24695,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::run_review::RunSettleRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_settle(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_settle(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23585,7 +24705,7 @@ async fn execute_agent_verb_row_on(
                 ),
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23601,7 +24721,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::run_review::RunSettlementRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_runs_settlement(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_runs_settlement(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23610,7 +24730,7 @@ async fn execute_agent_verb_row_on(
                     "vault.runs.settlement",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23626,7 +24746,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::memory::run_review::RevertRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_revert_run(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_revert_run(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23636,7 +24756,7 @@ async fn execute_agent_verb_row_on(
                 ),
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23652,12 +24772,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityMergeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_merge(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_identity_merge(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23673,12 +24793,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentitySplitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_split(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_identity_split(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23694,12 +24814,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityFacetRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_facet(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_identity_facet(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23715,11 +24835,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityAssertDistinctRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_assert_distinct(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_identity_assert_distinct(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ),
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -23736,13 +24858,14 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityProposeRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_propose(
-                server,
-                auth,
-                crate::api::facade::owner_binding::act_surface(auth),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_identity_propose(
+                    server,
+                    auth,
+                    crate::api::facade::owner_binding::act_surface(auth),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23757,12 +24880,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityUndoRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_identity_undo(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::vault_identity_undo(
                 server,
                 auth,
                 crate::api::facade::owner_binding::act_surface(auth),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23778,8 +24901,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityEntityRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_resolve(server, auth, input).await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_identity_resolve(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23794,9 +24919,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityEventRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_identity_events_get(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_identity_events_get(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23811,14 +24937,15 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityProposalResolveRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_identity_proposals_resolve(
                     server,
                     auth,
                     crate::api::facade::owner_binding::act_surface(auth),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23833,11 +24960,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::IdentityPairRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_identity_proposals_for_pair(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23852,11 +24980,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CustodyMemberRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_custody_members_drain_begin(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23871,11 +25000,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CustodyDrainCommitRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_custody_members_drain_commit(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23890,11 +25020,12 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CustodyMemberRef =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::vault_custody_members_drain_folder(
                     server, auth, input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23909,9 +25040,10 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::CustodyMemberReenrolRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
-                crate::api::facade::host_doors::vault_custody_members_reenrol(server, auth, input)
-                    .await;
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::vault_custody_members_reenrol(server, auth, input),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -23926,7 +25058,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::ConnectorAnswerRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::connector_answer(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::connector_answer(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
@@ -23935,7 +25067,7 @@ async fn execute_agent_verb_row_on(
                     "connector.answer",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23952,7 +25084,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserOpenInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_open(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_open(
                 server,
                 auth,
                 actor
@@ -23967,7 +25099,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.open",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -23984,7 +25116,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserObserveInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_observe(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_observe(
                 server,
                 auth,
                 actor
@@ -23999,7 +25131,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.observe",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24016,7 +25148,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserFindInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_find(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_find(
                 server,
                 auth,
                 actor
@@ -24031,7 +25163,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.find",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24048,7 +25180,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserClickInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_click(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_click(
                 server,
                 auth,
                 actor
@@ -24063,7 +25195,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.click",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24080,7 +25212,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserPointInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_click_at(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_click_at(
                 server,
                 auth,
                 actor
@@ -24095,7 +25227,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.click_at",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24112,7 +25244,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserTypeInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_type(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_type(
                 server,
                 auth,
                 actor
@@ -24127,7 +25259,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.type",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24144,7 +25276,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserSelectInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_select(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_select(
                 server,
                 auth,
                 actor
@@ -24159,7 +25291,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.select",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24176,7 +25308,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserWaitForInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_wait_for(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_wait_for(
                 server,
                 auth,
                 actor
@@ -24191,7 +25323,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.wait_for",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24208,7 +25340,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserExpectInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_expect(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_expect(
                 server,
                 auth,
                 actor
@@ -24223,7 +25355,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.expect",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24240,23 +25372,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserScreenshotInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_screenshot(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.screenshot",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_browser_screenshot(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.screenshot",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24272,7 +25405,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserViewInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_view(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_view(
                 server,
                 auth,
                 actor
@@ -24287,7 +25420,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.view",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24304,7 +25437,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserCropInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_crop(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_crop(
                 server,
                 auth,
                 actor
@@ -24319,7 +25452,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.crop",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24336,7 +25469,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserZoomInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_zoom(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_zoom(
                 server,
                 auth,
                 actor
@@ -24351,7 +25484,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.zoom",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24368,7 +25501,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserBatchInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_batch(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_batch(
                 server,
                 auth,
                 actor
@@ -24383,7 +25516,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.batch",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24400,23 +25533,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserLibraryFindInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_library_find(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.library.find",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_browser_library_find(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.library.find",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24432,23 +25566,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserLibraryDraftInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_library_draft(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.library.draft",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_browser_library_draft(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.library.draft",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24464,7 +25599,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserDemonstrationStartInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) =
+            let (output, listed) = Box::pin(
                 crate::api::facade::host_doors::self_browser_demonstration_start(
                     server,
                     auth,
@@ -24480,8 +25615,9 @@ async fn execute_agent_verb_row_on(
                         "self.browser.demonstration.start",
                     ),
                     input,
-                )
-                .await;
+                ),
+            )
+            .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24497,21 +25633,23 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserDemonstrationStopInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_demonstration_stop(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.demonstration.stop",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_browser_demonstration_stop(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.demonstration.stop",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -24529,21 +25667,23 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserLibraryProposeInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_library_propose(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.library.propose",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_browser_library_propose(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.library.propose",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -24561,23 +25701,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserLibraryRetireInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_library_retire(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.library.retire",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_browser_library_retire(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.library.retire",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24593,21 +25734,23 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserLibraryRetiredInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_library_retired(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.library.retired",
+            let (output, listed) = Box::pin(
+                crate::api::facade::host_doors::self_browser_library_retired(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.library.retired",
+                    ),
+                    input,
                 ),
-                input,
             )
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
@@ -24625,23 +25768,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserLibraryRunInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_library_run(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.library.run",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_browser_library_run(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.library.run",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24657,7 +25801,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserHandoverInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_handover(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_browser_handover(
                 server,
                 auth,
                 actor
@@ -24672,7 +25816,7 @@ async fn execute_agent_verb_row_on(
                     "self.browser.handover",
                 ),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24689,23 +25833,24 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::task_verb::sdk::BrowserSwitchEngineInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_browser_switch_engine(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                (actor.actor_ref, actor.actor_class),
-                oneiron::task_verb::verb_hook_boundary::door_invocation_of(
-                    &memory,
-                    "self.browser.switch_engine",
-                ),
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::self_browser_switch_engine(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    (actor.actor_ref, actor.actor_class),
+                    oneiron::task_verb::verb_hook_boundary::door_invocation_of(
+                        &memory,
+                        "self.browser.switch_engine",
+                    ),
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24721,18 +25866,19 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::code_run::MemorySupersedeInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::vault_claims_supersede(
-                server,
-                auth,
-                actor
-                    .off_record_session
-                    .as_deref()
-                    .map(oneiron::EntityId::from_hex)
-                    .transpose()
-                    .map_err(|_| invalid())?,
-                input,
-            )
-            .await;
+            let (output, listed) =
+                Box::pin(crate::api::facade::host_doors::vault_claims_supersede(
+                    server,
+                    auth,
+                    actor
+                        .off_record_session
+                        .as_deref()
+                        .map(oneiron::EntityId::from_hex)
+                        .transpose()
+                        .map_err(|_| invalid())?,
+                    input,
+                ))
+                .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
                 listed,
@@ -24747,13 +25893,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::FoldMarkRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_fold(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_fold(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.fold"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24769,13 +25915,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::FoldCompactRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_compact(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_compact(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.compact"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24791,13 +25937,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::FoldUnfoldRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_unfold(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_unfold(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.unfold"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24813,13 +25959,13 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::code_run::fold_api::FoldRunRequest =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_folds(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_folds(
                 server,
                 auth,
                 (actor.actor_ref, actor.actor_class),
                 oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, "self.folds"),
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24835,7 +25981,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::TaskRefuseInput> =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::tasks_refuse(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::tasks_refuse(
                 server,
                 auth,
                 actor
@@ -24845,7 +25991,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24862,7 +26008,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::code_run::ReportBlockedInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_report_blocked(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_report_blocked(
                 server,
                 auth,
                 actor
@@ -24872,7 +26018,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24888,7 +26034,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::AgentSpawnInput> =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_agents_spawn(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_agents_spawn(
                 server,
                 auth,
                 actor
@@ -24898,7 +26044,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24915,7 +26061,7 @@ async fn execute_agent_verb_row_on(
             let input: oneiron::task_verb::sdk::LiveRunRequest<
                 oneiron::code_run::LeaderSplitInput,
             > = serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_leader_split(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_leader_split(
                 server,
                 auth,
                 actor
@@ -24925,7 +26071,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
@@ -24941,7 +26087,7 @@ async fn execute_agent_verb_row_on(
                 .map_err(mcp_facade_error)?;
             let input: oneiron::task_verb::sdk::LiveRunRequest<oneiron::code_run::SkillCallInput> =
                 serde_json::from_value(input).map_err(|_| invalid())?;
-            let (output, listed) = crate::api::facade::host_doors::self_skills_call(
+            let (output, listed) = Box::pin(crate::api::facade::host_doors::self_skills_call(
                 server,
                 auth,
                 actor
@@ -24951,7 +26097,7 @@ async fn execute_agent_verb_row_on(
                     .transpose()
                     .map_err(|_| invalid())?,
                 input,
-            )
+            ))
             .await;
             // Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).
             served.listed(crate::api::facade::host_doors::support::ListedRows::rows(
