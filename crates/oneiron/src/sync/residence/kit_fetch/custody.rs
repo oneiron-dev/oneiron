@@ -9,12 +9,14 @@
 //! the part fetches' own.
 //!
 //! The custody comes in pages read only under the lineage's lock: the head
-//! in slices, then the frames after the cursor's sequence number through the
-//! head's, each page at most `KIT_CUSTODY_PAGE_BYTES` of both, or one frame
-//! alone where it is larger. A page that is not the last names its cursor:
-//! the head offset and the last sequence number it reached. Every answer
-//! stays within the residence RPC result bound once base64 is added
-//! ([`KIT_CUSTODY_REPLY_MAX`]). Sealed bytes only: the home opens nothing.
+//! in slices, then the log frames after the cursor's sequence number,
+//! through the head's and on past it as far as the home's log runs without
+//! a gap (FIX 12020), each page at most `KIT_CUSTODY_PAGE_BYTES` of all, or
+//! one frame alone where it is larger. A page that is not the last names
+//! its cursor: the head offset and the last sequence number it reached.
+//! Every answer stays within the residence RPC result bound once base64 is
+//! added ([`KIT_CUSTODY_REPLY_MAX`]). Sealed bytes only: the home opens
+//! nothing.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 

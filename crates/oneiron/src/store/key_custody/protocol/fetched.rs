@@ -3,9 +3,10 @@
 //! restore on a new host reads in place of the folder beside the backup.
 //!
 //! The home serves the sealed head in slices and then the log frames after
-//! a sequence number through the head's, a page at a time, each page read
-//! under the lineage's lock so its head and frames are one pair. A page that
-//! is not the last names its cursor: the head offset and the last sequence
+//! a sequence number, through the head's and on past it as far as its log
+//! runs without a gap (FIX 12020), a page at a time, each page read under
+//! the lineage's lock so its head and frames are one pair. A page that is
+//! not the last names its cursor: the head offset and the last sequence
 //! number it reached. The fetched bytes are never trusted here: the restore
 //! opens the head and chains the frames through the validator it runs on
 //! the folder's.
@@ -33,17 +34,19 @@ pub struct CustodyHomePage {
     pub head_object_id: [u8; 32],
     /// The whole head's length in bytes.
     pub head_len: u64,
-    /// The log sequence number the head's position names.
+    /// The log sequence number the head's position names: the frames after
+    /// it are the home's log past its head (FIX 12020).
     pub head_seq: u64,
     /// Where the page's slice of the head starts.
     pub head_offset: u64,
     /// The head's bytes from `head_offset`; empty once the head is whole.
     pub head_part: Vec<u8>,
-    /// Log frames after the cursor's sequence number, in order, through the
-    /// head's at most: each with its sequence number.
+    /// Log frames after the cursor's sequence number, in order and without
+    /// a gap, through the head's and on past it: each with its sequence
+    /// number.
     pub frames: Vec<(u64, Vec<u8>)>,
-    /// Where the next page starts; `None` on the last, and where the home
-    /// lacks the next frame.
+    /// Where the next page starts; `None` on the last: the home lacks the
+    /// next frame, at a gap or the end of its log.
     pub next: Option<CustodyHomeCursor>,
 }
 

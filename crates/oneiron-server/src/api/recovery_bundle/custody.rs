@@ -84,16 +84,17 @@ pub(in crate::api) struct KitCustodyPageResponse {
     head_object_id: String,
     /// The whole head's length in bytes.
     head_length: u64,
-    /// The log sequence number the head's position names: the last frame
-    /// the pages serve.
+    /// The log sequence number the head's position names. The frames after
+    /// it are the home's log past its head (FIX 12020).
     head_seq: u64,
     /// Where the page's slice of the head starts.
     head_offset: u64,
     /// The head's bytes from `headOffset`, in standard base64; empty once the
     /// head is whole.
     head_part: String,
-    /// The frames after the cursor's sequence number, in order, through the
-    /// head's at most.
+    /// The frames after the cursor's sequence number, in order and without
+    /// a gap: through the head's, then on past it as far as the home's log
+    /// runs.
     frames: Vec<KitCustodyFrame>,
     /// The cursor to sign for the next page; absent on the last, and where
     /// the home lacks the next frame.

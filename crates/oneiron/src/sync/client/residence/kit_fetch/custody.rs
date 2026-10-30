@@ -3,10 +3,12 @@
 //! kit's rebuilt seed. Each page request is signed with the seed's owner
 //! anchor ([`KitCustodyFetch`]), and the home's kit custody door serves the
 //! lineage only to the root it pins for the vault. The sealed head comes in
-//! slices, then every log frame through the head's sequence number, each
-//! page continuing the one before it; a head the home switched under the
-//! scan starts it over. The bytes are checked here only for their order and
-//! lengths and the head's digest: the restore opens and chains them.
+//! slices, then every log frame the home holds in order: through the head's
+//! sequence number and on past it, to the first frame the home lacks (FIX
+//! 12020), each page continuing the one before it; a head the home switched
+//! under the scan starts it over. The bytes are checked here only for their
+//! order and lengths and the head's digest: the restore opens and chains
+//! them.
 
 use std::collections::BTreeMap;
 
@@ -109,10 +111,11 @@ impl KitHome {
 /// The custody lineage `lineage` as the residence home at `home` holds it,
 /// read with the kit alone, for a restore on an install that is no machine
 /// of the vault's (FIX 5846): `seed` is the kit's, rebuilt for the vault
-/// `vault_id`. The whole sealed head and every log frame through its
-/// sequence number, as far as the home holds them in order. `None` when the
-/// home holds no head of the lineage, or refused the kit. `home` is the
-/// home's address, as `https`, `http`, `wss` or `ws`.
+/// `vault_id`. The whole sealed head and every log frame from the first, as
+/// far as the home holds them in order: through the head's sequence number,
+/// and past it, where a head older than its anchor chains to the anchor (FIX
+/// 12020). `None` when the home holds no head of the lineage, or refused the
+/// kit. `home` is the home's address, as `https`, `http`, `wss` or `ws`.
 pub async fn fetch_custody_with_kit(
     home: &str,
     vault_id: &[u8; 32],
@@ -152,9 +155,11 @@ pub async fn fetch_custody_with_kit(
             continue;
         }
         held = Some(read);
-        let (_, head_len, head_seq) = read;
+        let (_, head_len, _) = read;
         // Each page continues where the one before it ended, the frames
-        // only once the head is whole, and none past the head's.
+        // only once the head is whole and without a gap: those past the
+        // head's sequence number are the home's log after its head (FIX
+        // 12020).
         let part = decode(&page.head_part)?;
         if page.head_offset != head.len() as u64
             || head.len().saturating_add(part.len()) as u64 > head_len
@@ -164,10 +169,7 @@ pub async fn fetch_custody_with_kit(
         head.extend_from_slice(&part);
         let mut reached = cursor.1;
         for frame in &page.frames {
-            if reached.checked_add(1) != Some(frame.seq)
-                || frame.seq > head_seq
-                || (head.len() as u64) < head_len
-            {
+            if reached.checked_add(1) != Some(frame.seq) || (head.len() as u64) < head_len {
                 return Err(refused());
             }
             frames.insert(frame.seq, decode(&frame.frame)?);

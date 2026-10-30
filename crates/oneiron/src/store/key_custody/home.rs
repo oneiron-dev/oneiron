@@ -94,11 +94,13 @@ impl Store {
 
     /// One page of what this home holds of `lineage`, for the kit's custody
     /// fetch (FIX 5846): the head's bytes from `head_offset`, then, once the
-    /// head is whole, the frames after `after_seq` through the head's, at
-    /// most `fill` bytes of both, or one frame alone where it is larger.
-    /// Read only, under the commit's own lineage lock, so the head and the
-    /// frames it names are one pair; the scan ends at a frame the home
-    /// lacks. `None` with no head here, or an offset past the head's end.
+    /// head is whole, the log frames after `after_seq`, through the head's
+    /// and on past it as far as the home's log runs without a gap (FIX
+    /// 12020), at most `fill` bytes of all, or one frame alone where it is
+    /// larger. Read only, under the commit's own lineage lock, so the head
+    /// and the frames it names are one pair; the scan ends at the first
+    /// frame the home lacks: a gap, or the end of its log. `None` with no
+    /// head here, or an offset past the head's end.
     pub(crate) fn residence_custody_page(
         &self,
         lineage: Lineage,
@@ -125,19 +127,24 @@ impl Store {
         let head_len = head.len() as u64;
         let mut frames = Vec::new();
         let mut reached = after_seq;
-        let mut gap = false;
-        while next_offset == head_len && reached < head_seq {
-            let seq = reached.saturating_add(1);
-            let Some(frame) = target.frame(lineage, seq)? else {
-                gap = true;
-                break;
-            };
-            if frame.len() > room && !(head_part.is_empty() && frames.is_empty()) {
-                break;
+        // The page holds no room for the next frame: the scan goes on from it.
+        let mut full = false;
+        if next_offset == head_len {
+            // Past the head's sequence number too: a head older than its
+            // anchor chains to the anchor through the frames after it (FIX
+            // 12020).
+            while let Some(seq) = reached.checked_add(1) {
+                let Some(frame) = target.frame(lineage, seq)? else {
+                    break;
+                };
+                if frame.len() > room && !(head_part.is_empty() && frames.is_empty()) {
+                    full = true;
+                    break;
+                }
+                room = room.saturating_sub(frame.len());
+                frames.push((seq, frame));
+                reached = seq;
             }
-            room = room.saturating_sub(frame.len());
-            frames.push((seq, frame));
-            reached = seq;
         }
         let next = if next_offset < head_len {
             Some(CustodyHomeCursor {
@@ -145,7 +152,7 @@ impl Store {
                 after_seq,
             })
         } else {
-            (!gap && reached < head_seq).then_some(CustodyHomeCursor {
+            full.then_some(CustodyHomeCursor {
                 head_offset: head_len,
                 after_seq: reached,
             })
