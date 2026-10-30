@@ -14,24 +14,15 @@ use crate::edit_distance::publisher::PublisherActor;
 use crate::{EntityId, Result, Vault};
 
 impl Vault {
-    /// The ACTOR `publisher_ref` published `artifact` as. `None` for an
-    /// artifact with no publisher actor (the owner's own or local packs) and
-    /// for one shipped through more than one hub: its delivery names no comm
-    /// counterparty, and none is invented.
+    /// The ACTOR `publisher_ref` published `artifact` as, read on the
+    /// run's import join. `None` for an artifact with no publisher actor
+    /// (the owner's own or local packs) and for one shipped through more
+    /// than one hub: its delivery names no comm counterparty, and none is
+    /// invented.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub(super) fn report_publisher_actor(
-        &self,
-        publisher_ref: &str,
-        artifact: EntityId,
-    ) -> Result<Option<PublisherActor>> {
-        let join = self.report_import_join()?;
-        self.report_publisher_actor_in(&join, publisher_ref, artifact)
-    }
-
-    /// [`Self::report_publisher_actor`] on the run's import join.
     pub(super) fn report_publisher_actor_in(
         &self,
         join: &ReportImportJoin,

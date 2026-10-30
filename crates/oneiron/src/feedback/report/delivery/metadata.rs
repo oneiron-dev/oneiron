@@ -100,14 +100,8 @@ impl Vault {
     }
 
     /// The one SKILL entity `publisher_ref` shipped under `skill_id`, from
-    /// its canonical import receipts and installed packs; `None` when there
-    /// is none, or more than one.
-    fn report_artifact(&self, publisher_ref: &str, skill_id: &str) -> Result<Option<EntityId>> {
-        let join = self.report_import_join()?;
-        self.report_artifact_in(&join, publisher_ref, skill_id)
-    }
-
-    /// [`Self::report_artifact`] on the run's import join.
+    /// the run's import join of its canonical import receipts and installed
+    /// packs; `None` when there is none, or more than one.
     fn report_artifact_in(
         &self,
         join: &ReportImportJoin,
