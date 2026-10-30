@@ -160,7 +160,7 @@ fn normalize_epoch_timestamp_secs(value: u64) -> Result<u64> {
     Ok(value)
 }
 
-fn looks_like_linkedin_time(value: &str) -> bool {
+pub(super) fn looks_like_linkedin_time(value: &str) -> bool {
     let lower = value.trim().to_ascii_lowercase();
     if lower.contains(':') && (lower.ends_with("am") || lower.ends_with("pm")) {
         return true;
