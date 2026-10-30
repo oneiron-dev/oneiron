@@ -26,12 +26,15 @@
 //! withholds that handle alone, PendingCustody, warned; anywhere else
 //! today's path goes on, warned.
 //!
-//! Only an erase retires a credential's keys: nothing stages one for a
-//! rotate or a revoke, an image's own erase rows never land (`fences`), and
-//! the finisher runs an erase's intent alone. So a retired credential key in
-//! custody a restore takes, and a credential key's erase intent, are
-//! erase-only evidence: a fence is derived from them, never from a peer's
-//! tombstone.
+//! Only an erase retires a credential's value keys: nothing stages one for
+//! a rotate or a revoke, an image's own erase rows never land (`fences`),
+//! and the finisher runs an erase's intent alone. So a retired credential
+//! value key in custody a restore takes, and a credential key's erase
+//! intent, are erase-only evidence: a fence is derived from them, never
+//! from a peer's tombstone. A carrier's key also retires once what it
+//! carried is answered (FIX 7402): a Retention intent of a transition's or
+//! request input's instance, which the finisher runs too and which no fence
+//! is ever derived from.
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -170,14 +173,23 @@ pub(crate) fn credential_erases_staged() -> u64 {
 }
 
 /// The custody finisher's predicate for a credential's keys: an erase's
-/// intent for a fenced id runs; any other waits, warned (nothing else
-/// retires a credential's keys).
+/// intent for a fenced id runs, and so does a carrier key's retirement once
+/// what it carried is answered (FIX 7402); any other waits, warned (nothing
+/// else retires a credential's keys).
 fn credential_retirement_ready(
     store: &Store,
     txn: &RoTxn<'_>,
     intent: &RetirementIntent,
 ) -> Result<bool> {
     let parent = parent_of(&intent.subject).ok_or_else(|| intent.subject.kind().corrupt())?;
+    if intent.cause == RetireCause::Retention
+        && matches!(
+            intent.subject.kind(),
+            CustodyKind::CustodyTransition | CustodyKind::CustodyRequestInput
+        )
+    {
+        return Ok(true);
+    }
     let fenced = FENCES.contains(store, txn, &parent)?;
     if intent.cause != RetireCause::Erase || !fenced {
         tracing::warn!(

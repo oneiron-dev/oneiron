@@ -31,6 +31,9 @@ impl SyncServer {
         config: SyncServerConfig,
     ) -> Result<Self, oneiron::Error> {
         config.validate()?;
+        // Authority work past its row waits this server's own queue wait
+        // (FIX 8091, L14 s45 09:35); a crossing still only measures.
+        oneiron::authority::set_authority_work_wait_ms(config.limits.queue_wait_timeout_ms);
         vault.recover_admission_intents()?;
         // Genuine host authority must exist before any scoped-read fail-closed
         // policy applies. Dev/no-secret and blind-relay modes mint nothing.
@@ -255,6 +258,7 @@ impl SyncServer {
             retained,
             presence,
             removal_deliveries: crate::server::removal_delivery::RemovalDeliveries::start(&vault),
+            leaf_keys: crate::handler::LeafKeyRelay::default(),
             usage_ledger: UsageLedger::new(vault.clone()),
             retrieval_buffer: crate::usage::RetrievalMeterBuffer::new(UsageLedger::new(
                 vault.clone(),

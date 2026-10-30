@@ -170,6 +170,8 @@ fn publish_effect(request: &ArtifactPublishVerbRequest) -> ExternalEffectGateInp
         },
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(request.actor.entity_ref()),
+            // FIX 11921: the run the publisher writes for, if any.
+            run_attempt: request.actor.run_attempt(),
             ..GateProvenanceHandles::default()
         },
         verb: "publish".to_owned(),

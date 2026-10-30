@@ -410,11 +410,12 @@ pub(super) async fn run_code_mode_verb(
     let origin = run.origin.clone();
     // A media call spends on the run's own line, as its steps do (FIX 780).
     let line = media_line(server, tool.name, run.run_id);
+    // The verb table's fan-out, on the heap (FIX 12072).
     let (output, ..) = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
         crate::api::facade::host_doors::with_calling_line(
             line,
-            execute_agent_verb_input(
+            Box::pin(execute_agent_verb_input(
                 server,
                 tool.name,
                 input,
@@ -422,7 +423,7 @@ pub(super) async fn run_code_mode_verb(
                 Some(run),
                 &mut served,
                 &mut board_hooks,
-            ),
+            )),
         ),
     )
     .await?;

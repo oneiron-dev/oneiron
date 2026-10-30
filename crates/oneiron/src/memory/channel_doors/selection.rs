@@ -168,11 +168,8 @@ impl Memory<'_> {
             ChannelIdentitySelectionWriter::owner(owner)
         } else {
             super::super::support::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-            ChannelIdentitySelectionWriter::from_authenticated_write(&crate::WriteActor::new(
-                self.actor,
-                self.actor_class,
-            ))
-            .map_err(selection_error)?
+            ChannelIdentitySelectionWriter::from_authenticated_write(&self.write_actor())
+                .map_err(selection_error)?
         };
         let patch = match input.patch {
             ChannelSelectionPatchInput::Remove { rule_id } => {

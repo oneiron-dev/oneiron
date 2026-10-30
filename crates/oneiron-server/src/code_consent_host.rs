@@ -18,9 +18,12 @@
 //!
 //! A held browser act (FIX 10423) is driven on the run's own live browser
 //! instead, once (`browser`): the same original caller check first, then
-//! the exact act its press held, under one press armed for it alone.
+//! the exact act its press held, under one press armed for it alone. A
+//! held desktop act (FIX 11499) is driven the same way on the run's own
+//! live desktop (`desktop`).
 
 mod browser;
+mod desktop;
 
 use std::sync::{Arc, Weak};
 
@@ -85,7 +88,10 @@ pub(crate) fn resume_answered(
             .map_err(ledger_error)?;
         return Ok(());
     }
-    if vault.code_consent_held_browser_action(wait_id)?.is_some() {
+    if let Some(action) = vault.code_consent_held_browser_action(wait_id)? {
+        if action.act.starts_with("self.desktop.") {
+            return desktop::resume_answered_desktop(server, vault, wait_id);
+        }
         return browser::resume_answered_browser(server, vault, wait_id);
     }
     let mut host = ServedConnectorCallHost::new(server)?;

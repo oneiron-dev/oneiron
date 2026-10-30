@@ -89,6 +89,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.budgets.resident_shares.set", post(facade_route))
         .route("/vault.runners.seats.quotas", post(facade_route))
         .route("/vault.runners.seats.top_up", post(facade_route))
+        .route("/vault.runners.seats.resume", post(facade_route))
         .route("/vault.fanout.resume", post(facade_route))
         .route("/vault.fanout.resume_as", post(facade_route))
         .route("/vault.fanout.ack", post(facade_route))
@@ -640,6 +641,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             post(facade_route),
         )
         .route("/vault.lenses.propose", post(facade_route))
+        .route("/vault.lenses.propose_from_pack", post(facade_route))
         .route("/vault.lenses.activate", post(facade_route))
         .route("/vault.lenses.deactivate", post(facade_route))
         .route("/vault.lenses.list", post(facade_route))
