@@ -40,15 +40,12 @@ impl Memory<'_> {
             ));
         }
         if let Some(raw) = self.vault.get_raw_in(content.read(), &id)?
-            && crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
-                header.entity_type == crate::registry::ENTITY_TYPE_CLAIM
-            })
+            && crate::batch::EntityMetadataHeader::parse(&raw)
+                .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
             && self
                 .vault
                 .get_claim_in_txn(content.read(), &id)?
-                .is_some_and(|existing| {
-                    existing.predicate == super::super::key_value::PREDICATE
-                })
+                .is_some_and(|existing| existing.predicate == super::super::key_value::PREDICATE)
         {
             return Err(Error::InvalidClaimBody(
                 "keyed claim revisions cannot be overwritten through generic claims",
@@ -106,12 +103,10 @@ impl Memory<'_> {
         } else {
             Vec::new()
         };
-        let publication_write =
-            input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
+        let publication_write = input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE;
         // OF-187: a promise recorded here owes its reminders, so a
         // commitment series is indexed in this same transaction.
-        let commitment_write =
-            input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD;
+        let commitment_write = input.predicate == crate::commitment::PREDICATE_COMMITMENT_RECORD;
         if commitment_write {
             content.stage_claim_support(id, |_| Ok(()))?;
         }
@@ -257,9 +252,7 @@ impl Memory<'_> {
                 crate::booking::publication::index_publication_in_txn(
                     self.vault, txn, subject, id,
                 )?;
-                super::super::booking_publication::finish_publication_write(
-                    self.vault, txn, id,
-                )
+                super::super::booking_publication::finish_publication_write(self.vault, txn, id)
             })?;
             if let Some(old_id) = prior {
                 content.update_claim(old_id, |txn| {

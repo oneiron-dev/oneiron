@@ -56,8 +56,8 @@ impl Memory<'_> {
             .collect();
         // An exact retry lands nothing new, so its assertions earn no
         // creation status again (FIX 1211).
-        let lands_nothing = !matches!(admission.turn, AdmittedTurn::Mint { .. })
-            && !admission.has_new_messages();
+        let lands_nothing =
+            !matches!(admission.turn, AdmittedTurn::Mint { .. }) && !admission.has_new_messages();
         if lands_nothing {
             unproven.take();
         }
@@ -71,8 +71,7 @@ impl Memory<'_> {
                 quoted.as_ref(),
             )?),
             WitnessSink::Overlay(overlay) => {
-                let (segment, aliases) =
-                    self.stage_in_overlay(plan, &admission, overlay, wtxn)?;
+                let (segment, aliases) = self.stage_in_overlay(plan, &admission, overlay, wtxn)?;
                 Landed::Overlay { segment, aliases }
             }
         };
@@ -98,8 +97,7 @@ impl Memory<'_> {
         if matches!(sink, WitnessSink::Base(_))
             && plan.imported.is_none()
             && !door.is_host()
-            && (matches!(admission.turn, AdmittedTurn::Mint { .. })
-                || admission.has_new_messages())
+            && (matches!(admission.turn, AdmittedTurn::Mint { .. }) || admission.has_new_messages())
         {
             let outcome =
                 self.record_turn_program_wakes_in_txn(wtxn, plan.conversation_id, plan.turn_id);
@@ -146,11 +144,12 @@ impl Memory<'_> {
         plan: &WitnessPlan<'_>,
         lands_new: &[bool],
     ) -> MemoryResult<()> {
-        let assertions = crate::memory::witness::reply_assertions::admitted_reply_assertions_in_txn(
-            &self.vault.store,
-            wtxn,
-            &[&plan.turn.assertions],
-        )?;
+        let assertions =
+            crate::memory::witness::reply_assertions::admitted_reply_assertions_in_txn(
+                &self.vault.store,
+                wtxn,
+                &[&plan.turn.assertions],
+            )?;
         let landed: Vec<EntityId> = plan
             .messages
             .iter()
@@ -177,17 +176,17 @@ impl Memory<'_> {
         plan: &WitnessPlan<'_>,
         project: EntityId,
     ) -> MemoryResult<()> {
-            let message_ids = plan.message_ids();
-            for id in std::iter::once(plan.turn_id).chain(message_ids.iter().copied()) {
-                crate::workspace_roster::settle_leader_chat_record(
-                    self.vault,
-                    wtxn,
-                    id,
-                    plan.conversation_id,
-                    self.actor,
-                    project,
-                )?;
-            }
+        let message_ids = plan.message_ids();
+        for id in std::iter::once(plan.turn_id).chain(message_ids.iter().copied()) {
+            crate::workspace_roster::settle_leader_chat_record(
+                self.vault,
+                wtxn,
+                id,
+                plan.conversation_id,
+                self.actor,
+                project,
+            )?;
+        }
         Ok(())
     }
 }

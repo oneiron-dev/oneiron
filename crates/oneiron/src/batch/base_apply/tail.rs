@@ -1,7 +1,7 @@
 //! Base-apply tail: births, frontiers, rooms and index finalization.
 
-use super::*;
 use super::indexes::finalize_batch_indexes;
+use super::*;
 
 pub(super) fn apply_tail(
     store: &Store,
@@ -16,7 +16,8 @@ pub(super) fn apply_tail(
     for (row, birth) in &state.births {
         crate::provenance::birth::stamp_row_birth_in_txn(store, wtxn, row, birth)?;
     }
-    if state.preflight_gate_decision_ids
+    if state
+        .preflight_gate_decision_ids
         .values()
         .any(|ids| !ids.is_empty())
     {
@@ -41,7 +42,9 @@ pub(super) fn apply_tail(
         wtxn,
         &state.materialized_entity_ids,
     )?;
-    state.project_edge_endpoints.extend(&state.materialized_entity_ids);
+    state
+        .project_edge_endpoints
+        .extend(&state.materialized_entity_ids);
     crate::workspace_roster::validate_project_graph(store, wtxn, &state.project_edge_endpoints)?;
     crate::workspace_roster::validate_local_leader_chat_turns(
         store,
@@ -100,7 +103,8 @@ pub(super) fn apply_tail(
         if config.embedding_model.is_some()
             && store.pending_embedding_token_in_txn(wtxn, id)?.as_deref() == Some(token.as_slice())
         {
-            let priority = state.pending_embedding_enqueue_priorities
+            let priority = state
+                .pending_embedding_enqueue_priorities
                 .get(id)
                 .copied()
                 .unwrap_or(crate::embed::EMBED_PRIORITY_DEVICE);

@@ -50,9 +50,7 @@ pub(super) fn refuse_typed_claim_family(input: &ClaimInput) -> MemoryResult<()> 
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             "keyed memory is written through vault.kv.put",
-            &[
-                "Use the actor-bound keyed-memory door; generic claims cannot replace keyed facts.",
-            ],
+            &["Use the actor-bound keyed-memory door; generic claims cannot replace keyed facts."],
         ));
     }
     if crate::claim::is_expression_preference_predicate(&input.predicate) {

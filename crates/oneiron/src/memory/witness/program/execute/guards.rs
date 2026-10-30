@@ -98,8 +98,7 @@ impl Memory<'_> {
             ..
         } = *write;
         let rostered = room_speech.is_some();
-        let person_author =
-            self.overlay_guards_in_txn(plan, overlay, rostered, wtxn)?;
+        let person_author = self.overlay_guards_in_txn(plan, overlay, rostered, wtxn)?;
         // The writer's own key reads the composed room view, as
         // recall's session lane does; both drop here.
         let view = overlay.read_view()?;
