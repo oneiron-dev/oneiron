@@ -1,7 +1,8 @@
 //! The reap freeze a managed vault's device sync works under (WILL-PLAN L14
 //! row 14, FIX 5127). The connection holds no admission for its life: each
-//! run between freezes takes one, and so does each model catalog refresh
-//! and each candidacy write a catch-up starts. A freeze does not count them
+//! run between freezes takes one, and so does each model catalog refresh,
+//! each candidacy write a catch-up starts and each removal archive import
+//! (FIX 12038). A freeze does not count them
 //! among its writes in flight, as a live connection is always running; it
 //! pauses the run, which ends as a stop ends it, and a reap waits for its
 //! end before it judges the vault quiet. After the thaw the same connection
@@ -12,11 +13,11 @@ use tokio::sync::watch;
 
 use crate::server::HousekeepingAdmission;
 
-/// One run's, refresh's or write's admission, released as it drops.
+/// One run's, refresh's, write's or import's admission, released as it drops.
 pub(super) type Admitted = Box<dyn Send>;
 
-/// What device sync takes for each run, refresh and write, and the freeze
-/// that pauses a run.
+/// What device sync takes for each run, refresh, write and import, and the
+/// freeze that pauses a run.
 #[derive(Clone)]
 #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
 pub(crate) struct ReapFreeze {
@@ -60,8 +61,9 @@ impl ReapFreeze {
 
     /// Waits out a freeze: the first admission after the thaw, or `None`
     /// once `stop` is sent (or the freeze is gone). A vault frozen again
-    /// before the admission is waited out again.
-    #[cfg(feature = "mesh")]
+    /// before the admission is waited out again. The archive receiver waits
+    /// on it too, so it runs without the `mesh` feature as well.
+    #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
     pub(super) async fn resumed(
         &mut self,
         stop: &mut tokio::sync::oneshot::Receiver<()>,
