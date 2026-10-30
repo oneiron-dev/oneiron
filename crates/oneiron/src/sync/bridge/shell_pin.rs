@@ -23,8 +23,9 @@ use crate::{EntityId, Result, Vault};
 /// Shell's own ChildOf or RepliesTo and names a room, the Shell is pinned
 /// there, with the one admissible Parent `edges` carries for it and its
 /// recorded session. A Shell keeps no body to mark it a thread record, so it
-/// is pinned as an ordinary record.
-pub(super) fn pin_from_edge(
+/// is pinned as an ordinary record. Observer B and the forward pass's edge
+/// gate both pin through it.
+pub(in crate::sync) fn pin_from_edge(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     edges: &LoroMap,
