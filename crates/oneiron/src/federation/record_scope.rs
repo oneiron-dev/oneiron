@@ -32,7 +32,8 @@ mod stamping;
 mod tests;
 
 pub(crate) use self::birth_carrier::{
-    carried_birth_scope, guest_birth_scope, stamp_carried_birth_scope_in_txn,
+    carried_birth_scope, derived_world_birth_scope, guest_birth_scope,
+    stamp_carried_birth_scope_in_txn,
 };
 pub(crate) use self::stamping::{
     restrict_stamp_in_txn, room_rows_placed, settle_epoch_birth, settle_source_birth,
@@ -280,6 +281,15 @@ fn settled_at_birth(kind: u8, prior: &Scope, proposed: &Scope) -> bool {
             Scope {
                 worlds: proposed.worlds.clone(),
                 facets: proposed.facets.clone(),
+                ..prior.clone()
+            } == *proposed
+        }
+        // A WORLD row keeps the sensitivity its birth settled: a guest's
+        // derived base WORLD reads no wider than its CLAIMs (FIX 3831), and a
+        // raised one stays raised.
+        crate::registry::ENTITY_TYPE_WORLD => {
+            Scope {
+                sensitivity: proposed.sensitivity,
                 ..prior.clone()
             } == *proposed
         }

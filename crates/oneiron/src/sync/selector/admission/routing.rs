@@ -63,6 +63,9 @@ pub(super) struct Routes<'a> {
     /// This vault's saved-query kind, whose declared worlds are renamed too
     /// (FIX 3892).
     saved_query: Option<u8>,
+    /// The foreign WORLD the guest's base CLAIMs move to, when any move
+    /// (FIX 3831).
+    base_copy: Option<EntityId>,
 }
 
 /// A guest's update as its rows are copied: the source vault its pact names
@@ -88,6 +91,7 @@ impl<'a> Routes<'a> {
             worlds: BTreeMap::new(),
             rekeyed: BTreeMap::new(),
             saved_query: None,
+            base_copy: None,
         }
     }
 
@@ -194,6 +198,7 @@ impl<'a> Routes<'a> {
         });
         if !moved.is_empty() {
             let base = placed.foreign_of(None)?;
+            routes.base_copy = Some(base);
             for (id, learned_at) in moved {
                 let part = routes.part(WindowKey::for_world(learned_at, base));
                 routes.claims.insert(id, part);
@@ -350,6 +355,12 @@ impl<'a> Routes<'a> {
             worlds: &self.worlds,
             saved_query: self.saved_query,
         })
+    }
+
+    /// The foreign WORLD the guest's base CLAIMs move to, and the CLAIMs that
+    /// move there; `None` when none moves (FIX 3831).
+    pub(super) fn base_copy(&self) -> Option<(EntityId, impl Iterator<Item = &EntityId>)> {
+        self.base_copy.map(|base| (base, self.claims.keys()))
     }
 
     /// The part landing in `window`, a new one when none does yet.

@@ -19,8 +19,8 @@
 use std::collections::BTreeSet;
 
 use super::{
-    SCOPE_RECORD, ScopeAxis, ScopeId, Stamp, bump_scope_revision, carries_birth_stamp, singleton,
-    stored_scope,
+    SCOPE_RECORD, ScopeAxis, ScopeId, SensitivityCeiling, Stamp, bump_scope_revision,
+    carries_birth_stamp, default_stamp, singleton, stored_scope,
 };
 use crate::EntityId;
 use crate::error::{Error, Result};
@@ -162,4 +162,26 @@ pub(crate) fn guest_birth_scope(
         _ => return Ok(None),
     }
     encode(&stamp).map(Some)
+}
+
+/// The birth scope of the WORLD row `id` admission derives for a guest's
+/// base copy (FIX 3831; Engine ruling 09:39 A): a WORLD row's own default
+/// position, at `sensitivity`, the narrowest of the CLAIMs it lands with.
+///
+/// # Errors
+///
+/// A substrate facet derive error.
+pub(crate) fn derived_world_birth_scope(
+    id: EntityId,
+    sensitivity: SensitivityCeiling,
+) -> Result<Vec<u8>> {
+    let facet = crate::claim::substrate_facet_id(id)?;
+    let mut scope = default_stamp(ENTITY_TYPE_WORLD, facet);
+    scope.sensitivity = sensitivity;
+    encode(&Stamp {
+        version: STAMP_VERSION,
+        kind: ENTITY_TYPE_WORLD,
+        birth_facet: *facet.as_bytes(),
+        scope,
+    })
 }
