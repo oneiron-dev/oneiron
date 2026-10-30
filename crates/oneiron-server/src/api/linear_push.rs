@@ -67,7 +67,7 @@ pub(crate) struct LinearPushReply {
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "TASK was not found or is not readable.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The mirror refused the push in its current state. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The mirror refused the push in its current state. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Linear push failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -89,9 +89,10 @@ pub(crate) async fn core_linear_push(
     let wait = Duration::from_millis(request.wait_ms);
     let body_line = crate::linear_host::push_body_line(&server);
     let pushing = Arc::clone(&server);
-    let pushed = tokio::task::spawn_blocking(move || {
+    // A keyed push's writes count on its intent (FIX 10379).
+    let pushed = tokio::task::spawn_blocking(oneiron::store::carry_idempotency_intent(move || {
         crate::linear_host::push_task_now(&pushing, task, wait, &body_line)
-    })
+    }))
     .await
     .map_err(|_| ApiError::internal_server_error("Linear push did not finish"))?;
     let reply = |status, issue, waiting| LinearPushReply {
