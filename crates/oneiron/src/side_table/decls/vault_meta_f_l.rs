@@ -327,6 +327,8 @@ side_tables! {
     /// Empty-marker age index over the tagging traces. Key: u64be recorded-at + turn id16 + u64be
     /// sequence.
     TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
+    /// Attempt task ref to attempt ids, empty markers. Key: u64be len + task ref + id16.
+    ATTEMPT_TASK_INDEX: VaultMeta b"job:task_index:v1:" Raw;
     /// The vault's typed key custody binding (`store::key_custody`): version 1, namespace
     /// (16), vault id (32), then the native absolute root path the custody sits beside; never
     /// key material. Pinned by the first publication with what it protects. Key: ().

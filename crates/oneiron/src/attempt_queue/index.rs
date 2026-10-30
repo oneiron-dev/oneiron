@@ -1,7 +1,8 @@
 //! FIX 11318: the attempt ledger's side indexes, so a reader that wants a
-//! kind's rows, a try's retries or the rows an annotation holds reads those
-//! rows by key and decodes no others. A row's kind and `retry_of` are set
-//! when it is created; a compacted lineage's relink is the one rewrite.
+//! kind's rows, a task's rows, a try's retries or the rows an annotation holds
+//! reads those rows by key and decodes no others. A row's kind, `task_ref` and
+//! `retry_of` are set when it is created; a compacted lineage's relink is the
+//! one rewrite.
 
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
@@ -11,6 +12,8 @@ use super::types::{AttemptId, AttemptRecord};
 
 /// Key: u64be kind length + kind + id16.
 const KIND: SideTable<Vec<u8>, (), Raw> = SideTable::new(&side_table::ATTEMPT_KIND_INDEX);
+/// Key: u64be task ref length + task ref + id16.
+const TASK: SideTable<Vec<u8>, (), Raw> = SideTable::new(&side_table::ATTEMPT_TASK_INDEX);
 /// Key: parent id16 + child id16.
 const RETRY_CHILD: SideTable<(AttemptId, AttemptId), (), Raw> =
     SideTable::new(&side_table::ATTEMPT_RETRY_CHILD_INDEX);
@@ -18,40 +21,53 @@ const RETRY_CHILD: SideTable<(AttemptId, AttemptId), (), Raw> =
 const ANNOTATION_HOLD: SideTable<AttemptId, (), Raw> =
     SideTable::new(&side_table::ATTEMPT_ANNOTATION_HOLD);
 
-/// The kind index's key prefix of every row of `kind`.
-fn kind_prefix(kind: &str) -> Vec<u8> {
-    let mut key = (kind.len() as u64).to_be_bytes().to_vec();
-    key.extend_from_slice(kind.as_bytes());
+/// The key prefix of every entry under `text`: its u64be length, then its bytes.
+fn text_prefix(text: &str) -> Vec<u8> {
+    let mut key = (text.len() as u64).to_be_bytes().to_vec();
+    key.extend_from_slice(text.as_bytes());
     key
 }
 
 /// The kind index's key of `record`.
 fn kind_key(record: &AttemptRecord) -> Vec<u8> {
-    let mut key = kind_prefix(&record.kind);
+    let mut key = text_prefix(&record.kind);
     key.extend_from_slice(record.id.as_bytes());
     key
 }
 
-/// Writes the kind and retry-child entries of a newly created `record`.
+/// The task index's key of `record`, when it realizes a task.
+fn task_key(record: &AttemptRecord) -> Option<Vec<u8>> {
+    let mut key = text_prefix(record.task_ref.as_deref()?);
+    key.extend_from_slice(record.id.as_bytes());
+    Some(key)
+}
+
+/// Writes the kind, task and retry-child entries of a newly created `record`.
 pub(super) fn put_created_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
 ) -> Result<()> {
     KIND.put(store, wtxn, &kind_key(record), &())?;
+    if let Some(key) = task_key(record) {
+        TASK.put(store, wtxn, &key, &())?;
+    }
     if let Some(parent) = record.retry_of {
         RETRY_CHILD.put(store, wtxn, &(parent, record.id), &())?;
     }
     Ok(())
 }
 
-/// Deletes every entry of a deleted `record`: its kind, retry-child and hold entries.
+/// Deletes every entry of a deleted `record`: its kind, task, retry-child and hold entries.
 pub(super) fn delete_deleted_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     record: &AttemptRecord,
 ) -> Result<()> {
     KIND.delete(store, wtxn, &kind_key(record))?;
+    if let Some(key) = task_key(record) {
+        TASK.delete(store, wtxn, &key)?;
+    }
     if let Some(parent) = record.retry_of {
         RETRY_CHILD.delete(store, wtxn, &(parent, record.id))?;
     }
@@ -82,13 +98,30 @@ pub(super) fn kind_ids_in_txn(
     txn: &heed::RoTxn<'_>,
     kind: &str,
 ) -> Result<Vec<AttemptId>> {
-    let prefix = kind_prefix(kind);
+    let prefix = text_prefix(kind);
     KIND.scan_keys(store, txn, &prefix)?
         .iter()
         .map(|key| {
             key.strip_prefix(prefix.as_slice())
                 .and_then(|id| AttemptId::from_bytes(id).ok())
                 .ok_or(Error::CorruptedIndex("attempt kind index"))
+        })
+        .collect()
+}
+
+/// The ids of every row realizing the task `task_ref`, in any state, in id order.
+pub(super) fn task_ids_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    task_ref: &str,
+) -> Result<Vec<AttemptId>> {
+    let prefix = text_prefix(task_ref);
+    TASK.scan_keys(store, txn, &prefix)?
+        .iter()
+        .map(|key| {
+            key.strip_prefix(prefix.as_slice())
+                .and_then(|id| AttemptId::from_bytes(id).ok())
+                .ok_or(Error::CorruptedIndex("attempt task index"))
         })
         .collect()
 }
@@ -133,9 +166,10 @@ pub(super) fn annotation_hold_ids_in_txn(
     ANNOTATION_HOLD.scan_keys(store, txn, &[])
 }
 
-/// Deletes every entry of the three indexes, for a restore that rebuilds them.
+/// Deletes every entry of the four indexes, for a restore that rebuilds them.
 pub(super) fn clear_in_txn(store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
     KIND.delete_from(store, wtxn, &[])?;
+    TASK.delete_from(store, wtxn, &[])?;
     RETRY_CHILD.delete_from(store, wtxn, &[])?;
     ANNOTATION_HOLD.delete_from(store, wtxn, &[])?;
     Ok(())
