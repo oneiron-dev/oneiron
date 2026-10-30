@@ -535,6 +535,9 @@ fn source(value: &Value) -> Result<RepoSecretSource> {
             new_oid: oid(field(map, "new_oid")?)?,
         }),
         "quarantine" => Ok(RepoSecretSource::Quarantine),
+        "sync_landing" => Ok(RepoSecretSource::SyncLanding {
+            source: entity(field(map, "source")?)?,
+        }),
         _ => Err(corrupt()),
     }
 }

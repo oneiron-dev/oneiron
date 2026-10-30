@@ -50,7 +50,9 @@ use crate::git_wire::GitOid;
 use crate::secret_custody::{CustodyWrite, MASKED_FILE_BAND, MemberStep};
 use crate::temporal::TimeRange;
 
+mod carry;
 mod read;
+pub(crate) use carry::carry_repo_secret_marks_in_txn;
 pub(crate) use read::{
     RepoBlobAddress, RepoBlobMarks, RepoMarkFacts, RepoSecretMarkLookup, add_place,
     for_each_repo_secret_mark_in_txn, repo_secret_marks_for_hash_in_txn,
@@ -96,6 +98,10 @@ pub(crate) enum RepoSecretSource {
     },
     /// The operation's quarantine scan saw the bytes, with no proved ref.
     Quarantine,
+    /// A translated sync copy edit landed these bytes on the marked source
+    /// `source`, a blob the operation's door saw before (FIX 10732, L04
+    /// 05:5x): no ref and no push proved them, as with the quarantine.
+    SyncLanding { source: EntityId },
 }
 
 /// What a mark places.
@@ -154,6 +160,10 @@ impl RepoSecretMark {
                 ("new_oid", Value::from(new_oid.as_str())),
             ]),
             RepoSecretSource::Quarantine => fields(vec![("kind", Value::from("quarantine"))]),
+            RepoSecretSource::SyncLanding { source } => fields(vec![
+                ("kind", Value::from("sync_landing")),
+                ("source", Value::from(source.to_hex())),
+            ]),
         };
         let placement = match &self.placement {
             RepoSecretPlacement::Span {
@@ -484,8 +494,8 @@ fn steps_value(member: &[MemberStep]) -> Value {
     )
 }
 
-/// The source as an id part: `["ref_move", name, old or nil, new]` or
-/// `["quarantine"]`.
+/// The source as an id part: `["ref_move", name, old or nil, new]`,
+/// `["quarantine"]` or `["sync_landing", source]`.
 fn source_part(source: &RepoSecretSource) -> Value {
     match source {
         RepoSecretSource::RefMove {
@@ -499,6 +509,10 @@ fn source_part(source: &RepoSecretSource) -> Value {
             Value::from(new_oid.as_str()),
         ]),
         RepoSecretSource::Quarantine => Value::Array(vec![Value::from("quarantine")]),
+        RepoSecretSource::SyncLanding { source } => Value::Array(vec![
+            Value::from("sync_landing"),
+            Value::from(source.to_hex()),
+        ]),
     }
 }
 

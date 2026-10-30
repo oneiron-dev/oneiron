@@ -11,6 +11,7 @@ mod app_tier;
 mod asset_bodies;
 mod conn_state;
 mod connection;
+mod document_copy;
 mod documents;
 mod ephemeral;
 mod federation;

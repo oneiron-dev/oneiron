@@ -399,8 +399,8 @@ pub(super) async fn handle_window_sync(
             }
             // FIX 7608 slice 4: a copy edit lands on its source before anything
             // persists, and is admitted again as the source edit it is. A ruled
-            // hold persists, imports, relays and acknowledges nothing: the
-            // device keeps the update and sends it again.
+            // hold persists, imports and relays nothing: its held record is
+            // kept and acknowledged, and it is never applied (FIX 10598).
             let admitted = oneiron::sync::selector::admit_repo_sync_frame(
                 server.vault.as_ref(),
                 window_key,
@@ -408,8 +408,14 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             )
             .map_err(|e| ProtocolError::Persistence(format!("copy translation failed: {e}")))?;
-            let oneiron::sync::selector::RepoSyncAdmission::Admit(update) = admitted else {
-                return Ok(ControlFlow::Continue(()));
+            let oneiron::sync::selector::RepoSyncAdmission::Admit(update, landings) = admitted else {
+                return super::window_copy::acknowledge_held(
+                    window_key,
+                    sub_tag,
+                    residence_seq,
+                    &receipt,
+                    direct_tx,
+                );
             };
             if let std::borrow::Cow::Owned(translated) = &update {
                 oneiron::sync::window::validate_window_update_residence_with_vault(
@@ -438,7 +444,7 @@ pub(super) async fn handle_window_sync(
                 Some(&doc),
             );
             server
-                .persist_imported_update(&key, &persisted, write_auth)
+                .persist_imported_update(&key, &persisted, &landings, write_auth)
                 .map_err(|e| ProtocolError::Persistence(format!("update persist failed: {e}")))?;
             // Client sending Loro update bytes — import with origin for echo suppression.
             // The machine this own-device socket proved sent them: their MESSAGE rows
