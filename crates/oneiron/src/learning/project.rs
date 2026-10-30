@@ -439,22 +439,32 @@ pub fn reproject_all_cells(vault: &Vault, now: u64) -> Result<usize> {
 }
 
 /// Re-projects every cell fitting the setting `key`, after its seed moved.
+/// A cell whose subject is gone passes over, and the write that carries it
+/// goes on: re-ensuring would resurrect what the owner erased.
 pub(crate) fn reproject_setting_cells_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     key: &str,
     now: u64,
 ) -> Result<()> {
-    let digests: Vec<[u8; 32]> = CELL
+    let cells: Vec<([u8; 32], EntityId)> = CELL
         .scan(&vault.store, wtxn)?
         .into_iter()
         .filter(|(_, row)| {
             row.cell.predicate == LearningPredicate::Setting
                 && row.cell.setting_key.as_deref() == Some(key)
         })
-        .map(|(digest, _)| digest)
+        .map(|(digest, row)| (digest, row.cell.subject))
         .collect();
-    for digest in &digests {
+    for (digest, subject) in &cells {
+        if vault.store.port_entity_record(wtxn, subject)?.is_none() {
+            tracing::warn!(
+                key,
+                subject = %subject.to_hex(),
+                "a setting cell was not reprojected: its subject is gone"
+            );
+            continue;
+        }
         project_cell_in_txn(vault, wtxn, digest, now)?;
     }
     Ok(())
