@@ -271,7 +271,7 @@ pub(super) fn decode_observer_u_seq(raw: &[u8]) -> Result<u32> {
 }
 
 /// Persists one window update to `sync_state` in a single write txn:
-/// `u:w:{key}:{seq:08x}` row + `m:u_seq:w:{key}` counter bump +
+/// `u:w:{key}:{seq:016x}` row + `m:u_seq:w:{key}` counter bump +
 /// `svf:w:{key}` staleness flip (the persisted `sv:w:` no longer reflects
 /// the doc once an update lands on top of it).
 ///
@@ -303,15 +303,14 @@ pub(crate) fn persist_window_update_in_txn(
     // present-but-malformed seq row (on-disk corruption). The latter
     // must not silently reset to 0; doing so would let next_seq=1
     // collide with whatever update was already persisted at
-    // `u:w:{window}:00000001` before the row was corrupted.
-    let seq: u32 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
+    // `u:w:{window}:0000000000000001` before the row was corrupted.
+    let seq: u64 = match WINDOW_UPDATE_SEQ.get(&vault.store, wtxn, &seq_key)? {
         None => 0,
         Some(WindowUpdateSeq(seq)) => seq,
     };
-    // checked_add surfaces overflow as a typed error rather than
-    // `wrapping_add`-ing to 0 and silently overwriting update key
-    // `u:w:{window}:00000000`. Matches SyncQueue's update-seq policy.
-    // u32 widening to u64 is tracked as a follow-up schema change.
+    // The u64 counter cannot run out (FIX 8883); checked_add still keeps a
+    // corrupt counter from wrapping onto an existing update key. Matches
+    // SyncQueue's update-seq policy.
     let next_seq = seq
         .checked_add(1)
         .ok_or(Error::ArithmeticOverflow("observer a u_seq"))?;

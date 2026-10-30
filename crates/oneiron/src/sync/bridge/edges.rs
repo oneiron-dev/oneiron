@@ -188,6 +188,19 @@ pub(super) fn materialize_edges_from_delta(
                         // The erased shell has no recipient carrier to prove.
                         continue;
                     }
+                    // Nor has a withdrawn Shell a body to prove its edges (FIX
+                    // 931): they wait. Its Parent goes to the coordinator.
+                    if kind != EdgeKind::Parent
+                        && crate::sync::withdrawn_cutoffs::withdrawn_shell_edge_in(
+                            &vault.store,
+                            &*wtxn,
+                            kind,
+                            &src,
+                            &tgt,
+                        )?
+                    {
+                        continue;
+                    }
                     // FIX 5972: a stored `regenerates` pair was proven when it
                     // landed, so a carried copy is no new pair, whatever has
                     // since become of its MESSAGEs. Any other waits below.
@@ -691,7 +704,9 @@ pub(super) fn materialize_edges_from_delta(
                 _ => None,
             })
             .collect();
+        let linked_facts = crate::task_verb::scoped_to_sources(&ops);
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones)?;
+        crate::task_verb::wake_linked_facts_in_txn(vault, wtxn, linked_facts)?;
         for (src, tgt) in considered_child_of {
             // The candidate has reached the winner arbiter or its terminal
             // rejection, so no earlier missing-endpoint obligation remains.

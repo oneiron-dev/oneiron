@@ -172,7 +172,7 @@ pub(crate) async fn ai_voice_tool(
     });
     let answer = result.map(|processed| LiveVoiceToolReply { processed, reply });
     match (answer, rows) {
-        (Ok(done), rows) if super::connector_call_doors::answers_as_before(&done.reply) => {
+        (Ok(done), rows) if super::connector_call_doors::voice_answers_as_before(&done.reply) => {
             (Ok(ActAnswer::Done(done)), rows)
         }
         answer => {

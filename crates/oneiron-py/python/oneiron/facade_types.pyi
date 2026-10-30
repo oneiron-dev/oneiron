@@ -4,10 +4,10 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1202 facade rows, 4344 declarations.
-Inputs: 1130 of 1202 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Results: 1041 of 1202 fully typed, 161 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
-Opaque serde_json::Value leaves: 120; unread shapes: 0.
+Census: 1207 facade rows, 4364 declarations.
+Inputs: 1135 of 1207 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Results: 1041 of 1207 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
+Opaque serde_json::Value leaves: 121; unread shapes: 0.
 """
 
 from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
@@ -709,7 +709,7 @@ class DiagnosticsListRequest(TypedDict):
     evidence_ref: NotRequired[str | None]
     limit: int
 class ReadScope(TypedDict):
-    entity_types: NotRequired[list[int] | None]
+    entity_types: NotRequired[list[str] | None]
     max_sensitivity_band: int
     include_stale: bool
     min_confidence: float
@@ -1287,6 +1287,33 @@ class GrantAskReceipt(TypedDict):
     request: str
     asked: str
     status: str
+class GrantAskedRequest(TypedDict):
+    after: NotRequired[str | None]
+    limit: NotRequired[int | None]
+class GrantRequestedScopeMessages(TypedDict):
+    kind: Literal["messages"]
+    space_ref: EntityId
+class GrantRequestedScopeSummaries(TypedDict):
+    kind: Literal["summaries"]
+    space_ref: EntityId
+class GrantRequestedScopeRelationshipClaims(TypedDict):
+    kind: Literal["relationship_claims"]
+    space_ref: EntityId
+class GrantRequestedScopeCompanionProfile(TypedDict):
+    kind: Literal["companion_profile"]
+    person_ref: EntityId
+    facet_ref: NotRequired[EntityId | None]
+GrantRequestedScope = GrantRequestedScopeMessages | GrantRequestedScopeSummaries | GrantRequestedScopeRelationshipClaims | GrantRequestedScopeCompanionProfile
+class GrantAskedRow(TypedDict):
+    request: str
+    asker: str
+    capability: str
+    scope: GrantRequestedScope
+    created_at: int
+    expires_at: NotRequired[int | None]
+class GrantAskedPage(TypedDict):
+    requests: list[GrantAskedRow]
+    next_after: NotRequired[str | None]
 CompanionAccessRequestAnswer = Literal["approve", "deny"]
 class CompanionAccessRequestAnswerRequest(TypedDict):
     request: EntityId
@@ -1309,20 +1336,6 @@ GrantAnswer = Literal["approve", "deny"]
 class GrantAnswerRequest(TypedDict):
     request: EntityId
     answer: GrantAnswer
-class GrantRequestedScopeMessages(TypedDict):
-    kind: Literal["messages"]
-    space_ref: EntityId
-class GrantRequestedScopeSummaries(TypedDict):
-    kind: Literal["summaries"]
-    space_ref: EntityId
-class GrantRequestedScopeRelationshipClaims(TypedDict):
-    kind: Literal["relationship_claims"]
-    space_ref: EntityId
-class GrantRequestedScopeCompanionProfile(TypedDict):
-    kind: Literal["companion_profile"]
-    person_ref: EntityId
-    facet_ref: NotRequired[EntityId | None]
-GrantRequestedScope = GrantRequestedScopeMessages | GrantRequestedScopeSummaries | GrantRequestedScopeRelationshipClaims | GrantRequestedScopeCompanionProfile
 class GrantAnswered(TypedDict):
     request: EntityId
     principal_ref: EntityId
@@ -1664,8 +1677,7 @@ class TaskAskClass(TypedDict):
     guest_fact_limit: NotRequired[int | None]
     soft_confirm_surface: NotRequired[TaskAskSurface | None]
     remind: list[int]
-AskAuthorityScopeWire = TypedDict("AskAuthorityScopeWire", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
-AskAuthorityScope = AskAuthorityScopeWire
+AskAuthorityScope = TypedDict("AskAuthorityScope", {"class": str, "selectors": list[str], "target": NotRequired[str | None], "budget": NotRequired[int | None], "receipt_required": bool})
 class TaskAssigneeAgentDefBody(TypedDict):
     agent_def_ref: EntityId
 class TaskAssigneeAgentDef(TypedDict):
@@ -1907,6 +1919,7 @@ class TaskStatusView(TypedDict):
     asks: list[tuple[TaskAskHandle, TaskAskStatus]]
     last_receipt: NotRequired[str | None]
     workflow: NotRequired[TaskWorkflowStatus | None]
+    waiting: NotRequired[str | None]
     observed: str
 class TaskOutcomeProposed(TypedDict):
     kind: Literal["proposed"]
@@ -2489,7 +2502,22 @@ class FanoutResumeRequest(TypedDict):
     remembered_cap: NotRequired[int | None]
 class DetailsOnDevice(TypedDict):
     details_on_device: bool
-ActAnswer = DetailsOnDevice | T
+class NarrowedQuestion(TypedDict):
+    key: str
+    message: NotRequired[str | None]
+    requested_schema: NotRequired[Any | None]
+    on_device: NotRequired[bool]
+class NarrowedQuestions(TypedDict):
+    outcome: str
+    questions_narrowed: bool
+    handle: str
+    call_ref: str
+    source: str
+    foreign: bool
+    questions: list[NarrowedQuestion]
+    live_until_ms: int
+    reasons: NotRequired[list[str]]
+ActAnswer = DetailsOnDevice | NarrowedQuestions | T
 FanoutCheckChoice = Literal["ack", "ack_and_remember"]
 class FanoutAckRequest(TypedDict):
     launch_ref: EntityId
@@ -3558,6 +3586,23 @@ class ExportTransfer(TypedDict):
     bytes: int
     digest: str
 ExportAnswer = MemoryExport | ExportTransfer
+class ExportTransferReadRequest(TypedDict):
+    transfer_ref: str
+    offset: NotRequired[int]
+    length: NotRequired[int | None]
+class ExportTransferPiece(TypedDict):
+    transfer_ref: str
+    offset: int
+    bytes_base64: str
+    length: int
+    total_bytes: int
+    digest: str
+    end: bool
+class ExportTransferReleaseRequest(TypedDict):
+    transfer_ref: str
+class ExportTransferReleased(TypedDict):
+    transfer_ref: str
+    released: bool
 class ScopeAxisBottom(TypedDict):
     kind: Literal["bottom"]
 class ScopeAxisAll(TypedDict):
@@ -3568,15 +3613,14 @@ class ScopeAxisSome(TypedDict, Generic[T]):
 ScopeAxis = ScopeAxisBottom | ScopeAxisAll | ScopeAxisSome[T]
 ScopeId = str
 Sensitivity = Literal["public", "private", "sensitive", "restricted"]
-class SensitivityCeilingWireBottom(TypedDict):
+class SensitivityCeilingBottom(TypedDict):
     kind: Literal["bottom"]
-class SensitivityCeilingWireAll(TypedDict):
+class SensitivityCeilingAll(TypedDict):
     kind: Literal["all"]
-class SensitivityCeilingWireAtMost(TypedDict):
+class SensitivityCeilingAtMost(TypedDict):
     kind: Literal["at_most"]
     value: Sensitivity
-SensitivityCeilingWire = SensitivityCeilingWireBottom | SensitivityCeilingWireAll | SensitivityCeilingWireAtMost
-SensitivityCeiling = SensitivityCeilingWire
+SensitivityCeiling = SensitivityCeilingBottom | SensitivityCeilingAll | SensitivityCeilingAtMost
 class Scope(TypedDict):
     worlds: NotRequired[ScopeAxis[ScopeId]]
     facets: NotRequired[ScopeAxis[ScopeId]]
@@ -4162,6 +4206,14 @@ class TurnProgramRegistration(TypedDict):
     newly_armed: bool
 class DisarmTurnProgram(TypedDict):
     registration: EntityId
+class TurnProgramRebindRequest(TypedDict):
+    attempt: str
+class TurnProgramRebindReceipt(TypedDict):
+    attempt: str
+    admission: str
+    predecessor_slip: str
+    successor_slip: str
+    owner_work: bool
 class SavedQueryScopeSpec(TypedDict):
     worlds: NotRequired[list[EntityId]]
     facets: NotRequired[list[str]]
@@ -12422,6 +12474,97 @@ class OriginMirrorTarget(TypedDict):
 class OriginMirrorView(TypedDict):
     repo: str
     mirror: NotRequired[OriginMirrorTarget | None]
+class OriginMirrorPlanRequest(TypedDict):
+    repo: str
+    plan_id: NotRequired[EntityId | None]
+    page: NotRequired[int]
+class OriginPublishDestination(TypedDict):
+    url: str
+    user: str
+    secret_ref: str
+    target_generation: NotRequired[EntityId | None]
+    audience: RepoDestinationAudience
+class MirrorObservedTipAbsent(TypedDict):
+    state: Literal["absent"]
+class MirrorObservedTipAt(TypedDict):
+    state: Literal["at"]
+    oid: str
+class MirrorObservedTipUnknown(TypedDict):
+    state: Literal["unknown"]
+    cause: str
+MirrorObservedTip = MirrorObservedTipAbsent | MirrorObservedTipAt | MirrorObservedTipUnknown
+OriginPublishLfsBytes = Literal["not_sent"]
+class OriginPublishReview(TypedDict):
+    digest: str
+    subtracted: NotRequired[str | None]
+    commits: int
+    entries: int
+    paths: int
+    pages: int
+    lfs_bytes: OriginPublishLfsBytes
+MirrorRefOutcome = Literal["pending", "dispatched", "applied", "observed_applied", "rejected", "unknown", "refused", "remote_moved", "paused", "covered", "held"]
+class OriginMirrorPlanRefView(TypedDict):
+    ref_name: str
+    new: NotRequired[str | None]
+    observed: MirrorObservedTip
+    review: NotRequired[OriginPublishReview | None]
+    first_page: int
+    batch: NotRequired[int | None]
+    outcome: MirrorRefOutcome
+class MirrorBatchClaimPending(TypedDict):
+    state: Literal["pending"]
+class MirrorBatchClaimClaimed(TypedDict):
+    state: Literal["claimed"]
+    at: int
+class MirrorBatchClaimSent(TypedDict):
+    state: Literal["sent"]
+    at: int
+class MirrorBatchClaimPaused(TypedDict):
+    state: Literal["paused"]
+MirrorBatchClaim = MirrorBatchClaimPending | MirrorBatchClaimClaimed | MirrorBatchClaimSent | MirrorBatchClaimPaused
+class OriginMirrorPlanBatchView(TypedDict):
+    claim: MirrorBatchClaim
+    refs: list[int]
+    detail: NotRequired[str | None]
+class OriginPublishReviewItemCommit(TypedDict):
+    kind: Literal["commit"]
+    commit: str
+    parents: list[str]
+class OriginPublishReviewItemPath(TypedDict):
+    kind: Literal["path"]
+    status: str
+    mode: str
+    object: NotRequired[str | None]
+    path: str
+class OriginPublishReviewItemObject(TypedDict):
+    kind: Literal["object"]
+    object_type: str
+    object: str
+    target: NotRequired[str | None]
+    name: NotRequired[str | None]
+    size: NotRequired[int | None]
+OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
+class OriginMirrorPlanRecord(TypedDict):
+    plan_id: EntityId
+    destination: OriginPublishDestination
+    strategy: OriginMirrorSyncStrategy
+    strategy_revision: int
+    requested_by: NotRequired[EntityId | None]
+    digest: str
+    vector: str
+    created_at: int
+    settled: bool
+    refs: list[OriginMirrorPlanRefView]
+    batches: list[OriginMirrorPlanBatchView]
+    pending_checks: list[OriginMirrorPendingCheck]
+    page: int
+    pages: int
+    items: list[OriginPublishReviewItem]
+class OriginMirrorPlanView(TypedDict):
+    repo: str
+    open: NotRequired[EntityId | None]
+    kept: list[EntityId]
+    plan: NotRequired[OriginMirrorPlanRecord | None]
 class OriginMirrorSetRequest(TypedDict):
     repo: str
     url: str
@@ -12445,27 +12588,12 @@ class OriginPublishRequestInput(TypedDict):
     idempotency_key: NotRequired[str | None]
     expires_at: NotRequired[int | None]
     code_repo: NotRequired[EntityId | None]
-class OriginPublishDestination(TypedDict):
-    url: str
-    user: str
-    secret_ref: str
-    target_generation: NotRequired[EntityId | None]
-    audience: RepoDestinationAudience
 class OriginPublishRemoteAbsent(TypedDict):
     state: Literal["absent"]
 class OriginPublishRemoteAt(TypedDict):
     state: Literal["at"]
     commit: str
 OriginPublishRemote = OriginPublishRemoteAbsent | OriginPublishRemoteAt
-OriginPublishLfsBytes = Literal["not_sent"]
-class OriginPublishReview(TypedDict):
-    digest: str
-    subtracted: NotRequired[str | None]
-    commits: int
-    entries: int
-    paths: int
-    pages: int
-    lfs_bytes: OriginPublishLfsBytes
 OriginPublishState = Literal["pending", "approved", "dispatching", "published", "observed_published", "refused", "cancelled", "expired"]
 OriginPublishActorClass = Literal["human", "agent", "system"]
 class OriginPublishAuthorityOwner(TypedDict):
@@ -12506,24 +12634,6 @@ class OriginPublishReviewRequest(TypedDict):
     request_id: EntityId
     page: int
     code_repo: NotRequired[EntityId | None]
-class OriginPublishReviewItemCommit(TypedDict):
-    kind: Literal["commit"]
-    commit: str
-    parents: list[str]
-class OriginPublishReviewItemPath(TypedDict):
-    kind: Literal["path"]
-    status: str
-    mode: str
-    object: NotRequired[str | None]
-    path: str
-class OriginPublishReviewItemObject(TypedDict):
-    kind: Literal["object"]
-    object_type: str
-    object: str
-    target: NotRequired[str | None]
-    name: NotRequired[str | None]
-    size: NotRequired[int | None]
-OriginPublishReviewItem = OriginPublishReviewItemCommit | OriginPublishReviewItemPath | OriginPublishReviewItemObject
 class OriginPublishReviewView(TypedDict):
     request_id: EntityId
     digest: str
@@ -17024,12 +17134,19 @@ QuestionDefinitionInput = QuestionDefinition[DecisionQuestionInput]
 class QuestionCreateRequest(TypedDict):
     definition: QuestionDefinitionInput
 QuestionAskerClass = Literal["human", "agent", "system"]
+class FrozenReadLane(TypedDict):
+    credential: NotRequired[list[int] | None]
+    authority: NotRequired[Scope | None]
+    records: NotRequired[list[str]]
+    worlds: NotRequired[ScopeAxis[ScopeId] | None]
+    room_facets: NotRequired[EntityId | None]
 class QuestionRecord(TypedDict):
     schema_version: int
     principal: str
     definition: QuestionDefinition[DecisionQuestion]
     created_at: int
     asker_class: NotRequired[QuestionAskerClass | None]
+    read_lane: FrozenReadLane
 class QuestionEditRequest(TypedDict):
     id: EntityId
     expected_version: int
@@ -17299,12 +17416,19 @@ ConnectorCallStatus = ConnectorCallStatusPending | ConnectorCallStatusSettled | 
 class ScopedCommitRequest(TypedDict):
     claims: list[ScopedClaimInput]
 RefusalReason = Literal["INVENTED_REFERENCE", "GATE_REFUSED"]
+LegalHoldState = Literal["retained_for_law", "use_restricted"]
+class LegalHoldNotice(TypedDict):
+    state: LegalHoldState
+    bound: LegalHoldBound
+    works_self_hosted: bool
+    self_hosted_note: str
 class RecordRefusal(TypedDict):
     reason: RefusalReason
     code: str
     message: str
     suggestions: list[str]
     field: str
+    legal_hold: NotRequired[LegalHoldNotice | None]
 class CommitOutcomeLanded(CommitReceipt):
     outcome: Literal["landed"]
 class CommitOutcomeRefused(TypedDict):
@@ -18239,6 +18363,7 @@ class FacadeMemoryError(TypedDict):
     retry_after: NotRequired[int | None]
     resets_at: NotRequired[list[int]]
     reason_codes: NotRequired[list[str]]
+    legal_hold: NotRequired[LegalHoldNotice | None]
 class EsignDocumentTrailReadable(TypedDict):
     trail: Literal["readable"]
     status: DocumentStatus
@@ -20910,6 +21035,7 @@ class ProposalBundle(TypedDict):
     author: DocActor
     forks: list[ForkRecord]
     settled: bool
+    opener_lineage: list[str]
 class SummaryForkView(TypedDict):
     record: ForkRecord
     text: NotRequired[str | None]

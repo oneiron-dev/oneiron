@@ -833,6 +833,12 @@ export class Oneiron {
     }),
     /** Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`). */
     export: Object.assign((format?: string): Facade.ExportAnswer => this.#call(() => this.#client.vaultExport({format: format}) as Facade.ExportAnswer), {
+      transfer: {
+        /** Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it. */
+        read: (input: Facade.ExportTransferReadRequest): Facade.ExportTransferPiece => this.#call(() => this.#client.vaultExportTransferRead(input) as Facade.ExportTransferPiece),
+        /** Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is. */
+        release: (input: Facade.ExportTransferReleaseRequest): Facade.ExportTransferReleased => this.#call(() => this.#client.vaultExportTransferRelease(input) as Facade.ExportTransferReleased),
+      },
       /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
       scoped: (input: Facade.ScopedExportRequest): Facade.ScopedExport => this.#call(() => this.#client.vaultExportScoped(input) as Facade.ScopedExport),
     }),
@@ -931,6 +937,8 @@ export class Oneiron {
       arm: (input: Facade.ArmTurnProgram): Facade.TurnProgramRegistration => this.#call(() => this.#client.vaultTurnProgramsArm(input) as Facade.TurnProgramRegistration),
       /** Disarms one of the caller's own armed turn programs; true when it was armed. */
       disarm: (input: Facade.DisarmTurnProgram): boolean => this.#call(() => this.#client.vaultTurnProgramsDisarm(input) as boolean),
+      /** Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes. */
+      rebind: (input: Facade.TurnProgramRebindRequest): Facade.TurnProgramRebindReceipt => this.#call(() => this.#client.vaultTurnProgramsRebind(input) as Facade.TurnProgramRebindReceipt),
       /** Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential. */
       admission: (input: Facade.TurnProgramAdmissionRequest): Facade.TurnProgramAdmissionView | null => this.#call(() => this.#client.vaultTurnProgramsAdmission(input) as Facade.TurnProgramAdmissionView | null),
     },
@@ -2214,6 +2222,8 @@ export class Oneiron {
         mirror: {
           /** Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner. */
           get: (input: Facade.OriginRepoRequest): Facade.OriginMirrorView => this.#call(() => this.#client.vaultCodeOriginMirrorGet(input) as Facade.OriginMirrorView),
+          /** Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review. */
+          plan: (input: Facade.OriginMirrorPlanRequest): Facade.OriginMirrorPlanView => this.#call(() => this.#client.vaultCodeOriginMirrorPlan(input) as Facade.OriginMirrorPlanView),
           /** Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked. */
           set: (input: Facade.OriginMirrorSetRequest): Facade.OriginMirrorTarget => this.#call(() => this.#client.vaultCodeOriginMirrorSet(input) as Facade.OriginMirrorTarget),
           /** Set one served origin mirror's sync strategy: ask_me sends nothing until an exact request is approved, schedule pushes every published ref on its cadence, full_auto each new green head at once; unsent automatic work pauses. */
@@ -3187,6 +3197,8 @@ export class Oneiron {
     grants: {
       /** Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it. */
       ask: (input: Facade.GrantAskRequest): Facade.GrantAskReceipt => this.#call(() => this.#client.selfGrantsAsk(input) as Facade.GrantAskReceipt),
+      /** Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing. */
+      asked: (input: Facade.GrantAskedRequest): Facade.GrantAskedPage => this.#call(() => this.#client.selfGrantsAsked(input) as Facade.GrantAskedPage),
       /** The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner. */
       answer: (input: Facade.GrantAnswerRequest): Facade.GrantAnswered => this.#call(() => this.#client.selfGrantsAnswer(input) as Facade.GrantAnswered),
     },
@@ -3571,6 +3583,7 @@ export class Oneiron {
 
 export { OneironError }
 export type { HookStop } from "./error.js"
+export type { LegalHoldNotice } from "./facade-types.js"
 export type * from "./types.js"
 export type * as Facade from "./facade-types.js"
 

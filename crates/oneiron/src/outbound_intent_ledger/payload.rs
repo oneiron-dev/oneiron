@@ -196,6 +196,15 @@ pub(super) fn payload_erased(stored: &[u8]) -> IntentLedgerResult<bool> {
     ))
 }
 
+/// The custody ref a stored payload is sealed under, for an erase that
+/// retires its key (KS7-4b); `None` for a bare, clear or erased form.
+pub(super) fn sealed_custody_ref(stored: &[u8]) -> IntentLedgerResult<Option<EntityId>> {
+    Ok(match StoredPayload::parse(stored)? {
+        StoredPayload::Sealed { custody_ref, .. } => Some(custody_ref),
+        StoredPayload::Bare(_) | StoredPayload::Clear { .. } | StoredPayload::Erased => None,
+    })
+}
+
 /// Whether admission seals a payload whole (canon-silent policy hook): an
 /// off-record caller's request (FIX 9372), and a request the side-row wall
 /// would refuse for a secret it carries (FIX 2328, 2331). Every other
