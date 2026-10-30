@@ -96,7 +96,8 @@ impl InFlightCounts {
         }
     }
 
-    /// Every write in flight.
+    /// Every counted write in flight; a device sync run is not counted, as
+    /// it pauses for the freeze (`live_sync_writer` covers it, FIX 5127).
     pub(super) fn total(&self) -> u64 {
         self.owner_write + self.background() + self.backup
     }

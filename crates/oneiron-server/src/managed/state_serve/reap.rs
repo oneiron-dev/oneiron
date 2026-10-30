@@ -95,7 +95,8 @@ impl ManagedState {
     }
 
     /// The strict quiescence `prepare_reap` reports, from `in_flight`, the
-    /// admitted writes of every kind read once frozen, and whether the lease
+    /// counted writes read once frozen (a device sync run is judged through
+    /// the sync session check instead), and whether the lease
     /// table `drained`: none in flight, drained, still frozen, and no sync
     /// session that could still commit. The idle reap's preparation judges
     /// its own.
