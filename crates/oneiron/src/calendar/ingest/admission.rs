@@ -22,6 +22,7 @@ use crate::entity_id::EntityId;
 use crate::entity_id::derived_domains::CALENDAR_ICS_IMPORT_ACTOR;
 use crate::ingest::{
     ICS_FEED_SOURCE_ID, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution,
+    ImportedEvidenceScreen,
 };
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MACHINE};
@@ -421,8 +422,9 @@ impl PollAdmission<'_> {
     /// The one admission door: CAL-09's hook runs immediately before the
     /// imported-evidence admission, and the admission executes from the
     /// typed `CalendarAdmissionRequest` — never from a zero-argument closure
-    /// that could not see the verdict. The verdict is folded into the feed
-    /// cursor as the run's admission-metadata witness.
+    /// that could not see the verdict. A screen that ran rides the admitted
+    /// claim's evidence, verdict and reason codes, beside its source record;
+    /// the run's worst verdict is also folded into the feed cursor.
     fn admit_screened(
         &mut self,
         event_ref: EntityId,
@@ -433,13 +435,14 @@ impl PollAdmission<'_> {
     ) -> Result<EntityId, CalendarError> {
         let screened = screen_then_claim(self.safeguard_enabled, self.screener, body, |request| {
             let token = verdict_token(&request.verdict);
-            let admitted = admit_calendar_import_claim(
+            let admitted = admit_calendar_import_claim_screened(
                 self.vault,
                 &event_ref,
                 predicate,
                 value,
                 source_record_id,
                 self.now,
+                imported_screen(&request.verdict),
             );
             Ok((admitted, token))
         })?;
@@ -574,8 +577,65 @@ pub(in crate::calendar) fn delete_connector_resource(
 fn screen_body(event: &ParsedVEvent) -> CalendarInboundBody {
     CalendarInboundBody {
         description: event.description.clone().unwrap_or_default(),
-        attachment_text: Vec::new(),
+        attachment_text: attachment_text(&event.raw_component),
     }
+}
+
+/// Every ATTACH of one raw VEVENT as text: an inline `ENCODING=BASE64`
+/// attachment's content when it decodes to UTF-8 text, else the value as the
+/// source wrote it (a URI, or inline bytes that are no text). A component
+/// that does not read again yields none; its parse already succeeded once.
+fn attachment_text(raw_component: &[u8]) -> Vec<String> {
+    let Ok(text) = std::str::from_utf8(raw_component) else {
+        return Vec::new();
+    };
+    let unfolded = icalendar::parser::unfold(text);
+    let Ok(components) = icalendar::parser::read_calendar_simple(&unfolded) else {
+        return Vec::new();
+    };
+    components
+        .iter()
+        .flat_map(|component| component.properties.iter())
+        .filter(|prop| prop.name.as_str().eq_ignore_ascii_case("ATTACH"))
+        .map(|prop| {
+            let base64 = prop.params.iter().any(|param| {
+                param.key.as_str().eq_ignore_ascii_case("ENCODING")
+                    && param
+                        .val
+                        .as_ref()
+                        .is_some_and(|val| val.as_str().eq_ignore_ascii_case("BASE64"))
+            });
+            let value = prop.val.as_str().trim();
+            if base64 {
+                use base64::Engine;
+                if let Some(content) = base64::engine::general_purpose::STANDARD
+                    .decode(value)
+                    .ok()
+                    .and_then(|bytes| String::from_utf8(bytes).ok())
+                {
+                    return content;
+                }
+            }
+            value.to_owned()
+        })
+        .collect()
+}
+
+/// The evidence entry of a screen that ran; `None` when the dial was off.
+fn imported_screen(
+    verdict: &super::safeguard::CalendarScreenVerdict,
+) -> Option<ImportedEvidenceScreen> {
+    use super::safeguard::CalendarScreenVerdict;
+    let reason_codes = match verdict {
+        CalendarScreenVerdict::Skipped => return None,
+        CalendarScreenVerdict::Clear => Vec::new(),
+        CalendarScreenVerdict::Flagged { reason_codes } => reason_codes.clone(),
+        CalendarScreenVerdict::Indeterminate { reason_code } => vec![reason_code.clone()],
+    };
+    Some(ImportedEvidenceScreen {
+        verdict: verdict_token(verdict).to_owned(),
+        reason_codes,
+    })
 }
 
 /// The EVENT's display name: SUMMARY, with a UID fallback.
@@ -598,9 +658,31 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
     source_record_id: &str,
     recorded_at: u64,
 ) -> crate::Result<EntityId> {
+    admit_calendar_import_claim_screened(
+        vault,
+        event_ref,
+        predicate,
+        value,
+        source_record_id,
+        recorded_at,
+        None,
+    )
+}
+
+/// [`admit_calendar_import_claim`] with the screen the admission ran under,
+/// kept on the claim's evidence.
+fn admit_calendar_import_claim_screened(
+    vault: &Vault,
+    event_ref: &EntityId,
+    predicate: &str,
+    value: rmpv::Value,
+    source_record_id: &str,
+    recorded_at: u64,
+    screen: Option<ImportedEvidenceScreen>,
+) -> crate::Result<EntityId> {
     let actor = ensure_ics_import_actor(vault, recorded_at)?;
     let claim_id = vault.store.clock.entity_id()?;
-    let admission = ImportedEvidenceAdmission::proposed(
+    let mut admission = ImportedEvidenceAdmission::proposed(
         ICS_FEED_SOURCE_ID,
         claim_id,
         ImportedEvidenceEntityResolution::subject(*event_ref),
@@ -611,6 +693,9 @@ pub(in crate::calendar) fn admit_calendar_import_claim(
         },
         recorded_at,
     );
+    if let Some(screen) = screen {
+        admission = admission.with_screen(screen);
+    }
     crate::ingest::admit_imported_evidence_claim_typed_for_machine(
         vault,
         predicate,

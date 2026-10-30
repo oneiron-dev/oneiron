@@ -31,6 +31,18 @@ impl ImportedEvidenceEntityResolution {
     }
 }
 
+/// The inbound-content screen a caller ran immediately before admitting one
+/// imported claim (CAL-09): the verdict class and the screener's own reason
+/// codes. It rides the claim's evidence beside its source record, so each
+/// admission keeps the verdict it was admitted under.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImportedEvidenceScreen {
+    /// `clear`, `flagged` or `indeterminate`.
+    pub verdict: String,
+    /// The screener's reason codes; empty for a clear body.
+    pub reason_codes: Vec<String>,
+}
+
 /// Write metadata for admitting one normalized imported evidence claim.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImportedEvidenceAdmission {
@@ -41,6 +53,8 @@ pub struct ImportedEvidenceAdmission {
     pub occurred: TimeRange,
     pub learned_at: u64,
     pub approval: ClaimApprovalStatus,
+    /// The screen this admission ran under, when one ran.
+    pub screen: Option<ImportedEvidenceScreen>,
 }
 
 impl ImportedEvidenceAdmission {
@@ -63,7 +77,15 @@ impl ImportedEvidenceAdmission {
             occurred,
             learned_at,
             approval: ClaimApprovalStatus::Proposed,
+            screen: None,
         }
+    }
+
+    /// Records the screen this admission ran under on the claim's evidence.
+    #[must_use]
+    pub fn with_screen(mut self, screen: ImportedEvidenceScreen) -> Self {
+        self.screen = Some(screen);
+        self
     }
 
     /// Overrides the admission approval when a caller has an explicit
@@ -411,13 +433,35 @@ pub(super) fn imported_candidate(
         ));
     }
     let imported_evidence = imported_evidence_value(&admission.source_id, source_record_id);
+    let mut evidence = imported_evidence.clone();
+    if let (Some(screen), MsgpackValue::Map(entries)) = (&admission.screen, &mut evidence) {
+        entries.push((
+            MsgpackValue::from("screen"),
+            MsgpackValue::Map(vec![
+                (
+                    MsgpackValue::from("verdict"),
+                    MsgpackValue::from(screen.verdict.as_str()),
+                ),
+                (
+                    MsgpackValue::from("reason_codes"),
+                    MsgpackValue::Array(
+                        screen
+                            .reason_codes
+                            .iter()
+                            .map(|code| MsgpackValue::from(code.as_str()))
+                            .collect(),
+                    ),
+                ),
+            ]),
+        ));
+    }
     let candidate = ClaimCandidate::new(
         predicate.to_owned(),
         ClaimSubject::Entity(admission.entity_resolution.subject),
         value,
         1.0,
     )
-    .with_evidence(imported_evidence.clone());
+    .with_evidence(evidence);
     let envelope = WriteEnvelope::new(
         admission.actor,
         ClaimSource::Imported,
