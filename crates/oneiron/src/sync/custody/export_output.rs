@@ -5,11 +5,10 @@
 //! owner's server reads it whether or not it is the holder.
 //!
 //! - Admission takes a row only whole, filed under its own request, in its
-//!   sealing month's base window, within one row's bound, and, once this
-//!   vault folds the request's signed result, only the copy that result
-//!   names (FIX 12065), a part only as that copy is cut (FIX 12294). With
-//!   no result folded yet, whether it names the copy is judged where the
-//!   copy is kept.
+//!   sealing month's base window, within one row's bound. A copy (or a part
+//!   set) the request's folded signed result does not name is admitted,
+//!   never kept, and leaves at the next prune (FIX 12065, 12294); whether a
+//!   copy is the one named is judged where it is kept.
 //! - Reverse rematerialization relays each copy this vault keeps that stands
 //!   on its fold (`KeptExportOutput::stands`), and drops a row once its
 //!   request is refused here, its result names another copy, or its secret
@@ -59,9 +58,10 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
 
 /// Admits one sealed copy under `row_key`, the map key after its prefix:
 /// one that decodes within one row's bound, filed under its own request, in
-/// its sealing month's base window, and that the request's signed result
-/// names when `vault` folds one (FIX 12065): a forged copy under a real
-/// request is refused here, not carried until its window retires.
+/// its sealing month's base window. A copy the request's folded signed
+/// result does not name is admitted, never kept, and leaves at the next
+/// prune (`row_done`, FIX 12065): refusing it would refuse the whole update
+/// of a peer that has not folded the result yet.
 pub(super) fn admit_export_output(
     vault: &Vault,
     key: Option<&WindowKey>,
@@ -96,14 +96,15 @@ pub(super) fn admit_export_output(
         .owner_work_result(&kept.request)
         .is_some_and(|answer| !names_copy(answer.outcome.sealed_output(), &kept.sealed))
     {
-        // The row's key alone: never a byte of the copy.
-        tracing::warn!(
+        // Admitted, never kept: the keep path judges it against the result,
+        // and the relay prune drops it (`row_done`). Refusing it would refuse
+        // the whole update or snapshot of a peer that has not folded the
+        // result yet, and stall the window's sync until it does. The row's
+        // key alone: never a byte of the copy.
+        tracing::debug!(
             request = row_key,
-            "an export secret supplement row its request's signed result does not name was refused"
+            "an export secret supplement row its request's signed result does not name; it leaves at the next prune"
         );
-        return Err(refused(
-            "export secret supplement its request's signed result does not name",
-        ));
     }
     Ok(())
 }
