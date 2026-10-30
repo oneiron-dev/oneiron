@@ -10,6 +10,7 @@ use crate::consent::{
     GrantBound,
 };
 use crate::entity_id::EntityId;
+use crate::entity_id::derived_domains::CHANNEL_IDENTITY_AUTONOMY;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
@@ -131,13 +132,13 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Value> {
 pub(super) fn key(kind: &str, suffix: &str) -> Vec<u8> {
     format!("{kind}:{suffix}").into_bytes()
 }
+/// The content address of one autonomy row: the derived id of its kind and
+/// its value's MessagePack bytes under [`CHANNEL_IDENTITY_AUTONOMY`]. Every
+/// writer and every verifier of a handle calls this one fn.
 pub(super) fn address(kind: &str, value: &Value) -> Result<EntityId> {
-    let bytes = encode(&Value::Array(vec![Value::from(kind), value.clone()]))?;
-    let hash = blake3::hash(&bytes);
-    EntityId::from_bytes(
-        hash.as_bytes()[..16]
-            .try_into()
-            .map_err(|_| invalid_autonomy())?,
+    EntityId::derive(
+        CHANNEL_IDENTITY_AUTONOMY,
+        &[kind.as_bytes(), &encode(value)?],
     )
 }
 pub(super) fn mode_key(identity: EntityId, context: RelationshipContext) -> Vec<u8> {
@@ -146,22 +147,44 @@ pub(super) fn mode_key(identity: EntityId, context: RelationshipContext) -> Vec<
         &format!("{}:{}", identity.to_hex(), context.as_str()),
     )
 }
-pub(super) fn read_value(e: &MailboxReadEnvelope) -> Result<Value> {
-    if e.label_allowlist.is_empty() && e.thread_allowlist.is_empty()
+/// Allowlist length past which an owner's read-envelope write leaves one
+/// advisory note. Every entry is still kept, stored and matched.
+const MAILBOX_READ_ALLOWLIST_ADVISORY: usize = 256;
+
+/// The shape every stored read envelope has: the full-mailbox marker set
+/// exactly when both allowlists are empty, ordered date bounds, and
+/// well-formed, distinct allowlist entries.
+fn check_read(e: &MailboxReadEnvelope) -> Result<()> {
+    let names_no_allowlist = e.label_allowlist.is_empty() && e.thread_allowlist.is_empty();
+    if e.full_mailbox != names_no_allowlist
         || e.not_before.zip(e.not_after).is_some_and(|(a, b)| a > b)
     {
         return Err(invalid_autonomy());
     }
     for list in [&e.label_allowlist, &e.thread_allowlist] {
-        if list.len() > 256 {
-            return Err(invalid_autonomy());
-        }
         for item in list {
             token(item)?;
         }
         if list.iter().collect::<std::collections::BTreeSet<_>>().len() != list.len() {
             return Err(invalid_autonomy());
         }
+    }
+    Ok(())
+}
+
+/// The stored value of a read envelope the owner writes, after
+/// [`check_read`]. A long allowlist is kept whole; past
+/// [`MAILBOX_READ_ALLOWLIST_ADVISORY`] entries it leaves an advisory note.
+pub(super) fn read_value(e: &MailboxReadEnvelope) -> Result<Value> {
+    check_read(e)?;
+    let longest = e.label_allowlist.len().max(e.thread_allowlist.len());
+    if longest > MAILBOX_READ_ALLOWLIST_ADVISORY {
+        tracing::info!(
+            labels = e.label_allowlist.len(),
+            threads = e.thread_allowlist.len(),
+            advisory_threshold = MAILBOX_READ_ALLOWLIST_ADVISORY,
+            "a mailbox read envelope passed its advisory allowlist length"
+        );
     }
     Ok(Value::Array(vec![
         id_value(e.identity_ref),
@@ -175,10 +198,11 @@ pub(super) fn read_value(e: &MailboxReadEnvelope) -> Result<Value> {
         ),
         e.not_before.map_or(Value::Nil, Value::from),
         e.not_after.map_or(Value::Nil, Value::from),
+        Value::from(e.full_mailbox),
     ]))
 }
 pub(super) fn read_from(value: &Value) -> Result<MailboxReadEnvelope> {
-    let v = array(value, 5)?;
+    let v = array(value, 6)?;
     let strings = |v: &Value| -> Result<Vec<String>> {
         v.as_array()
             .ok_or_else(invalid_autonomy)?
@@ -190,10 +214,11 @@ pub(super) fn read_from(value: &Value) -> Result<MailboxReadEnvelope> {
         identity_ref: id(&v[0])?,
         label_allowlist: strings(&v[1])?,
         thread_allowlist: strings(&v[2])?,
+        full_mailbox: v[5].as_bool().ok_or_else(invalid_autonomy)?,
         not_before: optional_number(&v[3])?,
         not_after: optional_number(&v[4])?,
     };
-    read_value(&e)?;
+    check_read(&e)?;
     Ok(e)
 }
 pub(super) fn action_value(e: &ChannelIdentityActionEnvelope) -> Result<Value> {
