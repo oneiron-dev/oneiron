@@ -6,7 +6,7 @@
 
 mod categories;
 
-use super::chart::{ChartEdit, ChartPlot, ChartSeries};
+use super::chart::{ChartCategories, ChartEdit, ChartPlot, ChartSeries};
 use super::table_ops::order;
 use super::{LiveDeck, NodeId, NodePayload};
 use crate::live::LiveError;
@@ -370,6 +370,16 @@ pub(super) fn lower_chart(
     for edit in lower_set(None, held_categories, categories, mint) {
         emit(edit, &mut scratch, &mut edits, mint);
     }
+    // The category identities the lowering gave points `wanted` named
+    // otherwise, for its custom splits (FIX 9375).
+    let mut points: Vec<(NodeId, NodeId)> = Vec::new();
+    if let NodePayload::Chart {
+        categories: lowered,
+        ..
+    } = &scratch
+    {
+        renamed_points(categories, lowered, &mut points);
+    }
     let held_ids: Vec<NodeId> = held_series.iter().filter_map(|line| line.id).collect();
     let known: BTreeSet<NodeId> = held_ids.iter().copied().collect();
     let mut seen = BTreeSet::new();
@@ -446,6 +456,9 @@ pub(super) fn lower_chart(
         let Some(was) = now(&scratch) else {
             continue;
         };
+        if let (Some(wanted), Some(lowered)) = (&line.categories, &was.categories) {
+            renamed_points(wanted, lowered, &mut points);
+        }
         if was.name != line.name {
             edits.push(ChartEdit::SetSeriesName {
                 series: id,
@@ -492,33 +505,73 @@ pub(super) fn lower_chart(
             });
         }
     }
-    // A stock plot's prices follow the series this lowering named anew.
+    // A stock plot's prices follow the series this lowering named anew,
+    // and an of-pie plot's custom split the points it named anew (FIX
+    // 9375), each where the chart no longer holds the old identity.
     let renamed: Vec<(NodeId, NodeId)> = series
         .iter()
         .zip(&lines)
         .filter_map(|(line, now)| Some((line.id?, now.id?)))
         .filter(|(was, now)| was != now && !wanted_ids.contains(was))
         .collect();
+    let kept: BTreeSet<NodeId> = match &scratch {
+        NodePayload::Chart {
+            categories, series, ..
+        } => categories
+            .ids()
+            .into_iter()
+            .chain(
+                series
+                    .iter()
+                    .filter_map(|line| line.categories.as_ref())
+                    .flat_map(ChartCategories::ids),
+            )
+            .collect(),
+        _ => BTreeSet::new(),
+    };
     for plot in plots {
-        let Some(mut roles) = plot.stock else {
-            continue;
-        };
+        let mut out = plot.clone();
         let mut moved = false;
-        for slot in roles.slots_mut() {
-            if let Some(&(_, now)) = renamed.iter().find(|(was, _)| *slot == Some(*was)) {
-                *slot = Some(now);
-                moved = true;
+        if let Some(roles) = &mut out.stock {
+            for slot in roles.slots_mut() {
+                if let Some(&(_, now)) = renamed.iter().find(|(was, _)| *slot == Some(*was)) {
+                    *slot = Some(now);
+                    moved = true;
+                }
+            }
+        }
+        if let Some(split) = &mut out.custom_split {
+            for id in split.iter_mut() {
+                if !kept.contains(&*id)
+                    && let Some(&(_, now)) = points.iter().find(|(was, _)| *was == *id)
+                {
+                    *id = now;
+                    moved = true;
+                }
             }
         }
         if moved {
-            let plot = ChartPlot {
-                stock: Some(roles),
-                ..plot.clone()
-            };
-            emit(ChartEdit::SetPlot { plot }, &mut scratch, &mut edits, mint);
+            emit(ChartEdit::SetPlot { plot: out }, &mut scratch, &mut edits, mint);
         }
     }
     edits
+}
+
+/// The identities a lowering gave, by place, the points of `wanted` it
+/// named otherwise (`lowered` is the set it made): each named one and the
+/// one it now holds.
+fn renamed_points(
+    wanted: &ChartCategories,
+    lowered: &ChartCategories,
+    out: &mut Vec<(NodeId, NodeId)>,
+) {
+    for (point, now) in wanted.points.iter().zip(&lowered.points) {
+        if let (Some(was), Some(now)) = (point.id, now.id)
+            && was != now
+        {
+            out.push((was, now));
+        }
+    }
 }
 
 /// `edits` to the chart `held` as its writer logs them: each whole set a
