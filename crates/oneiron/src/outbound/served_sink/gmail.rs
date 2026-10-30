@@ -90,10 +90,7 @@ impl ServedChannelSink<'_> {
         identity: EntityId,
     ) -> Option<GmailReplyThread> {
         let origin = self.answered_gmail_origin(request, identity)?;
-        let gmail_thread = origin
-            .payload_ref
-            .as_deref()?
-            .strip_prefix(GMAIL_THREAD_PAYLOAD_PREFIX)?;
+        let gmail_thread = self.gmail_thread_of(origin.payload_ref.as_deref()?)?;
         let mut passports = match self.vault.thread_passports(origin.thread_ref.as_deref()?) {
             Ok(passports) => passports,
             Err(error) => {
@@ -108,7 +105,24 @@ impl ServedChannelSink<'_> {
             .iter()
             .map(|passport| passport.message_id.as_str())
             .collect::<Vec<_>>();
-        GmailReplyThread::new(gmail_thread, parent.message_id.as_str(), &references).ok()
+        GmailReplyThread::new(&gmail_thread, parent.message_id.as_str(), &references).ok()
+    }
+
+    /// The Gmail thread id `payload_ref` names. The run door archives each
+    /// Gmail inbound as its provider event, so a live ref is the archive's:
+    /// the archived body keeps the `gmail:thread:` ref it arrived with.
+    fn gmail_thread_of(&self, payload_ref: &str) -> Option<String> {
+        if let Some(thread) = payload_ref.strip_prefix(GMAIL_THREAD_PAYLOAD_PREFIX) {
+            return Some(thread.to_owned());
+        }
+        self.vault
+            .read_provider_email(payload_ref)
+            .ok()?
+            .and_then(|email| email.payload_ref)
+            .and_then(|kept| {
+                kept.strip_prefix(GMAIL_THREAD_PAYLOAD_PREFIX)
+                    .map(str::to_owned)
+            })
     }
 
     /// The inbound Gmail message this send answers: the intent's trigger

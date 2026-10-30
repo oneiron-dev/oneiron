@@ -45,8 +45,10 @@ const GMAIL_RESCAN_OVERLAP_SECS: u64 = 86_400;
 const GMAIL_USERS_URL: &str = "https://gmail.googleapis.com/gmail/v1/users";
 /// How many messages one page lists.
 const GMAIL_PAGE_SIZE: u32 = 50;
-/// The headers the adapter reads: the sender, and the RFC threading headers.
-const GMAIL_METADATA_HEADERS: [&str; 4] = ["From", "Message-ID", "References", "In-Reply-To"];
+/// The headers the adapter reads: the sender, the subject, and the RFC
+/// threading headers.
+const GMAIL_METADATA_HEADERS: [&str; 5] =
+    ["From", "Subject", "Message-ID", "References", "In-Reply-To"];
 /// The largest reply one Gmail call reads.
 const MAX_GMAIL_REPLY_BYTES: u64 = 1_048_576;
 
@@ -289,7 +291,7 @@ struct ReadMessage {
 /// Projects one `format=metadata` reply onto the adapter's message metadata.
 /// The receiving address is the seat's mailbox, the mailbox the message is
 /// in; the sender is the `From` header's mailbox, or a digest of the header
-/// when it names none.
+/// when it names none. The `Subject` header rides along for the STOP check.
 fn project_message(
     mailbox: &str,
     listed_id: &str,
@@ -340,6 +342,9 @@ fn project_message(
         internal_date_secs,
         placement(&labels),
     );
+    if let Some(subject) = header("Subject") {
+        metadata = metadata.with_subject(subject.to_owned());
+    }
     if let Some(message_id) = header("Message-ID").and_then(|value| message_ids(value).next()) {
         metadata = metadata.with_thread_headers(EmailThreadHeaders::new(
             message_id,

@@ -1,6 +1,7 @@
 //! Page admission and persisted mailbox progress for a delegated read.
 
 use super::*;
+use crate::channel_identity_provider::EmailProviderInbound;
 use crate::channel_identity_provider::mailbox_cursor::{
     advance_mailbox_cursor, mailbox_cursor_snapshot, validate_mailbox_cursor,
 };
@@ -42,6 +43,28 @@ impl GmailReadAuthority<'_> {
         self.adapter
             .with_delegated_token_at_door(self.vault, self.identity_id, &mut guarded)
     }
+}
+
+/// Keeps one Gmail inbound in the vault as its provider event
+/// ([`Vault::archive_provider_event`]): the inbound as it arrived, its
+/// threading headers and subject included. Its `payload_ref` becomes the
+/// archive's, so the STOP check reads the subject back through
+/// [`Vault::read_provider_email`]; the archived body keeps the
+/// `gmail:thread:` ref the reply path reads back for the Gmail thread.
+fn archive_gmail_inbound(
+    vault: &Vault,
+    inbound: &mut EmailProviderInbound,
+    now: u64,
+) -> Result<()> {
+    let body = serde_json::to_vec(&*inbound)
+        .map_err(|_| Error::InvalidConfig("gmail inbound did not encode".into()))?;
+    inbound.payload_ref = Some(vault.archive_provider_event(
+        EMAIL_CHANNEL,
+        &inbound.provider_event_id,
+        &body,
+        now,
+    )?);
+    Ok(())
 }
 
 /// Delivery idempotence is mailbox-local, while the handoff queue is vault-wide.
@@ -160,7 +183,7 @@ impl GmailDelegatedAdapter {
             };
             // Only these deterministic, message-local refusals are set aside;
             // every other failure keeps the page retryable as before.
-            let inbound = match message.into_provider_inbound() {
+            let mut inbound = match message.into_provider_inbound() {
                 Ok(inbound) => inbound,
                 Err(error @ Error::InvalidConfig(_)) => {
                     skipped.push(set_aside(
@@ -171,6 +194,7 @@ impl GmailDelegatedAdapter {
                 }
                 Err(error) => return Err(error),
             };
+            archive_gmail_inbound(vault, &mut inbound, now)?;
             let thread = inbound.thread_headers.clone();
             let input = match self.parse_inbound(ChannelIdentityProviderInbound::Email(inbound)) {
                 Ok(input) => input,
