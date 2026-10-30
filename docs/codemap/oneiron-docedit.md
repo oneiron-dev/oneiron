@@ -35,13 +35,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/docx_body.rs` | src | m | 5 struct · 5 enum · 7 fn · 1 const | DocxAnchor, DocxBlock, DocxBlockKind, DocxCell, DocxChange, DocxLock, DocxMark, DocxParagraph +2 | The DOCX face of a live office body (ARCH-0075, "the body is the truth, the file is a projection") |
 | `src/edit/check.rs` | src | m | 16 crate-vis | — | The independent passthrough check (ARCH-0077, "Transactions and allowed part changes") |
 | `src/edit/geometry.rs` | src | s | 6 crate-vis | — | `set_preset` and `set_glue`: a shape's, picture's or connector's preset geometry, and a connector's glue |
-| `src/edit/media.rs` | src | m | 8 crate-vis | — | `set_picture` and `set_notes`: verbs whose write sets reach beyond the slide part |
+| `src/edit/media.rs` | src | m | 9 crate-vis | — | `set_picture`, `set_notes` and `release_media`: verbs whose write sets reach beyond the slide part |
 | `src/edit/mod.rs` | src | m | 7 struct · 3 enum · 1 fn · 2 mod · 2 re-export · 4 crate-vis | AnchorCandidate, EditRefusal, EditReport, Effect, FitUnverified, Picture, RunProps, Target +2 | Narrow value and text edits in place (ARCH-0077, "Edit in place with passthrough"): `set_text`… |
 | `src/edit/structure/arrange.rs` | src | s | 4 crate-vis | — | Projector arrangement verbs and their verification seam |
 | `src/edit/structure/arrange/verify.rs` | src | m | 5 crate-vis | — | Independent read-back checks for projector arrangement verbs |
 | `src/edit/structure/born.rs` | src | s | 2 crate-vis | — | The live-deck projector's creation verbs for what a preset shape cannot carry: a picture over a new media… |
 | `src/edit/structure/check.rs` | src | m | 5 crate-vis | — | The independent check for structural edits |
-| `src/edit/structure/mod.rs` | src | m | 5 struct · 3 enum · 5 fn · 3 crate-vis | ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, StructureEdit, StructureReport | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
+| `src/edit/structure/mod.rs` | src | m | 5 struct · 4 enum · 5 fn · 3 crate-vis | ConnectorPreset, NewConnector, NewGroup, NewPicture, NewShape, Preset, ShapeId, StructureEdit +1 | Structural edits (ONE-2529; ARCH-0077, "Edit in place with passthrough"): `add_shape` from a preset… |
 | `src/edit/structure/slides/app_props.rs` | src | m | 10 crate-vis | — | The app properties (`docProps/app.xml`) a slide's addition, copy, removal or move, or an edit of its title… |
 | `src/edit/structure/slides/check.rs` | src | m | 2 crate-vis | — | The independent check for slide-level edits |
 | `src/edit/structure/slides/lifecycle.rs` | src | s | 2 crate-vis | — | A blank slide over a layout, and a slide's removal from the list: the live-deck projector's slide verbs |
@@ -73,8 +73,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/live/chart_labels.rs` | src | m | 1 crate-vis | — | A chart's data-label ranges (`c15:datalabelsRange`, Office 2013's "Value From Cells") unlinked when its data… |
 | `src/live/conversion.rs` | src | m | 2 enum · 2 fn | Conversion, RebuildReason | What a deck edit or export did PowerPoint's way, named on its receipt (OF-510; the Office ruling of 10-18) |
 | `src/live/convert.rs` | src | m | 12 crate-vis | — | Deck edits PowerPoint performs, done its way where the live deck once refused them (OF-510; the Office… |
-| `src/live/convert/chart.rs` | src | m | 1 crate-vis | — | A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out… |
-| `src/live/convert/chart/special.rs` | src | s | 6 crate-vis | — | A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its… |
+| `src/live/convert/chart.rs` | src | m | 2 crate-vis | — | A chart payload settled into the form its export writes (OF-510): the plots Change Chart Type lays out… |
+| `src/live/convert/chart/special.rs` | src | m | 7 crate-vis | — | A chart's stock, surface and of-pie settlement (OF-510, FIX 3493 D9c): each stock plot's prices bound to its… |
 | `src/live/deck_export.rs` | src | XL | 7 struct · 1 enum · 11 fn · 1 const | ExportKey, ExportOutcome, ExportProfile, Gate, HeldAssets, OracleReceipt, RoundtripReport, StepOutcome | The deterministic export projector and the eight-step gate (ARCH-0077, "Export is a deterministic projection") |
 | `src/live/deck_export/chart.rs` | src | s | 3 crate-vis | — | A chart at export, by series identity: a bound chart's changed data written over its retained chart part… |
 | `src/live/deck_export/table.rs` | src | s | 3 crate-vis | — | A table at export, by row and column identity: a bound table's grid rewritten where its rows, columns or… |

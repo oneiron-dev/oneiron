@@ -96,9 +96,13 @@ pub enum Conversion {
     /// points by index): a point a series holds no value for is a missing
     /// height, never zero.
     SurfaceAligned { count: usize },
-    /// The nth of-pie plot's custom split lost `count` point(s) the set its
-    /// first series draws no longer holds.
+    /// The nth of-pie plot's custom split lost `count` point(s) no set its
+    /// series draw holds any more.
     SplitPointsDropped { nth: u32, count: usize },
+    /// The nth of-pie plot's series draw sets of their own that place its
+    /// custom split at different points, so it is drawn as `count` of-pie
+    /// plots, one per placement, each holding its settings (FIX 9375).
+    OfPieSplitViews { nth: u32, count: usize },
     /// A title or label linked to a cell keeps its text, unlinked.
     TitleLinkDropped,
     /// This many SmartArt nodes' text was written into the data part and
@@ -337,6 +341,10 @@ impl Conversion {
             ),
             Self::SplitPointsDropped { nth, count } => format!(
                 "of-pie plot {} drops {count} custom split point(s) its categories no longer hold",
+                nth + 1
+            ),
+            Self::OfPieSplitViews { nth, count } => format!(
+                "of-pie plot {} is drawn as {count} of-pie plots, one per placement its series' categories give its custom split",
                 nth + 1
             ),
             Self::TitleLinkDropped => {

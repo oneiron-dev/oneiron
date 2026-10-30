@@ -340,6 +340,10 @@ pub struct SlideReviewRun {
 pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     pub decision: Option<TypedDecision>,
+    /// The live body the review read the unit on, when it read one: its
+    /// decision names the head version as evidence (FIX 12051).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// A selected unit the review will not ask as given. A shape unit offers its
@@ -350,6 +354,9 @@ pub struct SlideUnitRefusal {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
     pub offer: Option<PptxCommentTarget>,
+    /// The live body the review read the unit on, when it read one
+    /// (FIX 12051).
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// On the wire as its variant name (`MissingShape`, ...), the words a
@@ -383,6 +390,11 @@ pub struct SlideReviewBase<'a> {
     /// pinned to the frontier on its receipt, and what a rendered image is of.
     pub artifact: EntityId,
     pub package_limits: Limits,
+    /// The deck each unit's text is read from when it is not `bytes`: a live
+    /// deck's projection at its head, which a wake renders the units' images
+    /// from (FIX 11981, 12019). A unit is found there by its slide part and
+    /// id; its comment still lands on `bytes`.
+    pub shown: Option<&'a [u8]>,
 }
 
 /// One typed ask, whose principal and display configuration are fixed by the
