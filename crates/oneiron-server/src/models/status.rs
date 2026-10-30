@@ -1,7 +1,11 @@
 //! What the model runtime built, for the owner-facing status route.
+use std::collections::BTreeMap;
+use std::time::UNIX_EPOCH;
+
 use oneiron::ModelId;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{BrokerIsolation, SpentKind, WorkerStatus};
+use oneiron::llm::{BrokerIsolation, ResourceClass, SpentKind, WorkClass, WorkerStatus};
+use oneiron_driver::{AdmissionSnapshot, PressureState, ResidentSource};
 use serde::Serialize;
 
 use crate::config::models::{ModelRef, ProviderConfig, ProviderKind, role_key};
@@ -23,10 +27,158 @@ pub struct ModelsStatus {
     /// seats' availability; none when no worker is configured.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub workers: Vec<WorkerStatus>,
+    /// One row per host/device admission queue, copied from live state.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<DeviceStatus>,
     /// Sealed inference snapshot parking (V2-R3), over the vaults this
     /// process serves, in the live status only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<SnapshotStatus>,
+}
+
+/// One device queue and its memory ledger, copied without a probe.
+#[derive(Clone, Debug, Serialize)]
+pub struct DeviceStatus {
+    pub device: String,
+    pub capacity_mib: Option<u64>,
+    pub queued_foreground: u64,
+    pub queued_background: u64,
+    pub active_grants: u64,
+    pub paused: u64,
+    pub holds_mib: u64,
+    pub declared_mib: Option<u64>,
+    pub resident_mib: Option<u64>,
+    pub class_used_mib: Option<BTreeMap<String, u64>>,
+    pub rows: Vec<DeviceRowStatus>,
+    pub pressure: DevicePressureStatus,
+    pub executors: Vec<DeviceExecutorStatus>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeviceRowStatus {
+    pub worker_id: String,
+    pub declared: DeviceDeclarationStatus,
+    pub resident_mib: Option<u64>,
+    pub resident_source: Option<&'static str>,
+    pub observed_at_unix_ms: Option<u64>,
+    pub class: Option<ResourceClass>,
+    pub mediated: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct DeviceDeclarationStatus {
+    pub weights_mib: Option<u64>,
+    pub kv_mib: Option<u64>,
+    pub workspace_mib: Option<u64>,
+    pub load_transient_mib: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DevicePressureStatus {
+    pub state: &'static str,
+    pub idle_worker: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeviceExecutorStatus {
+    pub worker_id: String,
+    pub external: bool,
+    pub idle: bool,
+    pub load_class: Option<WorkClass>,
+}
+
+impl DeviceStatus {
+    #[must_use]
+    pub fn from_snapshot(snapshot: AdmissionSnapshot) -> Self {
+        let pressure = match &snapshot.pressure {
+            PressureState::None => DevicePressureStatus {
+                state: "none",
+                idle_worker: None,
+            },
+            PressureState::UnloadedIdle(worker) => DevicePressureStatus {
+                state: "unloaded_idle",
+                idle_worker: Some(worker.clone()),
+            },
+            PressureState::WaitingGrant => DevicePressureStatus {
+                state: "waiting_grant",
+                idle_worker: None,
+            },
+            PressureState::UnknownCapacityAdmitted => DevicePressureStatus {
+                state: "unknown_capacity_admitted",
+                idle_worker: None,
+            },
+        };
+        let rows = snapshot
+            .ledger
+            .rows
+            .into_iter()
+            .map(|row| {
+                let resident = row.resident;
+                DeviceRowStatus {
+                    worker_id: row.worker_id,
+                    declared: DeviceDeclarationStatus {
+                        weights_mib: row.declared.weights_mib,
+                        kv_mib: row.declared.kv_mib,
+                        workspace_mib: row.declared.workspace_mib,
+                        load_transient_mib: row.declared.load_transient_mib,
+                    },
+                    resident_mib: resident.map(|report| report.resident_mib),
+                    resident_source: resident.map(|report| match report.source {
+                        ResidentSource::WorkerReport => "worker_report",
+                        ResidentSource::DeviceQuery => "device_query",
+                    }),
+                    observed_at_unix_ms: resident.and_then(|report| {
+                        report
+                            .observed_at
+                            .duration_since(UNIX_EPOCH)
+                            .ok()
+                            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+                    }),
+                    class: row.class,
+                    mediated: row.mediated,
+                }
+            })
+            .collect();
+        let loads = snapshot.loads;
+        Self {
+            device: snapshot.device,
+            capacity_mib: snapshot.capacity_mib,
+            queued_foreground: snapshot.queued_foreground,
+            queued_background: snapshot.queued_background,
+            active_grants: snapshot.active_grants,
+            paused: snapshot.paused,
+            holds_mib: snapshot.ledger.holds_mib,
+            declared_mib: snapshot.ledger.declared_mib,
+            resident_mib: snapshot.ledger.resident_mib,
+            class_used_mib: snapshot.ledger.class_used_mib.map(|used| {
+                used.into_iter()
+                    .map(|(class, mib)| (resource_class_name(class).to_owned(), mib))
+                    .collect()
+            }),
+            rows,
+            pressure,
+            executors: snapshot
+                .executors
+                .into_iter()
+                .map(|executor| DeviceExecutorStatus {
+                    load_class: loads.get(&executor.worker_id).copied(),
+                    worker_id: executor.worker_id,
+                    external: executor.external,
+                    idle: executor.idle,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn resource_class_name(class: ResourceClass) -> &'static str {
+    match class {
+        ResourceClass::Chat => "chat",
+        ResourceClass::Encoder => "encoder",
+        ResourceClass::Embedder => "embedder",
+        ResourceClass::Asr => "asr",
+        ResourceClass::Tts => "tts",
+    }
 }
 
 /// Sealed inference snapshot parking as this process stands, summed over

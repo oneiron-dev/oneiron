@@ -347,6 +347,56 @@ pub(crate) fn stamp_reveal_lease_in_txn(
     Ok(SecretLeaseMaterialization { lease, value })
 }
 
+/// The value a delivered reveal's own T1 lease `lease_id` still holds, read
+/// again for the step that collected it, resumed after a park (FIX 2360).
+/// The lease must be this reveal's (its secret and its effector), active,
+/// inside its window and of the value generation the record holds now, and
+/// the record admitted to a model as a reveal is; nothing is stamped, spent
+/// or extended. `None` when the lease is gone, lapsed or outlived its value.
+///
+/// # Errors
+/// [`GateError::InvalidConsentBound`] for a lease of another secret or
+/// effector; the reveal admission's refusals; storage faults.
+pub(crate) fn reread_reveal_lease_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authority: &RevealAuthority,
+    lease_id: &EntityId,
+) -> Result<Option<Zeroizing<Vec<u8>>>> {
+    let rec = read_secret_custody_admission_in_txn(&vault.store, txn, authority.secret())?
+        .ok_or_else(|| {
+            Error::Secret(SecretError::SecretRefNotFound {
+                name: authority.handle().to_owned(),
+            })
+        })?;
+    let Some(lease) = read_secret_lease_in_txn(&vault.store, txn, lease_id)? else {
+        return Ok(None);
+    };
+    if lease.secret_ref != rec.name || lease.binding_effector != authority.effector() {
+        return Err(Error::Gate(GateError::InvalidConsentBound(
+            "the replayed reveal names a lease of another secret or reader",
+        )));
+    }
+    let now = VaultInstant(vault.store.clock.now_recorded_at()).secs();
+    if lease.status != SecretLeaseStatus::Active
+        || now >= lease.expires_at
+        || lease.value_generation != rec.rotation_generation
+        || rec.class != authority.class()
+    {
+        return Ok(None);
+    }
+    let floor = SecretCustodyFloor::resolve(&vault.store, txn)?;
+    reveal_tier_admission(&rec, &floor)?;
+    crate::secret_custody::refuse_revoked_use_in_txn(
+        vault,
+        txn,
+        authority.secret(),
+        rec.class,
+        &rec.name,
+    )?;
+    reveal_value_in_txn(&vault.store, txn, authority).map(Some)
+}
+
 /// The rows every T1 materialization writes once its value is read: the
 /// materialization receipt, then the lease, then the expiry wake.
 fn write_t1_lease_rows_in_txn(

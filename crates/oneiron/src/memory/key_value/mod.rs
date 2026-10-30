@@ -111,10 +111,7 @@ struct KeyValueRows {
 impl KeyValueRows {
     /// The one head at `address`, or `None` when it has none. Competing
     /// heads there are a conflict: no winner is ever picked.
-    fn take(
-        &mut self,
-        address: &KeyValueAddress,
-    ) -> MemoryResult<Option<(EntityId, StoredValue)>> {
+    fn take(&mut self, address: &KeyValueAddress) -> MemoryResult<Option<(EntityId, StoredValue)>> {
         if self.conflicted.contains_key(address) {
             return Err(conflict(MULTIPLE_HEADS));
         }
@@ -346,9 +343,10 @@ impl Memory<'_> {
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
         let selected = |address: &KeyValueAddress, value: &StoredValue| {
             address.namespace.starts_with(&request.namespace_prefix)
-                && request.filter.as_ref().is_none_or(|filter| {
-                    filter.iter().all(|(k, v)| value.value.get(k) == Some(v))
-                })
+                && request
+                    .filter
+                    .as_ref()
+                    .is_none_or(|filter| filter.iter().all(|(k, v)| value.value.get(k) == Some(v)))
         };
         let rows = self.key_value_rows(&txn, readable.as_ref())?;
         // A conflicted address answers only a search it could be in: one of

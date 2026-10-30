@@ -46,7 +46,7 @@ pub(crate) async fn vault_critic_review(
     };
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         let producers = ProducerRows::default();
         let mut read = Vec::new();
         let answer = review(&server, &auth, actor, class, &input, &producers, &mut read);

@@ -169,6 +169,29 @@ const INVOCATION_HEADER = "x-oneiron-invocation";
 const HOOK_ASK_HEADER = "x-oneiron-hook-ask";
 
 /**
+ * The facade verb whose body past the ceiling rides the owner route
+ * instead: a sealed custody change, which a surface's frame of numbered
+ * envelopes can take past any bound (FIX 11727).
+ */
+const CUSTODY_SUBMIT_VERB = "vault.secrets.custody.submit";
+
+/**
+ * The owner route that spools a sealed custody change whatever its
+ * length, under the same credential, in place of the facade verb. Its
+ * reply is the verb's `SecretCustodyReply` field for field, and it keeps
+ * no call receipt.
+ */
+const OWNER_CUSTODY_ROUTE = "/v1/owner/secrets/custody";
+
+/**
+ * Request-body ceiling for the facade nest: 64 MiB, as `api/facade.rs`
+ * bounds it. Measured before the request is sent, so an oversized body
+ * costs one serialization rather than an upload the server would refuse
+ * at the far end after the bytes crossed the network.
+ */
+const MAX_REMOTE_REQUEST_BYTES = 64 * 1024 * 1024;
+
+/**
  * What a redirect leaves of the request, per the fetch redirect rules: `303`
  * turns any non-GET/HEAD into a bodyless `GET`, `301`/`302` do the same to a
  * `POST`, and `307`/`308` preserve method and body exactly. The body headers
@@ -258,10 +281,13 @@ export function mergeHeaders(defaults: Headers, extra?: HeadersInit): Headers {
 export class HttpBaseClient {
   /**
    * Every facade verb at its SDK path, as `POST /v1/core/facade/<verb>`:
-   * `client.facade.vault.recall({ query: "..." }, init)`. Each call goes out
-   * under a fresh `x-oneiron-invocation` and returns the original `Response`,
-   * or a `FacadePending` when a verb hook stopped it on an ask;
-   * `FacadeResult<"vault.recall">` types its 2xx body.
+   * `client.facade.vault.recall({ query: "..." }, init)`. A sealed custody
+   * change past the facade's 64 MiB body ceiling rides
+   * `POST /v1/owner/secrets/custody` instead, which spools it whole
+   * (FIX 11727). Each call goes out under a fresh `x-oneiron-invocation`
+   * and returns the original `Response`, or a `FacadePending` when a verb
+   * hook stopped it on an ask; `FacadeResult<"vault.recall">` types its
+   * 2xx body.
    */
   readonly facade = facadeTree<"response", RequestInit>((verb, input, init, invocation, ask) =>
     this.facadeCall(verb, input, init ?? {}, invocation, ask),
@@ -364,6 +390,22 @@ export class HttpBaseClient {
     invocation: string,
     ask?: string,
   ): Promise<Response | FacadePending<V>> {
+    const body = JSON.stringify(input);
+    // A sealed custody change past the ceiling goes to the owner route
+    // that spools it whole, whatever its length (FIX 11727), as the Rust
+    // remote client does: the facade would refuse it at its bound. The
+    // route keeps no call receipt, so the call carries no invocation.
+    if (
+      verb === CUSTODY_SUBMIT_VERB &&
+      new TextEncoder().encode(body).length > MAX_REMOTE_REQUEST_BYTES
+    ) {
+      const spooledHeaders = new Headers(init.headers ?? {});
+      spooledHeaders.set("Content-Type", "application/json");
+      const spooled = await this.request(OWNER_CUSTODY_ROUTE, {
+        ...init, method: "POST", headers: spooledHeaders, body,
+      });
+      return (await facadePending(verb, input, spooled)) ?? spooled;
+    }
     const headers = new Headers(init.headers ?? {});
     headers.set("Content-Type", "application/json");
     headers.set(INVOCATION_HEADER, invocation);
@@ -371,7 +413,7 @@ export class HttpBaseClient {
       headers.set(HOOK_ASK_HEADER, ask);
     }
     const response = await this.request(`/v1/core/facade/${encodeURIComponent(verb)}`, {
-      ...init, method: "POST", headers, body: JSON.stringify(input),
+      ...init, method: "POST", headers, body,
     });
     return (await facadePending(verb, input, response)) ?? response;
   }

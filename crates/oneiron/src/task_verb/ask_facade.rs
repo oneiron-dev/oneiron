@@ -336,6 +336,7 @@ impl Memory<'_> {
                     statement,
                     scope: check_scope,
                     effect,
+                    requester: crate::agent_dispatch::QueuedRequester::of_memory(self),
                     now,
                 },
             );

@@ -7,10 +7,7 @@ use crate::edge::{EdgeInfo, EdgeKind};
 #[cfg(test)]
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
-use crate::limits::{
-    ERR_CHILD_OF_CYCLE_CHECK, MAX_ANCESTOR_DEPTH, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS,
-};
+use crate::error::Result;
 use crate::ports::EdgeDirection;
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
@@ -82,7 +79,8 @@ fn first_child_of_parent(
     Ok(None)
 }
 
-/// Cap for `subtree` to prevent unbounded allocation on deep trees.
+/// Advisory threshold row for [`Vault::subtree`]: past it the walk raises one
+/// check and reads on. It bounds no result.
 const MAX_SUBTREE_RESULTS: usize = 50_000;
 
 /// Build an edge prefix `[entity_id | kind]` for targeted LMDB prefix scans.
@@ -227,7 +225,8 @@ impl Vault {
         })
     }
 
-    /// Returns outbound edges for `src`.
+    /// Returns outbound edges for `src`, however many: past the threshold
+    /// row the scan raises one check and reads on (rule 5).
     pub fn edges_out(&self, src: &EntityId) -> Result<Vec<EdgeInfo>> {
         let txn = self.store.env.read_txn()?;
         crate::ports::EdgeStore::port_edge_neighbors(
@@ -236,11 +235,12 @@ impl Vault {
             src,
             crate::ports::EdgeDirection::Out,
             None,
-            MAX_EDGE_QUERY_RESULTS,
+            usize::MAX,
         )
     }
 
-    /// Returns inbound edges for `tgt`.
+    /// Returns inbound edges for `tgt`, however many: past the threshold row
+    /// the scan raises one check and reads on (rule 5).
     pub fn edges_in(&self, tgt: &EntityId) -> Result<Vec<EdgeInfo>> {
         let txn = self.store.env.read_txn()?;
         crate::ports::EdgeStore::port_edge_neighbors(
@@ -249,7 +249,7 @@ impl Vault {
             tgt,
             crate::ports::EdgeDirection::In,
             None,
-            MAX_EDGE_QUERY_RESULTS,
+            usize::MAX,
         )
     }
 
@@ -487,30 +487,30 @@ impl Vault {
 /// `max_depth`, read through `store`, a room's view included. Returns
 /// `(id, depth)` pairs sorted by depth.
 ///
-/// Uses BFS internally (queue-based) so that when the result cap is hit,
-/// shallower nodes are always included before deeper ones. This ensures
-/// fair capping across wide trees.
-/// Children are found via inbound ChildOf edges (since ChildOf direction is
-/// child → parent, children appear in the parent's edges_in).
-///
-/// Returns all descendants, or `Err(IndexOverflow("subtree"))` if the
-/// result set or pending frontier would exceed `MAX_SUBTREE_RESULTS`.
+/// Uses BFS internally (queue-based), so shallower nodes always come before
+/// deeper ones. Children are found via inbound ChildOf edges (since ChildOf
+/// direction is child → parent, children appear in the parent's edges_in).
+/// Every descendant is returned, however many: past the advisory threshold
+/// row the walk raises one check and reads on (rule 5).
 pub(crate) fn subtree_in(
     store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     root: &EntityId,
     max_depth: u32,
 ) -> Result<Vec<(EntityId, u32)>> {
+    let mut count = ScanCount::start_at(
+        EngineScan::DagWalkRecords,
+        root.as_bytes(),
+        MAX_SUBTREE_RESULTS as u64,
+    );
     let mut result = Vec::new();
     let mut frontier = std::collections::VecDeque::from([(*root, 0_u32)]);
     let mut visited = std::collections::HashSet::new();
     visited.insert(*root);
 
     while let Some((node, depth)) = frontier.pop_front() {
+        count.row();
         if depth > 0 {
-            if result.len() >= MAX_SUBTREE_RESULTS {
-                return Err(Error::IndexOverflow("subtree"));
-            }
             result.push((node, depth));
         }
         if depth >= max_depth {
@@ -527,11 +527,9 @@ pub(crate) fn subtree_in(
             None,
         )? {
             let edge_row = entry?;
+            count.row();
             let child = edge_row.target;
             if visited.insert(child) {
-                if result.len() + frontier.len() >= MAX_SUBTREE_RESULTS {
-                    return Err(Error::IndexOverflow("subtree"));
-                }
                 frontier.push_back((child, depth + 1));
             }
         }
@@ -543,36 +541,38 @@ pub(crate) fn subtree_in(
         a.1.cmp(&b.1)
             .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
     });
+    count.defer(store);
     Ok(result)
 }
 
 /// Walk `node`'s ancestors via outbound ChildOf edges, read through
 /// `store`, a room's view included.
 ///
-/// Returns ancestor IDs from immediate parent to root (nearest first).
-/// The `visited` set prevents infinite loops on corrupted cyclic data, and
-/// `MAX_ANCESTOR_DEPTH` bounds pathological acyclic chains.
+/// Returns ancestor IDs from immediate parent to root (nearest first),
+/// however many. The `visited` set prevents infinite loops on corrupted
+/// cyclic data; past the advisory threshold row the walk raises one check
+/// and reads on (rule 5).
 pub(crate) fn ancestors_in(
     store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
     node: &EntityId,
 ) -> Result<Vec<EntityId>> {
+    let mut count = ScanCount::start(store, rtxn, EngineScan::DagWalkRecords, node.as_bytes())?;
     let mut result = Vec::new();
     let mut current = *node;
     let mut visited = std::collections::HashSet::new();
     visited.insert(current);
 
     while let Some(parent) = first_child_of_parent(store, rtxn, &current)? {
+        count.row();
         if !visited.insert(parent) {
             break; // Cycle detected — stop walking but don't error
-        }
-        if result.len() >= MAX_ANCESTOR_DEPTH {
-            return Err(Error::IndexOverflow("ancestors"));
         }
         result.push(parent);
         current = parent;
     }
 
+    count.defer(store);
     Ok(result)
 }
 
@@ -582,8 +582,8 @@ pub(crate) fn ancestors_in(
 ///
 /// Walks ancestors of `target` — if `node` is found among them, it's a cycle.
 /// Short-circuits as soon as `node` is found instead of collecting all ancestors.
-/// The `visited` set prevents infinite loops on corrupted cyclic data, and
-/// `MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS` bounds pathological acyclic chains.
+/// The `visited` set prevents infinite loops on corrupted cyclic data;
+/// `false` is returned only once the reachable ancestors are all walked.
 pub(crate) fn would_create_cycle_in(
     store: &impl crate::store::ManifestDbs,
     rtxn: &heed::RoTxn<'_>,
@@ -593,25 +593,25 @@ pub(crate) fn would_create_cycle_in(
     if node == target {
         return Ok(true);
     }
+    let mut count = ScanCount::start(store, rtxn, EngineScan::DagWalkRecords, target.as_bytes())?;
     let mut current = *target;
     let mut visited = std::collections::HashSet::new();
     visited.insert(current);
-    let mut traversed_steps = 0usize;
+    let mut cyclic = false;
 
     while let Some(parent) = first_child_of_parent(store, rtxn, &current)? {
-        if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
-            return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
-        }
-        traversed_steps += 1;
+        count.row();
         if parent == *node {
-            return Ok(true);
+            cyclic = true;
+            break;
         }
         if !visited.insert(parent) {
             break; // Existing cycle in data — stop walking
         }
         current = parent;
     }
-    Ok(false)
+    count.defer(store);
+    Ok(cyclic)
 }
 
 /// [`Vault::filtered_edge_peers`] read through `store`, a room's view
