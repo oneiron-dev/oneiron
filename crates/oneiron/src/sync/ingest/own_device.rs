@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use loro::json::{JsonOpContent, MapOp};
-use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
+use loro::{ContainerID, ContainerType, EncodedBlobMode, ImportBlobMetadata, LoroDoc, LoroValue};
 
 use super::entity::{IngestCtx, Residence};
 use crate::authority::PeerMachine;
@@ -113,7 +113,7 @@ pub(in crate::sync) fn with_own_device_import<T>(
         vault: vault.store.env.path().to_path_buf(),
         window: key.as_str().to_owned(),
         machine: import.machine(),
-        rows: inserted_messages(doc, update),
+        rows: inserted_messages(key, doc, update),
     });
     let _restore =
         Restore(OWN_DEVICE_SPAN.with(|slot| std::mem::replace(&mut *slot.borrow_mut(), span)));
@@ -138,12 +138,18 @@ pub fn with_own_device_push<T>(
     with_own_device_import(vault, import.as_ref(), (key, doc), update, land)
 }
 
-/// Each MESSAGE row `update` itself inserts into the window whose live
+/// Each MESSAGE row `update` itself inserts into the window `key` whose live
 /// document is `doc`, with the digest of the bytes it inserts: a snapshot's
 /// rows as it holds them, an update's as its own operations write them, not
 /// those of another import its operations complete. An update that does not
 /// decode, or whose history `doc` lacks, inserts none here; its import fails.
-fn inserted_messages(doc: &LoroDoc, update: &[u8]) -> BTreeSet<(EntityId, [u8; 32])> {
+/// An update forks `doc` to read its operations only when it may insert a
+/// MESSAGE row at all ([`may_insert_message`]).
+fn inserted_messages(
+    key: &WindowKey,
+    doc: &LoroDoc,
+    update: &[u8],
+) -> BTreeSet<(EntityId, [u8; 32])> {
     let Ok(meta) = LoroDoc::decode_import_blob_meta(update, true) else {
         return BTreeSet::new();
     };
@@ -163,7 +169,7 @@ fn inserted_messages(doc: &LoroDoc, update: &[u8]) -> BTreeSet<(EntityId, [u8; 3
                 }
             });
         }
-    } else {
+    } else if may_insert_message(key, doc, &meta, update) {
         let candidate = doc.fork();
         if candidate
             .import(update)
@@ -184,6 +190,31 @@ fn inserted_messages(doc: &LoroDoc, update: &[u8]) -> BTreeSet<(EntityId, [u8; 3
         }
     }
     rows
+}
+
+/// Whether `update`, not a snapshot, may insert a MESSAGE row into the window
+/// `key` whose live document is `doc`, read without forking `doc`. It cannot
+/// when:
+/// - `key` is a world's window: a MESSAGE row resides only in a base window,
+///   and a world window's door refuses one (`entity_belongs_to_window`);
+/// - `doc` already holds every change `update` carries, so it lands no row;
+/// - it is a fast update whose bytes never name the `entities` map: each
+///   block of one keeps its key strings, a root container's name among them,
+///   as written (loro 1.16 `block_encode::encode_keys`), so a block that
+///   writes a row there names the map.
+fn may_insert_message(
+    key: &WindowKey,
+    doc: &LoroDoc,
+    meta: &ImportBlobMetadata,
+    update: &[u8],
+) -> bool {
+    const ENTITIES: &[u8] = b"entities";
+    key.world().is_none()
+        && !doc.oplog_vv().includes_vv(&meta.partial_end_vv)
+        && (!matches!(meta.mode, EncodedBlobMode::Updates)
+            || update
+                .windows(ENTITIES.len())
+                .any(|bytes| bytes == ENTITIES))
 }
 
 /// The lane of the MESSAGE row `blob` at `id`, whose put lands `data`: an
