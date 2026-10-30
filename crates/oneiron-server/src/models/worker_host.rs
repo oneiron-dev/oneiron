@@ -40,7 +40,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::llm::run_admission::WorkContext;
 use oneiron::llm::{
@@ -182,7 +182,41 @@ impl BoundWork {
                     if let Some(victim) = hosted_worker(&worker) {
                         victim_changes.push(victim.subscribe_changed());
                     }
-                    let _ = unload_idle_worker(&worker).await;
+                    let unload = unload_idle_worker(&worker);
+                    tokio::pin!(unload);
+                    let stop = loop {
+                        let changed = ticket.pressure_change();
+                        tokio::pin!(changed);
+                        changed.as_mut().enable();
+                        if ticket.request.cancel.load(Ordering::Acquire)
+                            || ticket
+                                .deadline()
+                                .is_some_and(|deadline| deadline <= Instant::now())
+                        {
+                            match ticket.resolve_pressure_excluding(&tried) {
+                                PressureDecision::Stop(stop) => break Some(stop),
+                                _ => {}
+                            }
+                        }
+                        let deadline = ticket.deadline();
+                        tokio::select! {
+                            _ = unload.as_mut() => break None,
+                            () = changed.as_mut() => continue,
+                            () = async {
+                                if let Some(deadline) = deadline {
+                                    tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                                } else {
+                                    std::future::pending::<()>().await;
+                                }
+                            } => {
+                                ticket.cancel();
+                                return Err(AdmissionStop::Deadline);
+                            }
+                        }
+                    };
+                    if let Some(stop) = stop {
+                        return Err(stop);
+                    }
                     tried.insert(worker);
                     continue;
                 }
