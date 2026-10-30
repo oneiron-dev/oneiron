@@ -83,19 +83,25 @@ pub(super) fn erase_review_claims_in_txn(
         }
     }
     // Only a torn outcome withdraws its evidence: a held one stands, and
-    // its evidence with it. The entity's own row goes with its erase.
+    // its evidence with it, even when its verdict goes. The entity's own row
+    // goes with its erase.
     let mut receipts = BTreeSet::new();
+    let mut kept = BTreeSet::new();
     for (id, receipt) in torn {
         let gone = if id == *entity {
             !entity_held
         } else {
             tear_review_claim_in_txn(vault, wtxn, &id)?
         };
-        if gone && let Some(receipt) = receipt {
-            receipts.insert(receipt);
+        if let Some(receipt) = receipt {
+            if gone {
+                receipts.insert(receipt);
+            } else {
+                kept.insert(receipt);
+            }
         }
     }
-    withdraw_outcome_evidence_in_txn(vault, wtxn, &receipts, &torn_verdicts)?;
+    withdraw_outcome_evidence_in_txn(vault, wtxn, &receipts, &kept, &torn_verdicts)?;
     for dissent in &dissent {
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         match erase_dissent_in_txn(vault, &mut savepoint, dissent) {
@@ -139,9 +145,9 @@ fn withdraw_outcome_evidence_in_txn(
     for ((digest, receipt), row) in crate::skill_attribution::erase_scan_in_txn(vault, wtxn, table)?
     {
         let of_torn = torn.iter().any(|prefix| receipt.starts_with(prefix.as_str()));
-        if !of_torn
-            && (row.anchor == crate::learning::Anchor::WorldOutcome || !receipts.contains(&receipt))
-        {
+        let outcome_withdrawn =
+            row.anchor != crate::learning::Anchor::WorldOutcome && receipts.contains(&receipt);
+        if kept.contains(&receipt) || !(of_torn || outcome_withdrawn) {
             continue;
         }
         table.delete(&vault.store, wtxn, &(digest, receipt))?;
