@@ -32,7 +32,7 @@ use crate::memory::{
 use crate::run_tree::RunTreeStatus;
 use crate::temporal::TimeRange;
 
-use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
 use super::consts::{
     TASK_CANCEL_FORCE_MODE, TASK_CANCEL_GATE_CHANNEL, TASK_CANCEL_PROPOSAL_PREDICATE,

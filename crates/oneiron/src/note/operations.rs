@@ -260,11 +260,8 @@ impl Memory<'_> {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
         }
         super::lifecycle::refuse_sealed_note_in_txn(&self.vault().store, txn, note)?;
-        self.vault().authorize_shared_note_write_in_txn(
-            txn,
-            note,
-            &WriteActor::new(self.actor(), self.actor_class()),
-        )?;
+        self.vault()
+            .authorize_shared_note_write_in_txn(txn, note, &self.write_actor())?;
         require_note_writer(self, txn, note)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
@@ -285,7 +282,7 @@ impl Memory<'_> {
         // A required gate policy cannot disappear between citation detection and
         // candidate admission. Even free prose resolves the policy in this txn.
         let policy = crate::gate::resolve_policy_manifest(&self.vault().store, txn)?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let outcome = match &operation.change {
             NoteChange::Edit { base, edits } => {
                 let cited_by = cited_by(self.vault(), txn, note)?;
