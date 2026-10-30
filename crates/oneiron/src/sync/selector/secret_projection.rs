@@ -55,6 +55,7 @@ mod held;
 mod history;
 mod reauthor;
 mod release;
+mod remark;
 mod rows;
 
 use std::collections::{BTreeMap, BTreeSet};
