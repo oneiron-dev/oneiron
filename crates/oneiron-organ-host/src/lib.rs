@@ -86,6 +86,8 @@ pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };
+#[cfg(unix)]
+pub use sandbox::filesystem_confined;
 pub use shutdown::MeshCancel;
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};
