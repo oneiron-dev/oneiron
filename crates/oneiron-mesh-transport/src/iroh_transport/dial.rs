@@ -171,24 +171,24 @@ impl IrohTransport {
         receipt.id = write_receipt(&recorder.sink, &receipt)
             .await
             .ok_or_else(retained)?;
-        let mut due: Vec<_> = bounded
+        let unattributed = bounded
             .is_err()
-            .then(|| (address.endpoint_key, receipt.clone(), true))
-            .into_iter()
-            .collect();
+            .then(|| (address.endpoint_key, receipt.clone()));
         let Some(lookup) = owner_lookup else {
-            recorder.keep_unattributed(due.into_iter().map(|(key, kept, _)| (key, kept)));
+            recorder.keep_unattributed(unattributed);
             return bounded.map(|_| receipt);
         };
-        due.extend(
-            recorder
-                .take_unattributed()
-                .into_iter()
-                .map(|(key, kept)| (key, kept, false)),
-        );
+        let due = unattributed
+            .into_iter()
+            .map(|(key, kept)| (key, kept, true))
+            .chain(
+                recorder
+                    .take_unattributed()
+                    .into_iter()
+                    .map(|(key, kept)| (key, kept, false)),
+            );
         let looked = tokio::task::spawn_blocking(move || {
-            due.into_iter()
-                .map(|(key, kept, current)| (lookup(key), key, kept, current))
+            due.map(|(key, kept, current)| (lookup(key), key, kept, current))
                 .collect::<Vec<_>>()
         })
         .await
