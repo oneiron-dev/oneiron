@@ -208,8 +208,10 @@ impl BoundWork {
                 if victim_changes.is_empty() {
                     std::future::pending::<()>().await;
                 } else {
-                    select_all(victim_changes.into_iter().map(|mut receiver| async move {
-                        let _ = receiver.changed().await;
+                    select_all(victim_changes.into_iter().map(|mut receiver| {
+                        Box::pin(async move {
+                            let _ = receiver.changed().await;
+                        })
                     }))
                     .await;
                 }
