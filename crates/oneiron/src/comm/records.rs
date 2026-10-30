@@ -77,6 +77,9 @@ pub(super) enum CommEventKind {
     InboundStop,
     ThreadJoined,
     ThreadLeft,
+    /// A touch a generic claim write stated, with no transport behind it to
+    /// say which way it went.
+    TouchAsserted,
 }
 
 impl CommEventKind {
@@ -87,6 +90,7 @@ impl CommEventKind {
             Self::InboundStop => "inbound_stop",
             Self::ThreadJoined => "thread_joined",
             Self::ThreadLeft => "thread_left",
+            Self::TouchAsserted => "touch_asserted",
         }
     }
 
@@ -97,6 +101,7 @@ impl CommEventKind {
             "inbound_stop" => Some(Self::InboundStop),
             "thread_joined" => Some(Self::ThreadJoined),
             "thread_left" => Some(Self::ThreadLeft),
+            "touch_asserted" => Some(Self::TouchAsserted),
             _ => None,
         }
     }
@@ -236,14 +241,16 @@ pub(super) fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
             if let Some(thread_ref) = &thread_ref {
                 validate_key_string(thread_ref).map_err(|_| CommError::InvalidRecord)?;
             }
-            // Enforce the exact per-variant field shape: a send/STOP carries a
-            // channel_class and no thread_ref; a thread event carries a
-            // thread_ref and no channel_class. Cross-populated bodies are
-            // rejected at the door (fail-closed) rather than silently accepted.
+            // Enforce the exact per-variant field shape: a send, reply, STOP or
+            // asserted touch carries a channel_class and no thread_ref; a
+            // thread event carries a thread_ref and no channel_class.
+            // Cross-populated bodies are rejected at the door (fail-closed)
+            // rather than silently accepted.
             match event_kind {
                 CommEventKind::SendSucceeded
                 | CommEventKind::InboundReply
                 | CommEventKind::InboundStop
+                | CommEventKind::TouchAsserted
                     if channel_class.is_some() && thread_ref.is_none() => {}
                 CommEventKind::ThreadJoined | CommEventKind::ThreadLeft
                     if thread_ref.is_some() && channel_class.is_none() => {}
