@@ -9,6 +9,7 @@ use oneiron::blob_artifact::esign::EsignSealerError;
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
 
+use oneiron_organ_protocol::seal::backend_operation_id;
 use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, ByteBuf};
 
 use super::{ASK_IDENTITY, ASK_SIGN, HostedSealer};
@@ -169,6 +170,21 @@ pub(super) fn measure_asks(vault: &Vault, asked: &[AskReceipt]) {
 /// Asks the report row what one verdict's report JSON holds: it came whole.
 pub(super) fn measure_report(vault: &Vault, report_json: &ByteBuf) {
     vault.measure_limit(EngineLimit::SealReportJsonBytes, report_json.len() as u64);
+}
+
+/// Bytes the seal's own suffix takes on a backend operation id
+/// (`:{16 hex}:{phase}:{capacity}`).
+const OPERATION_ID_SUFFIX_BYTES: u64 = 32;
+
+/// Asks the operation id rows what one seal's caller id holds, and what the
+/// longest id the seal sends its backend for it holds, its suffix counted
+/// (FIX 6271). Neither refuses: a long id reaches the backend as its alias.
+pub(super) fn measure_operation_id(vault: &Vault, operation_id: &str) {
+    vault.measure_limit(EngineLimit::SealOperationIdBytes, operation_id.len() as u64);
+    vault.measure_limit(
+        EngineLimit::SealBackendOperationIdBytes,
+        backend_operation_id(operation_id).len() as u64 + OPERATION_ID_SUFFIX_BYTES,
+    );
 }
 
 /// Asks the input row what one lent PDF holds.
