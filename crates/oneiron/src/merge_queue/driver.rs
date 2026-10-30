@@ -579,7 +579,8 @@ impl MergeQueue<'_> {
                 &link,
                 |txn, retried| self.attach_queue_conflict_in_txn(txn, retried),
             )?;
-            if retried.task.is_some() {
+            // A minted TASK, or a hold whose reason moved (FIX 7308).
+            if retried != link {
                 return Ok(QueueDriveOutcome::Changed);
             }
         }

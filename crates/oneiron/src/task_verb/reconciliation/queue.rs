@@ -3,10 +3,11 @@
 //!
 //! The queue's handoff mints its TASK under the real creator the sealed
 //! [`QueueReconciliationAdmission`] names, at that creator's own task
-//! authority: below its Auto ceiling no TASK is minted and the claim keeps a
-//! held disposition (CALL "queue reconciliation TASK admission"). The hold
-//! is told to the creator in an inbox notice that names its reason, so it
-//! shows on the creator's board. Nothing falls back to the embedded owner,
+//! authority: a creator whose live Grant does not cover the repository, the
+//! branch and every conflicted path (FIX 7308), or whose ceiling is below
+//! Auto, gets no TASK, and the claim keeps a held disposition (CALL "queue
+//! reconciliation TASK admission"). The hold is told to the creator in an
+//! inbox notice that names its reason, so it shows on the creator's board. Nothing falls back to the embedded owner,
 //! and no agent is promoted to a person or to the owner's ceiling. A later
 //! policy change retries the same conflict, and the same index answers it.
 use rmpv::Value;
@@ -28,11 +29,17 @@ use crate::repo_mutation::RepoConflictClaim;
 /// The producer of a held queue reconciliation's notice.
 const QUEUE_RECONCILIATION_HOLD_PRODUCER: &str = "merge_queue.reconciliation_hold";
 
+/// The producer of a queue reconciliation's notice held by its creator's
+/// Grant (FIX 7308).
+const QUEUE_RECONCILIATION_GRANT_HOLD_PRODUCER: &str = "merge_queue.reconciliation_grant_hold";
+
 impl Vault {
     /// The reconciliation TASK of queue conflict `conflict`, written in its
     /// claim's transaction: the indexed one, or one minted now under the
-    /// admission's real creator when that creator's ceiling is Auto. `None`
-    /// keeps the conflict held (HeldTaskAuthority); the creator is told why.
+    /// admission's real creator when that creator's live Grant covers the
+    /// repository, the branch and every conflicted path and its ceiling is
+    /// Auto. `Err(held)` keeps the conflict held (HeldTaskAuthority) with
+    /// why; the creator is told why.
     ///
     /// # Errors
     /// A store failure, or a conflict claim this transaction has not written.
@@ -42,9 +49,9 @@ impl Vault {
         conflict: &RepoConflictClaim,
         admission: &QueueReconciliationAdmission,
         now: u64,
-    ) -> Result<Option<EntityId>> {
+    ) -> Result<std::result::Result<EntityId, String>> {
         if let Some(task) = RECONCILIATION_TASKS.get(&self.store, txn, &conflict.claim_id)? {
-            return Ok(Some(task));
+            return Ok(Ok(task));
         }
         if !crate::ports::EntityStoreRead::port_entity_present(
             &self.store,
@@ -56,31 +63,22 @@ impl Vault {
         // An erased creator has no board to be told on; the queue's own
         // observation keeps the hold.
         let Some((creator, class)) = admission.creator() else {
-            return Ok(None);
+            return Ok(Err(QueueReconciliationAdmission::TASK_HELD.to_owned()));
         };
+        // The spec's current repo/branch/path policy, by the run's own seam.
+        if let Err(refused) = admission.creator_grant_in_txn(self, txn)? {
+            let held = QueueReconciliationAdmission::grant_held(refused);
+            let producer = QUEUE_RECONCILIATION_GRANT_HOLD_PRODUCER;
+            self.record_held_notice_in_txn(txn, conflict, creator, producer, &held, now)?;
+            return Ok(Err(held));
+        }
         if task_actor_ceiling(self, txn, creator, class).map_err(map_error)?
             != PolicyApprovalCeiling::Auto
         {
-            let mut subject_refs = vec![conflict.claim_id];
-            subject_refs.extend(conflict.proposals.iter().copied());
-            self.record_notification_in_txn(
-                txn,
-                &NotificationEvent {
-                    kind: NotificationKind::Ask,
-                    source: NotificationSource {
-                        producer: QUEUE_RECONCILIATION_HOLD_PRODUCER.to_owned(),
-                        event: format!("{}:{}", conflict.claim_id.to_hex(), creator.to_hex()),
-                        result: Some(conflict.claim_id.to_hex()),
-                        detail: Some(QueueReconciliationAdmission::TASK_HELD.to_owned()),
-                        ..NotificationSource::default()
-                    },
-                    subject_refs,
-                    recipient: Some(creator),
-                    created_at: now,
-                    origin_conversation: None,
-                },
-            )?;
-            return Ok(None);
+            let held = QueueReconciliationAdmission::TASK_HELD;
+            let producer = QUEUE_RECONCILIATION_HOLD_PRODUCER;
+            self.record_held_notice_in_txn(txn, conflict, creator, producer, held, now)?;
+            return Ok(Err(held.to_owned()));
         }
         // The vault's fan-out policy row names the threshold this create's
         // own_rate_burst check is recorded at (FIX 10187); a conflict names
@@ -97,7 +95,41 @@ impl Vault {
             |resolved| resolved.policy.create_rate,
         );
         record_task_create(self, txn, creator, self.now_recorded_at(), create_rate)?;
-        mint_reconciliation_task_in_txn(self, txn, conflict, creator, class, now).map(Some)
+        mint_reconciliation_task_in_txn(self, txn, conflict, creator, class, now).map(Ok)
+    }
+
+    /// Tells `creator` why the reconciliation of `conflict` is held,
+    /// `detail`, in its inbox from `producer`, on the conflict and both
+    /// proposals.
+    fn record_held_notice_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conflict: &RepoConflictClaim,
+        creator: EntityId,
+        producer: &str,
+        detail: &str,
+        now: u64,
+    ) -> Result<()> {
+        let mut subject_refs = vec![conflict.claim_id];
+        subject_refs.extend(conflict.proposals.iter().copied());
+        self.record_notification_in_txn(
+            txn,
+            &NotificationEvent {
+                kind: NotificationKind::Ask,
+                source: NotificationSource {
+                    producer: producer.to_owned(),
+                    event: format!("{}:{}", conflict.claim_id.to_hex(), creator.to_hex()),
+                    result: Some(conflict.claim_id.to_hex()),
+                    detail: Some(detail.to_owned()),
+                    ..NotificationSource::default()
+                },
+                subject_refs,
+                recipient: Some(creator),
+                created_at: now,
+                origin_conversation: None,
+            },
+        )?;
+        Ok(())
     }
 }
 
