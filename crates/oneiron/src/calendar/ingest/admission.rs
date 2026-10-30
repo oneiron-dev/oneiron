@@ -28,7 +28,7 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 pub(in crate::calendar) use connector::{
-    ConnectorAdmissionSource, admit_connector_event, connector_event_ref,
+    ConnectorAdmissionSource, ConnectorScreen, admit_connector_event, connector_event_ref,
     delete_connector_resource, preflight_connector_feed, sweep_connector_resource,
 };
 use continuation::OwedProperties;

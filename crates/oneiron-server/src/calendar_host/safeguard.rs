@@ -1,13 +1,15 @@
 //! The host's labeller for the owner's inbound calendar safeguard (FIX 12002):
 //! a [`CalendarBodyScreener`] over a loaded [`LabelClassifier`] head. Each
-//! ICS poll the dial screens hands it the event's description and each
-//! attachment's text; it asks the head whether the text addresses an AI
-//! assistant with instructions, and answers within the engine's default
-//! decision band. A verdict classifies the body; it never withholds it.
+//! admission the dial screens (an ICS poll, an upload or instance move, a
+//! connector pull, and their property continuations) hands it the event's
+//! description and each attachment's text; it asks the head whether the
+//! text addresses an AI assistant with instructions, and answers within the
+//! engine's default decision band. A verdict classifies the body; it never
+//! withholds it.
 //!
 //! A host installs its head once ([`install_calendar_label_head`]); with
-//! none installed, the polls pass no screener and the dial-on screen records
-//! that no screener ran.
+//! none installed, the admissions pass no screener and the dial-on screen
+//! records that no screener ran.
 
 use std::sync::OnceLock;
 
@@ -35,7 +37,8 @@ const REASON_UNCERTAIN: &str = "calendar.safeguard.uncertain";
 /// Reason code of a body the head failed on or answered out of shape.
 const REASON_CLASSIFIER_FAILED: &str = "calendar.safeguard.classifier_failed";
 
-/// The screener this host's ICS polls run with, once a head is installed.
+/// The screener this host's calendar admissions run with, once a head is
+/// installed.
 static CALENDAR_BODY_SCREENER: OnceLock<Box<dyn CalendarBodyScreener>> = OnceLock::new();
 
 /// Installs `head` as this host's calendar safeguard labeller. The first
@@ -46,8 +49,8 @@ pub fn install_calendar_label_head(head: impl LabelClassifier + 'static) -> bool
         .is_ok()
 }
 
-/// The screener this host's ICS polls pass the safeguard, when a head is
-/// installed.
+/// The screener this host's calendar admissions pass the safeguard, when a
+/// head is installed.
 pub(crate) fn calendar_body_screener() -> Option<&'static dyn CalendarBodyScreener> {
     CALENDAR_BODY_SCREENER.get().map(Box::as_ref)
 }
