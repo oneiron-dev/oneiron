@@ -702,7 +702,11 @@ pub struct ApiErrorEnvelopeBody {
     request_id: String,
     details: Box<ApiErrorDetails>,
     suggestions: Vec<String>,
-    #[serde(default, rename = "legal_hold", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "legal_hold",
+        skip_serializing_if = "Option::is_none"
+    )]
     #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }

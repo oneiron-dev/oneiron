@@ -154,7 +154,9 @@ impl Vault {
             let ran = self
                 .with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, machine, secret));
             match ran {
-                Ok(Ran::Answered(OwnerWorkOutcome::Enacted { .. })) => drain.enacted += 1,
+                Ok(Ran::Answered(
+                    OwnerWorkOutcome::Enacted { .. } | OwnerWorkOutcome::Sealed { .. },
+                )) => drain.enacted += 1,
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
                 Ok(Ran::Gone) => {}
@@ -205,6 +207,9 @@ impl Vault {
             }
             (OwnerWorkBody::Custody { .. }, secret) => {
                 self.custody_work_in_txn(txn, &fold, hash, request, secret)?
+            }
+            (OwnerWorkBody::ExportSecret(work), _) => {
+                self.export_secret_work_in_txn(txn, &fold, hash, request, work)?
             }
             (
                 OwnerWorkBody::WorldKey { .. }

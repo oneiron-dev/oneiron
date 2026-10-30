@@ -13,7 +13,10 @@ pub(crate) enum LegalHoldStateSchema {
 
 #[derive(ToSchema)]
 #[serde(rename_all = "snake_case")]
-#[expect(dead_code, reason = "OpenAPI mirror of the engine legal-hold bound kind")]
+#[expect(
+    dead_code,
+    reason = "OpenAPI mirror of the engine legal-hold bound kind"
+)]
 pub(crate) enum LegalHoldBoundKindSchema {
     Law,
 }

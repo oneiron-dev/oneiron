@@ -107,7 +107,7 @@ async fn skills_call(
         };
     let auth = auth.clone();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<MaybeListed<serde_json::Value>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<MaybeListed<serde_json::Value>> {
         let binding = held.proof();
         let memory = crate::api::credential_memory(server.vault(), Some(&auth), actor, class)
             .at(auth.locality());
@@ -272,7 +272,7 @@ pub(crate) async fn vault_skills_pack_receipt(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         sdk::skill_pack_receipt_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -295,7 +295,7 @@ pub(crate) async fn vault_skills_outcomes_project(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         sdk::skill_pack_outcome_as_owner(server.vault(), &owner, &input)
     })
     .await
@@ -317,7 +317,7 @@ pub(crate) async fn vault_skills_outcomes_get(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         sdk::skill_pack_credit_as_owner(server.vault(), &owner, &input)
     })
     .await

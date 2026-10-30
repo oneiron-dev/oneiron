@@ -20,12 +20,12 @@
 
 use crate::agent_dispatch::{AgentDispatcher, AgentSpawnContext};
 use crate::attempt_queue::AttemptRecord;
-use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::team::{
     LeasedSpawnRequest, PatternLaunchRunner, PatternSkillRef, PlannedIntentView, PlannedSpawnHost,
     SpawnPhase,
 };
+use crate::write_envelope::WriteActor;
 
 use super::super::intent::IntentName;
 use super::GroupLaunch;
@@ -39,7 +39,8 @@ impl AgentDispatcher<'_> {
     /// freezes the start it writes with that pack; the leader under the
     /// spawning attempt, exactly width - 1 members under the leader and
     /// their team are queued and bound in one write transaction, which marks
-    /// the intent launched. A solo queues its one agent.
+    /// the intent launched. A solo queues its one agent. The pattern run is
+    /// metered to `actor`, the parent's own write actor.
     ///
     /// The same key then answers what launched and never runs the runner
     /// or a dispatch again. A launch the dispatcher refuses is kept as the
@@ -55,13 +56,14 @@ impl AgentDispatcher<'_> {
     pub fn launch_planned_spawn_for_attempt(
         &self,
         leased: &AttemptRecord,
-        actor: &EntityId,
+        actor: &WriteActor,
         request: &LeasedSpawnRequest,
         host: &PlannedSpawnHost<'_>,
         runner: Option<&dyn PatternLaunchRunner>,
         at: u64,
     ) -> Result<PlannedIntentView> {
-        let view = self.plan_reserved_spawn_for_attempt(leased, actor, request, host, at)?;
+        let entity = actor.entity_ref();
+        let view = self.plan_reserved_spawn_for_attempt(leased, &entity, request, host, at)?;
         // FIX 9180: the seat its plan resolved, in every phase it answers.
         if let Some(plan) = &view.plan {
             self.observe_seat(plan.plan.agent_def);
@@ -69,7 +71,7 @@ impl AgentDispatcher<'_> {
         if view.phase != SpawnPhase::Planned {
             return Ok(view);
         }
-        let name = IntentName::leased(leased, actor, request)?;
+        let name = IntentName::leased(leased, &entity, request)?;
         // The leader goes under the spawning attempt, on its run, in the
         // context the agent asked for; it spends under its parent's scope
         // and names no spend of its own.
@@ -81,6 +83,7 @@ impl AgentDispatcher<'_> {
                 spend: None,
                 ..request.context.clone()
             },
+            payer: *actor,
         };
         let load = |pattern: &PatternSkillRef| {
             self.vault.load_leased_exact_skill_pack(

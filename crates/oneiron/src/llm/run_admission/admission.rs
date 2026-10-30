@@ -7,20 +7,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use super::super::media::{MediaBackend, MediaRequest};
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, WorkClass,
 };
 use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
 use super::host::{HostAccount, OfferBinding, PaidConnector, PayerPerson};
-use super::media::MediaGate;
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
+use super::work_context::WorkContext;
 
 mod denied;
+mod media;
 mod origin;
 pub use denied::RunDenied;
 pub(super) use origin::CallOrigin;
@@ -67,6 +67,8 @@ pub struct RunAdmission {
     /// The idempotency key a job submitted through this handle goes out
     /// with ([`Self::submit_keyed`], FIX 2248); `None` on the run itself.
     submit_key: Option<String>,
+    /// Host scheduling and physical-custody context for this handle (R4).
+    work_context: Option<WorkContext>,
 }
 
 pub(super) struct RunInner {
@@ -213,6 +215,7 @@ impl RunAdmission {
             sources: None,
             initiator: None,
             submit_key: None,
+            work_context: None,
         }
     }
 
@@ -257,6 +260,31 @@ impl RunAdmission {
             initiator: actor,
             ..self.clone()
         }
+    }
+
+    /// This handle with host scheduling and physical-custody context (R4).
+    /// Every clone-based overlay preserves it, and scheduling stays outside
+    /// the run's declaration, prompt, conditioning, and dispatch identity.
+    #[must_use]
+    pub fn with_work_context(&self, context: WorkContext) -> Self {
+        Self {
+            work_context: Some(context),
+            ..self.clone()
+        }
+    }
+
+    /// The effective context for device admission. Explicit context wins;
+    /// memory work is Background, and every other unlabeled call is
+    /// Foreground so today's callers keep their equal FIFO standing.
+    #[must_use]
+    pub fn work_context(&self) -> WorkContext {
+        self.work_context.clone().unwrap_or_else(|| {
+            let mut context = WorkContext::default();
+            if self.inner.memory_work() {
+                context.class = WorkClass::Background;
+            }
+            context
+        })
     }
 
     /// Who this handle's calls answer to (FIX 562): the actor that acted to
@@ -404,82 +432,6 @@ impl RunAdmission {
                 .admit_connector(&declaration, revision, connector, quantity, self.origin());
         self.inner
             .receipt_for(revision, None, &connector.connector, admitted, None)
-    }
-
-    /// The only backend a host hands a run for `offer`, over that offer's own
-    /// backend and credential: it checks and starts the call's permit before
-    /// any byte leaves, on `generate` and `stream`. A permit admitted under
-    /// another offer never starts here, whatever route the two share.
-    #[must_use]
-    pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, offer: &OfferBinding) -> GatedBackend {
-        let offer = self.inner.bound(offer).dispatch_binding();
-        GatedBackend::new(Arc::clone(&self.inner), inner, offer)
-    }
-
-    /// Admits one media call (`ai.image`, `ai.video`, `ai.speech`,
-    /// `ai.transcribe`, `ai.embed`) as the text call its admission request
-    /// names: the same teachers, offer, locality and route rules, and one
-    /// permit for one physical call.
-    pub fn admit_media(
-        &self,
-        selector: Option<&str>,
-        request: &MediaRequest,
-        offer: &OfferBinding,
-    ) -> Result<RunPermit, RunDenied> {
-        let admission = request.admission_request();
-        self.admit(RunCall {
-            selector,
-            request: &admission,
-            offer,
-        })
-    }
-
-    /// Admits one bounded media stream (live `ai.transcribe` partials) as
-    /// [`Self::admit_media`] admits one call, on one permit for the whole
-    /// stream. The permit reserves `reserve_units`, the stream's bound at its
-    /// rung's rate ([`MediaStreamLease::reserve_units`](super::MediaStreamLease::reserve_units)), in place of one
-    /// call's reservation; the run's line and the vault's allocation must
-    /// hold all of it before any audio leaves.
-    pub fn admit_media_stream(
-        &self,
-        selector: Option<&str>,
-        request: &MediaRequest,
-        offer: &OfferBinding,
-        reserve_units: u64,
-    ) -> Result<RunPermit, RunDenied> {
-        let admission = request.admission_request();
-        let offer = self.inner.bound(offer);
-        let call = RunCall {
-            selector,
-            request: &admission,
-            offer: &*offer,
-        };
-        let (revision, declaration) = self.inner.snapshot();
-        let declaration = declaration.with_reserve(reserve_units);
-        let admitted = self
-            .inner
-            .admit_model(&declaration, revision, call, None, self.origin());
-        self.inner.receipt_for(
-            revision,
-            selector,
-            admission.model.as_str(),
-            admitted,
-            Some(admission.model.clone()),
-        )
-    }
-
-    /// The only media backend a host hands a run for `offer`: it checks and
-    /// starts a media call's permit before any byte leaves, as
-    /// [`Self::gate`] does for a text call.
-    #[must_use]
-    pub fn media_gate(&self, inner: Arc<dyn MediaBackend>, offer: &OfferBinding) -> MediaGate {
-        let offer = self.inner.bound(offer).dispatch_binding();
-        MediaGate::new(
-            Arc::clone(&self.inner),
-            inner,
-            offer,
-            self.submit_key.clone(),
-        )
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,

@@ -40,7 +40,7 @@
 
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
@@ -48,6 +48,7 @@ use crate::error::{Error, Result};
 use crate::pipeline::ScoredEntity;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::{RetrievalAction, RetrievalRunId};
+use crate::work_line::{LinePermit, TASK_WORK_WAIT, WaitTimedOut, WorkLine};
 
 pub(crate) mod scoped;
 
@@ -273,15 +274,18 @@ impl SpeculativeSession {
     /// when the pass was not done by then: it ran on a thread of its own,
     /// which stops at its next checkpoint, and its result is dropped; the
     /// thread goes to the session's [`SpeculativeThreads`], when it has
-    /// them, until its call joins it. Also `None`, at once, while the vault
-    /// already runs as many passes as it lets run.
+    /// them, until its call joins it. Also `None` when a fair turn did not
+    /// arrive before the session's deadline.
     fn run(&self, pass: SpeculativePass) -> Result<Option<PassOutput>> {
         let Some(budget) = self.config.deadline else {
             return pass.run(&self.vault, None, self.scope.as_ref()).map(Some);
         };
         let started = Instant::now();
-        let Some(running) = RunningPass::admit(&self.vault) else {
-            return Ok(None);
+        let remaining = budget.saturating_sub(started.elapsed());
+        let running = match RunningPass::admit(&self.vault, self.speculative_work_key(), remaining)
+        {
+            Ok(running) => running,
+            Err(WaitTimedOut) => return Ok(None),
         };
         let vault = Arc::clone(&self.vault);
         let scope = self.scope.clone();
@@ -328,14 +332,25 @@ impl SpeculativeSession {
     /// (logged as `RetrievalAction::Pipeline`; it IS a real retrieval) and
     /// warm-fill the shortfall. Never counts against `max_fires`.
     pub fn finalize(self, final_partial: SpeculativePartial<'_>) -> Result<SpeculativeFinal> {
+        self.finalize_candidates(final_partial)
+            .map(|candidates| candidates.output)
+    }
+
+    fn finalize_candidates(
+        self,
+        final_partial: SpeculativePartial<'_>,
+    ) -> Result<FinalizedCandidates> {
         let signature = partial_signature(&final_partial);
         if signature == self.last_signature
             && let Some(warm) = self.warm
         {
-            return Ok(SpeculativeFinal::Promoted {
-                scores: warm.scores,
-                run_id: warm.run_id,
-                partial: warm.partial,
+            return Ok(FinalizedCandidates {
+                output: SpeculativeFinal::Promoted {
+                    scores: warm.scores,
+                    run_id: warm.run_id,
+                    partial: warm.partial,
+                },
+                warm_ids: BTreeSet::new(),
             });
         }
 
@@ -364,6 +379,7 @@ impl SpeculativeSession {
         let mut seen: BTreeSet<crate::entity_id::EntityId> =
             scores.iter().map(|scored| scored.id).collect();
         let mut warm_appended = 0;
+        let mut warm_ids = BTreeSet::new();
         if let Some(warm) = self.warm {
             for candidate in warm.scores {
                 if scores.len() >= self.config.final_limit {
@@ -372,18 +388,28 @@ impl SpeculativeSession {
                 if !seen.insert(candidate.id) {
                     continue;
                 }
+                warm_ids.insert(candidate.id);
                 scores.push(candidate);
                 warm_appended += 1;
             }
         }
 
-        Ok(SpeculativeFinal::Finalized {
-            scores,
-            run_id: fresh.run_id,
-            warm_appended,
-            partial: fresh.partial,
+        Ok(FinalizedCandidates {
+            output: SpeculativeFinal::Finalized {
+                scores,
+                run_id: fresh.run_id,
+                warm_appended,
+                partial: fresh.partial,
+            },
+            warm_ids,
         })
     }
+}
+
+struct FinalizedCandidates {
+    output: SpeculativeFinal,
+    /// Warm rows actually appended after fresh/warm dedupe, before release.
+    warm_ids: BTreeSet<crate::entity_id::EntityId>,
 }
 
 /// The share of a vault's LMDB reader slots its speculative passes may hold
@@ -395,31 +421,37 @@ const READER_SLOT_SHARE: u32 = 4;
 /// slot, until its next checkpoint, so fires that keep missing a stalled
 /// stage would otherwise take every slot the vault has.
 #[derive(Default)]
-pub(crate) struct SpeculativePasses(AtomicUsize);
+pub(crate) struct SpeculativePasses {
+    line: OnceLock<WorkLine<[u8; 32]>>,
+    last_cap: AtomicUsize,
+}
 
-/// One admitted pass; the vault counts it until its thread lets it go.
-struct RunningPass(Arc<crate::Vault>);
+/// One admitted pass; the fair permit releases when its thread lets it go.
+struct RunningPass(LinePermit);
 
 impl RunningPass {
-    fn admit(vault: &Arc<crate::Vault>) -> Option<Self> {
+    fn admit(
+        vault: &Arc<crate::Vault>,
+        key: [u8; 32],
+        remaining: Duration,
+    ) -> std::result::Result<Self, WaitTimedOut> {
         // The table LMDB gave, which another process may have kept smaller
         // than the config asked for.
         let cap = usize::try_from((vault.reader_slots() / READER_SLOT_SHARE).max(1))
             .unwrap_or(usize::MAX);
-        vault
+        let line = vault
             .speculative_passes
-            .0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |running| {
-                (running < cap).then_some(running + 1)
-            })
-            .ok()?;
-        Some(Self(Arc::clone(vault)))
-    }
-}
-
-impl Drop for RunningPass {
-    fn drop(&mut self) {
-        self.0.speculative_passes.0.fetch_sub(1, Ordering::AcqRel);
+            .line
+            .get_or_init(|| WorkLine::new(None, cap, TASK_WORK_WAIT));
+        if vault
+            .speculative_passes
+            .last_cap
+            .swap(cap, Ordering::AcqRel)
+            != cap
+        {
+            line.configure(cap, TASK_WORK_WAIT, None);
+        }
+        Ok(Self(line.admit_blocking_for(key, remaining)?))
     }
 }
 

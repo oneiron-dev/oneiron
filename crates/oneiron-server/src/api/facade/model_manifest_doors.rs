@@ -343,7 +343,7 @@ async fn invoke(
             }
             let expected = receipt.clone();
             let embedding_server = Arc::clone(server);
-            let vector = tokio::task::spawn_blocking(move || {
+            let vector = super::clock_ingress::run_blocking(move || {
                 let slot = embedding_server
                     .embedder
                     .as_ref()
@@ -379,7 +379,7 @@ async fn invoke(
             }
             let expected = receipt.clone();
             let server = Arc::clone(server);
-            let (output, execution, provider) = tokio::task::spawn_blocking(move || {
+            let (output, execution, provider) = super::clock_ingress::run_blocking(move || {
                 let slot = server
                     .tagger
                     .as_ref()
