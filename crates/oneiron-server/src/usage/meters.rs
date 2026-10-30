@@ -317,11 +317,8 @@ impl UsageLedger {
             row: row.clone(),
             recorded_at: now_secs(),
         };
-        self.vault.sync_state_put_in_write_txn(
-            txn,
-            key,
-            &rmp_serde::to_vec_named(&stored)?,
-        )?;
+        self.vault
+            .sync_state_put_in_write_txn(txn, key, &rmp_serde::to_vec_named(&stored)?)?;
         self.vault.sync_state_put_in_write_txn(
             txn,
             rollup_key,
@@ -418,11 +415,7 @@ fn add_dropped_in_txn(
         },
     };
     rollup.dropped = rollup.dropped.saturating_add(count);
-    vault.sync_state_put_in_write_txn(
-        txn,
-        &rollup_key,
-        &rmp_serde::to_vec_named(&rollup)?,
-    )?;
+    vault.sync_state_put_in_write_txn(txn, &rollup_key, &rmp_serde::to_vec_named(&rollup)?)?;
     Ok(())
 }
 

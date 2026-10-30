@@ -54,18 +54,18 @@ use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRec
 use crate::vault::Vault;
 
 pub(crate) use self::actor_erase::erase_reveal_actor_in_txn;
-pub(crate) use self::close::close_secret_reveals_in_txn;
 pub(super) use self::actor_erase::names_no_actor;
 pub use self::actor_erase::{ACTOR_ERASE_REVEAL_ASK, RevealAskErase};
+pub(crate) use self::close::close_secret_reveals_in_txn;
 pub use self::file::RepoFileRevealScope;
 pub(crate) use self::file::{
     RepoFileKeys, RepoFileOriginal, RepoFileReadDisclosure, RepoFileRevealDelivery,
     RepoFileRevealTarget, RepoFileSight,
 };
 pub use self::types::{
-    HandleReveal, OwnerSecretReveal, RevealTarget, SecretHandleCard, SecretProvenance,
-    RevealGrantScope, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
-    SecretRevealCause, SecretRevealDecision, SecretRevealReceipt, SecretRevealState,
+    HandleReveal, OwnerSecretReveal, RevealGrantScope, RevealTarget, SecretHandleCard,
+    SecretProvenance, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealCause,
+    SecretRevealDecision, SecretRevealReceipt, SecretRevealState,
 };
 
 /// How long a pending reveal waits for its answer and its collection, in
@@ -518,7 +518,9 @@ fn disclosure_bound(
 ) -> Result<GrantBound> {
     scope::project_reach(project)
         .bound(connection, class, RevealGrantScope::Project)?
-        .ok_or(Error::InvariantViolation("a project's reach names its project"))
+        .ok_or(Error::InvariantViolation(
+            "a project's reach names its project",
+        ))
 }
 
 /// The registry ref of the standing grant that covers `bound` now, by the one

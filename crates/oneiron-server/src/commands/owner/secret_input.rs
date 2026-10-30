@@ -8,10 +8,10 @@
 //! nothing is copied here.
 
 use std::io::{self, Read};
-#[cfg(unix)]
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(windows)]
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+#[cfg(unix)]
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// How much of a terminal's input one secret is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -4,16 +4,15 @@
 use super::ref_sync::{RefFetch, pinned_tracking};
 use super::support::map_value;
 use super::{
-    HubPackage, HubPin, HubRef, HubSyncDisposition, MarketplaceFit, MarketplaceFitDecision,
-    MarketplaceFitEvaluator, PREDICATE_SKILL_HUB_PROVENANCE, SkillHubAdapter, SkillScanReceipt,
-    TrackedHubRef, package_codec::invalid,
+    HoldsNothing, HubPackage, HubPin, HubRef, HubSyncDisposition, MarketplaceFit,
+    MarketplaceFitDecision, MarketplaceFitEvaluator, PREDICATE_SKILL_HUB_PROVENANCE,
+    SkillHubAdapter, SkillScanReceipt, TrackedHubRef, package_codec::invalid,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, TimeRange, Vault, error::Result};
 
-/// The fit rung for a skill the owner asked for: its requested permissions
-/// still reach the owner as one ask. The owner's skill fit setting can also
-/// pick it for every ordinary install (FIX 9752).
+/// The fit rung that asks for every install: the owner's skill fit setting
+/// picks it when the owner chose to be asked for everything (FIX 9752).
 pub(super) struct OwnerAskedSkillFit;
 impl MarketplaceFitEvaluator for OwnerAskedSkillFit {
     fn evaluate(
@@ -91,9 +90,10 @@ impl<A: SkillHubAdapter> SkillHubAdapter for PrefetchedPackage<'_, A> {
 
 impl Vault {
     /// Owner door: import the skill at `folder` of a configured hub, at a
-    /// pin. The named publisher is admitted for this hub first. The skill
-    /// lands Candidate behind one permission ask
-    /// ([`Vault::approve_marketplace_permission_ask`]).
+    /// pin. The named publisher is admitted for this hub first. The owner's
+    /// chosen skill fit decides: a clean reversible import activates through
+    /// the install plan, anything else lands Candidate behind one permission
+    /// ask ([`Vault::approve_marketplace_permission_ask`]).
     pub fn import_skill_from_hub_ref(
         &self,
         owner: &AuthenticatedOwner,
@@ -107,24 +107,14 @@ impl Vault {
         let at = self.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
         let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+        let caller = HoldsNothing;
+        let fit = self.chosen_skill_fit(&caller)?;
         match self.hub_ref_fetch(&pinned_tracking(source.clone())?, None)? {
             RefFetch::Git(adapter, _) => self.import_marketplace_skill_with_query(
-                &adapter,
-                &source,
-                &publisher,
-                &OwnerAskedSkillFit,
-                osv,
-                occurred,
-                at,
+                &adapter, &source, &publisher, &*fit, osv, occurred, at,
             ),
             RefFetch::Http(adapter, _) => self.import_marketplace_skill_with_query(
-                &adapter,
-                &source,
-                &publisher,
-                &OwnerAskedSkillFit,
-                osv,
-                occurred,
-                at,
+                &adapter, &source, &publisher, &*fit, osv, occurred, at,
             ),
         }
     }
@@ -162,6 +152,8 @@ impl Vault {
         let at = self.now_recorded_at();
         let occurred = TimeRange { start: at, end: at };
         let osv = Some(&super::osv::OsvDevClient as &dyn super::osv::OsvQuery);
+        let caller = HoldsNothing;
+        let fit = self.chosen_skill_fit(&caller)?;
         match &fetch {
             RefFetch::Git(adapter, _) => self.import_marketplace_skill_with_query(
                 &PrefetchedPackage {
@@ -171,7 +163,7 @@ impl Vault {
                 },
                 &source,
                 &publisher,
-                &OwnerAskedSkillFit,
+                &*fit,
                 osv,
                 occurred,
                 at,
@@ -184,7 +176,7 @@ impl Vault {
                 },
                 &source,
                 &publisher,
-                &OwnerAskedSkillFit,
+                &*fit,
                 osv,
                 occurred,
                 at,
