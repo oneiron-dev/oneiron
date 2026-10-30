@@ -67,6 +67,7 @@ impl Memory<'_> {
         let list = self.diary_reader_list()?;
         let log = self.diary_reads(&DiaryReadsRequest {
             limit: Some(READS_SHOWN.max(ASKS_SHOWN)),
+            include_used: false,
         })?;
         let pinned = vec![
             format!("review: {}", if log.review { "on" } else { "off" }),

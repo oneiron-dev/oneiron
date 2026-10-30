@@ -10,13 +10,16 @@ mod doors;
 mod hooks;
 mod hub_install;
 mod import_notice;
+mod lenses;
 mod local;
 mod manifest;
 mod migrations;
 mod organs;
 mod setup;
+mod setup_actor;
 mod setup_cards;
 mod setup_session;
+mod slack_install;
 mod source;
 
 pub use crate::gate::PackInstallPolicyOverride;
@@ -29,19 +32,22 @@ pub use hooks::{
 };
 pub use hub_install::hub_pin;
 pub use import_notice::PackImportPreview;
+pub use lenses::{
+    PackLens, PackLensComponent, PackLensEntry, PackLensProposeRequest, WEAVE_LENS_PACK_NAME,
+    WEAVE_REPORT_LENS, weave_lens_pack_files,
+};
 pub use local::LOCAL_PACK_NAME;
 pub use manifest::{PackAdapter, PackKind, PackManifest};
 pub use migrations::PackMigration;
 pub use organs::{
-    MAX_ORGAN_BUILD_BYTES, PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree,
-    host_platform,
+    PackOrgan, PackOrganBinary, PackOrganBuild, PackOrganEntry, PackTree, host_platform,
 };
 pub use screening::PackInstallRules;
 pub use setup::{
-    MAX_SETUP_ACCOUNTS, MAX_SETUP_CONNECTIONS, MAX_SETUP_PERMISSIONS, MAX_SETUP_SECRETS, PackSetup,
-    PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission, PackSetupRisk,
-    PackSetupSecret,
+    PackSetup, PackSetupAccount, PackSetupAuth, PackSetupConnection, PackSetupPermission,
+    PackSetupRisk, PackSetupSecret,
 };
+pub use setup_actor::PackSetupActor;
 pub use setup_cards::PackSetupCardAction;
 pub use setup_session::{
     PackSetupAnswer, PackSetupCheck, PackSetupCheckRecord, PackSetupConnectionState,
@@ -49,6 +55,7 @@ pub use setup_session::{
     PackSetupSecretState, PackSetupSession, PackSetupView,
 };
 pub(crate) use setup_session::{live_custody_in_txn, pin_connection_custody_in_txn};
+pub use slack_install::{SlackInstallHold, SlackInstallRedeemed};
 pub use source::{PackSection, PackSource};
 
 pub(crate) fn export_source_body(
@@ -70,6 +77,8 @@ fn invalid(reason: &'static str) -> crate::error::Error {
 mod admission;
 mod admission_types;
 mod bundled_skills;
+mod owner_activation;
+mod permission_card;
 mod qualify;
 mod removal;
 mod route_halt;

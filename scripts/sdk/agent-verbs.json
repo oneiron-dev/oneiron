@@ -4625,7 +4625,7 @@
     },
     {
       "name": "vault.packs.setup.prepare",
-      "description": "The owner opens, or resumes, a pack's guided setup; opening grants nothing.",
+      "description": "The owner, or an agent acting for the owner, opens or resumes the owner's guided setup of a pack; opening grants nothing.",
       "input": "PackSetupRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::prepare_pack_setup_embedded(memory, input)?",
@@ -4639,7 +4639,7 @@
     },
     {
       "name": "vault.packs.setup.get",
-      "description": "A pack's guided setup as it stands, for the owner.",
+      "description": "A pack's guided setup as it stands, for the owner or an agent acting for the owner.",
       "input": "PackSetupRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::pack_setup_embedded(memory, input)?",
@@ -4653,7 +4653,7 @@
     },
     {
       "name": "vault.packs.setup.answer",
-      "description": "The owner's one typed answer or card action in a pack's guided setup; a credential value never passes here.",
+      "description": "One typed answer or card action in the owner's guided setup of a pack, from the owner or an agent acting for the owner; an allow goes to the owner as an ask, whose yes lands it, and a credential value never passes here.",
       "input": "PackSetupAnswerRequest",
       "output": "crate::task_verb::sdk::PackSetupReceipt",
       "call": "crate::task_verb::sdk::answer_pack_setup_embedded(memory, input)?",

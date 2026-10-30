@@ -544,6 +544,13 @@ pub(super) fn complete_ask_member_in_txn(
                 &encode_task_verb_body(body),
             )
             .apply(txn)?;
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement; the completion keeps no row of its own, so no settler
+        // gate stands beside the reviewer's (FIX 11806).
+        anchor_kept_review_in_txn(vault, txn, answer.task_ref, None)?;
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11807).
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, answer.task_ref);
     }
     Ok(())
 }
