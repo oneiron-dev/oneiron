@@ -348,10 +348,11 @@ impl Package {
         if out.len() != entry.uncompressed || crc32fast::hash(&out) != entry.crc {
             return Err(Error::Invalid("entry size or CRC mismatch"));
         }
-        // The kept copy is reserved before it is allocated; one the port
-        // does not admit is left out, and its part inflates on each read.
-        if let Ok(_kept) = self.resources.reserve(wide(out.len())) {
-            self.inflated.keep(entry.data.start, &out);
+        // The kept copy is reserved before it is allocated, and the hold
+        // lives as long as the copy; one the port does not admit is left
+        // out, and its part inflates on each read.
+        if let Ok(hold) = self.resources.reserve(wide(out.len())) {
+            self.inflated.keep(entry.data.start, &out, hold);
         }
         Ok(out)
     }
@@ -362,7 +363,7 @@ impl Package {
 /// part stays exact for the package's life and every copy of it shares the
 /// parts; an edited or removed part is answered before these are read.
 #[derive(Default)]
-pub(super) struct Inflated(Mutex<HashMap<usize, Vec<u8>>>);
+pub(super) struct Inflated(Mutex<HashMap<usize, (Hold, Vec<u8>)>>);
 
 impl Inflated {
     /// A copy of the part whose payload starts at `offset`, once inflated.
@@ -371,16 +372,17 @@ impl Inflated {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(&offset)
-            .cloned()
+            .map(|(_, part)| part.clone())
     }
 
-    /// Keeps a copy of `part`, inflated from the payload at `offset`.
-    fn keep(&self, offset: usize, part: &[u8]) {
+    /// Keeps a copy of `part`, inflated from the payload at `offset`, with
+    /// the memory `hold` that counts it.
+    fn keep(&self, offset: usize, part: &[u8], hold: Hold) {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(offset)
-            .or_insert_with(|| part.to_vec());
+            .or_insert_with(|| (hold, part.to_vec()));
     }
 }
 
