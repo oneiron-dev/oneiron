@@ -29,6 +29,8 @@ use super::super::container::{
     Stop, holds_spans, masked_retained_repo_copy, walk_retained_repo_members,
 };
 use super::super::release_hit;
+use super::body::reads_as_text;
+use super::text_log::{TextLog, TextSpans};
 use super::wipe::PlanValues;
 use super::{
     FileKey, FoundFile, Masker, REASON_KNOWN_VALUE, file_spans, merged, occurrences, offset,
@@ -145,7 +147,6 @@ fn place_leaf(
         None => Vec::new(),
     };
     let mut spans = file_spans(leaf);
-    spans.extend(extra.iter().cloned());
     // A value a structured reading places (a credential field), wherever
     // its bytes sit in the leaf.
     let mut fields = Masker {
@@ -153,7 +154,17 @@ fn place_leaf(
         at: Some((origin, PLACE.to_owned())),
         ..Masker::default()
     };
+    // A leaf no decoder takes is read as one text, whose spans are
+    // the ones just found: they are not found again (speed, FIX 12211).
+    if reads_as_text(leaf) {
+        let leaf_spans = TextSpans {
+            known: Vec::new(),
+            shapes: spans.clone(),
+        };
+        fields.text_log = TextLog::seeded(leaf, leaf_spans);
+    }
     fields.mask_body(leaf)?;
+    spans.extend(extra.iter().cloned());
     for found in fields.found {
         spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
     }
