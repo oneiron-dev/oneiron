@@ -18,6 +18,7 @@ use oneiron::memory::{HostWriteOrigin, MEMORY_CODE_INTERNAL};
 use oneiron::receipt::{
     ActionInputs, CallAttemptWitness, CallOutcome, CallReceiptInput, CallTransport,
 };
+use oneiron::runtime_hooks::VerbHookStop;
 use oneiron::skill_attribution::RunWriteToken;
 use tower::ServiceExt;
 
@@ -50,8 +51,10 @@ const CREDENTIAL_ROW_TRANSPORT: CallTransport = CallTransport::HttpFacade;
 ///
 /// A row's refusal keeps the words its route answered with in `refused`,
 /// which the action's record keeps beside its code; the guest sees only the
-/// code. What its reply stated of its call receipt is kept in `stamp`, for
-/// a caller that states it again on its own reply (FIX 2887); a row the
+/// code. A verb hook's stop goes back to the run as the typed stop, as
+/// every other door hands it (FIX 1450). What its reply stated of its call
+/// receipt is kept in `stamp`, for a caller that states it again on its own
+/// reply (FIX 2887); a row the
 /// credential's own facade call ran records its receipt here (FIX 10635).
 /// Each row's receipt names the action's own live-run hold, which it runs
 /// inside (FIX 10938).
@@ -82,6 +85,22 @@ fn unfinished() -> AgentVerbRefusalWords {
         reason_codes: Vec::new(),
     }
 }
+
+/// A row's refusal as its route answered it: its words, and the verb hook's
+/// stop when a hook stopped the row (FIX 1450).
+struct RowRefusal {
+    words: AgentVerbRefusalWords,
+    hook: Option<Box<VerbHookStop>>,
+}
+
+impl From<AgentVerbRefusalWords> for RowRefusal {
+    fn from(words: AgentVerbRefusalWords) -> Self {
+        Self { words, hook: None }
+    }
+}
+
+/// What the run reads of one posted row.
+type RowAnswer = oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>>;
 
 impl FacadeRowDoor {
     pub(super) fn new(
@@ -128,7 +147,7 @@ impl FacadeRowDoor {
     async fn answer(
         rows: Router,
         request: Request,
-    ) -> (CallStamp, Result<serde_json::Value, AgentVerbRefusalWords>) {
+    ) -> (CallStamp, Result<serde_json::Value, RowRefusal>) {
         let response = match rows.oneshot(request).await {
             Ok(response) => response,
             Err(never) => match never {},
@@ -138,9 +157,10 @@ impl FacadeRowDoor {
         (stamp, Self::body(response).await)
     }
 
-    /// A row reply's JSON on success, else its refusal as answered.
-    async fn body(response: Response) -> Result<serde_json::Value, AgentVerbRefusalWords> {
-        let refused = unfinished;
+    /// A row reply's JSON on success, else its refusal as answered, with
+    /// the hook stop its error states.
+    async fn body(response: Response) -> Result<serde_json::Value, RowRefusal> {
+        let refused = || RowRefusal::from(unfinished());
         let status = response.status();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -170,12 +190,35 @@ impl FacadeRowDoor {
                 .unwrap_or_default()
         };
         let fallback = unfinished();
-        Err(AgentVerbRefusalWords {
-            code: text("/error/code").unwrap_or(fallback.code),
-            message: text("/error/message").unwrap_or(fallback.message),
-            suggestions: texts("/error/suggestions"),
-            reason_codes: texts("/error/reasonCodes"),
+        let hook = body
+            .pointer("/error/hook")
+            .and_then(|stop| serde_json::from_value::<VerbHookStop>(stop.clone()).ok());
+        Err(RowRefusal {
+            words: AgentVerbRefusalWords {
+                code: text("/error/code").unwrap_or(fallback.code),
+                message: text("/error/message").unwrap_or(fallback.message),
+                suggestions: texts("/error/suggestions"),
+                reason_codes: texts("/error/reasonCodes"),
+            },
+            hook: hook.map(Box::new),
         })
+    }
+
+    /// A row's answer as the run takes it: its output, a verb hook's stop
+    /// as the typed stop (FIX 1450), or any other refusal as its code, its
+    /// words kept for the action's record.
+    fn answered(&self, answer: Result<serde_json::Value, RowRefusal>) -> RowAnswer {
+        match answer {
+            Ok(output) => Ok(Ok(AgentVerbAnswer::new(output, None))),
+            Err(RowRefusal {
+                hook: Some(stop), ..
+            }) => Err(oneiron::Error::from(*stop)),
+            Err(RowRefusal { words, hook: None }) => {
+                let code = words.code.clone();
+                *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(words);
+                Ok(Err(AgentVerbRefusal { code }))
+            }
+        }
     }
 }
 
@@ -189,7 +232,7 @@ impl FacadeRowDoor {
         call: &SelfAgentVerbCall,
         origin: &HostWriteOrigin,
         invocation: oneiron::runtime_hooks::InvocationId,
-    ) -> Result<AgentVerbAnswer, AgentVerbRefusal> {
+    ) -> RowAnswer {
         let refused = || AgentVerbRefusal {
             code: MEMORY_CODE_INTERNAL.to_owned(),
         };
@@ -225,34 +268,37 @@ impl FacadeRowDoor {
                     (request_digest, inputs, attempt),
                     &answer,
                 );
-                let answer =
-                    answer
-                        .map(|answer| answer.value)
-                        .map_err(|error| AgentVerbRefusalWords {
+                let answer = answer
+                    .map(|answer| answer.value)
+                    .map_err(|error| RowRefusal {
+                        words: AgentVerbRefusalWords {
                             code: error.body.error.code,
                             message: error.body.error.message,
                             suggestions: error.body.error.suggestions,
                             reason_codes: error.body.error.reason_codes,
-                        });
+                        },
+                        hook: error.body.error.hook,
+                    });
                 let _ = sender.send((stamp, answer));
             };
             self.runtime.spawn(with_attempt_collector(
                 self.collector.clone(),
                 with_calling_run_writes(run_writes, row),
             ));
-            let (stamp, answer) = receiver.recv().map_err(|_| refused())?;
+            let Ok((stamp, answer)) = receiver.recv() else {
+                return Ok(Err(refused()));
+            };
             *self.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp;
-            let output = answer.map_err(|row| {
-                let code = row.code.clone();
-                *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
-                AgentVerbRefusal { code }
-            })?;
-            return Ok(AgentVerbAnswer::new(output, None));
+            return self.answered(answer);
         }
-        let body = serde_json::to_vec(&call.input).map_err(|_| refused())?;
-        let mut request = axum::http::Request::post(format!("/{}", call.verb.as_str()))
+        let Ok(body) = serde_json::to_vec(&call.input) else {
+            return Ok(Err(refused()));
+        };
+        let Ok(mut request) = axum::http::Request::post(format!("/{}", call.verb.as_str()))
             .body(Body::from(body))
-            .map_err(|_| refused())?;
+        else {
+            return Ok(Err(refused()));
+        };
         *request.headers_mut() = self.headers.clone();
         request.headers_mut().remove(header::CONTENT_LENGTH);
         if let Ok(value) = HeaderValue::from_str(&invocation.to_hex()) {
@@ -280,14 +326,11 @@ impl FacadeRowDoor {
             self.collector.clone(),
             with_calling_run_writes(run_writes, row),
         ));
-        let (stamp, answer) = receiver.recv().map_err(|_| refused())?;
+        let Ok((stamp, answer)) = receiver.recv() else {
+            return Ok(Err(refused()));
+        };
         *self.stamp.lock().unwrap_or_else(PoisonError::into_inner) = stamp;
-        let output = answer.map_err(|row| {
-            let code = row.code.clone();
-            *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = Some(row);
-            AgentVerbRefusal { code }
-        })?;
-        Ok(AgentVerbAnswer::new(output, None))
+        self.answered(answer)
     }
 }
 
@@ -353,7 +396,7 @@ impl AgentVerbDoor for FacadeRowDoor {
         origin: &HostWriteOrigin,
         invocation: oneiron::runtime_hooks::InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        Ok(self.post_row(call, origin, invocation))
+        self.post_row(call, origin, invocation)
     }
 
     /// The typed actions keep their own ceiling and owner proof; this door
