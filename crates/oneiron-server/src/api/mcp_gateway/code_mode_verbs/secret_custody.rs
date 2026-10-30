@@ -95,6 +95,14 @@ impl SecretCustody for RunSecretCustody {
     ) -> Result<(), BrowserError> {
         self.lend(handle, browser_secret_use(operation), use_)
     }
+
+    /// The custody's admission of `handle` for this run's seat, its bytes
+    /// unread and no use recorded (FIX 10424).
+    fn holds(&self, handle: &str) -> Result<bool, BrowserError> {
+        self.vault
+            .holds_run_secret(&self.holder, handle)
+            .map_err(|error| BrowserError::SecretRefused(error.to_string()))
+    }
 }
 
 impl RunSecretCustody {
