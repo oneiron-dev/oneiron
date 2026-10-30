@@ -196,7 +196,7 @@ pub fn decode_notification_body(raw: &[u8]) -> Result<NotificationBody> {
 }
 
 /// The row id a producer's event lands under.
-fn notification_id(source: &NotificationSource) -> Result<EntityId> {
+pub(crate) fn notification_id(source: &NotificationSource) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(
         NOTIFICATION_ID_DOMAIN,
         &[source.producer.as_bytes(), source.event.as_bytes()],

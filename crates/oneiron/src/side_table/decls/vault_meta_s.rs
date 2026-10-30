@@ -330,6 +330,10 @@ side_tables! {
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
+    /// One delivery of a removal archive a removed person's device took in: its digest, what
+    /// it holds and when, never the archive (FIX 11197). Key: hex32 (person) ":" hex32 (receipt
+    /// id) ":" decimal (delivery version).
+    SHARED_ACT_REMOVAL_IMPORT: VaultMeta b"shared-act:removal-import:v1:" Named;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
@@ -638,6 +642,10 @@ side_tables! {
     /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
     SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
+    /// The erase selector of each asker a hard erase reached: value-free and permanent, one
+    /// marker per erased asker, so the intent fence still reaches a stale copy whose asker a
+    /// plain scrub already forgot. Never a name or count. Key: blake3 (32) asker erase key.
+    SPAWN_PLANNED_INTENT_ASKER_ERASED: VaultMeta b"spawn:planned_intent_asker_erased:v1:" Raw Engine;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64
     /// (blake3 of prefix+agent+world).
     STANDING_BLOCK: VaultMeta b"standing.block.v1:" LegacyJson;

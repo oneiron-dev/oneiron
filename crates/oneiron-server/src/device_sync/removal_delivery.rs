@@ -5,14 +5,17 @@
 //! has ended for good. Each archive a session sends is checked (its digest,
 //! and that it is this person's), written beside the credential file,
 //! readable by its owner alone, and acknowledged; one already written is
-//! acknowledged again. A live member's device holds the same sessions, and a
-//! removal wakes them. A failed session is tried again after a wait that
-//! doubles from [`REMOVAL_DELIVERY_RETRY_FIRST`] to
+//! acknowledged again. Each written archive is then taken into the device's
+//! vault, which tells its person it arrived (FIX 11197,
+//! [`oneiron::Vault::import_removal_archive`]); one that does not import
+//! stays on disk as written, and each start takes in those not yet taken in
+//! before its first session. A live member's device holds the same sessions,
+//! and a removal wakes them. A failed session is tried again after a wait
+//! that doubles from [`REMOVAL_DELIVERY_RETRY_FIRST`] to
 //! [`REMOVAL_DELIVERY_RETRY_MAX`]. Logs name receipts, never a slip or a key.
 #![cfg_attr(not(feature = "mesh"), allow(dead_code))]
 
 use std::path::{Path, PathBuf};
-#[cfg(feature = "mesh")]
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -49,19 +52,25 @@ impl Receiver {
     /// The receiver for `dial`'s home: at its URL where that URL takes one
     /// (`wss`, or `ws` to a loopback host, as the device's own link requires
     /// off the mesh), else over the mesh to the home machine where the link
-    /// has a mesh host (FIX 11196). `None` where neither is in reach.
+    /// has a mesh host (FIX 11196). `None` where neither is in reach. What
+    /// it receives goes into `vault`, this device's own.
     #[cfg(feature = "mesh")]
-    pub(super) fn start(dial: &Dial, mesh: Option<&MeshHost>) -> Option<Self> {
+    pub(super) fn start(
+        dial: &Dial,
+        mesh: Option<&MeshHost>,
+        vault: &Arc<oneiron::Vault>,
+    ) -> Option<Self> {
         use oneiron_mesh_transport::sync_dialer::MeshSyncDialer;
 
         let credential_file = dial.credential_file.clone();
         let archives = credential_file
             .parent()
             .map_or_else(|| PathBuf::from(ARCHIVE_DIR), |dir| dir.join(ARCHIVE_DIR));
+        let vault = Arc::clone(vault);
         let (stop, stopped) = oneshot::channel();
         if super::direct(&dial.url).is_ok() {
             let base = http_base(&dial.url)?;
-            let task = tokio::spawn(receive(base, credential_file, archives, stopped));
+            let task = tokio::spawn(receive(base, vault, credential_file, archives, stopped));
             return Some(Self { stop, task });
         }
         let mesh = mesh?;
@@ -71,6 +80,7 @@ impl Receiver {
         let task = tokio::spawn(receive_mesh(
             dialer,
             host,
+            vault,
             credential_file,
             archives,
             stopped,
@@ -81,7 +91,11 @@ impl Receiver {
     /// No receiver in a build without the `mesh` feature, whose device sync
     /// never starts.
     #[cfg(not(feature = "mesh"))]
-    pub(super) fn start(_dial: &Dial, _mesh: Option<&MeshHost>) -> Option<Self> {
+    pub(super) fn start(
+        _dial: &Dial,
+        _mesh: Option<&MeshHost>,
+        _vault: &Arc<oneiron::Vault>,
+    ) -> Option<Self> {
         None
     }
 
@@ -144,13 +158,20 @@ fn mesh_host(url: &str) -> String {
         .unwrap_or_else(|| "mesh".to_owned())
 }
 
-/// Sessions back to back until `stop`, waiting after each failed one.
+/// Sessions back to back until `stop`, waiting after each failed one, once
+/// the archives an earlier run kept but did not import are taken in.
 async fn receive(
     base: reqwest::Url,
+    vault: Arc<oneiron::Vault>,
     credential_file: PathBuf,
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
 ) {
+    tokio::select! {
+        biased;
+        _ = &mut stop => return,
+        () = import_kept(&vault, &credential_file, &archives) => {}
+    }
     // FIX 6969: a redirect is answered, never followed with the slip
     // headers; without a client the receiver cannot run.
     let client = match reqwest::Client::builder()
@@ -168,7 +189,7 @@ async fn receive(
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
-            session = session(&client, &base, &credential_file, &archives) => session,
+            session = session(&client, &base, &vault, &credential_file, &archives) => session,
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -186,21 +207,34 @@ async fn receive(
 }
 
 /// Sessions over the mesh back to back until `stop`, waiting after each
-/// failed one, as at the home's URL.
+/// failed one, as at the home's URL, once the archives an earlier run kept
+/// but did not import are taken in.
 #[cfg(feature = "mesh")]
 async fn receive_mesh(
     dialer: Arc<dyn oneiron::sync::SyncDialer>,
     host: String,
+    vault: Arc<oneiron::Vault>,
     credential_file: PathBuf,
     archives: PathBuf,
     mut stop: oneshot::Receiver<()>,
 ) {
+    tokio::select! {
+        biased;
+        _ = &mut stop => return,
+        () = import_kept(&vault, &credential_file, &archives) => {}
+    }
     let mut wait = REMOVAL_DELIVERY_RETRY_FIRST;
     loop {
         let session = tokio::select! {
             biased;
             _ = &mut stop => return,
-            session = session_mesh(dialer.as_ref(), &host, &credential_file, &archives) => session,
+            session = session_mesh(
+                dialer.as_ref(),
+                &host,
+                &vault,
+                &credential_file,
+                &archives,
+            ) => session,
         };
         match session {
             Ok(()) => wait = REMOVAL_DELIVERY_RETRY_FIRST,
@@ -233,12 +267,13 @@ struct Acknowledged {
     state: String,
 }
 
-/// One session: what the home sends is written and acknowledged. A session
-/// that sent archives but took no acknowledgement fails, so the next one
-/// waits.
+/// One session: what the home sends is written, taken into `vault` and
+/// acknowledged. A session that sent archives but took no acknowledgement
+/// fails, so the next one waits.
 async fn session(
     client: &reqwest::Client,
     base: &reqwest::Url,
+    vault: &Arc<oneiron::Vault>,
     credential_file: &Path,
     archives: &Path,
 ) -> anyhow::Result<()> {
@@ -257,8 +292,11 @@ async fn session(
     let mut acked = false;
     for delivery in answer.deliveries {
         let archives = archives.to_owned();
+        let vault = Arc::clone(vault);
         let delivery = tokio::task::spawn_blocking(move || {
-            store(&archives, person, &delivery).map(|()| delivery)
+            store(&archives, person, &delivery)?;
+            import(&vault, person, &delivery.copy);
+            Ok::<_, anyhow::Error>(delivery)
         })
         .await??;
         let receipt_id = delivery.copy.receipt_id;
@@ -279,13 +317,14 @@ async fn session(
     Ok(())
 }
 
-/// One session over the mesh (FIX 11196): what the home sends is written
-/// and acknowledged, as at the home's URL. A session that sent archives
-/// but took no acknowledgement fails, so the next one waits.
+/// One session over the mesh (FIX 11196): what the home sends is written,
+/// taken into `vault` and acknowledged, as at the home's URL. A session that
+/// sent archives but took no acknowledgement fails, so the next one waits.
 #[cfg(feature = "mesh")]
 async fn session_mesh(
     dialer: &dyn oneiron::sync::SyncDialer,
     host: &str,
+    vault: &Arc<oneiron::Vault>,
     credential_file: &Path,
     archives: &Path,
 ) -> anyhow::Result<()> {
@@ -302,8 +341,11 @@ async fn session_mesh(
     let mut acked = false;
     for delivery in answer.deliveries {
         let archives = archives.to_owned();
+        let vault = Arc::clone(vault);
         let delivery = tokio::task::spawn_blocking(move || {
-            store(&archives, person, &delivery).map(|()| delivery)
+            store(&archives, person, &delivery)?;
+            import(&vault, person, &delivery.copy);
+            Ok::<_, anyhow::Error>(delivery)
         })
         .await??;
         let receipt_id = delivery.copy.receipt_id;
@@ -448,6 +490,104 @@ fn store(archives: &Path, person: oneiron::EntityId, delivery: &Delivery) -> any
     }
     std::fs::rename(&part, &path)?;
     Ok(())
+}
+
+/// Takes `copy`, an archive written beside the credential for `person`,
+/// into `vault` (FIX 11197), and logs what came of it by its receipt. One
+/// that does not import stays on disk as written, and the next start tries
+/// it again.
+fn import(vault: &oneiron::Vault, person: oneiron::EntityId, copy: &RemovalExportCopy) {
+    match vault.import_removal_archive(person, copy) {
+        Ok(Some(records)) => tracing::info!(
+            receipt = %copy.receipt_id,
+            version = copy.delivered_at,
+            records,
+            "removal archive imported"
+        ),
+        Ok(None) => tracing::debug!(
+            receipt = %copy.receipt_id,
+            version = copy.delivered_at,
+            "removal archive imported before"
+        ),
+        Err(error) => tracing::warn!(
+            receipt = %copy.receipt_id,
+            version = copy.delivered_at,
+            %error,
+            "removal archive kept on disk, not imported"
+        ),
+    }
+}
+
+/// Takes into `vault` each archive kept under `archives` that it has not
+/// taken in yet: one an earlier import refused or never reached. Each is
+/// logged as [`import`] logs it; a sweep that cannot run is logged once and
+/// leaves every file as it is.
+async fn import_kept(vault: &Arc<oneiron::Vault>, credential_file: &Path, archives: &Path) {
+    let vault = Arc::clone(vault);
+    let (credential_file, archives) = (credential_file.to_owned(), archives.to_owned());
+    let swept =
+        tokio::task::spawn_blocking(move || import_dir(&vault, &credential_file, &archives)).await;
+    match swept {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(
+            error = %format!("{error:#}"),
+            "kept removal archives not imported"
+        ),
+        Err(error) => tracing::warn!(%error, "kept removal archive import task"),
+    }
+}
+
+/// [`import_kept`]'s sweep: each archive under `archives` not yet taken in
+/// is read and imported for the paired credential's holder. No directory,
+/// no sweep.
+fn import_dir(
+    vault: &oneiron::Vault,
+    credential_file: &Path,
+    archives: &Path,
+) -> anyhow::Result<()> {
+    let entries = match std::fs::read_dir(archives) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let paired = PairedCredentialFile::read(credential_file)?;
+    let slip = oneiron::authority::CapabilitySlip::from_token(&paired.token)
+        .map_err(|_| anyhow::anyhow!("the paired credential's slip does not decode"))?;
+    let person = oneiron::EntityId::from_hex(&slip.claims.holder_ref)?;
+    for entry in entries {
+        let path = entry?.path();
+        let Some((receipt, version)) = archive_name(&path) else {
+            continue;
+        };
+        if vault.removal_archive_imported(person, receipt, version)? {
+            continue;
+        }
+        match read_kept(&path) {
+            Ok(copy) => import(vault, person, &copy),
+            Err(error) => tracing::warn!(
+                receipt = %receipt.to_hex(),
+                version,
+                error = %format!("{error:#}"),
+                "kept removal archive does not read"
+            ),
+        }
+    }
+    Ok(())
+}
+
+/// The receipt and delivery version an archive file's name carries,
+/// `<receipt>.<version>.json` as [`store`] writes it; `None` for any other
+/// file, one still being written included.
+fn archive_name(path: &Path) -> Option<(oneiron::EntityId, u64)> {
+    let name = path.file_name()?.to_str()?.strip_suffix(".json")?;
+    let (receipt, version) = name.rsplit_once('.')?;
+    let receipt = oneiron::EntityId::from_hex(receipt).ok()?;
+    Some((receipt, version.parse().ok()?))
+}
+
+/// The archive kept at `path`, as [`store`] wrote it.
+fn read_kept(path: &Path) -> anyhow::Result<RemovalExportCopy> {
+    Ok(serde_json::from_slice(&std::fs::read(path)?)?)
 }
 
 /// Leaves `path` to its owner alone.

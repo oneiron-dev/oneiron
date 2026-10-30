@@ -65,6 +65,27 @@ pub struct GrantAnswered {
     pub decided_at: Option<u64>,
 }
 
+/// What an access request's `scope` asks for, as its answer and the asked
+/// one's list (`self.grants.asked`) name it; `None` for a scope no access
+/// request carries.
+pub(crate) fn grant_requested_scope(scope: &AccessGrantScope) -> Option<GrantRequestedScope> {
+    Some(match *scope {
+        AccessGrantScope::Messages { space_ref } => GrantRequestedScope::Messages { space_ref },
+        AccessGrantScope::Summaries { space_ref } => GrantRequestedScope::Summaries { space_ref },
+        AccessGrantScope::RelationshipClaims { space_ref } => {
+            GrantRequestedScope::RelationshipClaims { space_ref }
+        }
+        AccessGrantScope::CompanionProfile {
+            person_ref,
+            facet_ref,
+        } => GrantRequestedScope::CompanionProfile {
+            person_ref,
+            facet_ref,
+        },
+        _ => return None,
+    })
+}
+
 /// Answers `input` as `responder`, revalidated in the answering write
 /// ([`Vault::respond_addressed_access_request`]).
 pub fn answer_grant_request_as(
@@ -81,21 +102,8 @@ pub fn answer_grant_request_as(
         matches!(input.answer, GrantAnswer::Approve),
         crate::unix_seconds_now(),
     )?;
-    let scope = match answered.grant.scope {
-        AccessGrantScope::Messages { space_ref } => GrantRequestedScope::Messages { space_ref },
-        AccessGrantScope::Summaries { space_ref } => GrantRequestedScope::Summaries { space_ref },
-        AccessGrantScope::RelationshipClaims { space_ref } => {
-            GrantRequestedScope::RelationshipClaims { space_ref }
-        }
-        AccessGrantScope::CompanionProfile {
-            person_ref,
-            facet_ref,
-        } => GrantRequestedScope::CompanionProfile {
-            person_ref,
-            facet_ref,
-        },
-        _ => return Err(MemoryError::bad_request("request is not an access request")),
-    };
+    let scope = grant_requested_scope(&answered.grant.scope)
+        .ok_or_else(|| MemoryError::bad_request("request is not an access request"))?;
     Ok(GrantAnswered {
         request: answered.id,
         principal_ref: answered.grant.principal_ref,

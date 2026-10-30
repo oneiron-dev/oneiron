@@ -53,7 +53,7 @@ mod verbs;
 
 pub(crate) use crate::capture::{crop_region, encode_png, png_dimensions};
 
-use crate::capture::{self, Capture, Captures};
+use crate::capture::{self, Capture, Captures, Viewport};
 use crate::cdp::Pipe;
 use crate::observation::{HandleInfo, Rebound, match_target, rows_named};
 use crate::outline::{self, Line, Masks};
@@ -200,13 +200,18 @@ impl Frame {
     /// The frame of the (`x`, `y`, `width`, `height`) region of an image of
     /// `image` pixels that shows this frame.
     fn region(&self, image: (u32, u32), x: u32, y: u32, width: u32, height: u32) -> Self {
-        let across = self.width / f64::from(image.0.max(1));
-        let down = self.height / f64::from(image.1.max(1));
+        let view = Viewport {
+            left: self.left,
+            top: self.top,
+            width: self.width,
+            height: self.height,
+        }
+        .region(image, x, y, width, height);
         Self {
-            left: self.left + f64::from(x) * across,
-            top: self.top + f64::from(y) * down,
-            width: f64::from(width) * across,
-            height: f64::from(height) * down,
+            left: view.left,
+            top: view.top,
+            width: view.width,
+            height: view.height,
             scroll: self.scroll,
             url: self.url.clone(),
         }
