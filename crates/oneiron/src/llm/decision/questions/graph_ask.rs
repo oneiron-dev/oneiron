@@ -442,18 +442,9 @@ fn answer_unit(
     if !kind_is_graph_evidence(kind) {
         return Ok(UnitOutcome::Hidden);
     }
-    // A file-plane ASSET's row holds its manifest: the bound is the logical
-    // length, the manifest's own, not the manifest's bytes (FIX 5398).
-    let txn = vault.store.env.read_txn()?;
-    let body_len = if kind == crate::registry::ENTITY_TYPE_ASSET {
-        match crate::store::asset_file_in_txn(&vault.store, &txn, &unit, &body)? {
-            Some(manifest) => manifest.facts.len,
-            None => body.len() as u64,
-        }
-    } else {
-        body.len() as u64
-    };
-    if body.is_empty() || body_len > MAX_SOURCE_BYTES as u64 {
+    // The funnel supplies the live revision's logical bytes (FIX 5396), so
+    // the supplied length is the logical length (FIX 5398).
+    if body.is_empty() || body.len() > MAX_SOURCE_BYTES {
         return Ok(UnitOutcome::Abstain);
     }
     if !source_eligible(vault, &vault.store.env.read_txn()?, &unit, kind)? {
@@ -641,6 +632,8 @@ pub(super) fn recipe_context(
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Ok(None);
         };
+        // The funnel supplies the live revision's logical bytes (FIX 5396),
+        // so the supplied length is the logical length (FIX 5398).
         if !kind_is_graph_evidence(kind) || body.is_empty() || body.len() > MAX_SOURCE_BYTES {
             return Ok(None);
         }
@@ -720,6 +713,9 @@ pub(crate) fn trial_unit_context_in_txn(
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("model trial source header"))?;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        // The funnel supplies the live revision's logical bytes (FIX 5396):
+        // an older revision's manifest bytes miss the recorded hash and the
+        // trial refuses the frontier (FIX 5398).
         if *blake3::hash(&body).as_bytes() != pin.body_hash
             || !source_eligible(vault, txn, &pin.id, header.entity_type)?
         {
