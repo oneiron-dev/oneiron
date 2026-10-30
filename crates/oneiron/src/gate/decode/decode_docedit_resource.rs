@@ -29,11 +29,10 @@ pub(in crate::gate) fn parse_docedit_resource_policy(
         let n = required_value(entries, key)?.as_u64()?;
         values[i] = usize::try_from(n).ok().filter(|n| *n > 0)?;
     }
-    // ZIP32 output uses u32 offsets; Expat accepts one c_int-sized input.
-    // Policy must never promise a limit the parser cannot represent.
+    // ZIP32 output uses u32 offsets. Policy must never promise a limit the
+    // parser cannot represent.
     if values[0] > u32::MAX as usize
         || values[1] >= u16::MAX as usize
-        || values[2] > i32::MAX as usize
         || values[5] > u32::MAX as usize
     {
         return None;
