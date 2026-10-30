@@ -17565,6 +17565,12 @@ pub struct SkillTradeoffAsk {
     pub jev: Option<JevTradeoffVerdict>,
     #[serde(rename = "rung")]
     pub rung: u32,
+    #[serde(
+        rename = "judge_rubric_digest",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judge_rubric_digest: Option<String>,
 }
 
 /// `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffAskView`.
