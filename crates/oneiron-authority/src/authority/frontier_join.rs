@@ -7,12 +7,13 @@
 //! A join carries no semantic payload: no grant, role, clearance, consent or
 //! revoke, and it never stands for an owner act. It names only the signer
 //! family of the rows it leads to: the machine whose install key signs it,
-//! as that key signs the act; no machine when the host's slip issuer signs
-//! it for a host-issued op; or an owner anchor's own rows when a stored
-//! root's anchor signs it (FIX 8498): the signer domain the store doors
-//! vouch for it in, never a new constituency. Its parents are representation
-//! only: [`AUTHORITY_FRONTIER_JOIN_ARITY`] bounds one join's parents, never
-//! how many heads a frontier may hold.
+//! as that key signs the act; no machine when a live owner roster key signs
+//! it: the host's slip issuer for a host-issued op, or the root a ReRoot
+//! retires ahead of that ReRoot (FIX 11867); or an owner anchor's own rows
+//! when a stored root's anchor signs it (FIX 8498): the signer domain the
+//! store doors vouch for it in, never a new constituency. Its parents are
+//! representation only: [`AUTHORITY_FRONTIER_JOIN_ARITY`] bounds one join's
+//! parents, never how many heads a frontier may hold.
 
 use rmpv::Value;
 
@@ -35,7 +36,9 @@ pub const AUTHORITY_FRONTIER_JOIN_ARITY: usize = MAX_PARENTS;
 pub enum FrontierJoinFamily {
     /// The install key of this machine, the carrier of the act.
     Install(EntityId),
-    /// The host's slip issuer, ahead of a host-issued op.
+    /// A live owner roster key: the host's slip issuer, ahead of a
+    /// host-issued op, or the root a ReRoot retires, ahead of that ReRoot
+    /// (FIX 11867).
     Host,
     /// A stored owner root's anchor, ahead of that anchor's own rows: its
     /// root record, its marks and the owner's kit push (FIX 8498, Engine
