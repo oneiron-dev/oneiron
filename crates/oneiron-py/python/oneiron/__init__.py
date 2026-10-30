@@ -1704,6 +1704,9 @@ class Oneiron:
         def disarm(self, spec):
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
+        def rebind(self, spec):
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_rebind(json.dumps(spec))))
         def admission(self, spec):
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))
@@ -5772,6 +5775,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+        def asked(self, spec):
+            """Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."""
+            return json.loads(_translate(lambda: self._client.self_grants_asked(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
             return json.loads(_translate(lambda: self._client.self_grants_answer(json.dumps(spec))))

@@ -16,6 +16,9 @@ use super::*;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
+mod ancestry;
+pub(super) use self::ancestry::settle_ancestry;
+
 /// Why a revision or a project carries no authority. Kept as one list so a
 /// persisted reason maps back to the same static text.
 pub(super) mod reason {
@@ -168,15 +171,18 @@ impl ProjectEffective {
     }
     /// Main's `fits_under` over effective views; a `None` parent slice admits nothing.
     pub(crate) fn fits_under(&self, parent: &ProjectEffective) -> bool {
-        let Some(parent_slice) = &parent.slice else {
-            return false;
-        };
         self.depth_limit <= parent.depth_limit
             && self.depth_remaining < parent.depth_remaining
-            && self
-                .slice
+            && self.slice_fits_under(parent)
+    }
+    /// The slice part of [`Self::fits_under`]: this view's slice narrows the
+    /// parent's. A `None` parent slice admits nothing.
+    pub(crate) fn slice_fits_under(&self, parent: &ProjectEffective) -> bool {
+        parent.slice.as_ref().is_some_and(|parent_slice| {
+            self.slice
                 .as_ref()
                 .is_none_or(|slice| parent_slice.attenuate(slice.clone()).is_ok())
+        })
     }
     /// A state's own bounds: its members seated, its slice and depth.
     pub(super) fn bounds(authority: &ProjectAuthority) -> Self {

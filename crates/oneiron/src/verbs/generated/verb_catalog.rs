@@ -53,6 +53,7 @@ pub enum AgentVerb {
     VaultShapeGroupsResolve,
     SelfMessage,
     SelfGrantsAsk,
+    SelfGrantsAsked,
     VaultCompanionsAccessRequestsAnswer,
     SelfGrantsAnswer,
     VaultPersonasPreview,
@@ -185,6 +186,7 @@ pub enum AgentVerb {
     VaultCampaignProgramArchive,
     VaultTurnProgramsArm,
     VaultTurnProgramsDisarm,
+    VaultTurnProgramsRebind,
     SelfSavedQueryCreate,
     SelfSavedQueryRead,
     SelfSavedQueryUpdate,
@@ -1284,6 +1286,7 @@ impl AgentVerb {
         Self::VaultShapeGroupsResolve,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
+        Self::SelfGrantsAsked,
         Self::VaultCompanionsAccessRequestsAnswer,
         Self::SelfGrantsAnswer,
         Self::VaultPersonasPreview,
@@ -1416,6 +1419,7 @@ impl AgentVerb {
         Self::VaultCampaignProgramArchive,
         Self::VaultTurnProgramsArm,
         Self::VaultTurnProgramsDisarm,
+        Self::VaultTurnProgramsRebind,
         Self::SelfSavedQueryCreate,
         Self::SelfSavedQueryRead,
         Self::SelfSavedQueryUpdate,
@@ -2518,6 +2522,7 @@ impl AgentVerb {
             Self::VaultShapeGroupsResolve => "vault.shape.groups.resolve",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
+            Self::SelfGrantsAsked => "self.grants.asked",
             Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
             Self::SelfGrantsAnswer => "self.grants.answer",
             Self::VaultPersonasPreview => "vault.personas.preview",
@@ -2650,6 +2655,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
             Self::VaultTurnProgramsArm => "vault.turn_programs.arm",
             Self::VaultTurnProgramsDisarm => "vault.turn_programs.disarm",
+            Self::VaultTurnProgramsRebind => "vault.turn_programs.rebind",
             Self::SelfSavedQueryCreate => "self.saved_query.create",
             Self::SelfSavedQueryRead => "self.saved_query.read",
             Self::SelfSavedQueryUpdate => "self.saved_query.update",
@@ -3779,6 +3785,7 @@ impl AgentVerb {
                 | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
@@ -3911,6 +3918,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -5039,6 +5047,7 @@ impl AgentVerb {
                 | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
@@ -5171,6 +5180,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -6448,6 +6458,7 @@ impl AgentVerb {
                 | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
@@ -6563,6 +6574,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -7641,6 +7653,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryUpdate
                 | Self::SelfSavedQueryArchive
@@ -8349,6 +8362,7 @@ impl AgentVerb {
             Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::SelfGrantsAsked => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
             Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
@@ -8498,6 +8512,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultTurnProgramsArm => &["spec"],
             Self::VaultTurnProgramsDisarm => &["spec"],
+            Self::VaultTurnProgramsRebind => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -9598,6 +9613,7 @@ impl AgentVerb {
             Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::SelfGrantsAsked => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
             Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
@@ -9730,6 +9746,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultTurnProgramsArm => &["spec"],
             Self::VaultTurnProgramsDisarm => &["spec"],
+            Self::VaultTurnProgramsRebind => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -10923,6 +10940,9 @@ impl AgentVerb {
             Self::SelfGrantsAsk => {
                 "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."
             }
+            Self::SelfGrantsAsked => {
+                "Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."
+            }
             Self::VaultCompanionsAccessRequestsAnswer => {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
             }
@@ -11318,6 +11338,9 @@ impl AgentVerb {
             }
             Self::VaultTurnProgramsDisarm => {
                 "Disarms one of the caller's own armed turn programs; true when it was armed."
+            }
+            Self::VaultTurnProgramsRebind => {
+                "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."
             }
             Self::SelfSavedQueryCreate => {
                 "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."

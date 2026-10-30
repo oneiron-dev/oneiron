@@ -438,6 +438,11 @@ pub struct TaskStatusView {
     /// unbound TASK.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workflow: Option<TaskWorkflowStatus>,
+    /// What the TASK waits for before anyone may execute it: a consult whose
+    /// body arrived before its ConsultAssignee fact reads
+    /// `consult_assignee_fact`. Absent for every other TASK.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting: Option<String>,
     /// Digest of everything above; a poll passes it back as `after`.
     #[serde(with = "hex32")]
     pub observed: [u8; 32],

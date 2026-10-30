@@ -1,17 +1,18 @@
 //! `vault.questions.answers` (FIX 1585, FIX 2337): the engine's one reader
-//! ([`question_answers`]), as the run-host door serves it too. Without a cursor
+//! (`question_answers`), as the run-host door serves it too, read through the
+//! caller's own lane ([`question_answers_in_lane`], OF-506). Without a cursor
 //! it answers every graph answer receipt and every artifact ask as one bare
 //! list, unpaged and uncapped; a cursor opts into pages over the question's
 //! ask log.
 
 use std::sync::Arc;
 
-use oneiron::llm::decision::questions::question_answers;
+use oneiron::llm::decision::questions::question_answers_in_lane;
 use oneiron::memory::MemoryResult;
 use oneiron::receipt::{QuestionAnswersReply, QuestionAnswersRequest};
 
 use super::super::host_doors::support::{Listed, internal, naming};
-use super::{asker, question_answer_rows};
+use super::{asker, asker_lane, question_answer_rows};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -47,9 +48,17 @@ async fn vault_questions_answers_answer(
     const VERB: &str = "vault.questions.answers";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
+    let auth = auth.clone();
     crate::api::facade::clock_ingress::run_blocking(
         move || -> MemoryResult<QuestionAnswersReply> {
-            Ok(question_answers(server.vault(), principal, &input)?)
+            // A narrowed caller reads each answer its own lane reads (OF-506).
+            let lane = asker_lane(server.vault(), &auth, principal, VERB)?;
+            Ok(question_answers_in_lane(
+                server.vault(),
+                &lane,
+                principal,
+                &input,
+            )?)
         },
     )
     .await

@@ -55,6 +55,7 @@ both bindings and their export-census tests in one change.
 - `vault.shape.groups.resolve`
 - `self.message`
 - `self.grants.ask`
+- `self.grants.asked`
 - `vault.companions.access_requests.answer`
 - `self.grants.answer`
 - `vault.personas.preview`
@@ -187,6 +188,7 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.archive`
 - `vault.turn_programs.arm`
 - `vault.turn_programs.disarm`
+- `vault.turn_programs.rebind`
 - `self.saved_query.create`
 - `self.saved_query.read`
 - `self.saved_query.update`

@@ -51,6 +51,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shape.groups.resolve", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
+        .route("/self.grants.asked", post(facade_route))
         .route(
             "/vault.companions.access_requests.answer",
             post(facade_route),
@@ -189,6 +190,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.campaign.program.archive", post(facade_route))
         .route("/vault.turn_programs.arm", post(facade_route))
         .route("/vault.turn_programs.disarm", post(facade_route))
+        .route("/vault.turn_programs.rebind", post(facade_route))
         .route("/self.saved_query.create", post(facade_route))
         .route("/self.saved_query.read", post(facade_route))
         .route("/self.saved_query.update", post(facade_route))

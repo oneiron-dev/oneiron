@@ -330,6 +330,12 @@ pub(super) const ROUTES: &[OwnerRoute] = &[
     },
     OwnerRoute {
         method: "post",
+        path: "/connectors/attest",
+        summary: "The owner attests a pending connector the probe suite cannot grade (CONNECTOR-QUALIFY = A): its tools must still match the stamped slate, and the key activates with an owner-attested receipt.",
+        row: None,
+    },
+    OwnerRoute {
+        method: "post",
         path: "/connectors/qualify",
         summary: "Runs the probe suite through the installed endpoint with the owner's kit, activates the key, and approves the exact manifest the suite ran on.",
         row: None,

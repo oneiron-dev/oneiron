@@ -171,6 +171,13 @@ impl Memory<'_> {
             if let Some(wait) = self.world_privacy_wait_in(txn, handle, step_key)? {
                 return Ok(wait);
             }
+            // A code run that waits on a consult it executes parks on the
+            // consult's own wait for its ConsultAssignee fact.
+            if step_key.is_none()
+                && let Some(wait) = self.consult_assignee_wait_in(txn, handle.group_ref)?
+            {
+                return Ok(wait);
+            }
             let Some(group) = self.ask_group_named_in(txn, handle.group_ref)? else {
                 // A held ask waits on its approval like any pending ask: the
                 // park or the bound wait wakes once it goes out and settles.

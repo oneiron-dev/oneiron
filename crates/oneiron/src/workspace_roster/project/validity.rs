@@ -923,6 +923,7 @@ pub(super) fn parent_view(
     reader: &ProjectReader<'_, '_>,
     parent: EntityId,
 ) -> Result<std::result::Result<ProjectEffective, ProjectVerdict>> {
+    super::fold::settle_ancestry(reader, parent);
     Ok(match reader.frontier(parent)? {
         None => Err(ProjectVerdict::Pending(reason::PARENT_MISSING)),
         Some(frontier) => match frontier.effective {

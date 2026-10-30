@@ -10,8 +10,8 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1257 code-mode rows (1217 host rows, 40 run rows), 4412 declarations.
-// Replies: 1069 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1259 code-mode rows (1219 host rows, 40 run rows), 4418 declarations.
+// Replies: 1071 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
@@ -254,6 +254,10 @@ declare namespace Sdk {
   type GrantAskScope = { kind: "messages"; space_ref: string } | { kind: "summaries"; space_ref: string } | { kind: "relationship_claims"; space_ref: string } | { kind: "companion_profile"; facet_ref?: string | null };
   type GrantAskRequest = { pr: string; scope: GrantAskScope };
   type GrantAskReceipt = { request: string; asked: string; status: string };
+  type GrantAskedRequest = { after?: string | null; limit?: number | null };
+  type GrantRequestedScope = { kind: "messages"; space_ref: EntityId } | { kind: "summaries"; space_ref: EntityId } | { kind: "relationship_claims"; space_ref: EntityId } | { kind: "companion_profile"; person_ref: EntityId; facet_ref?: EntityId | null };
+  type GrantAskedRow = { request: string; asker: string; capability: string; scope: GrantRequestedScope; created_at: number; expires_at?: number | null };
+  type GrantAskedPage = { requests: GrantAskedRow[]; next_after?: string | null };
   type CompanionAccessRequestAnswer = "approve" | "deny";
   type CompanionAccessRequestAnswerRequest = { request: EntityId; answer: CompanionAccessRequestAnswer };
   type CompanionProfileRequestedScope = { kind: "companion_profile"; person_ref: EntityId; facet_ref?: EntityId | null };
@@ -261,7 +265,6 @@ declare namespace Sdk {
   type CompanionAccessRequestAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: CompanionProfileRequestedScope; status: AccessRequestStatus; grant_ref?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null };
   type GrantAnswer = "approve" | "deny";
   type GrantAnswerRequest = { request: EntityId; answer: GrantAnswer };
-  type GrantRequestedScope = { kind: "messages"; space_ref: EntityId } | { kind: "summaries"; space_ref: EntityId } | { kind: "relationship_claims"; space_ref: EntityId } | { kind: "companion_profile"; person_ref: EntityId; facet_ref?: EntityId | null };
   type GrantAnswered = { request: EntityId; principal_ref: EntityId; capability: string; scope: GrantRequestedScope; status: AccessRequestStatus; addressed_to?: EntityId | null; grant_ref?: EntityId | null; excess_request?: EntityId | null; decided_by?: EntityId | null; decided_at?: number | null };
   type PersonaSnapshotPreviewRequest = { subject: EntityId };
   type PersonaSnapshotPreviewRow = { row_id: string; kind: string; text: string; provenance_refs: string[]; attribution?: string | null; struck: boolean };
@@ -354,7 +357,7 @@ declare namespace Sdk {
   type TaskWorkflowHandoff = { program: { stop_cause: BatchStopCause } } | "goal_unmet" | { retired: { id: EntityId; reason?: string | null } } | { missing: { id: EntityId } } | { unreadable: { id: EntityId } } | "interrupted";
   type TaskWorkflowOutcome = "pending" | { started: { at: number } } | { done: { receipt_ref: EntityId } } | { handoff: { cause: TaskWorkflowHandoff; receipt_ref: EntityId } };
   type TaskWorkflowStatus = { attempt_ref: string; requested: EntityId; resolved?: EntityId | null; brief: BriefStamp; outcome: TaskWorkflowOutcome };
-  type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; observed: string };
+  type TaskStatusView = { handle: TaskHandle; task_ref?: EntityId | null; phase: TaskPhase; brief_current?: BriefStamp | null; brief_running?: BriefStamp | null; attempt?: AttemptView | null; pending: boolean; asks: [TaskAskHandle, TaskAskStatus][]; last_receipt?: string | null; workflow?: TaskWorkflowStatus | null; waiting?: string | null; observed: string };
   type TaskOutcome = { kind: "proposed"; decision_ref?: string | null; reason_codes: string[] } | { kind: "created"; route?: TaskRouteOutcome | null } | { kind: "accepted"; attempt?: AttemptHandle | null } | { kind: "held_by_other"; since: number } | { kind: "asked_up"; ask: TaskAskHandle } | { kind: "reported"; phase: TaskPhase } | (TaskStatusView & { kind: "snapshot" }) | { kind: "unchanged" } | { kind: "stale_fence" } | { kind: "wrong_node" } | { kind: "rejected"; decision_ref?: string | null };
   type TaskActor = string;
   type TaskLifecycleRecord = { call: string; outcome: string; occurred_at: number; actor: TaskActor; on_behalf_of?: string | null; job_ref?: string | null; trigger_ref?: string | null; fields: Record<string, string> };
@@ -839,6 +842,8 @@ declare namespace Sdk {
   type ProgramRecipePin = { skill: EntityId; version: string; content_hash: string; entry: string; contract_digest: string; executor: string; args: string };
   type TurnProgramRegistration = { registration: EntityId; actor: EntityId; conversation?: EntityId | null; definition: ProgramRecipePin; revision: string; armed_at: number; newly_armed: boolean };
   type DisarmTurnProgram = { registration: EntityId };
+  type TurnProgramRebindRequest = { attempt: string };
+  type TurnProgramRebindReceipt = { attempt: string; admission: string; predecessor_slip: string; successor_slip: string; owner_work: boolean };
   type SavedQueryScopeSpec = { worlds?: EntityId[]; facets?: string[] };
   type ClaimComparison = "exists" | "eq" | "not_eq" | "lt" | "lte" | "gt" | "gte" | "contains";
   type SavedQueryFilterSpec = { op: "task_owner"; owner: EntityId } | { op: "all"; terms: SavedQueryFilterSpec[] } | { op: "any"; terms: SavedQueryFilterSpec[] } | { op: "not"; term: SavedQueryFilterSpec } | { op: "claim"; predicate: string; cmp: ClaimComparison; value?: unknown } | { op: "edge_exists"; edge_kind: string; target?: EntityId | null };
@@ -3386,7 +3391,8 @@ declare namespace Sdk {
   type QuestionDefinitionInput = QuestionDefinition<DecisionQuestionInput>;
   type QuestionCreateRequest = { definition: QuestionDefinitionInput };
   type QuestionAskerClass = "human" | "agent" | "system";
-  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null };
+  type FrozenReadLane = { credential?: number[] | null; authority?: Scope | null; records?: string[]; worlds?: ScopeAxis<ScopeId> | null; room_facets?: EntityId | null };
+  type QuestionRecord = { schema_version: number; principal: string; definition: QuestionDefinition<DecisionQuestion>; created_at: number; asker_class?: QuestionAskerClass | null; read_lane: FrozenReadLane };
   type QuestionEditRequest = { id: EntityId; expected_version: number; definition: QuestionDefinitionInput };
   type QuestionPauseRequest = { id: EntityId; paused: boolean };
   type QuestionPaused = { id: EntityId; paused: boolean };
@@ -4818,6 +4824,8 @@ declare namespace self {
     answer(input: Sdk.GrantAnswerRequest): Promise<Sdk.GrantAnswered | StoredResult>;
     /** Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it. */
     ask(input: Sdk.GrantAskRequest): Promise<Sdk.GrantAskReceipt | StoredResult>;
+    /** Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing. */
+    asked(input: Sdk.GrantAskedRequest): Promise<Sdk.GrantAskedPage | StoredResult>;
   };
   /** Reads checkpointed raw steps and landed fold and epoch boundaries of the attached run; a cleared ask alone never proves compaction settled. */
   const history: (input: Sdk.FoldHistoryRequest) => Promise<Sdk.FoldHistory | StoredResult>;
@@ -7474,6 +7482,8 @@ declare const vault: Sdk.VaultHost & {
     arm(input: Sdk.ArmTurnProgram): Promise<Sdk.TurnProgramRegistration | StoredResult>;
     /** Disarms one of the caller's own armed turn programs; true when it was armed. */
     disarm(input: Sdk.DisarmTurnProgram): Promise<boolean | StoredResult>;
+    /** Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes. */
+    rebind(input: Sdk.TurnProgramRebindRequest): Promise<Sdk.TurnProgramRebindReceipt | StoredResult>;
   };
   usage: {
     events: {
