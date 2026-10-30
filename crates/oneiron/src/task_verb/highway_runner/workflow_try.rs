@@ -567,6 +567,9 @@ fn close_in(
         // settlement.
         anchor_kept_review_in_txn(vault, txn, end.task, Some(end.wrapper.id))?;
     }
+    // The routing projection counts this settlement on the folds whose runs
+    // worked this TASK before it settled (FIX 11807).
+    crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, end.task);
     Ok(receipt)
 }
 
