@@ -354,18 +354,22 @@ pub(super) fn decode_durable_send_receipt(
 
 /// This projector reads its entire existing audit source; it has no source cap.
 pub(super) fn scan_durable_send_receipts(vault: &Vault) -> Result<ReceiptScan> {
-    durable_send_receipts(vault).map(ReceiptScan::from_complete_records)
+    durable_send_receipts(vault).map(|(records, _)| ReceiptScan::from_complete_records(records))
 }
 
-pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<Vec<ReceiptRecord>> {
-    vault
-        .store
-        .send_receipt_rows()?
-        .into_iter()
-        .map(|(task_id, raw)| {
-            decode_durable_send_receipt(&task_id, &raw).map(|durable| durable.receipt)
-        })
-        .collect()
+/// The send receipt rows that decode, beside the hex task refs of the rows
+/// that do not (FIX 11952): one undecodable row no longer fails the whole
+/// read. A read error of the table itself still fails.
+pub(crate) fn durable_send_receipts(vault: &Vault) -> Result<(Vec<ReceiptRecord>, Vec<String>)> {
+    let mut records = Vec::new();
+    let mut undecodable = Vec::new();
+    for (task_id, raw) in vault.store.send_receipt_rows()? {
+        match decode_durable_send_receipt(&task_id, &raw) {
+            Ok(durable) => records.push(durable.receipt),
+            Err(_) => undecodable.push(crate::entity_id::bytes_to_hex_lower(&task_id)),
+        }
+    }
+    Ok((records, undecodable))
 }
 
 /// Builds an outbound receipt row from the OF-327 intent spine.
