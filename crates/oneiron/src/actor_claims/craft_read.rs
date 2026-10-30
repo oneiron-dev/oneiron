@@ -159,32 +159,36 @@ pub fn resident_craft_pack_scoped(
 }
 
 /// `resident`'s current craft on `rtxn`, each id with its body, newest
-/// first.
+/// first. Shells merged into the resident read as its own (FIX 9073).
 fn resident_craft_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     resident: &EntityId,
     at: u64,
 ) -> Result<Vec<(EntityId, ClaimBody)>> {
+    let subjects =
+        crate::skill_reliability::redirect_equivalent_subjects_in_txn(vault, rtxn, resident)?;
     let mut rows = Vec::new();
-    for id in vault.claims_for_subject_in_txn(rtxn, resident)? {
-        let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
-            continue;
-        };
-        if !is_current_craft(&body, resident, at)
-            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &id)?
-            || !crate::claim::has_live_support_in_txn(&vault.store, rtxn, &body)?
-        {
-            continue;
+    for subject in &subjects {
+        for id in vault.claims_for_subject_in_txn(rtxn, subject)? {
+            let Some(body) = vault.get_claim_in_txn(rtxn, &id)? else {
+                continue;
+            };
+            if !is_current_craft(&body, &subjects, at)
+                || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, rtxn, &id)?
+                || !crate::claim::has_live_support_in_txn(&vault.store, rtxn, &body)?
+            {
+                continue;
+            }
+            let raw = vault
+                .store
+                .port_entity_record(rtxn, &id)?
+                .map(|row| row.encode())
+                .ok_or(Error::CorruptedIndex("actor claim entity"))?;
+            let header =
+                EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+            rows.push((craft_order(&body, header.occurred_start, id), body));
         }
-        let raw = vault
-            .store
-            .port_entity_record(rtxn, &id)?
-            .map(|row| row.encode())
-            .ok_or(Error::CorruptedIndex("actor claim entity"))?;
-        let header =
-            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
-        rows.push((craft_order(&body, header.occurred_start, id), body));
     }
     rows.sort_unstable_by_key(|(order, _)| *order);
     Ok(rows
@@ -218,13 +222,13 @@ fn supported_in_txn(
     Ok(crate::claim::has_live_support_in_txn(&vault.store, rtxn, &body)?.then_some(body))
 }
 
-/// Whether `body` is `resident`'s craft at `at`: a surfaceable lesson or
-/// failure mode about exactly it, valid at `at`, learned or owner-approved.
-fn is_current_craft(body: &ClaimBody, resident: &EntityId, at: u64) -> bool {
+/// Whether `body` is craft about `subjects` at `at`: a surfaceable lesson or
+/// failure mode about one of them, valid at `at`, learned or owner-approved.
+fn is_current_craft(body: &ClaimBody, subjects: &[EntityId], at: u64) -> bool {
     matches!(
         body.predicate.as_str(),
         PREDICATE_ACTOR_LESSON | PREDICATE_ACTOR_FAILURE_MODE
-    ) && matches!(&body.subject, ClaimSubject::Entity(subject) if subject == resident)
+    ) && matches!(&body.subject, ClaimSubject::Entity(subject) if subjects.contains(subject))
         && claim_surfaceable(body)
         && body.valid_from.is_none_or(|start| start <= at)
         && body.valid_to.is_none_or(|end| end > at)
