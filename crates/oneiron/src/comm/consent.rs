@@ -253,9 +253,23 @@ pub fn approve_pending_opt_out_clear(
         // other; whether a REMAINING head still suppresses each of those
         // rows stays the fold's decision.
         let cleared: BTreeSet<EntityId> = heads.iter().map(|head| head.subject).collect();
-        rematerialize_subject_contacts_in_txn(vault, wtxn, &cleared, channel_class, ruled_at)?;
+        let contacts =
+            rematerialize_subject_contacts_in_txn(vault, wtxn, &cleared, channel_class, ruled_at)?;
         consume_clear_gates_in_txn(vault, wtxn, &gates)?;
+        // The retracted heads, rebuilt contacts and consumed gates go to the
+        // live-window mirror when the write commits, with the receipt below.
+        #[cfg(feature = "sync")]
+        let mut rows: BTreeSet<EntityId> = heads
+            .iter()
+            .map(|head| head.claim_ref)
+            .chain(contacts)
+            .chain(gates.iter().map(|(gate_id, _, _)| *gate_id))
+            .collect();
+        #[cfg(not(feature = "sync"))]
+        drop(contacts);
         if heads.is_empty() {
+            #[cfg(feature = "sync")]
+            crate::batch::queue_committed_rows(vault, wtxn, rows);
             return Ok(ClearRuling::NoActiveOptOut);
         }
         let receipt = CommRecord::Receipt {
@@ -265,7 +279,12 @@ pub fn approve_pending_opt_out_clear(
             outcome: OPT_OUT_CLEAR_APPROVED.to_owned(),
             actor_ref: actor.entity_ref(),
         };
-        put_comm_record_in_txn(vault, wtxn, vault.store.clock.entity_id()?, &receipt)?;
+        let receipt_id = vault.store.clock.entity_id()?;
+        put_comm_record_in_txn(vault, wtxn, receipt_id, &receipt)?;
+        #[cfg(feature = "sync")]
+        rows.insert(receipt_id);
+        #[cfg(feature = "sync")]
+        crate::batch::queue_committed_rows(vault, wtxn, rows);
         Ok(ClearRuling::Cleared)
     })?;
     match ruling {
