@@ -5,8 +5,8 @@ use crate::batch::{
     apply_ops_with_gate_mode,
 };
 use crate::consent::{
-    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
-    GrantBound,
+    ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectDigest,
+    EffectFacts, GrantBound,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -19,6 +19,8 @@ use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
+use std::time::{Duration, Instant};
 
 /// One page's prepared segments, summaries, annotation and predicted birth.
 type PreparedDocsPage = (
@@ -27,6 +29,20 @@ type PreparedDocsPage = (
     Option<Value>,
     super::BlobBirthDecision,
 );
+
+/// A page beside its preparation, ready for its batch's writer.
+type PreparedPage<'a> = (
+    &'a DocsPage,
+    Vec<DocsSegment>,
+    Vec<Option<String>>,
+    Option<Value>,
+    super::BlobBirthDecision,
+);
+
+/// How long one docs import call keeps starting page batches. Past it the
+/// call returns with the consent unspent and the first page it has not
+/// written; the same request called again resumes there.
+const DOCS_IMPORT_DEADLINE: Duration = Duration::from_secs(60);
 
 /// Stable durable-entity binding for one docs derivation slot. Key: the
 /// extraction id string.
@@ -69,6 +85,45 @@ pub struct DocsImportReceipt {
     pub summary_refs: Vec<String>,
     pub annotation_refs: Vec<String>,
     pub fingerprints: Vec<(String, super::BlobBirthDecision)>,
+    /// The first page this call did not write when its deadline passed;
+    /// `None` once every page is written and the consent is spent. The refs
+    /// above name what this call wrote.
+    pub resume_page: Option<usize>,
+}
+
+/// One approved import's fixed inputs, carried to each page batch's writer.
+struct DocsImportRun<'a> {
+    owner: &'a AuthenticatedOwner,
+    request_id: EntityId,
+    docs: &'a DocsExport,
+    allow_derivations: bool,
+    summary: Option<&'a dyn DocsSummaryModel>,
+    classifier: Option<&'a dyn DocsInjectionClassifier>,
+    digest: EffectDigest,
+    now: u64,
+}
+
+/// The import's pages in batches under the consent ceiling's own bounds: at
+/// most `max_pages` pages and `max_bytes` of page text each, a page over
+/// `max_bytes` alone. An export with no pages is one empty batch.
+fn page_batches(pages: &[DocsPage], ceiling: DocsImportCeiling) -> Vec<Range<usize>> {
+    let max_pages = ceiling.max_pages.max(1);
+    let mut batches = Vec::new();
+    let mut start = 0;
+    let mut bytes = 0usize;
+    for (index, page) in pages.iter().enumerate() {
+        if index > start
+            && (index - start >= max_pages
+                || bytes.saturating_add(page.text.len()) > ceiling.max_bytes)
+        {
+            batches.push(start..index);
+            start = index;
+            bytes = 0;
+        }
+        bytes = bytes.saturating_add(page.text.len());
+    }
+    batches.push(start..pages.len());
+    batches
 }
 fn invalid(message: &str) -> Error {
     Error::InvalidConfig(message.to_owned())
@@ -161,10 +216,8 @@ impl Vault {
         docs.validate()
             .map_err(|_| invalid("invalid docs export"))?;
         require_docs_corpus_project(self, &self.store.env.read_txn()?, docs.project_id)?;
+        // The ceiling schedules the import's page batches; it refuses no size.
         let bytes = serde_json::to_vec(docs).map_err(|_| invalid("docs export encoding"))?;
-        if docs.pages.len() > ceiling.max_pages || bytes.len() > ceiling.max_bytes {
-            return Err(invalid("docs import exceeds consent ceiling"));
-        }
         let hash = blake3::hash(&bytes).to_hex().to_string();
         let bound = GrantBound::action(
             ActorBound::new(owner.revalidate(self)?.to_hex())?,
@@ -182,7 +235,12 @@ impl Vault {
         ComposedEffect::new(EffectFacts::new("docs.import")?).with_action_requirement(bound)
     }
 
-    /// One exact approve-once covers the entire batch and its explicit derivation ceiling.
+    /// One exact approve-once covers the entire import and its explicit
+    /// derivation ceiling. The ceiling's page and byte bounds size the page
+    /// batches, each written in its own writer transaction; the last batch
+    /// spends the consent. Once [`DOCS_IMPORT_DEADLINE`] has passed no
+    /// further batch starts, and the same request called again skips the
+    /// pages this approval already wrote.
     /// Classifier is off by default (`None`); it produces an annotation, never a wall or edit.
     #[expect(
         clippy::too_many_arguments,
@@ -212,19 +270,17 @@ impl Vault {
                 return Err(invalid("docs import requires bulk consent"));
             }
         }
-        // Optional model calls never hold the LMDB writer slot. Consent is rechecked at commit.
-        let mut prepared = Vec::new();
-        for page in &docs.pages {
-            let (segments, summaries, annotation, predicted) =
-                self.prepare_docs_page(docs, page, summary, classifier)?;
-            prepared.push((page, segments, summaries, annotation, predicted));
-        }
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_in_txn(self, &txn)?;
-        require_docs_corpus_project(self, &txn, docs.project_id)?;
-        let authorization =
-            crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &digest)?
-                .ok_or_else(|| invalid("docs consent already consumed"))?;
+        let run = DocsImportRun {
+            owner,
+            request_id,
+            docs,
+            allow_derivations: ceiling.allow_derivations,
+            summary,
+            classifier,
+            digest,
+            now,
+        };
+        let started = Instant::now();
         let mut receipt = DocsImportReceipt {
             approval_digest: digest.to_hex(),
             asset_refs: Vec::new(),
@@ -232,7 +288,64 @@ impl Vault {
             summary_refs: Vec::new(),
             annotation_refs: Vec::new(),
             fingerprints: Vec::new(),
+            resume_page: None,
         };
+        let batches = page_batches(&docs.pages, ceiling);
+        for (index, pages) in batches.iter().enumerate() {
+            let last = index + 1 == batches.len();
+            // Optional model calls never hold the LMDB writer slot. Consent is rechecked at commit.
+            let mut prepared = Vec::new();
+            for page in docs.pages.get(pages.clone()).unwrap_or_default() {
+                if self.docs_page_written_by(docs, page, &receipt.approval_digest)? {
+                    continue;
+                }
+                let (segments, summaries, annotation, predicted) =
+                    self.prepare_docs_page(docs, page, summary, classifier)?;
+                prepared.push((page, segments, summaries, annotation, predicted));
+            }
+            self.write_docs_batch(&run, prepared, last, &mut receipt)?;
+            if !last && started.elapsed() >= DOCS_IMPORT_DEADLINE {
+                receipt.resume_page = Some(pages.end);
+                return Ok(receipt);
+            }
+        }
+        Ok(receipt)
+    }
+
+    /// Whether a batch of the import approved as `digest` already wrote this
+    /// revision of `page`: a resumed import skips it.
+    fn docs_page_written_by(
+        &self,
+        docs: &DocsExport,
+        page: &DocsPage,
+        digest: &str,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let extraction = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
+        let Some(asset) = existing_ref(self, &txn, &extraction)? else {
+            return Ok(false);
+        };
+        super::docs_deep::deep_ceiling_names(self, &txn, asset, digest, &page.text)
+    }
+
+    /// Writes one page batch in a writer transaction of its own, under the
+    /// import's unspent approve-once. The last batch spends it and records
+    /// the import's notification over every page's asset.
+    fn write_docs_batch(
+        &self,
+        run: &DocsImportRun<'_>,
+        prepared: Vec<PreparedPage<'_>>,
+        last: bool,
+        receipt: &mut DocsImportReceipt,
+    ) -> Result<()> {
+        let (docs, summary, classifier, now) = (run.docs, run.summary, run.classifier, run.now);
+        let digest_hex = run.digest.to_hex();
+        let mut txn = self.store.env.write_txn()?;
+        let actor = run.owner.revalidate_in_txn(self, &txn)?;
+        require_docs_corpus_project(self, &txn, docs.project_id)?;
+        let authorization =
+            crate::consent::approve_once_authorization_in_txn(&self.store, &txn, &run.digest)?
+                .ok_or_else(|| invalid("docs consent already consumed"))?;
         let mut ops = Vec::new();
         // Each new chunk is born under its page's facet (facet rule C).
         let mut text_births = HashMap::new();
@@ -275,10 +388,10 @@ impl Vault {
                 &mut txn,
                 asset,
                 &page.text,
-                ceiling.allow_derivations,
+                run.allow_derivations,
                 super::docs_deep::DeepApproval {
                     owner: actor,
-                    digest: &digest.to_hex(),
+                    digest: &digest_hex,
                     project_id: docs.project_id,
                 },
                 now,
@@ -322,7 +435,7 @@ impl Vault {
                     continue;
                 }
                 receipt.chunk_refs.push(chunk.to_hex());
-                ops.push(put(chunk,crate::registry::ENTITY_TYPE_ASSET_TEXT,json!({"text":segment.text,"source":"imported","asset_ref":asset.to_hex(),"section":segment.section}),now)?);
+                ops.push(put(chunk,crate::registry::ENTITY_TYPE_ASSET_TEXT,json!({"text":segment.text,"source":"imported","asset_ref":asset.to_hex(),"section":segment.section,"block":segment.block}),now)?);
                 births.extend(
                     RowBirth::written(
                         writer,
@@ -405,7 +518,7 @@ impl Vault {
                 if crate::batch::export::redact_credentials(&mut data) {
                     return Err(invalid("credential-shaped classifier annotation"));
                 }
-                let key = format!("{}:{}", asset.to_hex(), request_id.to_hex());
+                let key = format!("{}:{}", asset.to_hex(), run.request_id.to_hex());
                 ANNOTATION.put(&self.store, &mut txn, &key, &data)?;
                 receipt.annotation_refs.push(annotation_reference(&key));
             }
@@ -429,10 +542,19 @@ impl Vault {
         for (key, members) in membership_updates {
             MEMBERSHIP.put(&self.store, &mut txn, &key, &members)?;
         }
-        crate::consent::spend_approve_once_in_txn(&self.store, &mut txn, &authorization)?;
-        self.record_import_notification_in_txn(&mut txn, request_id, &receipt.asset_refs, now)?;
+        if last {
+            crate::consent::spend_approve_once_in_txn(&self.store, &mut txn, &authorization)?;
+            let mut assets = Vec::with_capacity(docs.pages.len());
+            for page in &docs.pages {
+                let extraction = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
+                if let Some(asset) = existing_ref(self, &txn, &extraction)? {
+                    assets.push(asset.to_hex());
+                }
+            }
+            self.record_import_notification_in_txn(&mut txn, run.request_id, &assets, now)?;
+        }
         txn.commit()?;
-        Ok(receipt)
+        Ok(())
     }
     /// One page's model-side preparation, outside the writer: its predicted
     /// blob birth, its semantic segments, the summaries of its changed
