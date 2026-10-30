@@ -648,7 +648,8 @@ impl CdpDriver {
             .filter(|line| line.masked)
             .filter_map(|line| Some((line.frame.clone(), line.backend_node?)))
             .collect();
-        let originals = lines.iter_mut().map(|line| line.original.take()).collect();
+        let originals: Vec<Option<String>> =
+            lines.iter_mut().map(|line| line.original.take()).collect();
         let target = self.target.clone();
         let missing = self.handles.missing(&target, documents.as_ref(), &lines);
         let gone = self.gone_nodes(&missing);
