@@ -615,14 +615,25 @@ impl Vault {
         {
             return Err(Error::Record(RecordError::IdentityUnsettled { name }));
         }
-        let (gate_id, decision) = crate::gate::check_share_create_policy(
+        let (gate_id, decision) = match crate::gate::check_share_create_policy(
             &self.store,
             &mut txn,
             share_id,
             issuer,
             share,
             travel,
-        )?;
+        )? {
+            crate::gate::ExternalEffectCheck::Decided(id, decision, _) => (id, decision),
+            // FIX 12155: a full count-bound window paces the share: nothing
+            // was recorded or charged, so drop the writer and wait for the
+            // window instead of committing a budget-exhausted denial.
+            crate::gate::ExternalEffectCheck::Paced { next_eligible_at } => {
+                drop(txn);
+                return Err(Error::Gate(GateError::ShareCreatePaced {
+                    next_eligible_at,
+                }));
+            }
+        };
         if decision.outcome() != GateOutcome::Allow {
             let error = Error::Gate(GateError::GateWriteRejected {
                 outcome: decision.outcome().as_str(),

@@ -315,6 +315,12 @@ pub enum GateError {
         outcome: &'static str,
         reason_codes: Vec<&'static str>,
     },
+    /// The Gate allowed a share creation but a full count-bound budget
+    /// window paces it (FIX 12155): no decision was recorded and nothing
+    /// was charged. Bring the share back at `next_eligible_at`, Unix
+    /// seconds on the engine's clock.
+    #[error("share creation paced by a full budget window: retry at {next_eligible_at}")]
+    ShareCreatePaced { next_eligible_at: u64 },
     /// A pending consent approval attempted to approve bytes or a policy
     /// read-frontier different from the original pending Gate decision.
     #[error("gate consent approval is stale for claim {}", claim_id.to_hex())]
@@ -377,6 +383,7 @@ impl GateError {
             Self::PersonaSnapshotConsentStale { .. } => ErrorKind::PersonaSnapshotConsentStale,
             Self::SourceNotTrustedForAuto { .. } => ErrorKind::SourceNotTrustedForAuto,
             Self::GateWriteRejected { .. } => ErrorKind::GateWriteRejected,
+            Self::ShareCreatePaced { .. } => ErrorKind::ShareCreatePaced,
             Self::GateConsentStale { .. } => ErrorKind::GateConsentStale,
             Self::FamilyRequiresAutoGrant { .. } => ErrorKind::FamilyRequiresAutoGrant,
             Self::PolicyValueLevelNotAdmitted { .. } => ErrorKind::InvalidConfig,

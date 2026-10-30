@@ -336,6 +336,10 @@ impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
     fn provider_wait(&self) -> Option<ProviderWait> {
         self.0.provider_wait()
     }
+
+    fn reported_cost(&self) -> Option<crate::connector_key::ConnectorSpendEstimate> {
+        self.0.reported_cost()
+    }
 }
 
 /// FIX 6424 part 2a (Engine 10-20 21:0x ruling 1): the approve-once digest
