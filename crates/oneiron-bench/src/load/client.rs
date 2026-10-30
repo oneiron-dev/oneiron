@@ -113,7 +113,7 @@ impl Agent {
 
     /// POSTs `body` to a facade verb; the time covers the round trip only,
     /// not the holder proof made before it.
-    fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+    pub(super) fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
@@ -246,6 +246,26 @@ impl Agent {
                 ranking: Vec::new(),
             },
         }
+    }
+
+    /// `request` with this agent's slip and a fresh holder proof, for a
+    /// route off the facade (`/v1/ai/*`).
+    pub(super) fn authorized(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> Result<reqwest::blocking::RequestBuilder, String> {
+        let wall = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let proof = oneiron::authority::holder_proof(
+            &self.slip,
+            &self.key,
+            wall.saturating_add_signed(self.skew),
+        )
+        .map_err(|e| format!("proof: {e}"))?;
+        Ok(request
+            .header("authorization", &self.bearer)
+            .header("x-oneiron-binding", proof.to_string()))
     }
 }
 

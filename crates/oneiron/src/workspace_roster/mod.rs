@@ -152,7 +152,7 @@ pub use project::{
 };
 pub use project::{
     GoalAxis, GoalExplorationBudget, GoalInterviewTurns, GoalPreference, GoalRecord,
-    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchor,
+    LEADER_CHAT_RULE_PREDICATE, LeaderChat, MessageHangs, PROJECT_TYPE_BYTE, ProjectAnchorLink,
     ProjectAuthority, ProjectBudgetShare, ProjectGoalRecord, ProjectMintReceipt,
     ProjectProofVersion, ProjectQuarantine, ProjectRecord, ProjectRole, ProjectRoom,
     ProjectRoomChange, ProjectVerdict, ProjectWidenAsk, ProjectWidenAxis, ProjectWriteProof,

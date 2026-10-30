@@ -148,7 +148,7 @@ impl Vault {
                 }
                 frontier.witness.ok_or_else(invalid)?
             };
-            let authority = witness.anchor.authority.clone();
+            let authority = witness.authority()?.clone();
             if only_from.is_some_and(|leader| authority.leader != leader) {
                 return Ok(false);
             }
