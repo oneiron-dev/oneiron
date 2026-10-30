@@ -5108,7 +5108,7 @@ export type MirrorObservedTip = { state: "absent" } | { state: "at"; oid: string
 /** `oneiron::origin::publish::types::OriginPublishLfsBytes` */
 export type OriginPublishLfsBytes = "not_sent"
 /** `oneiron::origin::publish::types::OriginPublishReview` */
-export type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes; lossy_paths: boolean }
+export type OriginPublishReview = { digest: string; subtracted?: string | null; commits: number; entries: number; paths: number; pages: number; lfs_bytes: OriginPublishLfsBytes; lossy_paths: boolean; secret_history?: boolean | null }
 /** `oneiron::origin::publish::mirror_plan_types::MirrorRefOutcome` */
 export type MirrorRefOutcome = "pending" | "dispatched" | "applied" | "observed_applied" | "rejected" | "unknown" | "refused" | "remote_moved" | "paused" | "covered" | "held"
 /** `oneiron::origin::publish::mirror_plan_view::OriginMirrorPlanRefView` */

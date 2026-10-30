@@ -40155,6 +40155,12 @@ pub struct OriginPublishReview {
     pub lfs_bytes: OriginPublishLfsBytes,
     #[serde(rename = "lossy_paths")]
     pub lossy_paths: bool,
+    #[serde(
+        rename = "secret_history",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub secret_history: Option<bool>,
 }
 
 /// `oneiron::origin::publish::mirror_plan_types::MirrorRefOutcome`.

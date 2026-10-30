@@ -17,7 +17,9 @@
 //! The copy store is a fresh bare store made through the one process
 //! constructor with no template, hook, alternate, commondir or shared
 //! object directory. Objects enter it one by one through the ordinary
-//! object writer, never by hard link, clone or replace ref.
+//! object effect, never by hard link, clone or replace ref, and with no
+//! keep-ref each (FIX 9106): the copy's root refs pin its whole closure
+//! once they are published, and nothing maintains a copy store before.
 
 #![allow(
     dead_code,
@@ -32,9 +34,10 @@ use super::failure::{classify_failure, invalid};
 use super::import_fetch::init_private_bare_store;
 use super::repo::repo_identity_for;
 use super::retained_object::{GitObjectKind, GitRetainedObject, GitSpool};
+use super::wire_reads::parse_oid_output;
 use super::{
-    GitOid, GitRefPublication, GitWire, GitWireCommitOutcome, GitWireOperation, GitWireRepo,
-    GitWireResult,
+    GitOid, GitRefPublication, GitWire, GitWireCommitOutcome, GitWireObjectWrite, GitWireOperation,
+    GitWireRepo, GitWireResult, lock_repository,
 };
 use crate::codebase::RepoRef;
 use crate::entity_id::bytes_to_hex_lower;
@@ -286,6 +289,31 @@ impl GitWire<'_> {
         }
         let repo_root = root.join(PROJECTION_STORE_REPO).canonicalize()?;
         self.bind_projection_store(&repo_root)
+    }
+
+    /// Writes one retained object into the copy store `repo` through the
+    /// ordinary object effect, its payload streamed from the spool, with no
+    /// keep-ref and no wire record (FIX 9106): one Git call an object. The
+    /// copy's root refs pin it once its graph is whole. An object read from
+    /// a store must land at the OID it was read at.
+    ///
+    /// # Errors
+    /// A failed write, or a copy that landed at another OID.
+    pub(crate) fn write_projection_object(
+        &self,
+        repo: &GitWireRepo,
+        object: &GitRetainedObject,
+    ) -> GitWireResult<GitOid> {
+        let argv = GitWireObjectWrite::Retained(object.clone()).argv()?;
+        let _guard = lock_repository(&repo.common_dir)?;
+        let output = self.run_mutation(repo, &argv)?;
+        let oid = parse_oid_output(&output.stdout)?;
+        if object.source_oid().is_some_and(|source| *source != oid) {
+            return Err(invalid(
+                "a retained copy of a stored object landed at another object id",
+            ));
+        }
+        Ok(oid)
     }
 
     /// Publishes a fresh copy store's refs, each batch the publication

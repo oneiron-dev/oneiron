@@ -312,6 +312,24 @@ impl RepoMarkFacts {
             .collect()
     }
 
+    /// The id of every mark, in any store, `keep` selects, sorted and once
+    /// each (FIX 9105): the marks a masked copy's closure reaches.
+    ///
+    /// # Errors
+    /// A failed id derivation.
+    pub(crate) fn ids_where<F: Fn(&RepoSecretMark) -> bool>(
+        &self,
+        keep: F,
+    ) -> Result<Vec<EntityId>> {
+        let kept: Vec<RepoSecretMark> = self
+            .marks
+            .iter()
+            .filter(|mark| keep(mark))
+            .cloned()
+            .collect();
+        sorted_ids(&kept)
+    }
+
     /// The marks of `address`'s blob in its store.
     pub(crate) fn for_blob(&self, address: &RepoBlobAddress) -> RepoBlobMarks {
         self.select(|mark| mark.store_id == address.store && mark.blob_oid == address.blob)
