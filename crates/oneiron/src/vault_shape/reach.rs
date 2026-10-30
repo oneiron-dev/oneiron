@@ -13,10 +13,11 @@
 //! gives the tool. One fact per path, never a cross product of independent
 //! lists. A data class joins a path only through a standing disclosure grant
 //! naming who may hear it, and only on a path that runs without asking. A
-//! standing outbound grant moves its actor's verdicts, and a scoped MCP
-//! grant is a path of its own (see [`super::outbound_reach`]).
+//! standing outbound grant moves its actor's verdicts, and a scoped MCP,
+//! contact, or brief grant is a path of its own (see
+//! [`super::outbound_reach`]).
 use super::outbound_reach::{
-    ReachOutbound, outbound_after_plan, outbound_covers, scoped_mcp_paths,
+    ReachOutbound, contact_brief_paths, outbound_after_plan, outbound_covers, scoped_mcp_paths,
 };
 use super::plan::{ShapeChange, ShapePlanItem};
 use super::{ShapeRow, ShapeTarget};
@@ -716,6 +717,9 @@ pub(super) fn reach_projection(rows: &ReachRows) -> ShapeReach {
         }
     }
     for path in scoped_mcp_paths(&rows.outbound, &rows.actors) {
+        push_path(&mut facts, &disclosures, path);
+    }
+    for path in contact_brief_paths(&rows.outbound, &rows.actors) {
         push_path(&mut facts, &disclosures, path);
     }
     facts.sort();

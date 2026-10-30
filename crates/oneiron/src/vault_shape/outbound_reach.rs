@@ -1,12 +1,13 @@
 //! The reach's standing outbound grant rows (ARCH-0070 `shape:reach-line`,
 //! FIX 2801). A standing outbound grant lets the actor it was minted for act
 //! without asking, as the gate's grant match reads it: a grant on a channel,
-//! or on the send verb class, covers that actor's sends there; a contact's
-//! or a brief's grant covers only sends that name them, which no path does,
-//! so it moves no verdict. A scoped MCP grant is a path of its own: an
-//! external tool its actor calls without asking. A grant counts only under
-//! the policy frontier it was minted at, so a plan that changes a manifest
-//! leaves none counting.
+//! or on the send verb class, covers that actor's sends there. A contact's
+//! or a brief's grant is a narrowed path of its own, with values from the
+//! grant row only and no generic verdict move (Engine 12:28). A scoped MCP
+//! grant is a path of its own: an external tool its actor calls without
+//! asking. Capability slips are out of reach by design (Engine 12:28). A
+//! grant counts only under the policy frontier it was minted at, so a plan
+//! that changes a manifest leaves none counting.
 use super::ShapeTarget;
 use super::live::ShapeSources;
 use super::plan::ShapePlanItem;
@@ -19,6 +20,18 @@ use crate::{EntityId, Vault};
 /// The channel a scoped MCP grant's path names: the external tool rides the
 /// MCP server the grant scopes.
 const MCP_CHANNEL: &str = "mcp";
+
+/// The channel a contact grant's narrowed path names: the grant covers sends
+/// to one contact on any channel, so the path rides the contact itself.
+const CONTACT_CHANNEL: &str = "contact";
+
+/// The channel a brief grant's narrowed path names: the grant covers one
+/// brief's verb class, so the path rides the brief itself.
+const BRIEF_CHANNEL: &str = "brief";
+
+/// The verb a contact grant's narrowed path carries: sends to the contact it
+/// names, as the gate's grant match reads them.
+const CONTACT_VERB: &str = "send";
 
 /// One standing outbound grant that counts now, as the reach reads it.
 #[derive(Debug, Clone)]
@@ -69,6 +82,68 @@ pub(super) fn scoped_mcp_paths(
                 verb: tool.clone(),
                 channel: MCP_CHANNEL.to_owned(),
                 sender: server.clone(),
+                identity: grant.grant.to_hex(),
+                class: None,
+                audience: Vec::new(),
+                audience_names: Vec::new(),
+                verdict: ShapeReachVerdict::Can,
+            })
+        })
+        .collect()
+}
+
+/// The narrowed paths the contact and brief grants among `outbound` hold:
+/// one per grant, for the actor it was minted for, running without asking
+/// (Engine 12:28). Each path's counterparty/brief values come from the grant
+/// row's own scope fields only, as the gate's grant match reads them; no
+/// generic send or connector verdict moves. A disabled roster actor is not
+/// dispatched, so it holds none.
+pub(super) fn contact_brief_paths(
+    outbound: &[ReachOutbound],
+    actors: &[ReachActor],
+) -> Vec<ShapeReachFact> {
+    outbound
+        .iter()
+        .filter_map(|grant| {
+            let (verb, channel, counterparty, brief) = match &grant.scope {
+                StandingOutboundGrantScope::Contact { contact_ref } => (
+                    CONTACT_VERB,
+                    CONTACT_CHANNEL,
+                    Some(contact_ref.as_str()),
+                    None,
+                ),
+                StandingOutboundGrantScope::BriefVerbClass {
+                    brief_ref,
+                    verb_class,
+                } => (
+                    verb_class.as_str(),
+                    BRIEF_CHANNEL,
+                    None,
+                    Some(brief_ref.as_str()),
+                ),
+                _ => return None,
+            };
+            if !grant
+                .scope
+                .matches_effect(verb, channel, counterparty, brief)
+            {
+                return None;
+            }
+            let actor = actors
+                .iter()
+                .find(|actor| actor.entity.to_hex() == grant.principal);
+            if actor.is_some_and(|actor| !actor.enabled) {
+                return None;
+            }
+            let Some(sender) = counterparty.or(brief) else {
+                return None;
+            };
+            Some(ShapeReachFact {
+                actor: grant.principal.clone(),
+                actor_name: actor.map(|actor| actor.agent_id.clone()),
+                verb: verb.to_owned(),
+                channel: channel.to_owned(),
+                sender: sender.to_owned(),
                 identity: grant.grant.to_hex(),
                 class: None,
                 audience: Vec::new(),
