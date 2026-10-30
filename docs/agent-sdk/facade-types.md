@@ -139,11 +139,11 @@ export type ScratchpadAppendRequest = { session_id: string; text: string; mark?:
 export type ScratchpadWriteReply = { pad?: EntityId | null; sealed: boolean; sealed_prior?: EntityId | null }
 /** `oneiron::verbs::scratchpad::ScratchpadSealRequest` */
 export type ScratchpadSealRequest = { session_id: string }
-/** `oneiron::verbs::self::DiaryEntryRequest` */
+/** `oneiron::verbs::self_verbs::DiaryEntryRequest` */
 export type DiaryEntryRequest = { content: string; kind?: string | null }
 /** `oneiron::lens::record_ref::RecordRef` */
 export type RecordRef = { kind: string; id: string; short_id?: string | null; label: string }
-/** `oneiron::verbs::self::DiaryEntryReceipt` */
+/** `oneiron::verbs::self_verbs::DiaryEntryReceipt` */
 export type DiaryEntryReceipt = { entry_id: string; entry_ref: string; receipt_ref: string; record?: RecordRef | null }
 /** `oneiron::memory::diary_read::DiaryReadsRequest` */
 export type DiaryReadsRequest = { limit?: number | null; include_used?: boolean }
@@ -543,9 +543,9 @@ export type TaskRequest = { task_ref: string }
 export type ClaimApprovalStatus = "auto" | "proposed" | "approved" | "rejected"
 /** `oneiron::task_verb::route_receipts::TaskCancelReceipt` */
 export type TaskCancelReceipt = { approval: ClaimApprovalStatus; effected: boolean; proposal_ref?: EntityId | null; gate_decision_ref?: string | null; status?: RunTreeStatus | null; cancel_requested: boolean; forced: boolean }
-/** `oneiron::verbs::self::SteerRequest` */
+/** `oneiron::verbs::self_verbs::SteerRequest` */
 export type SteerRequest = { task_ref: string; instruction: string; key: string }
-/** `oneiron::verbs::self::SteerReceipt` */
+/** `oneiron::verbs::self_verbs::SteerReceipt` */
 export type SteerReceipt = { task_ref: string; branch: string; run_id: string; key: string; state: RunSignalState }
 /** `oneiron::task_verb::highway_types::AttemptHandle` */
 export type AttemptHandle = { task_ref: EntityId; attempt_ref: string; attempt_count: number; node_ref?: EntityId | null }
@@ -3085,7 +3085,7 @@ export type OffRecordWitnessRequest = { session_ref: string; turn: WitnessTurn; 
 export type OffRecordClosed = { session_ref: string; turns_dropped: number; context_receipts_dropped: number; emit_receipts_dropped: number; emit_receipts_kept: number; promoted_turns_kept: number }
 /** `oneiron::verbs::off_record::OffRecordRecallRequest` */
 export type OffRecordRecallRequest = { session_ref: string; query: string; limit: number }
-/** `oneiron::verbs::memory::CreateNoteRequest` */
+/** `oneiron::verbs::memory_requests::CreateNoteRequest` */
 export type CreateNoteRequest = { kind: string; markdown: string }
 /** `oneiron::verbs::off_record::OffRecordNoteRequest` */
 export type OffRecordNoteRequest = { session_ref: string; note: CreateNoteRequest; evidence_turn_refs?: string[] }
@@ -6887,11 +6887,11 @@ export type LegalHoldNotice = { state: LegalHoldState; bound: LegalHoldBound; wo
 export type RecordRefusal = { reason: RefusalReason; code: string; message: string; suggestions: string[]; field: string; legal_hold?: LegalHoldNotice | null }
 /** `oneiron::memory::claims::CommitOutcome` */
 export type CommitOutcome = (CommitReceipt & { outcome: "landed" }) | { outcome: "refused"; refusal: RecordRefusal; receipt_ref?: string | null }
-/** `oneiron::verbs::memory::ClaimRefRequest` */
+/** `oneiron::verbs::memory_requests::ClaimRefRequest` */
 export type ClaimRefRequest = { claim_ref: string }
-/** `oneiron::verbs::memory::ForgetPredicateRequest` */
+/** `oneiron::verbs::memory_requests::ForgetPredicateRequest` */
 export type ForgetPredicateRequest = { subject_ref: string; predicate: string }
-/** `oneiron::verbs::memory::ForgetRequest` */
+/** `oneiron::verbs::memory_requests::ForgetRequest` */
 export type ForgetRequest = ClaimRefRequest | ForgetPredicateRequest
 /** `oneiron::booking::constraint::EventTypeKey` */
 export type EventTypeKey = string
@@ -7091,7 +7091,7 @@ export type ClaimFilteredListRequest = { subject_ref?: string | null; predicate?
 export type ClaimFilteredReadRequest = { claim_ref: string; filter?: ReadFilterInput | null }
 /** `oneiron::memory::claims::SafeDeleteReason` */
 export type SafeDeleteReason = "user_delete" | "user_hard_delete" | "gdpr_delete" | "policy_delete"
-/** `oneiron::verbs::memory::SafeDeleteRequest` */
+/** `oneiron::verbs::memory_requests::SafeDeleteRequest` */
 export type SafeDeleteRequest = { entity_ref: string; reason: SafeDeleteReason }
 /** `oneiron::memory::critical_confirm::CriticalWriteConfirmPendingRequest` */
 export type CriticalWriteConfirmPendingRequest = { pending_operation: string }
@@ -7113,9 +7113,9 @@ export type CriticalWriteConfirmReceiptRequest = { confirm_id: string }
 export type ReceiptsRequest = { limit?: number | null }
 /** `oneiron::memory::claims::PendingWrite` */
 export type PendingWrite = { claim_ref: string; decision_ref: string; created_at: number; reason_codes: string[]; dreamer_run_id?: string | null }
-/** `oneiron::verbs::memory::HydrateRequest` */
+/** `oneiron::verbs::memory_requests::HydrateRequest` */
 export type HydrateRequest = { refs: string[] }
-/** `oneiron::verbs::memory::EntityRequest` */
+/** `oneiron::verbs::memory_requests::EntityRequest` */
 export type EntityRequest = { entity_ref: string }
 /** `oneiron::lens::record_ref::ResolveRecordRefRequest` */
 export type ResolveRecordRefRequest = { reference: string }
@@ -7157,15 +7157,15 @@ export type TemporalSearchHit = { entity_ref: string; source_revision_ref?: stri
 export type TemporalSearchReport = { sigma_secs: number; rounds: number }
 /** `oneiron::memory::search_temporal::TemporalSearchResult` */
 export type TemporalSearchResult = { hits: TemporalSearchHit[]; widening?: TemporalSearchReport | null }
-/** `oneiron::verbs::memory::QueryBm25Request` */
+/** `oneiron::verbs::memory_requests::QueryBm25Request` */
 export type QueryBm25Request = { query: string; limit: number }
 /** `oneiron::memory::reads::LexicalHit` */
 export type LexicalHit = { short_id: string; kind: string; score: number; snippet?: string | null; record?: RecordRef | null }
-/** `oneiron::verbs::memory::Bm25Search` */
+/** `oneiron::verbs::memory_requests::Bm25Search` */
 export type Bm25Search = { value: LexicalHit[]; narrowing: ScopedReadReceipt; residence?: RecallResidence | null }
 /** `oneiron::memory::reads::NeighborOpts` */
 export type NeighborOpts = { edge_kind?: string | null; min_weight?: number | null; limit: number }
-/** `oneiron::verbs::memory::NeighborsRequest` */
+/** `oneiron::verbs::memory_requests::NeighborsRequest` */
 export type NeighborsRequest = { entity_ref: string; opts: NeighborOpts }
 /** `oneiron::memory::reads::NeighborHit` */
 export type NeighborHit = { short_id: string; kind: string; edge_kind: string; weight: number; direction: string; record?: RecordRef | null }
@@ -7627,17 +7627,17 @@ export type DeckPreviewRequest = { artifact_ref: string; fork_ref?: string | nul
 export type DeckPreviewSlide = { slide: number; media_type: string; image_hash: string; content_base64: string }
 /** `oneiron::office_body::pptx::preview::DeckPreview` */
 export type DeckPreview = { frontier: number[]; profile: string; projector: string; export_key: string; renderer: string; provisional: boolean; slides: DeckPreviewSlide[] }
-/** `oneiron::verbs::memory::AppendBlobVersionRequest` */
+/** `oneiron::verbs::memory_requests::AppendBlobVersionRequest` */
 export type AppendBlobVersionRequest = { artifact_ref: string; content_base64: string; run_ref?: string | null; occurred_at: number; learned_at?: number | null }
 /** `oneiron::memory::structural::types::BlobVersionView` */
 export type BlobVersionView = { artifact_ref: string; version: number; content_hash_hex: string; claim_ref: string; created_at: number; artifact?: RecordRef | null; claim?: RecordRef | null }
-/** `oneiron::verbs::memory::ReadBlobVersionRequest` */
+/** `oneiron::verbs::memory_requests::ReadBlobVersionRequest` */
 export type ReadBlobVersionRequest = { artifact_ref: string; version: number }
-/** `oneiron::verbs::memory::BlobContent` */
+/** `oneiron::verbs::memory_requests::BlobContent` */
 export type BlobContent = { content_base64: string }
-/** `oneiron::verbs::memory::ConsolidationEnqueueRequest` */
+/** `oneiron::verbs::memory_requests::ConsolidationEnqueueRequest` */
 export type ConsolidationEnqueueRequest = { scope: string; input: unknown; run_id?: string | null; dedupe_key?: string | null; now?: number | null }
-/** `oneiron::verbs::memory::ConsolidationStatusRequest` */
+/** `oneiron::verbs::memory_requests::ConsolidationStatusRequest` */
 export type ConsolidationStatusRequest = { job_ref: string }
 /** `oneiron::memory::dreamer::DreamerParkCauseView` */
 export type DreamerParkCauseView = "provider_unavailable" | "executor_error" | "checkpoint" | "retry" | "paused" | "cancelled" | "signal" | "other"
@@ -8141,11 +8141,11 @@ export type BriefClaimCitation = { claim_ref: string; document_ref: string; star
 export type AuthorBriefRequest = { markdown: string; citations: BriefClaimCitation[] }
 /** `oneiron::verbs::share::BriefCitationFollowRequest` */
 export type BriefCitationFollowRequest = { share_ref: string; claim_ref: string; narrowing?: ShareViewNarrowing | null }
-/** `oneiron::verbs::memory::AuthorTakeTarget` */
+/** `oneiron::verbs::memory_requests::AuthorTakeTarget` */
 export type AuthorTakeTarget = { subject: string } | { claim: string }
-/** `oneiron::verbs::memory::AuthorTakeRequest` */
+/** `oneiron::verbs::memory_requests::AuthorTakeRequest` */
 export type AuthorTakeRequest = { target: AuthorTakeTarget; markdown: string }
-/** `oneiron::verbs::memory::CreateNoteFromEntityRequest` */
+/** `oneiron::verbs::memory_requests::CreateNoteFromEntityRequest` */
 export type CreateNoteFromEntityRequest = { source_ref: string; kind: string; reason?: string | null }
 /** `oneiron::note::reads::NoteReadRequest` */
 export type NoteReadRequest = { note_ref: string; reason?: string | null; version?: NoteVersion | null; spans?: NoteReadSpan[] }
@@ -8195,7 +8195,7 @@ export type NoteEditorBinding = { binding: string; note: NoteReadView }
 export type NoteEditorCloseRequest = { binding: string }
 /** `oneiron::note::reads::NoteEditorClosed` */
 export type NoteEditorClosed = { closed: boolean }
-/** `oneiron::verbs::memory::EditNoteRequest` */
+/** `oneiron::verbs::memory_requests::EditNoteRequest` */
 export type EditNoteRequest = { note_ref: string; edit: NoteEdit }
 /** `oneiron::note::documents::NoteEditOutcome` */
 export type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt }
