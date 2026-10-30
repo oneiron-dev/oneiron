@@ -9380,7 +9380,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             crate::memory::checkout_doors::CheckoutLeaseView,
         >(),
         "vault.code.checkout.get" => crate::code_run::vault_read::request_schema::<
-            crate::memory::checkout_doors::CheckoutLeaseView,
+            crate::claim::ScopedReadResult<
+                Option<crate::memory::checkout_doors::CheckoutLeaseView>,
+            >,
         >(),
         "vault.code.checkout.renew" => crate::code_run::vault_read::request_schema::<
             crate::memory::checkout_doors::CheckoutLeaseView,
@@ -31455,7 +31457,9 @@ pub fn vault_code_checkout_claim(
 pub fn vault_code_checkout_get(
     memory: &Memory<'_>,
     input: crate::memory::checkout_doors::CheckoutGetInput,
-) -> MemoryResult<crate::memory::checkout_doors::CheckoutLeaseView> {
+) -> MemoryResult<
+    crate::claim::ScopedReadResult<Option<crate::memory::checkout_doors::CheckoutLeaseView>>,
+> {
     crate::task_verb::sdk::host_only(memory, "vault.code.checkout.get", &input)
 }
 pub fn vault_code_checkout_renew(
