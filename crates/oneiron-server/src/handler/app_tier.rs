@@ -43,7 +43,13 @@ pub(super) async fn handle_sync_message(
         )
         .map(ControlFlow::Continue),
         SyncMessage::Batch(members) => {
-            for member in members {
+            for (index, member) in members.into_iter().enumerate() {
+                // FIX 10163: a batch past one processing quantum gives the
+                // worker back between quanta, so a large validated batch
+                // shares it; no member is refused for the count.
+                if index > 0 && index % oneiron::sync::transport::MAX_NODE_BATCH_MEMBERS == 0 {
+                    tokio::task::yield_now().await;
+                }
                 // FIX 6313: an earlier member's window load may have waited,
                 // so each member runs only while the session still stands.
                 if session_gone() {
