@@ -55,6 +55,21 @@ pub(crate) fn index_publication_in_txn(
     page: EntityId,
     claim: EntityId,
 ) -> Result<()> {
+    index_publication_by_owner_in_txn(vault, txn, page, claim, None)
+}
+
+/// [`index_publication_in_txn`] under the owner's proof the publication
+/// write carries, when it carries one: that proof mints the page's invite
+/// grant. A publication with no proof bound indexes the page and mints no
+/// grant; the owner mints it through
+/// [`crate::booking::mint_publish_page_invite_grant`].
+pub(crate) fn index_publication_by_owner_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    page: EntityId,
+    claim: EntityId,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> Result<()> {
     let mut value = page.as_bytes().to_vec();
     value.extend_from_slice(claim.as_bytes());
     TOKEN_INDEX.put(
@@ -71,16 +86,13 @@ pub(crate) fn index_publication_in_txn(
     // Publishing is the owner act that lets the page's confirmed bookings
     // carry invites (FIX 7849): a published page's one standing invite grant
     // is minted here, in the owner's own write, bound to the publishing owner.
-    if let Some(body) = vault.get_claim_in_txn(&*txn, &claim)?
+    if let Some(owner) = owner
+        && let Some(body) = vault.get_claim_in_txn(&*txn, &claim)?
         && let Some(publisher) = publication_owner(&body)
         && decode_public_booking_page_value(&body.value).is_ok_and(|value| value.published)
     {
         crate::booking::invite_grant::mint_page_invite_grant_in_txn(
-            vault,
-            txn,
-            page,
-            publisher,
-            vault.store.clock.now_recorded_at(),
+            vault, txn, owner, page, publisher,
         )?;
     }
     Ok(())

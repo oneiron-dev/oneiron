@@ -1,10 +1,7 @@
 //! Channel-identity consume door: usage accounting, and the fair wait of an
 //! action that meets a full envelope window.
 
-use super::codec::invalid_grant;
-use super::grant::StandingOutboundGrant;
-use super::mint::standing_outbound_grant_in_txn;
-use super::scope::StandingOutboundGrantScope;
+use super::bound::invalid_grant;
 use super::verb_class::verb_in_class;
 use crate::Vault;
 use crate::channel_identity_autonomy::{
@@ -150,7 +147,7 @@ impl Vault {
     ///
     /// A true retry reuses the reservation; it is not permission to execute a
     /// second delivery. Dispatch must retain the same engine effect key. This
-    /// door never reads a caller timestamp or delegates to `matches_effect`.
+    /// door never reads a caller timestamp or delegates to a dial's effect match.
     pub fn authorize_and_consume_channel_identity_grant(
         &self,
         grant_ref: &EntityId,
@@ -161,7 +158,8 @@ impl Vault {
     }
 
     /// Atomically authorizes one action against its envelope on the engine
-    /// clock. An admitted action spends its slot and touches its grant. One
+    /// clock. An admitted action spends its slot and receipts its grant's
+    /// use. One
     /// that meets a full window spends nothing and keeps its place in the
     /// envelope's line, in arrival order, until its deadline: slots that open
     /// go to the line first. Every call proves the action's authority again
@@ -179,7 +177,7 @@ impl Vault {
             admit_channel_identity_grant_in_txn(&self.store, &txn, grant_ref, candidate, now)?;
         let outcome = match admission {
             ChannelIdentityGrantAdmission::Reserved(reservation) => {
-                reservation.commit_in_txn(&self.store, &mut txn, now)?;
+                reservation.commit_in_txn(&self.store, &mut txn)?;
                 ChannelIdentityGrantOutcome::Admitted
             }
             ChannelIdentityGrantAdmission::WindowWait(retention) => {
@@ -213,8 +211,10 @@ pub(crate) enum ChannelIdentityGrantAdmission {
 /// [`Self::commit_in_txn`] spends it; dropping it spends nothing, so a caller
 /// that holds, denies or aborts its effect leaves the window untouched.
 pub(crate) struct ChannelIdentityGrantReservation {
-    grant_ref: EntityId,
-    grant: StandingOutboundGrant,
+    /// The standing consent Grant row the action stands on.
+    consent_grant_ref: String,
+    /// The action's engine effect key, which its use receipt names.
+    effect_key: [u8; 32],
     envelope_ref: EntityId,
     /// The usage row this reservation was proven against.
     prior: Option<ChannelIdentityGrantUsage>,
@@ -224,25 +224,21 @@ pub(crate) struct ChannelIdentityGrantReservation {
 }
 
 impl ChannelIdentityGrantReservation {
-    /// Spends the slot and touches the grant as used, in the caller's write
-    /// txn. An exact replay writes nothing, so it is never charged twice.
-    pub(crate) fn commit_in_txn(
-        self,
-        store: &Store,
-        wtxn: &mut heed::RwTxn<'_>,
-        now: u64,
-    ) -> Result<()> {
+    /// Spends the slot and writes the grant's use receipt, in the caller's
+    /// write txn. An exact replay writes nothing, so it is never charged
+    /// twice.
+    pub(crate) fn commit_in_txn(self, store: &Store, wtxn: &mut heed::RwTxn<'_>) -> Result<()> {
         let Some(next) = self.next else {
             return Ok(());
         };
         put_usage(store, wtxn, &self.envelope_ref, self.prior.as_ref(), &next)?;
-        crate::ports::EntityStoreMaintenance::port_outbound_grant_touch(
+        crate::consent::record_standing_grant_use_for_store_in_txn(
             store,
             wtxn,
-            &self.grant_ref,
-            self.grant,
-            now,
-        )
+            &self.consent_grant_ref,
+            crate::consent::EffectDigest::from_bytes(self.effect_key),
+        )?;
+        Ok(())
     }
 }
 
@@ -294,7 +290,8 @@ fn put_usage(
 
 /// The live authority one channel-identity action stands on.
 struct ActionAuthority {
-    grant: StandingOutboundGrant,
+    /// The standing consent Grant row the autonomy row's action grant is.
+    consent_grant_ref: String,
     envelope_ref: EntityId,
     envelope: ChannelIdentityActionEnvelope,
     /// The action's verb, trimmed and lowercased.
@@ -302,9 +299,10 @@ struct ActionAuthority {
 }
 
 /// Proves `candidate`'s authority under `grant_ref` at `now` on the caller's
-/// transaction: a channel-identity grant whose identity and verb class cover
-/// the action, an envelope valid for its context and counterparty class, and
-/// an autonomy row that still names this grant at a rung allowing the verb.
+/// transaction: a live action Grant `grant_ref` names whose identity and
+/// verb class cover the action, an envelope valid for its context and
+/// counterparty class, and an autonomy row that still names this grant at a
+/// rung allowing the verb.
 /// `None` is a denial. Structural/storage failures stay errors; no error
 /// ever falls through to a less constrained dial.
 fn action_authority_in_txn(
@@ -317,23 +315,14 @@ fn action_authority_in_txn(
     use crate::channel_identity_autonomy::{AutonomyReader, ChannelIdentityAutonomyRung};
 
     let reader = AutonomyReader { store };
-    let Some(grant) = standing_outbound_grant_in_txn(store, txn, grant_ref)? else {
+    let Some(action) = reader.autonomy_action_grant_in_txn(txn, *grant_ref)? else {
         return Ok(None);
     };
-    let StandingOutboundGrantScope::ChannelIdentityEnvelope {
-        identity_ref,
-        envelope_ref,
-        verb_class,
-    } = &grant.scope
-    else {
-        return Ok(None);
-    };
-    let envelope_ref = *envelope_ref;
     let verb = candidate.verb_class.trim().to_ascii_lowercase();
-    if *identity_ref != candidate.identity_ref || !verb_in_class(verb_class, &verb) {
+    if action.identity_ref != candidate.identity_ref || !verb_in_class(&action.verb_class, &verb) {
         return Ok(None);
     }
-    let envelope = match reader.validate_autonomy_action(txn, &grant, now) {
+    let envelope = match reader.validate_autonomy_action(txn, &action, now) {
         Ok(envelope) => envelope,
         Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(None),
         Err(error) => return Err(error),
@@ -361,8 +350,8 @@ fn action_authority_in_txn(
         return Ok(None);
     }
     Ok(Some(ActionAuthority {
-        grant,
-        envelope_ref,
+        consent_grant_ref: action.grant_ref,
+        envelope_ref: action.envelope_ref,
         envelope,
         verb,
     }))
@@ -406,7 +395,7 @@ pub(crate) fn admit_channel_identity_grant_in_txn(
     let fingerprint = *blake3::hash(authority.verb.as_bytes()).as_bytes();
     if !elapsed && let Some((_, stored)) = usage.effects.iter().find(|(spent, _)| *spent == key) {
         return Ok(if *stored == fingerprint {
-            reserved(*grant_ref, authority.grant, envelope_ref, prior, None)
+            reserved(authority.consent_grant_ref, key, envelope_ref, prior, None)
         } else {
             ChannelIdentityGrantAdmission::Denied
         });
@@ -432,8 +421,8 @@ pub(crate) fn admit_channel_identity_grant_in_txn(
         }
         usage.effects.push((key, fingerprint));
         return Ok(reserved(
-            *grant_ref,
-            authority.grant,
+            authority.consent_grant_ref,
+            key,
             envelope_ref,
             prior,
             Some(usage),
@@ -480,15 +469,15 @@ pub(crate) fn admit_channel_identity_grant_in_txn(
 }
 
 fn reserved(
-    grant_ref: EntityId,
-    grant: StandingOutboundGrant,
+    consent_grant_ref: String,
+    effect_key: [u8; 32],
     envelope_ref: EntityId,
     prior: Option<ChannelIdentityGrantUsage>,
     next: Option<ChannelIdentityGrantUsage>,
 ) -> ChannelIdentityGrantAdmission {
     ChannelIdentityGrantAdmission::Reserved(Box::new(ChannelIdentityGrantReservation {
-        grant_ref,
-        grant,
+        consent_grant_ref,
+        effect_key,
         envelope_ref,
         prior,
         next,

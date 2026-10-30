@@ -249,8 +249,8 @@ pub(crate) fn governing_connector_key(
 // --- In-txn rewrites -----------------------------------------------------------
 
 /// Rewrites a connector-key entity body in place, preserving the entity
-/// header (the `touch_standing_outbound_grant_in_txn` pattern — the connector
-/// never changes, so the connector index needs no maintenance).
+/// header (the connector never changes, so the connector index needs no
+/// maintenance).
 pub(crate) fn rewrite_connector_key_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,

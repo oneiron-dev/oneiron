@@ -24,7 +24,6 @@ use crate::outbound::{
     OutboundDispatchRequest, OutboundExecutionOutcome, OutboundExecutionRequest,
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
-use crate::outbound_grant::StandingOutboundGrantStatus;
 use crate::outbound_intent_ledger::{IntentId, intent_ledger_records};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CHANNEL_IDENTITY;
@@ -158,7 +157,7 @@ fn enqueue_booking_invite_outcome(
     else {
         return Err(refused("the named booking page grant does not exist"));
     };
-    if grant.status != StandingOutboundGrantStatus::Active || grant.revoked_at.is_some() {
+    if !grant.is_active() {
         return Err(refused("the named booking page grant is not live"));
     }
     if !booking_page_invite_method_authorizes(
