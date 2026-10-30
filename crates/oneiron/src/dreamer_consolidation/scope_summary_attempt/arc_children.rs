@@ -39,8 +39,8 @@ use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::Result;
 use crate::llm::DurableStepContext;
 use crate::scope_summary::{
-    ArcChildPlan, ArcChildRow, ArcManifest, ArcPendingCause, ArcPins, ArcWorkState, ChildMode,
-    MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,
+    ArcChildPlan, ArcChildRow, ArcManifest, ArcPendingCause, ArcPins, ArcRange, ArcWorkState,
+    ChildMode, MemberKind, ScopeSummaryPlan, arc_member_kinds, check_manifest,
 };
 use std::collections::BTreeSet;
 
@@ -648,9 +648,10 @@ impl<E> ScopeSummaryExecutor<'_, E> {
     }
 
     /// Replaces the part at `position` by two that own its ranges between
-    /// them, in order, each owing what it owed; its words cut at a character
-    /// when it owns one range. A part of one character cannot split: the
-    /// window is too small for the Arc.
+    /// them, in order, each owing what it owed and keeping the reviews it
+    /// checked ([`split_row`]); its words cut at a character when it owns
+    /// one range. A part of one character cannot split: the window is too
+    /// small for the Arc.
     fn split(
         &self,
         run: &mut ArcRun<'_>,
@@ -677,6 +678,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 &run.charges,
             )?));
         };
+        let (first_row, second_row) = (split_row(run, row, &first)?, split_row(run, row, &second)?);
         let ids = [
             run.manifest.next_child,
             run.manifest.next_child.saturating_add(1),
@@ -696,10 +698,7 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         if let Err(error) = check_manifest(&run.manifest) {
             return Ok(ChildStep::Exit(run.charges.park_on_error(&error)));
         }
-        let parts = vec![
-            (ids[0], ArcChildRow::fresh(row.opened.clone())),
-            (ids[1], ArcChildRow::fresh(row.opened.clone())),
-        ];
+        let parts = vec![(ids[0], first_row), (ids[1], second_row)];
         let written: Vec<(u32, &ArcChildRow)> = parts.iter().map(|(id, row)| (*id, row)).collect();
         if let Err(error) =
             ctx.vault
@@ -717,4 +716,44 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         );
         Ok(ChildStep::Split(parts))
     }
+}
+
+/// The row a half of `row`'s part begins with, owning `ranges` (FIX 9173).
+/// A half reads every claim and every TURN its part opened, so a part that
+/// reviews passes on its cells and every review already checked against
+/// them; a TURN it opened that no cell holds yet gets cells on the half's
+/// own room. Only its compose steps begin again, over its own lines. A part
+/// that reviewed nothing, or a half with no room for those cells, begins
+/// fresh, owing what the part opened.
+fn split_row(run: &ArcRun<'_>, row: &ArcChildRow, ranges: &[ArcRange]) -> Result<ArcChildRow> {
+    let fresh = ArcChildRow::fresh(row.opened.clone());
+    if row.mode != ChildMode::Review || row.reviewed.is_empty() {
+        return Ok(fresh);
+    }
+    let held: BTreeSet<u32> = row
+        .cells
+        .iter()
+        .flatten()
+        .map(|range| range.member)
+        .collect();
+    let unheld: Vec<u32> = row
+        .opened
+        .iter()
+        .copied()
+        .filter(|index| !held.contains(index))
+        .collect();
+    let Some(room) = run.room.checked_sub(ranges_cost(&run.members, ranges)?) else {
+        return Ok(fresh);
+    };
+    let Some(more) = context_cells(&run.members, run.view, &unheld, room)? else {
+        return Ok(fresh);
+    };
+    let mut cells = row.cells.clone();
+    cells.extend(more);
+    Ok(ArcChildRow {
+        mode: ChildMode::Review,
+        cells,
+        reviewed: row.reviewed.clone(),
+        ..fresh
+    })
 }
