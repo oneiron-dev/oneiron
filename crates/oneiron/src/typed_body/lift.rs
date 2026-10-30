@@ -16,7 +16,9 @@ use loro::LoroDoc;
 use super::{DOCS, FORK_DOCS, HEADS, load};
 use crate::Vault;
 use crate::batch::secret_scan::{
-    CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_texts_in_txn, write_payload_hit,
+    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    mark_carrier_texts_in_txn, propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn,
+    write_payload_hit,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -350,35 +352,54 @@ impl Vault {
         Ok((LiftedKeys::of_in_txn(&self.store, txn, texts)?, sources))
     }
 
-    /// Whether `doc`, a typed body at an earlier frontier, holds a text with
-    /// a hit the write door finds that no mark covers yet.
+    /// Whether `doc`, `entity`'s typed body at an earlier frontier, holds a
+    /// text with a hit the write door finds that no mark covers yet and that
+    /// a write would act on: one the door's rules place, or one they cannot
+    /// while the owner's proposal for it is due (FIX 8996). A text whose key
+    /// no rule places, once its proposal stands, opens no writer: a masked
+    /// reader reads it as the door's placeholder.
     pub(crate) fn typed_body_unmarked_in_txn(
         &self,
         txn: &RoTxn<'_>,
+        entity: &EntityId,
         doc: &LoroDoc,
     ) -> Result<bool> {
-        Ok(carrier_texts_hit_in_txn(&self.store, txn, &state_of(doc)?.1)?.is_some())
+        let mut unplaced = false;
+        for text in state_of(doc)?.1 {
+            let hash = blake3::hash(text.as_bytes());
+            if write_payload_hit(text.as_bytes()).is_none()
+                || masked_file_in_txn(&self.store, txn, hash.as_bytes())?.is_some()
+            {
+                continue;
+            }
+            if carrier_text_placeable(text.as_bytes())? {
+                return Ok(true);
+            }
+            unplaced = true;
+        }
+        Ok(unplaced && typed_body_at_proposal_due_in_txn(self, txn, entity)?)
     }
 
     /// Marks the keys of each text in `doc`, `entity`'s typed body at an
     /// earlier frontier, in the caller's transaction, as the lift sweep
     /// marks its live body's: under each text's hash, the live body's row
     /// named as where they were found (FIX 2939). Only custody and span rows
-    /// are written; the stored document stays as it is, and a hit no text's
-    /// mark places is left unplaced.
+    /// are written; the stored document stays as it is. A hit no text's mark
+    /// places files the sweep's `unplaceable` proposal on the body's row
+    /// (FIX 8996).
     pub(crate) fn mark_typed_body_at_in_txn(
         &self,
         txn: &mut RwTxn<'_>,
         entity: &EntityId,
         doc: &LoroDoc,
     ) -> Result<()> {
-        mark_state_in_txn(
+        let marked = mark_state_in_txn(
             self,
             txn,
             &side_table::TYPED_BODY_DOC,
             entity.as_bytes(),
             doc,
         )?;
-        Ok(())
+        propose_typed_body_at_in_txn(self, txn, entity, marked)
     }
 }
