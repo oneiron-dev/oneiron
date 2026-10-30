@@ -192,6 +192,31 @@ pub fn refuse_unfinished_sealed_creation(vault_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Removes the creation record beside the vault at `vault_path` when it
+/// names that path (FIX 11950): what a refused restore's destination guard
+/// calls after it removes the copy and its mirror, so the record the copy's
+/// failed first open left does not stay until the next init. Best effort, as
+/// the guard's mirror removal is: a failure is logged and never panics or
+/// returns an error. A record that names another path is left alone.
+pub(crate) fn discard_creation_record(vault_path: &Path) {
+    let removed = (|| -> Result<()> {
+        let root = custody_root(vault_path)?;
+        match read_record(&root)? {
+            Some(record) if record.names_path(&root) => {
+                remove_synced(&record_beside(&root)?)
+            }
+            _ => Ok(()),
+        }
+    })();
+    if let Err(error) = removed {
+        tracing::warn!(
+            vault = %vault_path.display(),
+            error = %error,
+            "a refused restore left the page-seal creation record it wrote in place"
+        );
+    }
+}
+
 /// Removes what the creation `record` names made of the vault at `root`,
 /// under that vault's writer lease, so no process that holds the vault loses
 /// its files: the mirror the creation wrote, the LMDB data and lock files (a

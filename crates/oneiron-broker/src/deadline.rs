@@ -11,7 +11,7 @@ use tokio::time::Instant;
 
 /// How long a peer has to deliver its frame, and to take each reply write:
 /// the ceiling of each one, inside the call's deadline.
-pub(crate) const FRAME_DEADLINE: Duration = Duration::from_secs(10);
+pub const FRAME_DEADLINE: Duration = Duration::from_secs(10);
 
 /// How far ahead a deadline lies whose length the clock cannot add: tokio's
 /// own reach for such a sleep.
