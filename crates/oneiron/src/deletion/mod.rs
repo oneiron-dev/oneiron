@@ -105,7 +105,7 @@ pub(crate) use actor_fields::{hard_erased_ids_in, rerun_actor_scrubs_in_txn};
 // A due owner-confirmed erase rechecks its pending row (FIX 6337).
 pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
-pub(crate) use erase::TombstoneScopeProbes;
+pub(crate) use erase::{TombstoneScopeProbes, classified_corrupt_claim_in_txn};
 pub(crate) use gate::{DeletionClaim, DeletionGateContext, GatedDeletion, GuestRevokeAuthority};
 pub(crate) use receipt::decode_redaction_audit_receipt;
 // A corrupt CLAIM's repair event is no erase receipt (FIX 7800).

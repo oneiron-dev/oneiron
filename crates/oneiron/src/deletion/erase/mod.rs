@@ -194,4 +194,5 @@ mod scope_probes;
 
 pub use corrupt::CorruptClaimRepair;
 pub(super) use corrupt::take_corrupt_capture_in_txn;
+pub(crate) use corrupt::classified_corrupt_claim_in_txn;
 pub(crate) use scope_probes::TombstoneScopeProbes;
