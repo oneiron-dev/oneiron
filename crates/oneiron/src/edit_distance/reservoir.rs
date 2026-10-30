@@ -127,6 +127,7 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 
 mod eligibility;
 pub use eligibility::CorpusUse;
+pub(crate) use eligibility::owner_readable_proposal_in;
 pub use eligibility::{
     ReservoirSourcePeople, ReservoirSourcePreview, ReservoirSourceRow, reservoir_source_preview,
 };

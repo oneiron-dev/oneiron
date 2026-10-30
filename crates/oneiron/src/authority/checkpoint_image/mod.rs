@@ -68,8 +68,9 @@ use crate::{EntityId, HostingPrivacyPosture, Vault};
 /// ops (FIX 4624, FIX 5660). 17: the fold keeps each Grant a signed
 /// `SlipGrantRevoke` withdrew and its revoke proofs carry one (FIX 1978), a
 /// pact that ends keeps no plaintext scope, and one keyed digest over two
-/// scopes suspends the pact (FIX 7907).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 17;
+/// scopes suspends the pact (FIX 7907). 18: a replay delta keeps a map
+/// field's changed entries alone (FIX 11262).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 18;
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";
 /// The context of an image's id over its encoded bytes.

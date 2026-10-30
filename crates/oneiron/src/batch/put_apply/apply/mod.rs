@@ -16,7 +16,6 @@ use super::{
     validate_local_skill_create, validate_replicated_authority_log_for_local_vault,
     validate_skill_body_overwrite,
 };
-use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, RecordError, RegistryError, Result};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
@@ -451,12 +450,9 @@ pub(in crate::batch) fn apply_put(
     // discarded counters.
     let data = task_body_without_streaks.as_deref().unwrap_or(data);
     let data = pad_stored_body.as_deref().unwrap_or(data);
-    let reconciled_critical_claim_body = if replicated && entity_type == ENTITY_TYPE_CLAIM {
-        reconcile_replicated_critical_confirm(store, wtxn, &id, data, &mut decoded_claim_body)?
-    } else {
-        None
-    };
-    let data = reconciled_critical_claim_body.as_deref().unwrap_or(data);
+    if replicated && entity_type == ENTITY_TYPE_CLAIM {
+        reconcile_replicated_critical_confirm(store, wtxn, &id, data)?;
+    }
     // The AUTHORITY_LOG arm above already decoded the body and hashed it for
     // the store-key bind; reuse that hash instead of decoding a second time.
     let authority_first_seen_key = authority_entry_hash_pin

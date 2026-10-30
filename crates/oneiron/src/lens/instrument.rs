@@ -18,10 +18,9 @@ impl InstrumentAtoms {
         Ok(Self(atoms))
     }
 
+    /// An atom stream of any length, every atom validated (FIX 11257): its
+    /// caller holds the bytes whole already.
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() > 1024 * 1024 {
-            return Err(Error::InvalidConfig("instrument exceeds byte bound".into()));
-        }
         let atoms = serde_json::from_slice(bytes)
             .map_err(|_| Error::InvalidConfig("invalid instrument atom stream".into()))?;
         Self::new(atoms)

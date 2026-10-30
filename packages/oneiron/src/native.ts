@@ -179,6 +179,8 @@ vaultRetrievalPolicyEvaluate(input: unknown): unknown
 vaultRetrievalPolicyAdmit(input: unknown): unknown
 vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
+vaultExportTransferRead(input: unknown): unknown
+vaultExportTransferRelease(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
 selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
@@ -698,6 +700,7 @@ vaultCodeImportsGet(input: unknown): unknown
 vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorPlan(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
 vaultCodeOriginMirrorStrategy(input: unknown): unknown
 vaultCodeOriginMirrorClear(input: unknown): unknown
