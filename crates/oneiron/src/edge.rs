@@ -448,15 +448,6 @@ pub(crate) fn validate_public_edge_kind(kind: EdgeKind) -> crate::error::Result<
 pub(crate) fn validate_public_edge_creation_kind(kind: EdgeKind) -> crate::error::Result<()> {
     validate_public_edge_kind(kind)?;
     match kind {
-        EdgeKind::Parent => Err(crate::error::Error::Registry(
-            crate::error::RegistryError::ReservedEdgeKind("parent"),
-        )),
-        EdgeKind::SpawnedBy => Err(crate::error::Error::Registry(
-            crate::error::RegistryError::ReservedEdgeKind("spawned_by"),
-        )),
-        EdgeKind::RepliesTo => Err(crate::error::Error::Registry(
-            crate::error::RegistryError::ReservedEdgeKind("replies_to"),
-        )),
         EdgeKind::SameAs => Err(crate::error::Error::Registry(
             crate::error::RegistryError::ReservedEdgeKind("same_as"),
         )),

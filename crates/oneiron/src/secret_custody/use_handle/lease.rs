@@ -113,6 +113,7 @@ impl Vault {
             operation,
             effector: &held.effector,
             grant: Some(held.grant_id),
+            first_intent: None,
         };
         let admitted = self.check_secret_grant(&presented, target).map(drop);
         let granted =

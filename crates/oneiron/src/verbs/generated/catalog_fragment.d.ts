@@ -10,7 +10,7 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4429 declarations.
+// Census: 1260 code-mode rows (1220 host rows, 40 run rows), 4430 declarations.
 // Replies: 1072 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
 // Opaque serde_json::Value leaves: 117; unread shapes: none.
@@ -405,7 +405,7 @@ declare namespace Sdk {
   type FanoutSlotTerminal = { disposition: TaskTerminalDisposition; result_ref?: EntityId | null; finished_at: number };
   type AttemptState = "Queued" | "Leased" | "Paused" | "Completed" | "Failed" | "Cancelled" | "Scheduled" | "Landing" | "Abandoned";
   type SpendState = "open" | "closed";
-  type SpendPayer = { party: EntityId; granted_by: EntityId; at_ms: number };
+  type SpendPayer = { party: EntityId; granted_by?: EntityId | null; at_ms: number };
   type SpendScope = { scope: SpendScopeId; parent?: SpendScopeId | null; unit: LeaseUnit; cap_units: number; hard: boolean; spent_units: number; held_units: number; state: SpendState; shown_at_ms?: number | null; opened_at: number; closed_at?: number | null; agent?: EntityId | null; payer?: SpendPayer | null };
   type SpendSignal = { signal: "wrap_up"; available_units: number; cap_units: number } | { signal: "at_cap"; cap_units: number };
   type SpendRead = { scope: SpendScopeId; unit: LeaseUnit; spent_units: number; available_units: number; cap_scope: SpendScopeId; cap_units: number; signal?: SpendSignal | null };
@@ -998,7 +998,8 @@ declare namespace Sdk {
   type UnifiedInboxGroup = { kind: "dreamer"; group: InboxGroup } | { kind: "shape"; group: ShapeInboxGroup };
   type UnifiedInboxGroupPage = { groups: UnifiedInboxGroup[]; next?: string | null };
   type InboxGroupKind = "dreamer" | "shape";
-  type InboxGroupResolveRequest = { kind: InboxGroupKind; group_key: string; verb: InboxBulkVerb; verb_class?: string | null };
+  type InboxGroupResolveTarget = { kind: "fallback" } | { kind: "ban"; text: string } | { kind: "style_rule"; text: string } | { kind: "charter_line"; text: string } | { kind: "brief_update"; text: string };
+  type InboxGroupResolveRequest = { kind: InboxGroupKind; group_key: string; verb: InboxBulkVerb; verb_class?: string | null; target?: InboxGroupResolveTarget | null };
   type InboxBundleResolution = { group_key: string; verb: InboxBulkVerb; bundle_ref: string; bundle_receipt: ReceiptRecord; item_receipts?: ReceiptRecord[]; review_items?: string[] };
   type InboxGroupResolution = { kind: "dreamer"; resolution: InboxBundleResolution } | { kind: "shape"; receipt: ShapeApplyReceipt };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };
@@ -4186,8 +4187,8 @@ declare namespace Sdk {
   type NoteActor = string;
   type NoteAuthorship = { operation: string; actor: NoteActor; actor_class: string; grant?: string | null; command_hash: number[] };
   type NoteHistoryView = { version: NoteVersion; operations: NoteAuthorship[]; shallow_since: number[]; complete: boolean };
-  type NoteEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
-  type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteEdit; reason?: string | null };
+  type NoteProgramEdit = { kind: "replace_span"; start: NoteAnchor; end: NoteAnchor; text: string } | { kind: "insert_after"; anchor: NoteAnchor; text: string } | { kind: "append_to_section"; end: NoteAnchor; text: string } | { kind: "whole_text"; text: string; timeout_ms: number; base?: NoteVersion | null } | { kind: "rewrite"; text: string };
+  type NoteForkRequest = { note_ref: string; base: NoteVersion; edit: NoteProgramEdit; reason?: string | null };
   type NoteForkRecordView = { note_ref: string; fork_ref: string; parent: string; frontier: number[]; actor?: string | null; rewrite: boolean; proposal_ref?: string | null; decided: boolean };
   type NoteForkView = { record: NoteForkRecordView; markdown?: string | null };
   type NoteForkReadRequest = { note_ref: string; fork_ref: string; reason?: string | null };
@@ -4205,8 +4206,8 @@ declare namespace Sdk {
   type NoteEditorBinding = { binding: string; note: NoteReadView };
   type NoteEditorCloseRequest = { binding: string };
   type NoteEditorClosed = { closed: boolean };
-  type EditNoteRequest = { note_ref: string; edit: NoteEdit };
-  type NoteEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
+  type EditNoteRequest = { note_ref: string; edit: NoteProgramEdit };
+  type NoteProgramEditOutcome = { outcome: "edited"; head: EntityId } | { outcome: "rewrite_fork"; fork: EntityId } | { outcome: "proposed_fork"; fork: EntityId } | { outcome: "review_required"; receipt: CommitReceipt };
   type NoteRefRequest = { note_ref: string };
   type NoteSeal = { note: string; document: string; frontier: number[]; sealed_by: NoteActor; sealed_at: number };
   type NoteLifecycleStatus = "active" | "sealed" | "archived" | "tombstoned";
@@ -6442,7 +6443,7 @@ declare const vault: Sdk.VaultHost & {
     /** One NOTE's overrides and the extraction, context and retention defaults its gates read after them. */
     defaults(input: Sdk.NoteRefRequest): Promise<Sdk.NoteDefaultsView | StoredResult>;
     /** Edits one NOTE in a transaction-local document; a rejected edit leaves nothing pending. */
-    edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteEditOutcome | StoredResult>;
+    edit(input: Sdk.EditNoteRequest): Promise<Sdk.NoteProgramEditOutcome | StoredResult>;
     editor: {
       /** Binds a live NOTE editor to the caller and returns its typed text and base version; close the binding when the editor leaves. */
       bind(input: Sdk.NoteAccessRequest): Promise<Sdk.ScopedReadResult<Sdk.NoteEditorBinding | null> | StoredResult>;
