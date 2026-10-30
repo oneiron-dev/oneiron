@@ -10,7 +10,7 @@
 use std::time::Duration;
 
 use super::{EncodedFrame, TransportError, checked_encoded_frame_len};
-use crate::secret_custody::leaf_delivery::{LeafKeyAnswer, LeafKeyFailureCause, LeafKeyRequest};
+use crate::secret_custody::{LeafKeyAnswer, LeafKeyFailureCause, LeafKeyRequest};
 
 /// Request: `[tag][the request's own bytes]`.
 pub const TAG_LEAF_KEY_REQUEST: u8 = 27;

@@ -14,18 +14,19 @@ use tokio_tungstenite::tungstenite::Message;
 
 use super::SyncClient;
 use crate::EntityId;
-use crate::secret_custody::leaf_delivery::LeafKeyFailureCause;
+use crate::secret_custody::{LeafKeyFailureCause, LeafKeyRequest};
 use crate::sync::transport::{
     LEAF_KEY_RETRY, TAG_LEAF_KEY_ANSWER, TAG_LEAF_KEY_FAILURE, TAG_LEAF_KEY_REQUEST,
     TransportError, decode_leaf_key_answer, decode_leaf_key_failure, decode_leaf_key_request,
     encode_leaf_key_answer, encode_leaf_key_failure, encode_leaf_key_request, leaf_key_request_hex,
 };
 
-/// This connection's leaf-key requests: those sent on it, and those a failure
-/// cleared, each held until it may go again. Started again at every connect.
+/// This connection's leaf-key requests: each one sent on it, kept by id, since
+/// its answer is taken against it, and those a failure cleared, each held
+/// until it may go again. Started again at every connect.
 #[derive(Default)]
 pub(super) struct LeafKeySends {
-    sent: HashSet<[u8; 32]>,
+    sent: HashMap<[u8; 32], LeafKeyRequest>,
     held: HashMap<[u8; 32], Instant>,
 }
 
@@ -50,39 +51,36 @@ impl SyncClient {
             TAG_LEAF_KEY_REQUEST => {
                 let request = decode_leaf_key_request(payload)?;
                 let id = request.request_id();
-                let home = self.vault.peer_machine_stands(self.home_peer);
-                let answered = self
-                    .vault
-                    .answer_leaf_key_request(&request, home)
-                    .map_err(|error| error.to_string())
-                    .and_then(|answer| {
-                        encode_leaf_key_answer(&answer)
-                            .into_result()
-                            .map_err(|error| error.to_string())
-                    });
                 let (holder, executor) = (request.holder_machine(), request.executor_machine());
-                let frame = match answered {
-                    Ok(frame) => {
-                        logged(tag, &id, holder, executor, "answered");
-                        frame
-                    }
-                    Err(reason) => {
-                        logged(tag, &id, holder, executor, "holder_refused");
-                        let cause = LeafKeyFailureCause::HolderRefused(reason);
-                        encode_leaf_key_failure(&id, &cause).into_result()?
-                    }
+                let home = self.vault.peer_machine_stands(self.home_peer);
+                let cause = match self.vault.answer_leaf_key_request(&request, home) {
+                    Ok(answer) => match encode_leaf_key_answer(&answer).into_result() {
+                        Ok(frame) => {
+                            logged(tag, &id, holder, executor, "answered");
+                            return Ok(vec![frame]);
+                        }
+                        Err(error) => LeafKeyFailureCause::HolderRefused(error.to_string()),
+                    },
+                    Err(error) => LeafKeyFailureCause::of_refusal(&error)
+                        .unwrap_or_else(|| LeafKeyFailureCause::HolderRefused(error.to_string())),
                 };
-                Ok(vec![frame])
+                logged(tag, &id, holder, executor, "refused");
+                Ok(vec![encode_leaf_key_failure(&id, &cause).into_result()?])
             }
             TAG_LEAF_KEY_ANSWER => {
                 let answer = decode_leaf_key_answer(payload)?;
                 let id = answer.request_id();
                 let (holder, executor) = (answer.holder_machine(), answer.executor_machine());
+                let Some(request) = self.sent_leaf_key_request(&id)? else {
+                    logged(tag, &id, holder, executor, "no_request_out");
+                    return Ok(Vec::new());
+                };
                 self.vault
-                    .accept_leaf_key_answer(&answer)
+                    .accept_leaf_key_answer(&request, &answer)
                     .map_err(|error| {
                         TransportError::Storage(format!("accept leaf key answer: {error}"))
                     })?;
+                self.leaf_key_sends.sent.remove(&id);
                 logged(tag, &id, holder, executor, "accepted");
                 Ok(Vec::new())
             }
@@ -108,6 +106,25 @@ impl SyncClient {
         }
     }
 
+    /// The request this client sent for `id`: the one kept on this
+    /// connection or, for an answer that came on a socket opened since (the
+    /// home sends an answer to its executor's newest socket), the same ask
+    /// secret custody still has out. `None` where neither has it.
+    fn sent_leaf_key_request(
+        &self,
+        id: &[u8; 32],
+    ) -> Result<Option<LeafKeyRequest>, TransportError> {
+        if let Some(request) = self.leaf_key_sends.sent.get(id) {
+            return Ok(Some(request.clone()));
+        }
+        let pending = self.vault.pending_leaf_key_requests().map_err(|error| {
+            TransportError::Storage(format!("read pending leaf key requests: {error}"))
+        })?;
+        Ok(pending
+            .into_iter()
+            .find(|request| request.request_id() == *id))
+    }
+
     /// The leaf-key requests this client owes its home now: each one secret
     /// custody lists pending that was not sent on this connection and is not
     /// held after a failure. A read that fails is reported and leaves the
@@ -126,18 +143,18 @@ impl SyncClient {
         let now = Instant::now();
         let ids: HashSet<[u8; 32]> = pending.iter().map(|request| request.request_id()).collect();
         let sends = &mut self.leaf_key_sends;
-        sends.sent.retain(|id| ids.contains(id));
+        sends.sent.retain(|id, _| ids.contains(id));
         sends.held.retain(|id, at| *at > now && ids.contains(id));
         let mut frames = Vec::new();
-        for request in &pending {
+        for request in pending {
             let id = request.request_id();
-            if sends.sent.contains(&id) || sends.held.contains_key(&id) {
+            if sends.sent.contains_key(&id) || sends.held.contains_key(&id) {
                 continue;
             }
             let (holder, executor) = (request.holder_machine(), request.executor_machine());
-            match encode_leaf_key_request(request).into_result() {
+            match encode_leaf_key_request(&request).into_result() {
                 Ok(frame) => {
-                    sends.sent.insert(id);
+                    sends.sent.insert(id, request);
                     frames.push(frame);
                     logged(TAG_LEAF_KEY_REQUEST, &id, holder, executor, "sent");
                 }
