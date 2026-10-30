@@ -14251,6 +14251,7 @@ class PptxCommentPatch(TypedDict):
 class SlideAbstention(TypedDict):
     target: PptxCommentTarget
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 SlideUnitRefusalReason = Literal["MissingShape", "AmbiguousShape", "TargetChanged", "UnresolvedGeometry", "EvidenceBudget", "UnreadableImage", "RunDeadline"]
 class SlideUnitRefused(TypedDict):
     target: PptxCommentTarget
@@ -14297,9 +14298,11 @@ class ArtifactAskSubmit(TypedDict):
 class UnitAbstention(TypedDict):
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class UnitRefusal(TypedDict):
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactAskOutcome(TypedDict):
     proposed: NotRequired[PendingProposalView | None]
     abstained: list[UnitAbstention]
@@ -17372,10 +17375,12 @@ class ArtifactUnitReceiptAbstained(TypedDict):
     status: Literal["abstained"]
     unit: Any
     decision: NotRequired[TypedDecision | None]
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptRefused(TypedDict):
     status: Literal["refused"]
     unit: Any
     reason: str
+    judged_live: NotRequired[LivePin | None]
 class ArtifactUnitReceiptOmitted(TypedDict):
     status: Literal["omitted"]
 ArtifactUnitReceipt = ArtifactUnitReceiptAbstained | ArtifactUnitReceiptRefused | ArtifactUnitReceiptOmitted

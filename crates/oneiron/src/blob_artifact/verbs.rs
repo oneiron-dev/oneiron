@@ -961,6 +961,7 @@ impl Memory<'_> {
                         "row": item.row,
                     }),
                     reason: "unreadable_file".into(),
+                    judged_live: None,
                 }));
                 run
             }
