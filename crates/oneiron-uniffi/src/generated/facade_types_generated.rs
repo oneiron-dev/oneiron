@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1213 facade rows, 4399 generated types.
+// UniFFI census: 1213 facade rows, 4400 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1165.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -37521,8 +37521,10 @@ pub struct CodeConflictView {
     pub paths: Vec<String>,
     #[serde(rename = "proposals")]
     pub proposals: Vec<String>,
-    #[serde(rename = "task")]
-    pub task: String,
+    #[serde(rename = "task", default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<String>,
+    #[serde(rename = "held", default, skip_serializing_if = "Option::is_none")]
+    pub held: Option<String>,
 }
 
 /// `oneiron::memory::code_doors::conflict_types::CodeConflictViewRequest`.
@@ -40080,6 +40082,8 @@ pub struct OriginPublishReview {
     pub pages: u64,
     #[serde(rename = "lfs_bytes")]
     pub lfs_bytes: OriginPublishLfsBytes,
+    #[serde(rename = "lossy_paths")]
+    pub lossy_paths: bool,
 }
 
 /// `oneiron::origin::publish::mirror_plan_types::MirrorRefOutcome`.
@@ -40739,6 +40743,15 @@ pub struct CheckoutGetInput {
     pub checkout: String,
 }
 
+/// `oneiron::claim::scoped_read::receipt::ScopedReadResult` with `T` = `OptionalCheckoutLeaseView`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct ScopedReadResultOptionalCheckoutLeaseView {
+    #[serde(rename = "value", default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<CheckoutLeaseView>,
+    #[serde(rename = "narrowing")]
+    pub narrowing: ScopedReadReceipt,
+}
+
 /// `oneiron::memory::checkout_doors::types::CheckoutRenewInput`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 #[serde(deny_unknown_fields)]
@@ -40936,10 +40949,16 @@ pub struct CodeViewFile {
     pub path: String,
     #[serde(rename = "content_hash_blake3")]
     pub content_hash_blake3: String,
-    #[serde(rename = "frontier")]
-    pub frontier: CodeDocumentFrontier,
-    #[serde(rename = "text_sha256")]
-    pub text_sha256: String,
+    #[serde(rename = "frontier", default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<CodeDocumentFrontier>,
+    #[serde(
+        rename = "text_sha256",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub text_sha256: Option<String>,
+    #[serde(rename = "git_oid", default, skip_serializing_if = "Option::is_none")]
+    pub git_oid: Option<String>,
 }
 
 /// `oneiron::memory::code_view_doors::types::CodeWorkingView`.
@@ -41438,6 +41457,17 @@ pub enum ContractDiff {
         before: Option<CommandOutput>,
         #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
         after: Option<CommandOutput>,
+    },
+    #[serde(rename = "SchemaBytesDrift")]
+    SchemaBytesDrift {
+        #[serde(rename = "contract")]
+        contract: String,
+        #[serde(rename = "offset")]
+        offset: u64,
+        #[serde(rename = "before", default, skip_serializing_if = "Option::is_none")]
+        before: Option<String>,
+        #[serde(rename = "after", default, skip_serializing_if = "Option::is_none")]
+        after: Option<String>,
     },
 }
 

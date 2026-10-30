@@ -626,7 +626,7 @@
      "path": "src/agent_def/manifest.rs",
      "purpose": "Embedded sys.* roster manifest, legacy compat, and seeding/reconciliation",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 12
      }
     },
     {
@@ -2538,8 +2538,8 @@
      "path": "src/attempt_queue/engine/reads.rs",
      "purpose": "Point/list/dedupe reads plus retry-chain and dreamer-root walks",
      "surface": {
-      "crate-vis": 32,
-      "fn": 5
+      "crate-vis": 33,
+      "fn": 6
      }
     },
     {
@@ -6480,6 +6480,16 @@
      "purpose": "—",
      "surface": {
       "crate-vis": 8
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/batch/export/agent_person_import.rs",
+     "purpose": "Model PERSON mint for imported agent definitions (FIX 1162): one pass over the import's inserted rows, after…",
+     "surface": {
+      "crate-vis": 1
      }
     },
     {
@@ -15057,7 +15067,7 @@
      "path": "src/code_document/storage.rs",
      "purpose": "Atomic merge-before-persist of live file edits and immutable tested snapshots",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 22,
       "fn": 9
      }
     },
@@ -15072,7 +15082,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/code_document/storage/edit.rs",
@@ -15242,7 +15252,6 @@
       "CodeMemoryAttachment",
       "CodeMemoryLocator",
       "CodeMemoryPayloadRef",
-      "CodeMemoryRevision",
       "CodeMemorySlot",
       "CodeMemorySlotName",
       "CodeMemorySlotValue",
@@ -15251,9 +15260,9 @@
      "path": "src/code_memory/parts/types-and-slots.rs",
      "purpose": "—",
      "surface": {
-      "const": 7,
+      "const": 8,
       "crate-vis": 1,
-      "enum": 3,
+      "enum": 2,
       "fn": 8,
       "struct": 7
      }
@@ -15332,7 +15341,7 @@
      "purpose": "Which reviewed import a tested queue revision's untouched bytes descend from (FIX 6869, G4 PR1), and the one…",
      "surface": {
       "crate-vis": 5,
-      "fn": 1
+      "fn": 2
      }
     },
     {
@@ -15436,7 +15445,7 @@
      "path": "src/code_revision/proposals.rs",
      "purpose": "Durable stranded revisions against the new head; reconciliation is explicit",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "fn": 2,
       "struct": 1
@@ -18350,7 +18359,7 @@
      "purpose": "Pinned body keys and the manifest / chunk / revision / entity-body encode-decode",
      "surface": {
       "const": 4,
-      "crate-vis": 29,
+      "crate-vis": 31,
       "fn": 2
      }
     },
@@ -18386,7 +18395,7 @@
      "path": "src/code_symbol/mod.rs",
      "purpose": "Code-symbol manifests, semantic changes and producing-operation views",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "re-export": 8
      }
     },
@@ -18421,6 +18430,7 @@
      "path": "src/code_symbol/semantic_diff.rs",
      "purpose": "Content-addressed semantic changes",
      "surface": {
+      "crate-vis": 1,
       "fn": 3,
       "struct": 2
      }
@@ -18458,7 +18468,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "CodeChunk",
@@ -18476,8 +18486,8 @@
      "path": "src/code_symbol/types.rs",
      "purpose": "Chunk, symbol, manifest, graph and embedding value types with their limits",
      "surface": {
-      "const": 7,
-      "fn": 9,
+      "const": 5,
+      "fn": 11,
       "struct": 11
      }
     },
@@ -18489,6 +18499,16 @@
      "purpose": "Manifest, chunk, symbol and commit-hash validation plus the secret scan",
      "surface": {
       "crate-vis": 14
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/code_view/erase.rs",
+     "purpose": "The copies an erased source leaves in the view set (FIX 9722)",
+     "surface": {
+      "fn": 3
      }
     },
     {
@@ -18520,7 +18540,7 @@
      "surface": {
       "crate-vis": 9,
       "fn": 6,
-      "re-export": 1,
+      "re-export": 2,
       "struct": 3
      }
     },
@@ -21529,7 +21549,7 @@
      "purpose": "PEOPLE (owner ruling, ARCH-0067): one `pr` handle for every person, humans and agents alike",
      "surface": {
       "const": 1,
-      "crate-vis": 2,
+      "crate-vis": 3,
       "enum": 1,
       "fn": 16,
       "struct": 4
@@ -22577,18 +22597,21 @@
      "path": "src/contract_oracle/mod.rs",
      "purpose": "Persisted, deterministic Rust API, schema and command-output contracts",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "re-export": 4
      }
     },
     {
      "bucket": "m",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "RustPublicNames"
+     ],
      "path": "src/contract_oracle/rust_api.rs",
      "purpose": "Tree-sitter public-name extraction over a crate's module tree",
      "surface": {
-      "fn": 1
+      "fn": 1,
+      "struct": 1
      }
     },
     {
@@ -23520,7 +23543,7 @@
      "path": "src/credential_door/door_authority.rs",
      "purpose": "Checkout witnesses and consent admission under the committing writer",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -23570,7 +23593,7 @@
      "path": "src/credential_door/door_types.rs",
      "purpose": "Door constants, floor names and prefixes, error type, and small naming helpers",
      "surface": {
-      "crate-vis": 28
+      "crate-vis": 27
      }
     },
     {
@@ -34345,7 +34368,7 @@
      "path": "src/federation/git_push/caller.rs",
      "purpose": "The receive-pack decision's values (FIX 6867, G1-PUSH): the pusher a host transport authenticated, the…",
      "surface": {
-      "crate-vis": 18,
+      "crate-vis": 19,
       "enum": 1,
       "fn": 3,
       "struct": 3
@@ -37740,7 +37763,7 @@
      "purpose": "Every `GIT_WIRE_*` constant: schema, domain, bounds, env baseline, closed config policy",
      "surface": {
       "const": 9,
-      "crate-vis": 13
+      "crate-vis": 12
      }
     },
     {
@@ -38138,7 +38161,7 @@
      "path": "src/git_wire/wire_reads.rs",
      "purpose": "The `GitWire` handle, its constructors, the process seam, and the read path",
      "surface": {
-      "crate-vis": 8,
+      "crate-vis": 9,
       "fn": 16,
       "struct": 1
      }
@@ -38150,7 +38173,7 @@
      "path": "src/git_wire/wire_stage.rs",
      "purpose": "Two-phase staging: stage, commit-prepared, recovery, and keep-ref naming",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 4
      }
     },
@@ -44824,7 +44847,7 @@
      "path": "src/memory/checkout_doors/operations.rs",
      "purpose": "Checkout lease operations: claim, renew, reclaim, take over, publish, settle and tear down",
      "surface": {
-      "fn": 8
+      "fn": 9
      }
     },
     {
@@ -48707,7 +48730,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/merge_queue/driver_materialize.rs",
@@ -48918,7 +48941,7 @@
      "path": "src/merge_queue/staging.rs",
      "purpose": "Bounded speculation, materialization and cleanup through the shared repo writer",
      "surface": {
-      "crate-vis": 12,
+      "crate-vis": 15,
       "fn": 5
      }
     },
@@ -50894,7 +50917,7 @@
      "path": "src/origin/export.rs",
      "purpose": "Export finalized engine commits through GitWire objects and the origin CAS protocol",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "struct": 1
      }
@@ -51151,7 +51174,7 @@
       "const": 5,
       "crate-vis": 8,
       "enum": 2,
-      "fn": 7,
+      "fn": 9,
       "struct": 5
      }
     },
@@ -51217,7 +51240,7 @@
       "const": 2,
       "crate-vis": 3,
       "enum": 1,
-      "fn": 4,
+      "fn": 5,
       "struct": 1
      }
     },
@@ -51273,7 +51296,7 @@
      "path": "src/origin/publication/publication_journal.rs",
      "purpose": "Journal access: repo identity, row scans, visible-ref rows, owner counts plus advance/receipt/validate helpers",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 21
      }
     },
     {
@@ -51340,7 +51363,7 @@
      "path": "src/origin/publication/publication_types.rs",
      "purpose": "Pinned constants, protocol enums with string tables, and request/record/receipt/report types",
      "surface": {
-      "const": 10,
+      "const": 9,
       "crate-vis": 1,
       "enum": 5,
       "fn": 11,
@@ -51553,7 +51576,7 @@
      "purpose": "The full-ancestry review of one exact publish (FIX 6866; CALLS \"FIX 6866 review scope\"): what the push would…",
      "surface": {
       "const": 1,
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -51573,7 +51596,7 @@
      "path": "src/origin/publish/store.rs",
      "purpose": "The one store of exact publish requests (`ORIGIN_PUBLISH_REQUEST`, LIVE): each request's row and, beside it…",
      "surface": {
-      "crate-vis": 10
+      "crate-vis": 11
      }
     },
     {
@@ -51638,7 +51661,7 @@
       "const": 1,
       "crate-vis": 17,
       "enum": 2,
-      "fn": 7,
+      "fn": 8,
       "struct": 2
      }
     },
@@ -52447,8 +52470,9 @@
       "OriginTreeFile"
      ],
      "path": "src/origin/tree.rs",
-     "purpose": "Bounded, byte-preserving projection of Git trees",
+     "purpose": "Byte-preserving projection of complete Git trees",
      "surface": {
+      "crate-vis": 1,
       "fn": 1,
       "struct": 1
      }
@@ -59353,7 +59377,7 @@
      "path": "src/repo_mutation/proposal/files.rs",
      "purpose": "A proposal's reviewed files (G4 PR2): an ordinary operation's one file, or every file of a received push…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 6,
       "fn": 5,
       "struct": 1
      }
@@ -59584,7 +59608,7 @@
      "path": "src/repo_mutation/snapshot.rs",
      "purpose": "Capture, validation and restore of repository working-tree snapshots",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 15
      }
     },
     {
@@ -60973,11 +60997,20 @@
       "EngineScan"
      ],
      "path": "src/scan_check/engine_scan.rs",
-     "purpose": "The engine scans whose tables grow with use (rule 5), each with its closed code, the threshold it asks past…",
+     "purpose": "The engine scans whose tables grow with use (rule 5); their list, codes, thresholds and tags are in…",
+     "surface": {
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/scan_check/engine_scan_table.rs",
+     "purpose": "Each engine scan's list, closed code, the threshold it asks past and its row's tag; split from `engine_scan`…",
      "surface": {
       "const": 2,
       "crate-vis": 2,
-      "enum": 1,
       "fn": 1
      }
     },
@@ -69588,7 +69621,7 @@
      "purpose": "Subject model: who, if anyone, stands behind an actor (ARCH-0063 R7)",
      "surface": {
       "const": 3,
-      "crate-vis": 8,
+      "crate-vis": 9,
       "enum": 2,
       "fn": 12,
       "re-export": 1,
@@ -69607,6 +69640,16 @@
       "crate-vis": 3,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/subject_model/seeded.rs",
+     "purpose": "A seeded system agent's subject facts (FIX 12098): its PERSON's `person.substrate` and its own…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -75186,7 +75229,7 @@
      "path": "src/task_verb/mod.rs",
      "purpose": "Typed, actor-bound verbs over the Context Board TASKS section",
      "surface": {
-      "crate-vis": 59,
+      "crate-vis": 60,
       "fn": 1,
       "mod": 5,
       "re-export": 30
@@ -75377,7 +75420,7 @@
      "path": "src/task_verb/reconciliation.rs",
      "purpose": "Repository conflicts mint one linked reconciliation TASK and realizing attempt",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 1
      }
     },
@@ -77890,7 +77933,7 @@
      "path": "src/vault_shape/outbound_reach.rs",
      "purpose": "The reach's standing outbound grant rows (ARCH-0070 `shape:reach-line`, FIX 2801)",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -84507,7 +84550,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 167,
+     "files": 168,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -84689,7 +84732,7 @@
      "purpose": "Code-symbol manifests, semantic changes and producing-operation views"
     },
     "code_view": {
-     "files": 4,
+     "files": 5,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -85564,7 +85607,7 @@
      "purpose": "SAVED_QUERY — durable standing queries with staged evaluation (CA-02)"
     },
     "scan_check": {
-     "files": 3,
+     "files": 4,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "file+dir",
@@ -85739,7 +85782,7 @@
      "purpose": "LMDB store: one environment per vault plus the 28 named databases pinned by the ARCH-0019 manifest, and the…"
     },
     "subject_model": {
-     "files": 15,
+     "files": 16,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -85972,7 +86015,7 @@
    },
    "over_bar": 107,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5812,
+   "source_files": 5816,
    "test_files": 902
   },
   "oneiron-android": {
@@ -109082,7 +109125,7 @@
      "path": "src/big_rung.rs",
      "purpose": "The big model on the decision ladder's Big rung (ARCH-0076, OF-495)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -123154,6 +123197,7 @@
       "ScopedReadResultOptionalCalendarEventOutcome",
       "ScopedReadResultOptionalCalendarEventView",
       "ScopedReadResultOptionalCalendarPassportRevision",
+      "ScopedReadResultOptionalCheckoutLeaseView",
       "ScopedReadResultOptionalClaimView",
       "ScopedReadResultOptionalDiagnosticEventView",
       "ScopedReadResultOptionalEntityView",
@@ -124117,7 +124161,7 @@
      "purpose": "—",
      "surface": {
       "enum": 1086,
-      "struct": 3313
+      "struct": 3314
      }
     },
     {
