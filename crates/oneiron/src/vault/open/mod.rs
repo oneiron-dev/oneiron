@@ -631,6 +631,7 @@ impl Vault {
                 if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                     vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
                 }
+                crate::agent_def::ensure_seeded_agent_persons_in_txn(&vault, wtxn)?;
                 Ok(())
             })?;
             // An untouched seeded policy manifest takes the one this build
