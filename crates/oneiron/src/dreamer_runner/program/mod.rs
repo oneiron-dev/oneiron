@@ -24,7 +24,8 @@
 //! returns is the owner's to stop or, once its checkpoint validates, to
 //! resume (`release`, FIX 5880). A try whose sealed slip no longer stands is
 //! its waking actor's to rebind to a live slip of theirs (`rebind`, FIX
-//! 11429), as a queued turn action is.
+//! 11429), as a queued turn action is, and so is a wake its turn owes that
+//! no admission has judged yet (FIX 11833).
 
 mod admit;
 mod arm;
