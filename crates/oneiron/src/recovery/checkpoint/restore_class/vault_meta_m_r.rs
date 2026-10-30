@@ -123,6 +123,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF, LIVE),
     (&t::SKILL_HUB_PACK_BUILTIN_SEED, CONTENT),
     (&t::SKILL_HUB_PACK_CANDIDATE, CONTENT),
+    // An ask stands with the binding claims it describes.
+    (&t::SKILL_HUB_PACK_HOOK_PROPOSAL, CONTENT),
     (&t::SKILL_HUB_PACK_INSTALL, CONTENT),
     (&t::SKILL_HUB_PACK_PREDICATE, CONTENT),
     (&t::SKILL_HUB_PACK_SETUP, LIVE),
