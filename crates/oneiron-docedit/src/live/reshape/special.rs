@@ -8,16 +8,19 @@
 //! the ones its new family holds; a new plot takes its family's (CALLS, D9c
 //! stock, surface and of-pie defaults). A stock series is drawn with no
 //! line between its points, its close as a dot.
-//! A stock price no series draws holds a placeholder series (FIX 9374).
+//! A stock price no series draws holds a placeholder series (FIX 9374),
+//! its legend entry deleted (FIX 10293).
 //! Entry: `kept`, `fresh`, `same`, `defaults`, `overlay`, `stock_style`,
-//! `stock_series`, `placeholder`.
+//! `stock_series`, `placeholder`, `legend_entries`.
 
 use super::families::{applied, order, written};
 use super::*;
-use crate::edit::xml::A;
+use crate::edit::xml::{A, Splice};
 use crate::live::pptx::{
     ChartPlot, NodeId, OfPieType, SplitType, StockOrder, SurfaceBand, lines_and_bars, surface,
 };
+use crate::native_patch::stock_placeholder;
+use std::collections::BTreeSet;
 
 /// The compound plot children a plot converted from another family
 /// carries when its new family holds them.
@@ -524,4 +527,57 @@ pub(super) fn placeholder(tree: &XmlTree, writer: &Writer, (idx, order): (u32, u
         .into_bytes(),
     );
     out
+}
+
+/// The splices that hide each stock placeholder's legend entry (FIX 10293),
+/// so it shows as no blank entry: a `c:legendEntry` deleting the entry at
+/// each of `places` (each placeholder's place in the written order, its
+/// `c:order`) in the chart's legend, and each entry held at the place of a
+/// placeholder the part holds, or at one of `places`, dropped first. None
+/// where the chart has no legend.
+pub(super) fn legend_entries(
+    bytes: &[u8],
+    tree: &XmlTree,
+    writer: &Writer,
+    places: &[u32],
+) -> Vec<Splice> {
+    let Some(legend) = xml::path(tree, 0, &[(C, "chart"), (C, "legend")]) else {
+        return Vec::new();
+    };
+    let stale: BTreeSet<u32> = (0..tree.nodes.len())
+        .filter(|&at| tree.nodes[at].is(C, "ser") && stock_placeholder(tree, at))
+        .filter_map(|at| int(tree, at, "order"))
+        .chain(places.iter().copied())
+        .collect();
+    let mut splices: Vec<Splice> = held::children(tree, legend, C, "legendEntry")
+        .filter(|&entry| int(tree, entry, "idx").is_some_and(|idx| stale.contains(&idx)))
+        .map(|entry| (tree.nodes[entry].span.clone(), Vec::new()))
+        .collect();
+    if places.is_empty() {
+        return splices;
+    }
+    let entries: String = places
+        .iter()
+        .map(|place| {
+            format!(
+                r#"<{e}><{i} val="{place}"/><{d} val="1"/></{e}>"#,
+                e = writer.el("legendEntry"),
+                i = writer.el("idx"),
+                d = writer.el("delete"),
+            )
+        })
+        .collect();
+    let node = &tree.nodes[legend];
+    let after = node.children.iter().copied().find(|&child| {
+        let child = &tree.nodes[child];
+        child.namespace == C && !matches!(child.name.as_str(), "legendPos" | "legendEntry")
+    });
+    splices.push(match after {
+        Some(at) => {
+            let start = tree.nodes[at].span.start;
+            (start..start, entries.into_bytes())
+        }
+        None => xml::insert_end(bytes, node, entries.as_bytes()),
+    });
+    splices
 }

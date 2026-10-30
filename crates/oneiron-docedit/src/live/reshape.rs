@@ -35,7 +35,7 @@ use super::held::{self, C};
 use super::pptx::{ChartKind, NodePayload, draws_categories, effective_categories};
 use crate::design_plan::Cell;
 use crate::edit::xml::{self, P, R};
-use crate::native_patch::{Target, chart_data, number};
+use crate::native_patch::{NativeRefusal, Target, chart_data, number};
 use crate::ooxml::{Node, XmlTree, escape_text};
 use crate::retained_opc::Package;
 use axes::retyped_axis;
@@ -193,8 +193,15 @@ fn own_workbook(
     chart: &str,
     tree: &XmlTree,
 ) -> Result<Option<String>, LiveError> {
-    if !tree.nodes.iter().any(|node| node.is(C, "f")) || chart_data(package, chart).is_err() {
+    if !tree.nodes.iter().any(|node| node.is(C, "f")) {
         return Ok(None);
+    }
+    match chart_data(package, chart) {
+        Ok(_) => {}
+        // What the host cannot hold is no reason to replace the workbook
+        // (FIX 9165).
+        Err(refusal @ NativeRefusal::MemoryFloor { .. }) => return Err(refusal.into()),
+        Err(_) => return Ok(None),
     }
     let Some(link) =
         xml::child(tree, 0, C, "externalData").and_then(|data| tree.nodes[data].attr_ns(R, "id"))

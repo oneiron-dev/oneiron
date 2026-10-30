@@ -2,7 +2,7 @@
 //! FIX 3493): its plots, axes and series, and its own embedded workbook
 //! edited in place or rebuilt.
 
-use super::axes::{PlotAxes, plot_axes};
+use super::axes::{PlotAxes, mid_cat_axis, plot_axes};
 use super::dataset::{self, Refs, workbook_dataset};
 use super::families::{self, bit};
 use super::layout::{self, Layout, Resolved, Wanted, first_category, wanted};
@@ -131,22 +131,31 @@ enum Mode {
     /// resolution that plan read.
     Edit(workbook::InPlace, Resolved),
     /// Rebuilt from the live data: the chart's own workbook keeps its
-    /// sheets, the data on a new one beside them (FIX 6714); one the chart
-    /// does not own is replaced. The workbook not edited in place, and why,
-    /// for the receipt.
+    /// sheets, the data on a new one beside them (FIX 6714) or on its own
+    /// data sheet rewritten (FIX 9169); one the chart does not own is
+    /// replaced. The workbook not edited in place, and why, for the
+    /// receipt.
     Rebuild(Option<(String, RebuildReason)>),
     /// A live-born chart's seed, the engine's own, rebuilt afresh.
     Seed,
 }
 
-/// The sheet the rebuilt data goes on in the chart's own workbook `book`:
-/// a new one beside its sheets, or, `None`, none (the rebuild is afresh).
-fn rebuilt_sheet(package: &Package, book: &str, mode: &Mode) -> Option<String> {
+/// The sheet the rebuilt data goes on in the chart's own workbook `book`,
+/// as the chart part `first` references it ([`dataset::data_sheet`]): its
+/// own data sheet, or a new one beside its sheets, or, `None`, none (the
+/// rebuild is afresh).
+fn rebuilt_sheet(
+    package: &Package,
+    book: &str,
+    first: &crate::ooxml::XmlTree,
+    mode: &Mode,
+) -> Option<String> {
     if !matches!(mode, Mode::Rebuild(Some(_))) {
         return None;
     }
-    dataset::free_sheet(
+    dataset::data_sheet(
         &package.part(book).ok()??,
+        first,
         package.limits(),
         package.resources(),
     )
@@ -186,7 +195,7 @@ fn rewrite(
             let wanted = wanted(&first, *family, categories, series, &bound.series);
             let book = match own_workbook(package, chart, &first)? {
                 Some(book) => {
-                    beside = rebuilt_sheet(package, &book, &mode);
+                    beside = rebuilt_sheet(package, &book, &first, &mode);
                     Some(book)
                 }
                 None if *source == ChartSource::Literal => None,
@@ -271,6 +280,7 @@ fn rewrite(
         ids: ids_of,
         kept: held_ids,
         retyped,
+        mid_cat,
         new: new_axes,
     } = plot_axes(&tree, area, (&plots, &targets), (&nths, settings), &writer);
     // The display order follows the live order. Each survivor keeps its own
@@ -336,11 +346,21 @@ fn rewrite(
         .any(|(plan, assigned)| !plan.iter().copied().eq(assigned.iter().copied().map(Some)));
     let keep_order = keep_order && !renumber;
     let mut written_at: u32 = 0;
+    let mut placeholders: Vec<u32> = Vec::new();
     let mut plot_xml: Vec<Vec<u8>> = Vec::with_capacity(targets.len());
     let mut emitted: Vec<usize> = Vec::with_capacity(seats.len());
     for (at_target, target) in targets.iter().enumerate() {
         let kind = target.kind;
         let kept = target.held.filter(|&at| plots[at].0 == kind);
+        // How the plot lays its series out: the label positions its series
+        // keep follow it (FIX 10297).
+        let grouping = families::grouping(
+            &tree,
+            target.held.map(|at| plots[at].1),
+            kind,
+            settings,
+            nths[at_target],
+        );
         // A stock plot's close is drawn as a dot.
         let close = settings
             .iter()
@@ -355,6 +375,7 @@ fn rewrite(
                 let minted = next_idx;
                 next_idx = next_idx.saturating_add(1);
                 sers.extend(special::placeholder(&tree, &writer, (minted, place_at)));
+                placeholders.push(place_at);
                 continue;
             };
             emitted.push(index);
@@ -469,6 +490,7 @@ fn rewrite(
             let from = own_plot
                 .and_then(|plot| held::plot_family(&tree.nodes[plot].name))
                 .unwrap_or(kind);
+            let was = families::grouping(&tree, own_plot, from, &[], 0);
             let is_close = close.is_some() && close == series[index].id;
             let stock = (kind == ChartKind::Stock && from != ChartKind::Stock)
                 .then(|| special::stock_style(&tree, &writer, is_close));
@@ -480,7 +502,7 @@ fn rewrite(
                     ser,
                     (idx, order),
                     &writer,
-                    (from, kind, !in_kept),
+                    ((from, was), (kind, grouping), !in_kept),
                     &Slots {
                         tx: &tx,
                         cat: &cat_xml,
@@ -512,7 +534,7 @@ fn rewrite(
                         &bytes,
                         &tree,
                         seat.template,
-                        kind,
+                        (kind, grouping),
                         &writer,
                         (idx, order),
                         [&tx, &cat_xml, &val_xml, &tail],
@@ -536,6 +558,7 @@ fn rewrite(
             .and_then(|&index| data[index].set)
             .and_then(|set| sets.get(set))
             .map_or(&[][..], |set| set.ids.as_slice());
+        let mut dropped = Vec::new();
         plot_xml.push(match kept {
             Some(at) => kept_plot(
                 &bytes,
@@ -547,32 +570,29 @@ fn rewrite(
                 (held_ids[at_target] != *ids).then_some(ids.as_slice()),
                 &writer,
                 split_points,
+                &mut dropped,
             )?,
-            None => {
-                let mut dropped = Vec::new();
-                let xml = fresh_plot(
-                    place,
-                    &writer,
-                    &sers,
-                    ids,
-                    settings,
-                    &Context {
-                        bytes: &bytes,
-                        tree: &tree,
-                        from: target.held.map(|at| plots[at].1),
-                        points: split_points,
-                    },
-                    &mut dropped,
-                )?;
-                if !dropped.is_empty() {
-                    done.push(Conversion::PlotSettingsDropped {
-                        family: kind,
-                        settings: dropped,
-                    });
-                }
-                xml
-            }
+            None => fresh_plot(
+                place,
+                &writer,
+                &sers,
+                ids,
+                settings,
+                &Context {
+                    bytes: &bytes,
+                    tree: &tree,
+                    from: target.held.map(|at| plots[at].1),
+                    points: split_points,
+                },
+                &mut dropped,
+            )?,
         });
+        if !dropped.is_empty() {
+            done.push(Conversion::PlotSettingsDropped {
+                family: kind,
+                settings: dropped,
+            });
+        }
     }
     // The axes: each held axis a plot still plots on (turned where its plot
     // changed kind), then the new ones.
@@ -584,6 +604,9 @@ fn rewrite(
         }
         match retyped.get(&id) {
             Some(&value) => axes_xml.extend(retyped_axis(&bytes, &tree, at, value, &writer)?),
+            None if mid_cat.contains(&id) => {
+                axes_xml.extend(mid_cat_axis(&bytes, &tree, at, &writer)?);
+            }
             None => axes_xml.extend_from_slice(piece(&bytes, &tree, at)),
         }
     }
@@ -620,6 +643,12 @@ fn rewrite(
     out.extend(close(&tree.nodes[area]));
     let mut splices = vec![(tree.nodes[area].span.clone(), out)];
     splices.extend(families::view(&bytes, &tree, view.as_ref(), &writer)?);
+    splices.extend(special::legend_entries(
+        &bytes,
+        &tree,
+        &writer,
+        &placeholders,
+    ));
     let next = xml::splice(&bytes, splices)?;
     package.replace_xml_part(chart, next)?;
     if let Some(book) = &book {

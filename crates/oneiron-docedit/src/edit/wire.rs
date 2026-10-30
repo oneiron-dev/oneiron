@@ -339,6 +339,13 @@ pub enum DeckNativeRefusal {
         detail: String,
     },
     CacheMismatch,
+    /// A size the part declares that this host cannot hold now (FIX 9165):
+    /// a resource floor, never a count limit.
+    MemoryFloor {
+        detail: String,
+        needed: Option<u64>,
+        available: Option<u64>,
+    },
     OutsideAllowedParts {
         part: String,
     },
@@ -509,6 +516,15 @@ impl From<&NativeRefusal> for DeckNativeRefusal {
                 detail: (*text).to_owned(),
             },
             NativeRefusal::CacheMismatch => Self::CacheMismatch,
+            NativeRefusal::MemoryFloor {
+                reason,
+                needed,
+                available,
+            } => Self::MemoryFloor {
+                detail: (*reason).to_owned(),
+                needed: *needed,
+                available: *available,
+            },
             NativeRefusal::OutsideAllowedParts(part) => {
                 Self::OutsideAllowedParts { part: part.clone() }
             }

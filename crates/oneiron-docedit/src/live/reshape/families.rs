@@ -349,9 +349,10 @@ pub(super) fn grouping(
 /// A kept plot with its series replaced where they stood, each setting the
 /// model sets (`plots`, the `nth` plot of `kind`) written where it differs
 /// from the plot's own (compound ones as [`special::kept`] writes them, a
-/// custom split's points at their places in `points`), and its axis ids
-/// replaced by `ids` when the plot's axes changed. Everything else keeps
-/// its bytes.
+/// custom split's points at their places in `points`; a label position its
+/// new grouping places no label at dropped and named in `dropped`, FIX
+/// 10297), and its axis ids replaced by `ids` when the plot's axes changed.
+/// Everything else keeps its bytes.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn kept_plot(
     bytes: &[u8],
@@ -363,8 +364,10 @@ pub(super) fn kept_plot(
     ids: Option<&[u32]>,
     writer: &Writer,
     points: &[Option<NodeId>],
+    dropped: &mut Vec<String>,
 ) -> Result<Vec<u8>, LiveError> {
-    let held = tokens(&held::plot_settings(tree, kind, nth, plot));
+    let own = held::plot_settings(tree, kind, nth, plot);
+    let held = tokens(&own);
     let mut entries: Vec<(&str, Vec<u8>)> = vec![("ser", sers.to_vec())];
     let want = wanted(plots, kind, nth);
     if let Some(plot) = &want {
@@ -372,6 +375,19 @@ pub(super) fn kept_plot(
             if !held.contains(&(name, value.clone())) {
                 entries.push((name, flag(writer, name, &value)));
             }
+        }
+    }
+    let grouping = want
+        .as_ref()
+        .and_then(|plot| plot.grouping)
+        .or(own.grouping);
+    if grouping != own.grouping
+        && let Some(labels) = xml::child(tree, plot, C, "dLbls")
+    {
+        let before = dropped.len();
+        let relabelled = retype::labels(bytes, tree, labels, (kind, grouping), dropped)?;
+        if dropped.len() > before {
+            entries.push(("dLbls", relabelled));
         }
     }
     let context = Context {
@@ -422,10 +438,11 @@ fn carries(name: &str, kind: ChartKind, from: ChartKind) -> bool {
 /// plot's it converts (`context.from`) where `kind` holds them, else the
 /// family's defaults; its compound settings as [`special::fresh`] writes
 /// them; every other child the held plot holds and `kind` does too
-/// ([`carries`]: its data labels, their positions retyped, its drop lines
-/// and extensions; FIX 9275), the family's own default only for one it
-/// lacks; the series, and the axis ids it plots on. A label position the
-/// new family does not hold is named in `dropped`.
+/// ([`carries`]: its data labels, their positions retyped to the new
+/// family and grouping, its drop lines and extensions, those holding
+/// another family's filtered series dropped; FIX 9275, 10297, 10298), the
+/// family's own default only for one it lacks; the series, and the axis ids
+/// it plots on. What the new plot does not hold is named in `dropped`.
 pub(super) fn fresh_plot(
     (kind, nth): (ChartKind, u32),
     writer: &Writer,
@@ -471,10 +488,21 @@ pub(super) fn fresh_plot(
             let Some(&name) = order(kind).iter().find(|held| **held == node.name) else {
                 continue;
             };
-            let bytes = if name == "dLbls" {
-                retype::labels(context.bytes, context.tree, child, kind, dropped)?
-            } else {
-                piece(context.bytes, context.tree, child).to_vec()
+            let bytes = match name {
+                "dLbls" => retype::labels(
+                    context.bytes,
+                    context.tree,
+                    child,
+                    (kind, settings.grouping),
+                    dropped,
+                )?,
+                "extLst" => {
+                    match retype::extensions(context.bytes, context.tree, child, kind, dropped)? {
+                        Some(bytes) => bytes,
+                        None => continue,
+                    }
+                }
+                _ => piece(context.bytes, context.tree, child).to_vec(),
             };
             parts.push((name, bytes));
         }

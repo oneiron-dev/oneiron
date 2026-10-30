@@ -93,28 +93,49 @@ pub(super) struct Block {
     pub(super) keys: Vec<CellKey>,
 }
 
+/// A category block this host cannot hold: a memory floor (FIX 9165).
+fn floor(needed: Option<u64>, available: Option<u64>) -> NativeRefusal {
+    NativeRefusal::MemoryFloor {
+        reason: "a category block larger than the memory this host has free",
+        needed,
+        available,
+    }
+}
+
 /// Room for `count` items of `T`, measured first: past the address space,
 /// past the memory the host has free, or refused by the allocator, the
-/// block is not read.
+/// block is not read and the host's memory floor refuses.
 fn room<T>(count: usize) -> Result<Vec<T>, NativeRefusal> {
-    let refused = NativeRefusal::AmbiguousChartData(
-        "a category block larger than the memory this host has free",
-    );
     let bytes = count
         .checked_mul(size_of::<T>())
         .and_then(|bytes| u64::try_from(bytes).ok())
-        .ok_or(refused.clone())?;
-    if available_memory_bytes().is_some_and(|free| bytes > free) {
-        return Err(refused);
+        .ok_or(floor(None, None))?;
+    if let Some(free) = available_memory_bytes().filter(|&free| bytes > free) {
+        return Err(floor(Some(bytes), Some(free)));
     }
     let mut out = Vec::new();
-    out.try_reserve_exact(count).map_err(|_| refused)?;
+    out.try_reserve_exact(count)
+        .map_err(|_| floor(Some(bytes), None))?;
     Ok(out)
+}
+
+/// Which way the series holding the multi-level reference at `node` runs
+/// its values, as its `c:val` (or `c:yVal`) reference names them: down a
+/// column (`Some(true)`) or along a row; `None` for one cell or none.
+fn values_run(tree: &XmlTree, node: usize) -> Option<bool> {
+    let ser = tree.nodes[tree.nodes[node].parent?].parent?;
+    let values = child(tree, ser, "val").or_else(|| child(tree, ser, "yVal"))?;
+    let formula = child(tree, child(tree, values, "numRef")?, "f")?;
+    let (first, last) = Range::parse(tree.nodes[formula].text.trim())
+        .ok()?
+        .corners();
+    (first != last).then_some(first.0 == last.0)
 }
 
 /// The sequence a `c:multiLvlStrRef` at `node` names: its block, read
 /// against its cache's levels and count. The block's orientation is the one
-/// its shape allows (down the rows when both do).
+/// its shape allows (where both do, the way its series' values run, else
+/// down the rows).
 pub(super) fn sequence(tree: &XmlTree, node: usize) -> Result<Seq, NativeRefusal> {
     let reference = child(tree, node, "f")
         .map(|f| tree.nodes[f].text.trim().to_owned())
@@ -129,30 +150,32 @@ pub(super) fn sequence(tree: &XmlTree, node: usize) -> Result<Seq, NativeRefusal
         "cache point outside its count",
     ))?;
     let Count::Points(points) = read.count else {
-        return Err(NativeRefusal::AmbiguousChartData(
-            "a category cache counts past this machine's address space",
-        ));
+        return Err(NativeRefusal::MemoryFloor {
+            reason: "a category cache counts past this machine's address space",
+            needed: None,
+            available: None,
+        });
     };
     let levels = read.levels.len();
     let ((first_col, first_row), (last_col, last_row)) = range.corners();
     let span = |first: u32, last: u32| usize::try_from(last - first).map_or(0, |span| span + 1);
     let (width, height) = (span(first_col, last_col), span(first_row, last_row));
-    let down = if (width, height) == (levels, points) {
-        true
-    } else if (width, height) == (points, levels) {
-        false
-    } else {
-        return Err(NativeRefusal::AmbiguousChartData(
-            "the category block's shape disagrees with its cache",
-        ));
+    // A square block runs the way its series' values do, down the rows
+    // when they say neither (FIX 9167).
+    let down = match (
+        (width, height) == (levels, points),
+        (width, height) == (points, levels),
+    ) {
+        (true, true) => values_run(tree, node).unwrap_or(true),
+        (true, false) => true,
+        (false, true) => false,
+        (false, false) => {
+            return Err(NativeRefusal::AmbiguousChartData(
+                "the category block's shape disagrees with its cache",
+            ));
+        }
     };
-    let mut keys = room(
-        levels
-            .checked_mul(points)
-            .ok_or(NativeRefusal::AmbiguousChartData(
-                "a category block past this machine's address space",
-            ))?,
-    )?;
+    let mut keys = room(levels.checked_mul(points).ok_or(floor(None, None))?)?;
     for level in 0..levels {
         // The block holds the outermost level first, the leaf last.
         let line = u32::try_from(levels - 1 - level).unwrap_or(u32::MAX);

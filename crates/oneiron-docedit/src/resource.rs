@@ -420,6 +420,12 @@ impl crate::native_patch::NativeRefusal {
         match self {
             Self::Workbook(error) | Self::Package(error) => error.resource(),
             Self::Xml(error) => error.resource(),
+            Self::MemoryFloor {
+                needed, available, ..
+            } => Some(ResourceRefusal::MemoryFloor {
+                needed: needed.unwrap_or(u64::MAX),
+                available: available.unwrap_or(0),
+            }),
             _ => None,
         }
     }
