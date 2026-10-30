@@ -40,7 +40,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::deletion::{WithdrawnCutoff, WithdrawnReplacement};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, SyncEngineContext};
 use crate::ports::EntityStoreRead;
 use crate::store::Store;
 
@@ -284,7 +284,18 @@ fn raise_epoch_floors(vault: &Vault, carried: &BTreeMap<EntityId, (u64, u64)>) -
 /// still holds its words here is withdrawn in the same write, as the
 /// withdrawal that cut it off withdrew it there: an epoch summary keeps its
 /// keyframe, and a Shell's record keeps its header.
+///
+/// Admission calls this with rows it has already judged, so every fault here
+/// is a read or write of this vault's own store: it closes as this machine's
+/// fault, never as the peer's refused update (FIX 5925).
 pub(crate) fn apply_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<()> {
+    stage_withdrawn_cutoffs(vault, carried)
+        .map_err(|error| Error::sync_engine(SyncEngineContext::WindowAdmissionRead, error))
+}
+
+/// The staging [`apply_withdrawn_cutoffs`] runs, with the store's fault as it
+/// is: forward rematerialization runs it outside any admission.
+fn stage_withdrawn_cutoffs(vault: &Vault, carried: &[CarriedCutoff]) -> Result<()> {
     let mut newest: BTreeMap<EntityId, WithdrawnCutoff> = BTreeMap::new();
     let mut floors = BTreeMap::new();
     for row in carried {
@@ -469,7 +480,7 @@ pub(crate) fn apply_withdrawn_cutoff_map(vault: &Vault, doc: &LoroDoc, window: &
             }
         }
     }
-    apply_withdrawn_cutoffs(vault, &carried)
+    stage_withdrawn_cutoffs(vault, &carried)
 }
 
 /// Whether `doc` holds a cutoff map. Looking a root up by name creates it:
