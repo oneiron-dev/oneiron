@@ -252,6 +252,9 @@ impl SlackSharedPresenceAdapter {
                         "im:history",
                         "im:write",
                     ],
+                    // The owner's own posting, asked at install only when
+                    // he allowed posting as him (OF-414).
+                    "user": ["chat:write"],
                 },
             },
             "settings": {

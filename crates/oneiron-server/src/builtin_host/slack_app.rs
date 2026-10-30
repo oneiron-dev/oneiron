@@ -46,6 +46,11 @@ const SLACK_APP_NAME: &str = "Oneiron";
 /// Slack connector only.
 const SLACK_EFFECTOR: &str = "connector:slack";
 const SLACK_BOT_TOKEN: &str = "slack.bot_token";
+/// The owner's own user token, stored when he allowed posting as him.
+const SLACK_USER_TOKEN: &str = "slack.user_token";
+/// The setup permission that asks for it, and the user scope it asks.
+const SLACK_POST_AS_OWNER: &str = "post-as-you";
+const SLACK_OWNER_USER_SCOPE: &str = "chat:write";
 const SLACK_CLIENT_ID: &str = "slack.client_id";
 const SLACK_CLIENT_SECRET: &str = "slack.client_secret";
 const SLACK_AUTHORIZE_URL: &str = "https://slack.com/oauth/v2/authorize";
@@ -241,22 +246,27 @@ pub(crate) fn start_slack_install(
     let vault = server.vault();
     let setup = vault.pack_setup(&owner, SLACK_PACK, source.as_deref())?;
     let scopes = allowed_scopes(&setup)?;
+    let as_owner = permission_allowed(&setup, SLACK_POST_AS_OWNER);
     let client_id = client_id(vault)?;
     let mut nonce = [0u8; 16];
     rand_core::OsRng.fill_bytes(&mut nonce);
     let state: String = nonce.iter().map(|byte| format!("{byte:02x}")).collect();
     let redirect_url = format!("{origin}{SLACK_OAUTH_PATH}");
-    let authorize_url = reqwest::Url::parse_with_params(
-        SLACK_AUTHORIZE_URL,
-        &[
-            ("client_id", client_id.as_str()),
-            ("scope", scopes.as_str()),
-            ("redirect_uri", redirect_url.as_str()),
-            ("state", state.as_str()),
-        ],
-    )
-    .map_err(|error| OwnerError::Invalid(format!("the Slack install link is invalid: {error}")))?
-    .to_string();
+    let mut params = vec![
+        ("client_id", client_id.as_str()),
+        ("scope", scopes.as_str()),
+        ("redirect_uri", redirect_url.as_str()),
+        ("state", state.as_str()),
+    ];
+    // Posting as the owner rides his own token, asked beside the bot's.
+    if as_owner {
+        params.push(("user_scope", SLACK_OWNER_USER_SCOPE));
+    }
+    let authorize_url = reqwest::Url::parse_with_params(SLACK_AUTHORIZE_URL, &params)
+        .map_err(|error| {
+            OwnerError::Invalid(format!("the Slack install link is invalid: {error}"))
+        })?
+        .to_string();
     server.builtin_handles.slack_installs.hold(
         state,
         PendingInstall {
@@ -309,6 +319,16 @@ fn allowed_scopes(setup: &PackSetupView) -> Result<String, OwnerError> {
         ));
     }
     Ok(scopes.join(","))
+}
+
+/// Whether the owner allowed the app connection's permission `id`.
+fn permission_allowed(setup: &PackSetupView, id: &str) -> bool {
+    setup
+        .connections
+        .iter()
+        .filter(|connection| connection.id == SLACK_CONNECTION)
+        .flat_map(|connection| &connection.permissions)
+        .any(|permission| permission.id == id && permission.granted)
 }
 
 /// The app's client id. Public in every install link, but stored with the
@@ -415,6 +435,15 @@ fn finish_install(
         SLACK_BOT_TOKEN,
         &grant.access_token,
     )?;
+    if let Some(user_token) = &grant.user_token {
+        store(
+            vault,
+            &install.owner,
+            install.surface,
+            SLACK_USER_TOKEN,
+            user_token,
+        )?;
+    }
     let checks = HostConnectionChecks::new(server)?;
     let view = vault.verify_pack_connection(
         &install.owner,
@@ -441,6 +470,8 @@ fn finish_install(
 
 struct SlackGrant {
     access_token: Zeroizing<String>,
+    /// The installing owner's own token, when the install asked his scope.
+    user_token: Option<Zeroizing<String>>,
 }
 
 #[derive(Deserialize)]
@@ -448,6 +479,17 @@ struct OAuthAccess {
     ok: bool,
     #[serde(default)]
     error: Option<String>,
+    #[serde(default)]
+    token_type: Option<String>,
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    authed_user: Option<OAuthUser>,
+}
+
+/// The installing user's part of `oauth.v2.access`.
+#[derive(Deserialize)]
+struct OAuthUser {
     #[serde(default)]
     token_type: Option<String>,
     #[serde(default)]
@@ -512,9 +554,16 @@ fn exchange_code(
             access.error.as_deref().unwrap_or("no reason given")
         )));
     }
+    let user_token = access
+        .authed_user
+        .filter(|user| user.token_type.as_deref() == Some("user"))
+        .and_then(|user| user.access_token)
+        .filter(|token| !token.is_empty())
+        .map(Zeroizing::new);
     match (access.token_type.as_deref(), access.access_token) {
         (Some("bot"), Some(token)) if !token.is_empty() => Ok(SlackGrant {
             access_token: Zeroizing::new(token),
+            user_token,
         }),
         _ => Err(invalid("Slack returned no bot token".to_owned())),
     }

@@ -75,7 +75,10 @@ pub use self::reply_job::{
     CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
     ConnectorReplyJobResult, ConnectorReplyStage,
 };
-pub use self::served_sink::{OwnedServedChannelSink, ServedChannelSink};
+pub use self::served_sink::{
+    LINE_API_BASE, OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints,
+    ServedTransports, TELEGRAM_API_BASE,
+};
 
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,

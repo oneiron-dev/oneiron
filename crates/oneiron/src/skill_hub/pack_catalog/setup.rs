@@ -138,6 +138,25 @@ pub struct PackSetupSecret {
     /// Where the owner finds it, in plain words.
     #[serde(default)]
     pub hint: Option<String>,
+    /// The connection is ready without it: it serves only an optional
+    /// permission, and is stored when the owner allows that.
+    #[serde(default)]
+    pub optional: bool,
+}
+
+impl PackSetupConnection {
+    /// Whether every credential the connection needs is stored, by the
+    /// connection's state read in declared order; an optional one may be
+    /// absent.
+    #[must_use]
+    pub fn required_secrets_stored(&self, stored: &[super::PackSetupSecretState]) -> bool {
+        self.secrets.iter().all(|declared| {
+            declared.optional
+                || stored
+                    .iter()
+                    .any(|state| state.name == declared.name && state.stored)
+        })
+    }
 }
 
 /// One permission a connection asks for, shown to the owner like an app

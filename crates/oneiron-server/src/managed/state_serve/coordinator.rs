@@ -248,6 +248,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // A managed vault's attested owner's queued work is judged by this
     // server's check, installed before any worker takes it up (FIX 11090).
     crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
+    // Served sends reach this host's provider APIs and mail server (FIX 4435).
+    crate::builtin_host::install_served_transports(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain

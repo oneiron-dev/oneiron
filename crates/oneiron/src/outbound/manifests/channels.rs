@@ -136,7 +136,7 @@ pub(super) fn telegram_manifest() -> OutboundCapabilityManifest {
                 verb(
                     "send",
                     "sendMessage",
-                    json!({"chat_id": "integer|string", "text": "string", "parse_mode": "optional string", "posting": {"default": "named_participant", "post_as_owner_supported": false, "policy_risk": true, "owner_path": "Telegram Business reply-as-you (business_connection_id); no sink sends it yet"}}),
+                    json!({"chat_id": "integer|string", "text": "string", "parse_mode": "optional string", "business_connection_id": "owner mode only: the answered business message's connection", "reply_parameters": "optional answered message", "posting": {"default": "named_participant", "post_as_owner_supported": true, "policy_risk": true, "owner_path": "Telegram Business reply-as-you: an answer to a business message, sent on its business_connection_id"}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,
@@ -197,7 +197,7 @@ pub(super) fn slack_manifest() -> OutboundCapabilityManifest {
                 verb(
                     "send",
                     "chat.postMessage",
-                    json!({"channel": "channel_id", "text": "string", "blocks": "optional block kit array", "thread_ts": "optional string", "username": "persona display name", "icon_url": "optional persona avatar URL", "icon_emoji": "optional persona emoji", "metadata": "optional app-level-token identity metadata", "posting": {"default": "named_participant", "post_as_owner_supported": false, "policy_risk": true, "owner_path": "user-token chat.postMessage; the app requests no user scopes yet"}}),
+                    json!({"channel": "channel_id", "text": "string", "blocks": "optional block kit array", "thread_ts": "optional string", "username": "persona display name", "icon_url": "optional persona avatar URL", "icon_emoji": "optional persona emoji", "metadata": "optional app-level-token identity metadata", "posting": {"default": "named_participant", "post_as_owner_supported": true, "policy_risk": true, "owner_path": "user-token chat.postMessage with the owner's chat:write user scope from the app's install"}}),
                     OutboundInterruptionClass::Interrupt,
                     OutboundDeliverySemanticsKind::FireAndForget,
                     None,

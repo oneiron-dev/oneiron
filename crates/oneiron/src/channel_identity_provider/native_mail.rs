@@ -1,8 +1,10 @@
 //! Native mail fulfillment adapter. MTA, JMAP, DNS and DKIM stay in the host.
 mod canonical;
+mod host_pass;
 mod mailbox;
 pub mod pack;
 pub(crate) use canonical::{CanonicalMailSend, approval_digest_from_frozen_payload};
+pub use host_pass::NativeMailInboxPass;
 pub use mailbox::PREDICATE_NATIVE_MAIL_MAILBOX;
 pub use pack::{NativeMailPack, PreparedNativeMailSend};
 
