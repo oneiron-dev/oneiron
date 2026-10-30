@@ -24,6 +24,18 @@
 //! (FIX 11596): each read checks that act's exact owner against the owner
 //! the caller's fresh proof resolves to, and that he is still a live owner.
 //! A positive lapse lets the export go unread and answers `410 Gone`.
+//!
+//! A transport with no byte route reads the same kept export through
+//! `vault.export.transfer.read` and lets it go through
+//! `vault.export.transfer.release`, and an MCP `vault.export` keeps one when
+//! its `delivery` asks (`mcp_read`, FIX 11176).
+
+// FIX 11176: the transfer verbs, and MCP's kept export.
+mod mcp_read;
+
+pub(crate) use mcp_read::{
+    mcp_export_transfer, vault_export_transfer_read, vault_export_transfer_release,
+};
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -205,6 +217,36 @@ pub(super) fn vault_export_answer(
         };
         return Ok((encoded(&output)?, rows));
     }
+    let (transfer, rows) = kept_transfer(
+        server,
+        auth,
+        surface,
+        &auth.destination(),
+        input,
+        (proof, action, owner),
+    )?;
+    Ok((encoded(&transfer)?, rows))
+}
+
+/// The archive `input` asks for, written to a spool as it is built and kept
+/// here for `auth`'s caller, named by its transfer, beside the rows its
+/// snapshot read past `destination` (FIX 3676). It runs the four owner paths
+/// [`vault_export_answer`] runs, `(proof, action, owner)` naming which,
+/// with where the owner spoke from as `surface` names it. The facade and
+/// MCP keep their exports here alike (FIX 11176).
+fn kept_transfer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    surface: oneiron::authority::ActSurface,
+    destination: &oneiron::settings::ReadDestination,
+    input: &ExportOptions,
+    (proof, action, owner): (
+        Option<&VerifiedSlip>,
+        Option<HostActionAuthority>,
+        Option<AuthenticatedOwner>,
+    ),
+) -> Result<(ExportTransfer, Vec<EntityId>), FacadeApiError> {
+    let vault = &server.vault;
     let mut spool = vault.archive_spool_file().map_err(MemoryError::from)?;
     let (receipt, rows) = match (proof, action, owner) {
         (Some(proof), _, _) if proof.claims().holder_ref == "host" => vault
@@ -212,7 +254,7 @@ pub(super) fn vault_export_answer(
                 input,
                 proof,
                 surface,
-                auth.destination(),
+                destination.clone(),
                 &mut spool,
             )?,
         (Some(proof), _, _) => {
@@ -220,7 +262,7 @@ pub(super) fn vault_export_answer(
             let producers = oneiron::memory::ProducerRows::default();
             let receipt = vault
                 .memory(actor, class)
-                .for_destination(&auth.destination())
+                .for_destination(destination)
                 .listing_producers(&producers)
                 .export_with_verified_owner_to(input, proof, surface, &mut spool)?;
             (receipt, producers.take())
@@ -229,14 +271,14 @@ pub(super) fn vault_export_answer(
             input,
             &action,
             surface,
-            auth.destination(),
+            destination.clone(),
             &mut spool,
         )?,
         (None, None, Some(owner)) => vault.export_with_authenticated_owner_listing_to(
             input,
             &owner,
             surface,
-            auth.destination(),
+            destination.clone(),
             &mut spool,
         )?,
         (None, None, None) => return Err(no_owner_proof()),
@@ -244,7 +286,7 @@ pub(super) fn vault_export_answer(
     let transfer = server
         .export_transfers
         .keep(auth, spool, receipt, rows.clone())?;
-    Ok((encoded(&transfer)?, rows))
+    Ok((transfer, rows))
 }
 
 /// The transfer routes.
@@ -375,10 +417,23 @@ fn admitted(
     call: &FacadeCall<'_>,
     transfer_ref: &str,
 ) -> Result<Arc<KeptExport>, FacadeApiError> {
-    let auth = call.auth();
+    admitted_as(server, call.auth(), Some(call), transfer_ref)
+}
+
+/// [`admitted`] for `auth`'s caller: outside a room turn when `call` names
+/// the HTTP call it came in by; a verb's dispatch has judged that already
+/// (FIX 11176).
+fn admitted_as(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    call: Option<&FacadeCall<'_>>,
+    transfer_ref: &str,
+) -> Result<Arc<KeptExport>, FacadeApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
-    super::invoke::facade_outside_room_turn(call, EXPORT_VERB)?;
+    if let Some(call) = call {
+        super::invoke::facade_outside_room_turn(call, EXPORT_VERB)?;
+    }
     if !auth.is_owner_grade() {
         return Err(FacadeApiError::forbidden(
             "full-vault export requires owner authority",

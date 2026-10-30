@@ -128,6 +128,7 @@ mod principal_standing;
 mod readonly_fold;
 mod recover_many;
 mod retired_signers;
+mod revocation_notice;
 mod revoke_proof;
 mod sequence_ancestry;
 mod sequence_observation;

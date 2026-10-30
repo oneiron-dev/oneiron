@@ -10,10 +10,10 @@
 // A call that parks the run, and every call after a park, rejects with "missing_host_response_field"; the host bridge's own
 // refusals reject with a bare code too, such as "verb_input_over_budget" or "host_response_over_budget". Only an input JSON
 // cannot carry throws at the call itself ("non_finite_verb_input", "invalid_verb_input"); the call is sent on a later microtask.
-// Census: 1255 code-mode rows (1215 host rows, 40 run rows), 4400 declarations.
-// Replies: 1072 fully typed, 182 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
+// Census: 1257 code-mode rows (1217 host rows, 40 run rows), 4406 declarations.
+// Replies: 1069 fully typed, 187 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read, 1 unknown (rows whose output the table does not name, or the run's own coordination reply).
 // Per-input replies: 2 (2 fully typed, 0 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read).
-// Opaque serde_json::Value leaves: 116; unread shapes: none.
+// Opaque serde_json::Value leaves: 117; unread shapes: none.
 declare namespace Sdk {
   /** Members the `vault` root holds beside its verbs; another declaration file adds them by merging into this interface. */
   interface VaultHost {}
@@ -154,7 +154,7 @@ declare namespace Sdk {
   type ConcernMoveRequest = { card: string; move: ConcernMove; basis?: ConcernMoveBasis | null };
   type ConcernMoveOutcome = { kind: "ask_coach"; card: string; ask: AgentHealthCoachAsk } | { kind: "applied"; card: string; receipt: ConcernMoveReceipt };
   type DiagnosticsListRequest = { event_class?: string | null; actor_ref?: string | null; evidence_ref?: string | null; limit: number };
-  type ReadScope = { entity_types?: number[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
+  type ReadScope = { entity_types?: string[] | null; max_sensitivity_band: number; include_stale: boolean; min_confidence: number; min_salience: number; deny_all: boolean };
   type ScopedReadReceipt = { requested: ReadScope; actor_ceiling: ReadScope; applied: ReadScope; narrowed_axes: string[]; suppressed_count: number; replan_hint: string[] };
   type ScopedReadResult<T> = { value: T; narrowing: ScopedReadReceipt };
   type DiagnosticEventView = { diagnostic_ref: string; detector_id: string; event_class: string; signal?: string | null; actor_class: string; actor_ref?: string | null; source: string; criticality: string; expected: unknown; actual: unknown; delta: unknown; replay_content_hash: string; replay_run_ref?: string | null; replay_checkpoint_ref?: string | null; evidence_refs: string[]; untrusted_detail?: string | null; valid_from: number; valid_to?: number | null };
@@ -481,7 +481,9 @@ declare namespace Sdk {
   type FanoutLaunchRuling = "approve_once" | "approve_and_remember" | "deny";
   type FanoutResumeRequest = { launch_ref: EntityId; plan_digest: string; ruling: FanoutLaunchRuling; remembered_cap?: number | null };
   type DetailsOnDevice = { details_on_device: boolean };
-  type ActAnswer<T> = DetailsOnDevice | T;
+  type NarrowedQuestion = { key: string; message?: string | null; requested_schema?: unknown | null; on_device?: boolean };
+  type NarrowedQuestions = { outcome: string; questions_narrowed: boolean; handle: string; call_ref: string; source: string; foreign: boolean; questions: NarrowedQuestion[]; live_until_ms: number; reasons?: string[] };
+  type ActAnswer<T> = DetailsOnDevice | NarrowedQuestions | T;
   type FanoutCheckChoice = "ack" | "ack_and_remember";
   type FanoutAckRequest = { launch_ref: EntityId; plan_digest: string; answer: FanoutCheckChoice; remembered_cap?: number | null };
   type TaskReportBody = "ack" | { progress: { evidence_refs?: EntityId[]; renew_lease?: boolean } } | { blocked: { on?: TaskHandle[]; note?: string | null; ask?: TaskAskSpec | null } } | { done: { result_ref: EntityId; confession?: string | null } } | { failed: { error: string; retryable: boolean; result_ref?: EntityId | null } } | { release: { reason: string } } | { brief: QueueTaskBrief } | { edit: { expected_revision: number; title: string } };
@@ -711,6 +713,10 @@ declare namespace Sdk {
   type MemoryExport = { format: string; archive: string; digest: string; holder_requests?: HolderExportRequest[] };
   type ExportTransfer = { transfer_ref: string; format: string; bytes: number; digest: string; holder_requests?: HolderExportRequest[] };
   type ExportAnswer = MemoryExport | ExportTransfer;
+  type ExportTransferReadRequest = { transfer_ref: string; offset?: number; length?: number | null };
+  type ExportTransferPiece = { transfer_ref: string; offset: number; bytes_base64: string; length: number; total_bytes: number; digest: string; end: boolean };
+  type ExportTransferReleaseRequest = { transfer_ref: string };
+  type ExportTransferReleased = { transfer_ref: string; released: boolean };
   type ScopeAxis<T> = { kind: "bottom" } | { kind: "all" } | { kind: "some"; values: T[] };
   type ScopeId = string;
   type Sensitivity = "public" | "private" | "sensitive" | "restricted";
@@ -6012,10 +6018,16 @@ declare const vault: Sdk.VaultHost & {
     /** Why one memory appeared in the caller's session: the run that served it and its place, its board tier and the run's score breakdown; none when the session was not served it or the caller cannot read it. */
     memory(input: Sdk.ExplainMemoryRequest): Promise<Sdk.ExplainMemoryReply | null | StoredResult>;
   };
-  /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline. */
+  /** Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read. */
   export: ((input: Sdk.ExportOptions) => Promise<Sdk.ExportAnswer | StoredResult>) & {
     /** Exports rows selected under the caller credential and named channel, preserving the engine export fences and provenance withholding. */
     scoped(input: Sdk.ScopedExportRequest): Promise<Sdk.ScopedExport | StoredResult>;
+    transfer: {
+      /** Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it. */
+      read(input: Sdk.ExportTransferReadRequest): Promise<Sdk.ExportTransferPiece | StoredResult>;
+      /** Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is. */
+      release(input: Sdk.ExportTransferReleaseRequest): Promise<Sdk.ExportTransferReleased | StoredResult>;
+    };
   };
   fanout: {
     /** The owner acknowledges the width check of a fan-out that already went out, once or remembered under a cap; nothing was held, so nothing is denied. */

@@ -2384,7 +2384,7 @@
     },
     {
       "name": "vault.export",
-      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline.",
+      "description": "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read.",
       "input": "crate::memory::ExportOptions",
       "output": "crate::memory::ExportAnswer",
       "call": "crate::memory::ExportAnswer::Inline(memory.export(&input)?)",
@@ -2410,6 +2410,34 @@
           "py": "Exports the whole vault as one re-importable archive (ZIP, base64 in `archive`)."
         }
       }
+    },
+    {
+      "name": "vault.export.transfer.read",
+      "description": "Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it.",
+      "input": "crate::memory::ExportTransferReadRequest",
+      "output": "crate::memory::ExportTransferPiece",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.read\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
+    },
+    {
+      "name": "vault.export.transfer.release",
+      "description": "Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is.",
+      "input": "crate::memory::ExportTransferReleaseRequest",
+      "output": "crate::memory::ExportTransferReleased",
+      "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.release\", &input)?",
+      "host_door": true,
+      "host_door_lists": true,
+      "scope": "Read",
+      "admission": {
+        "unrestricted_record_scope": true
+      },
+      "section": false
     },
     {
       "name": "self.credential.attenuate",
@@ -13545,7 +13573,7 @@
       "description": "The owner reads one proposal settlement by receipt: its measured delta, recorded ops, amendment evidence, judgment, preference notes and unclear rows.",
       "input": "ProposalDeltaReadRequest",
       "output": "crate::task_verb::sdk::ProposalDeltaRead",
-      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, &input)?",
+      "call": "crate::task_verb::sdk::skill_attribution_read_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.read\")?, crate::claim::CallerLocality::OnDevice, &input)?",
       "host_door": true,
       "scope": "Read",
       "admission": {
