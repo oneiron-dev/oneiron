@@ -32,8 +32,8 @@ use super::super::{
     open_counted, open_world_key, recipients,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityKey, AuthorityView, EffectiveRead, WorldKeyWrapsRecord,
-    invalid_authority, own_world_key_records_in_txn,
+    AuthorityEntryHash, AuthorityKey, AuthorityView, EffectiveRead, KeyFrontier,
+    WorldKeyWrapsRecord, invalid_authority, own_world_key_records_in_txn,
 };
 use crate::error::Result;
 use crate::store::Store;
@@ -191,8 +191,9 @@ impl HolderRead {
 
     /// Whether `machine`'s wraps of one key to `missing`, for `request`, would
     /// name more rows than one record may, its first record naming `chain`:
-    /// the writer's own plan in `txn`'s snapshot (FIX 5552). Reads only:
-    /// nothing is sealed, signed or raised.
+    /// the writer's own plan in `txn`'s snapshot (FIX 5552), with the join
+    /// the writer runs first (FIX 8497, FIX 11865). Reads only: nothing is
+    /// sealed, signed or raised.
     pub(crate) fn wraps_wide(
         &self,
         vault: &Vault,
@@ -214,7 +215,27 @@ impl HolderRead {
             request,
             parents: Parents::Frontier,
         };
-        Ok(vault.plan_world_key_wraps_in_txn(txn, &input)?.is_err())
+        if vault.plan_world_key_wraps_in_txn(txn, &input)?.is_ok() {
+            return Ok(false);
+        }
+        // FIX 11865: the writer joins a wide frontier first and wraps on
+        // the fold read back (FIX 8497), so a plan too wide here is wide
+        // only where the writer still cannot proceed: where its own join
+        // predicate names no join (its room included, never recomputed
+        // here), as when the row's own non-main parents alone fill the
+        // record (FIX 11868). A row the door writes first is unwritten, so
+        // its join asks with this snapshot's head, which it descends from.
+        let row = match chain {
+            ChainHead::Row(row) => row,
+            ChainHead::Planned => match self.chain_head() {
+                ChainHead::Row(row) => row,
+                // `chain_head` names a row of this snapshot, never a
+                // planned one: no chain, the main heads alone ask.
+                ChainHead::Planned => None,
+            },
+        };
+        let join = KeyFrontier::wide_heads_in_txn(&vault.store, txn, &self.fold, self.world, row)?;
+        Ok(join.is_none())
     }
 }
 
