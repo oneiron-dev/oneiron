@@ -45,8 +45,12 @@ pub(super) enum OutcomeWriter {
 
 /// [`record_review_outcome`] in the caller's transaction, every check read in
 /// its snapshot, for a caller whose own write settles the outcome (FIX 2970).
-/// It keeps no dissent: an overruled critique's dissent opens writes of its
-/// own, which [`record_review_outcome`] runs after its commit and the
+/// A critique holds one standing outcome: a later outcome with another value,
+/// such as a later settlement with another anchor or a replaced held-out
+/// result, supersedes the one that stood (FIX 12160). Its calibration evidence
+/// is kept under the critique's own receipt, so it reads the standing outcome
+/// only. It keeps no dissent: an overruled critique's dissent opens writes of
+/// its own, which [`record_review_outcome`] runs after its commit and the
 /// measured-state sweep keeps for every other writer (FIX 12105).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn record_review_outcome_in_txn(
@@ -98,69 +102,230 @@ pub(super) fn record_review_outcome_in_txn(
         OutcomeWriter::Review => review_actor_in_txn(vault, txn, verdict_claim)?,
     };
     let outcome_value = value_of(&(source, accepted))?;
-    let outcome_key = format!("{}:{artifact_id}", verdict_claim.to_hex());
-    let mut existing = None;
-    for id in vault.claims_for_subject_in_txn(txn, &session)? {
+    let standing = standing_outcome_in_txn(vault, txn, &session, verdict_claim, artifact_id)?;
+    let (id, replaced) = match standing {
+        Some((id, body)) if body.value == outcome_value => (id, false),
+        standing => {
+            let id = EntityId::now();
+            let mut body = ClaimBody::new(
+                "review.outcome",
+                ClaimSubject::Entity(session),
+                outcome_value.clone(),
+                1.0,
+                ClaimApprovalStatus::Auto,
+                ClaimLifecycleStatus::Active,
+            )?;
+            body.source = Some(ClaimSource::Observed);
+            body.evidence = Some(Value::from(outcome_key(verdict_claim, artifact_id)));
+            body.scope = Some(Value::from(super::findings::finding_key(&artifact)));
+            body.session_tag = Some(session.to_hex());
+            write_claim(vault, txn, &id, &body, actor, at)?;
+            if let Some((old, _)) = &standing {
+                let old_start = vault
+                    .port_entity_get(txn, old)?
+                    .ok_or(Error::EntityNotFound)?
+                    .occurred
+                    .start;
+                vault.supersede_claim_in_txn_as(txn, &id, old, at.max(old_start), Some(actor))?;
+            }
+            (id, standing.is_some())
+        }
+    };
+    let outcome = StandingOutcome {
+        id,
+        anchor,
+        accepted,
+    };
+    if !record_outcome_evidence_in_txn(vault, txn, verdict_claim, &artifact, &outcome, at)?
+        && replaced
+    {
+        // A replacement the gate holds is not evidence yet, and the outcome
+        // it closed stands no more (FIX 12160).
+        crate::learning::evidence::withdraw_evidence_in_txn(
+            vault,
+            txn,
+            &artifact.calibration,
+            &calibration_receipt(verdict_claim, artifact_id),
+            at,
+        )?;
+    }
+    Ok(id)
+}
+
+/// A critique's standing outcome claim, as its calibration evidence records it.
+struct StandingOutcome {
+    id: EntityId,
+    anchor: crate::learning::Anchor,
+    accepted: bool,
+}
+
+/// The `review.outcome` key of `artifact`, a critique of the review `verdict`.
+fn outcome_key(verdict: &EntityId, artifact: &str) -> String {
+    format!("{}:{artifact}", verdict.to_hex())
+}
+
+/// The trusted, surfaceable `review.outcome` of the critique `artifact` of
+/// the review `verdict` in `session`: the one that stands, since a later
+/// outcome supersedes it (FIX 12160).
+fn standing_outcome_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    session: &EntityId,
+    verdict: &EntityId,
+    artifact: &str,
+) -> Result<Option<(EntityId, ClaimBody)>> {
+    let key = Value::from(outcome_key(verdict, artifact));
+    for id in vault.claims_for_subject_in_txn(txn, session)? {
         let Some(body) = vault.get_claim_in_txn(txn, &id)? else {
             continue;
         };
         if crate::claim::claim_surfaceable(&body)
             && trusted_claim(vault, txn, &id, &body)?
             && body.predicate == "review.outcome"
-            && candidate_evidence(&body) == Some(&Value::from(outcome_key.clone()))
+            && candidate_evidence(&body) == Some(&key)
         {
-            if body.value != outcome_value {
-                return Err(invalid_critic_config("outcome already recorded"));
-            }
-            existing = Some(id);
-            break;
+            return Ok(Some((id, body)));
         }
     }
-    let id = if let Some(id) = existing {
-        id
-    } else {
-        let id = EntityId::now();
-        let mut body = ClaimBody::new(
-            "review.outcome",
-            ClaimSubject::Entity(session),
-            outcome_value.clone(),
-            1.0,
-            ClaimApprovalStatus::Auto,
-            ClaimLifecycleStatus::Active,
-        )?;
-        body.source = Some(ClaimSource::Observed);
-        body.evidence = Some(Value::from(outcome_key.clone()));
-        body.scope = Some(Value::from(super::findings::finding_key(&artifact)));
-        body.session_tag = Some(session.to_hex());
-        write_claim(vault, txn, &id, &body, actor, at)?;
-        id
-    };
-    // A verdict still waiting for its owner's answer is not evidence.
-    if crate::gate::claim_consolidation_eligible_in_txn(
+    Ok(None)
+}
+
+/// Records `outcome` as the calibration evidence of the critique `artifact`
+/// of the review `verdict`, on its critic's cell, under the critique's own
+/// receipt, which replaces any it held. A verdict still waiting for its
+/// owner's answer is not evidence: then nothing is recorded, and it gives
+/// back false.
+fn record_outcome_evidence_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    verdict: &EntityId,
+    artifact: &CritiqueArtifact,
+    outcome: &StandingOutcome,
+    at: u64,
+) -> Result<bool> {
+    if !crate::gate::claim_consolidation_eligible_in_txn(
         &vault.store,
         txn,
-        &id,
+        &outcome.id,
         crate::gate::ConsolidationReader::CriticOutcome,
     )? {
-        let evidence_at = vault
-            .port_entity_get(txn, &id)?
-            .ok_or(Error::EntityNotFound)?
-            .occurred
-            .start;
-        crate::learning::record_evidence_in_txn(
-            vault,
-            txn,
-            &artifact.calibration,
-            &LearningEvidence::anchored(
-                calibration_receipt(verdict_claim, artifact_id),
-                evidence_at,
-                anchor,
-                Observation::Success(accepted),
-            ),
-            at,
-        )?;
+        return Ok(false);
     }
-    Ok(id)
+    let evidence_at = vault
+        .port_entity_get(txn, &outcome.id)?
+        .ok_or(Error::EntityNotFound)?
+        .occurred
+        .start;
+    crate::learning::record_evidence_in_txn(
+        vault,
+        txn,
+        &artifact.calibration,
+        &LearningEvidence::anchored(
+            calibration_receipt(verdict, &artifact.artifact_id),
+            evidence_at,
+            outcome.anchor,
+            Observation::Success(outcome.accepted),
+        ),
+        at,
+    )?;
+    Ok(true)
+}
+
+/// The standing `review.outcome` `id` when it owes its critique's
+/// calibration evidence (FIX 12159): it is eligible now, and its critic's
+/// cell holds no evidence under the critique's receipt. An outcome the write
+/// gate held when it was recorded owes it once it is released. Gives back
+/// the review's verdict, the critique and the outcome; `None` when the
+/// outcome does not stand or owes nothing.
+fn owed_outcome_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<(EntityId, CritiqueArtifact, StandingOutcome)>> {
+    let Some(body) = vault.get_claim_in_txn(txn, id)? else {
+        return Ok(None);
+    };
+    if body.predicate != "review.outcome"
+        || !crate::claim::claim_surfaceable(&body)
+        || !trusted_claim(vault, txn, id, &body)?
+    {
+        return Ok(None);
+    }
+    let Some((verdict, artifact_id)) = candidate_evidence(&body)
+        .and_then(Value::as_str)
+        .and_then(|key| key.split_once(':'))
+    else {
+        return Ok(None);
+    };
+    let verdict = EntityId::from_hex(verdict)?;
+    let artifact = persisted_artifact_in_txn(vault, txn, &verdict, artifact_id)?;
+    let receipt = calibration_receipt(&verdict, artifact_id);
+    if crate::learning::evidence::EVIDENCE
+        .get(&vault.store, txn, &(artifact.calibration.digest(), receipt))?
+        .is_some()
+        || !crate::gate::claim_consolidation_eligible_in_txn(
+            &vault.store,
+            txn,
+            id,
+            crate::gate::ConsolidationReader::CriticOutcome,
+        )?
+    {
+        return Ok(None);
+    }
+    let (source, accepted) = outcome_of(&body.value)?;
+    let outcome = StandingOutcome {
+        id: *id,
+        anchor: source.anchor()?,
+        accepted,
+    };
+    Ok(Some((verdict, artifact, outcome)))
+}
+
+/// The source and acceptance a `review.outcome` value records.
+fn outcome_of(value: &Value) -> Result<(ReliabilityOutcomeSource, bool)> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value)
+        .map_err(|_| invalid_critic_config("review outcome value"))?;
+    rmp_serde::from_slice(&bytes).map_err(|_| invalid_critic_config("review outcome value"))
+}
+
+/// Records the calibration evidence every standing critique outcome still
+/// owes (FIX 12159), each in its own write: an outcome the write gate held
+/// is finished at the measured-state sweep after its release. An outcome
+/// that does not read or record warns, and the sweep goes on.
+pub(super) fn finish_owed_outcomes(vault: &Vault, at: u64) -> Result<()> {
+    let owed = {
+        let txn = vault.store.env.read_txn()?;
+        let outcomes =
+            crate::claim::claim_ids_for_predicate_in_txn(&vault.store, &txn, "review.outcome")?;
+        let mut owed = Vec::new();
+        for id in outcomes {
+            match owed_outcome_in_txn(vault, &txn, &id) {
+                Ok(Some(_)) => owed.push(id),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "a critique's outcome did not read; its evidence waits"
+                ),
+            }
+        }
+        owed
+    };
+    for id in owed {
+        let recorded = vault.with_write_txn_grouped(|txn| {
+            let Some((verdict, artifact, outcome)) = owed_outcome_in_txn(vault, txn, &id)? else {
+                return Ok(false);
+            };
+            record_outcome_evidence_in_txn(vault, txn, &verdict, &artifact, &outcome, at)
+        });
+        if let Err(error) = recorded {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a critique's outcome evidence was not recorded; the sweep goes on"
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Whether `actor` is an active human owner of the vault.

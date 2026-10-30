@@ -100,6 +100,7 @@ pub(super) fn persist_review(
             principal: request.actor.entity_ref(),
             principal_class: Some(request.actor.actor_class() as u8),
             dissent: BTreeMap::new(),
+            dissent_claims: BTreeMap::new(),
             verdict: id.to_hex(),
             triage: triage.clone(),
             artifacts,
@@ -191,6 +192,9 @@ struct StoredReview {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     principal_class: Option<u8>,
     dissent: BTreeMap<String, ReviewDissent>,
+    /// Each critique whose dissent a caller is authoring now, with the process
+    /// run that claimed it (FIX 12161).
+    dissent_claims: BTreeMap<String, EntityId>,
     verdict: String,
     triage: CritiqueTriage,
     artifacts: Vec<CritiqueArtifact>,
@@ -456,7 +460,16 @@ pub(super) fn dissent_state(
     let stored = RESULT
         .get(&vault.store, &txn, &hash)?
         .ok_or(Error::EntityNotFound)?;
-    let state = stored
+    let state = dissent_of(&stored, artifact);
+    let class = stored
+        .principal_class
+        .and_then(crate::EdgeActorClass::try_from_u8);
+    Ok((stored.principal, class, state, stored.triage.verdict))
+}
+
+/// The dissent `stored` keeps for `artifact` so far.
+fn dissent_of(stored: &StoredReview, artifact: &str) -> ReviewDissent {
+    stored
         .dissent
         .get(artifact)
         .cloned()
@@ -465,11 +478,66 @@ pub(super) fn dissent_state(
             note: None,
             question: None,
             settled_fact: None,
-        });
-    let class = stored
-        .principal_class
-        .and_then(crate::EdgeActorClass::try_from_u8);
-    Ok((stored.principal, class, state, stored.triage.verdict))
+        })
+}
+
+/// Claims the dissent of the critique `artifact` of the review `verdict` for
+/// this process run before any of it is authored (FIX 12161). The check and
+/// the claim are one write, so of two callers keeping one dissent at once,
+/// the second finds it taken and authors nothing. Gives back the dissent so
+/// far, or `None` when another caller in this run holds it; a dissent kept
+/// in full is given back unclaimed. A claim an earlier run left, stopped by
+/// a crash, is taken over.
+pub(super) fn claim_dissent(
+    vault: &Vault,
+    verdict: &EntityId,
+    artifact: &str,
+) -> Result<Option<ReviewDissent>> {
+    vault.with_write_txn_grouped(|txn| {
+        let hash = result_hash(vault, txn, verdict)?;
+        let mut stored = RESULT
+            .get(&vault.store, txn, &hash)?
+            .ok_or(Error::EntityNotFound)?;
+        let state = dissent_of(&stored, artifact);
+        if state.note.is_some() && state.question.is_some() {
+            return Ok(Some(state));
+        }
+        if stored.dissent_claims.get(artifact) == Some(&this_run()) {
+            return Ok(None);
+        }
+        stored
+            .dissent_claims
+            .insert(artifact.to_owned(), this_run());
+        RESULT.put(vault, txn, &hash, &stored)?;
+        Ok(Some(state))
+    })
+}
+
+/// Drops this run's claim on the dissent of `artifact` once its authoring
+/// ends, kept or not.
+pub(super) fn release_dissent_claim(
+    vault: &Vault,
+    verdict: &EntityId,
+    artifact: &str,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        let hash = result_hash(vault, txn, verdict)?;
+        let mut stored = RESULT
+            .get(&vault.store, txn, &hash)?
+            .ok_or(Error::EntityNotFound)?;
+        if stored.dissent_claims.get(artifact) == Some(&this_run()) {
+            stored.dissent_claims.remove(artifact);
+            RESULT.put(vault, txn, &hash, &stored)?;
+        }
+        Ok(())
+    })
+}
+
+/// This process run, the holder a dissent claim names: a claim that names
+/// another run was left by a run that stopped.
+fn this_run() -> EntityId {
+    static RUN: std::sync::OnceLock<EntityId> = std::sync::OnceLock::new();
+    *RUN.get_or_init(EntityId::now)
 }
 
 pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDissent) -> Result<()> {
@@ -487,7 +555,8 @@ pub(super) fn save_dissent(vault: &Vault, verdict: &EntityId, state: &ReviewDiss
 
 /// The actor that wrote `verdict`'s review: its principal, as the class it
 /// authenticated as. It writes the outcome an anchored settlement no owner
-/// decided gives a critique of that review (FIX 12106).
+/// decided gives a critique of that review (FIX 12106). The review keeps no
+/// run attempt or authority frontier of that actor (FIX 12188).
 pub(super) fn review_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -530,8 +599,8 @@ pub(super) fn reviews_with_dissent(vault: &Vault) -> Result<Vec<ReviewResult>> {
 }
 
 /// Each stored review with its in-scope critiques that carry a prediction
-/// but keep no standing question yet: the dissent an overruling outcome may
-/// still owe (FIX 12105).
+/// but keep no standing question yet: the dissent an overruling triage or
+/// outcome may still owe (FIX 12105, 12161).
 pub(super) fn reviews_with_unkept_dissent(
     vault: &Vault,
 ) -> Result<Vec<(ReviewResult, Vec<String>)>> {
