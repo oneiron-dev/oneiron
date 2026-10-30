@@ -55,6 +55,7 @@ use crate::server::SyncServer;
 
 mod admission;
 mod constants;
+mod email_evidence;
 mod execute;
 mod free_text;
 mod front;

@@ -107,9 +107,21 @@ async fn execute(
     // An authenticated caller past a window waits for it and is admitted
     // again (`turn::Turn`), so the clock and the facts are read each time.
     let mut turn = turn::Turn::new(server, &transport);
+    // A confirm's email domain is looked up once per request, not per turn.
+    let mut email_domain = None;
     let (now, disposition) = loop {
         let now = now_secs()?;
-        let facts = admission_facts(server, page_ref, &request, &transport, now)?;
+        let mut facts = admission_facts(server, page_ref, &request, &transport, now)?;
+        if let BookingOperationRequest::Book(BookingBookInput::Confirm(input)) = &request {
+            let evidence = match email_domain {
+                Some(evidence) => evidence,
+                None => *email_domain.insert(
+                    email_evidence::email_domain_evidence(server, &facts, &input.booker_email)
+                        .await?,
+                ),
+            };
+            evidence.apply(&mut facts);
+        }
         let disposition = match &request {
             BookingOperationRequest::Availability(_) => {
                 enforce_slot_list(State(Arc::clone(server)), facts, cache.is_some()).await?
@@ -189,7 +201,8 @@ async fn execute(
                 .await
                 .map(|response| (response, None))
         }
-        BookingOperationRequest::Book(BookingBookInput::Confirm(input)) => {
+        BookingOperationRequest::Book(BookingBookInput::Confirm(mut input)) => {
+            admission::strip_form_honeypot(&transport, &mut input.intake);
             execute_confirm(server, page_ref, input, now, public_authority)
                 .await
                 .map(|response| (response, None))
