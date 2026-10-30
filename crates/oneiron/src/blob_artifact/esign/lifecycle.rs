@@ -271,6 +271,33 @@ pub(super) fn reminder_due(
 ) -> Result<Option<u32>> {
     state_in(vault, txn, document)?.next_reminder(recipient, now)
 }
+/// `body` under `rules`, as [`Vault::create_esign_document_with_lifecycle`]
+/// drafts it: a zero document or recipient expiry set from its window
+/// `now`, and the rules kept on the draft.
+pub(super) fn with_lifecycle(
+    body: &EsignDocument,
+    now: u64,
+    rules: &EsignLifecycleRules,
+) -> Result<EsignDocument> {
+    rules.validate()?;
+    let mut body = body.clone();
+    let expires = if body.expires_at == 0 || body.recipients.iter().any(|r| r.expires_at == 0) {
+        now.checked_add(rules.expiry_after_seconds)
+            .ok_or_else(|| invalid("expiry overflow"))?
+    } else {
+        0
+    };
+    if body.expires_at == 0 {
+        body.expires_at = expires;
+    }
+    for recipient in &mut body.recipients {
+        if recipient.expires_at == 0 {
+            recipient.expires_at = body.expires_at.min(expires);
+        }
+    }
+    body.lifecycle = Some(rules.clone());
+    Ok(body)
+}
 impl Vault {
     /// Create a draft using pack data. A zero expiry means materialize the
     /// supplied window NOW, separately for the document and each recipient.
@@ -282,23 +309,7 @@ impl Vault {
         now: u64,
         rules: &EsignLifecycleRules,
     ) -> Result<()> {
-        rules.validate()?;
-        let mut body = body.clone();
-        let expires = if body.expires_at == 0 || body.recipients.iter().any(|r| r.expires_at == 0) {
-            now.checked_add(rules.expiry_after_seconds)
-                .ok_or_else(|| invalid("expiry overflow"))?
-        } else {
-            0
-        };
-        if body.expires_at == 0 {
-            body.expires_at = expires;
-        }
-        for recipient in &mut body.recipients {
-            if recipient.expires_at == 0 {
-                recipient.expires_at = body.expires_at.min(expires);
-            }
-        }
-        body.lifecycle = Some(rules.clone());
+        let body = with_lifecycle(body, now, rules)?;
         self.create_esign_document(document, &body, actor, now)
     }
     /// Sweep is caller-scheduled. Each expiry claim and its edge notification
