@@ -13,6 +13,8 @@
 //! paused, never drops it.
 
 use super::Pipe;
+use super::requests::PausedResponse;
+use crate::SpooledResponse;
 use base64::Engine as _;
 use oneiron_container::{EgressRelay, HostNetFloor, HostNetPermit, saturated_floor};
 use serde_json::{Value, json};
@@ -135,7 +137,7 @@ impl Pipe {
         let answered = self.fetch_paused(&relay, &session, &event, asked);
         drop(asked_room);
         match answered {
-            Some(response) => {
+            Some(PausedResponse::Whole(response)) => {
                 let encoded = response.body.len().div_ceil(3).saturating_mul(4);
                 let Some(_answer_room) = held_bytes(
                     relay.host_net_floor(),
@@ -158,8 +160,60 @@ impl Pipe {
                     Instant::now() + Duration::from_secs(30),
                 );
             }
+            Some(PausedResponse::Spooled(response)) => {
+                self.fulfill_spooled(&relay, &session, &id, response);
+            }
             None => self.fail_paused(&session, &id, "BlockedByClient"),
         }
+    }
+
+    /// Fulfills one opted-in handler's response without assembling its
+    /// decoded body in memory again. The encoded body remains the single
+    /// string CDP's `Fetch.fulfillRequest` requires.
+    fn fulfill_spooled(
+        &self,
+        relay: &Arc<dyn EgressRelay>,
+        session: &str,
+        id: &str,
+        response: SpooledResponse,
+    ) {
+        let len = usize::try_from(response.body.len()).unwrap_or(usize::MAX);
+        let encoded = len.div_ceil(3).saturating_mul(4);
+        let Some(_answer_room) = held_bytes(relay.host_net_floor(), len.saturating_add(encoded))
+        else {
+            self.fail_paused(session, id, "Failed");
+            return;
+        };
+        let SpooledResponse {
+            status,
+            headers,
+            mut body,
+        } = response;
+        let mut encoder = base64::write::EncoderWriter::new(
+            Vec::new(),
+            &base64::engine::general_purpose::STANDARD,
+        );
+        let encoded = std::io::copy(&mut body, &mut encoder).and_then(|_| encoder.finish());
+        let Ok(encoded) = encoded else {
+            self.fail_paused(session, id, "Failed");
+            return;
+        };
+        let Ok(body) = String::from_utf8(encoded) else {
+            self.fail_paused(session, id, "Failed");
+            return;
+        };
+        let headers: Vec<_> = headers
+            .into_iter()
+            .map(|(name, value)| json!({"name": name, "value": value}))
+            .collect();
+        let _ = self.call(
+            Some(session),
+            "Fetch.fulfillRequest",
+            json!({"requestId": id,
+            "responseCode": status, "responseHeaders": headers,
+            "body": body}),
+            Instant::now() + Duration::from_secs(30),
+        );
     }
 
     /// A paused request's body: its entries decoded, its inline data, or
