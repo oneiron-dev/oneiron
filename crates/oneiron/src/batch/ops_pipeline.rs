@@ -391,6 +391,7 @@ pub(crate) fn apply_ops_session(
                 vectors.insert(*id);
                 id
             }
+            BatchOp::Delete { id } => id,
             _ => continue,
         };
         if !rows.insert(*id) {
@@ -571,9 +572,15 @@ pub(crate) fn apply_ops_session(
                     provenance.as_ref(),
                 )?;
             }
+            // FIX 10763: a bound raw handle's delete of a row only the room
+            // staged. Its own row is its scope's turn, so no promote or save
+            // replays it.
+            BatchOp::Delete { id } => {
+                super::session_delete::stage_session_delete(view, wtxn, id)?;
+            }
             _ => {
                 return Err(Error::InvariantViolation(
-                    "session witness stages only put, edge, text, vector, and media vector ops",
+                    "session witness stages only put, edge, text, vector, media vector and room-row delete ops",
                 ));
             }
         }

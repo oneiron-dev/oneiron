@@ -29,6 +29,10 @@ pub(crate) async fn vault_companions_access_requests_answer(
     .await
 }
 
+/// `vault.personas.preview`: the compiled card, beside the rows it carries
+/// (FIX 6080): its subject, each row's person, the claims and relationship
+/// records its rows cite and the claims a relationship row's label reads,
+/// as the compile listed them. A refusal lists none.
 pub(crate) async fn vault_personas_preview(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -36,18 +40,17 @@ pub(crate) async fn vault_personas_preview(
 ) -> MaybeListed<PersonaSnapshotPreview> {
     const VERB: &str = "vault.personas.preview";
     let destination = auth.destination();
-    as_person_naming(
+    let (answer, rows) = as_person_naming(
         server,
         VERB,
         owner_proof(auth, server, VERB),
         move |server, owner| {
-            sdk::preview_persona_snapshot_as(server.vault(), &owner, input, destination)
+            sdk::preview_persona_snapshot_listing_as(server.vault(), &owner, input, destination)
         },
-        // The compile reads claims as well as its subject. The owner's existing
-        // persona surface owns that projection; it is not a one-row listing.
-        |_| None,
+        |(_, rows): &(PersonaSnapshotPreview, Vec<oneiron::EntityId>)| Some(rows.clone()),
     )
-    .await
+    .await;
+    (answer.map(|(preview, _)| preview), rows)
 }
 
 pub(crate) async fn vault_personas_export(

@@ -15,6 +15,9 @@
 //!   server's install carries the owner's act under its own live profile
 //!   and cosigns it; this host's own root signs it as the predecessor. Only
 //!   a counted enrollment answers its receipt.
+//! - `POST .../enroll-this-install` enrols this server's own install's key,
+//!   made in its keystore on first use, by the same act, and the server then
+//!   holds it as a checkpoint root signer (FIX 4921).
 //!
 //! The wire form is CALLS "FIX 4920 enrollment HTTP representation": a
 //! machine as 32 hex, a key as 64 hex, a proof and a challenge as hex. The
@@ -24,7 +27,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -37,17 +39,51 @@ use oneiron::error::RecordError;
 use serde::{Deserialize, Serialize};
 
 use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/owner-signing-keys", get(list))
-        .route("/owner-signing-keys/challenge", post(challenge))
-        .route("/owner-signing-keys/enroll", post(enroll))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/owner-signing-keys",
+                summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live and whether a checkpoint policy may name it now. Empty before any enrollment.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/challenge",
+                summary: "The bytes a device's new owner key signs to enrol (`machine`, 32 hex; `public_key`, 64 hex): the vault, the machine, the key and the owner this request proves. Answers `challenge` as hex.",
+                row: None,
+            },
+            post(challenge),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/enroll",
+                summary: "The owner enrols a device's own Ed25519 owner signing key (`machine`, 32 hex; `public_key`, 64 hex; `proof`, 128 hex: the key's signature over its challenge). This install carries and cosigns the act, this host's root signs it as the predecessor; answers the receipt only once the fold counted it.",
+                row: None,
+            },
+            post(enroll),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/owner-signing-keys/enroll-this-install",
+                summary: "The owner enrols this install's own Ed25519 owner signing key, made in its keystore on first use (FIX 4921): the same act as `/enroll`, and the server then holds the key as a checkpoint root signer. A key already enrolled and live answers its receipt; one the roster revoked is replaced by a fresh key, which is enrolled.",
+                row: None,
+            },
+            post(enroll_this_install),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -281,6 +317,36 @@ async fn enroll(
         };
         let authority = ActAuthority::Owner(owner, surface);
         let receipt = enrol_as_host(&server, &authority, input)?;
+        Ok(ReceiptReply {
+            entry: revision_hex(&receipt.entry),
+            machine: receipt.machine.to_hex(),
+            public_key: revision_hex(&receipt.public_key),
+        })
+    })
+    .await?;
+    Ok(Json(reply))
+}
+
+/// `POST /v1/owner/owner-signing-keys/enroll-this-install`: the owner enrols
+/// this install's own owner signing key, made in its keystore on first use,
+/// carried by this install, with this host's root as its predecessor; the
+/// server then holds it as a checkpoint root signer (FIX 4921). A key
+/// already enrolled and live answers its receipt.
+async fn enroll_this_install(
+    auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
+    State(server): State<Arc<SyncServer>>,
+) -> OwnerReply<ReceiptReply> {
+    let owner = owner(&auth, &server)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let reply = blocking(move || -> OwnerResult<ReceiptReply> {
+        let authority = ActAuthority::Owner(owner, surface);
+        let issuer = server.host_issuer().ok_or_else(no_root_signer)?;
+        let receipt = server
+            .vault()
+            .enrol_device_owner_signing_key(&authority, issuer)
+            .map_err(refusal)?;
         Ok(ReceiptReply {
             entry: revision_hex(&receipt.entry),
             machine: receipt.machine.to_hex(),

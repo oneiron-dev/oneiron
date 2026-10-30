@@ -628,20 +628,19 @@ pub enum CriticalWriteConfirmResolution {
 }
 
 /// Reconciles replicated claim input against the claim's owner-answer
-/// obligation. A replica overwrite never closes the obligation: the claim stays
-/// held, and the put shows its owner an item for the peer's revision. A live
-/// confirm binds only the earlier body, so a changed or missing body closes its
-/// row; an exact replay keeps it. Returns whether the peer's revision lands
-/// demoted: after a peer overwrote a confirm this device attached, as before
-/// obligations, until a fresh local confirm. A hold this device attached on
-/// sync, or an item it showed its owner, binds only an earlier peer body: the
-/// peer's bytes land unchanged.
+/// obligation (FIX 9603). The peer's bytes always land unchanged: a replica
+/// overwrite never closes the obligation, which holds the claim from every
+/// consolidation and effect reader ([`claim_critical_confirm_settled_in_txn`])
+/// on this device alone, and the put shows its owner an item for the peer's
+/// revision. A live confirm binds only the earlier body, so a changed or
+/// missing body closes its row, and the obligation stays open on the claim; an
+/// exact replay keeps the row.
 pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
     body_changed_or_missing: bool,
-) -> Result<bool> {
+) -> Result<()> {
     let pending = store.pending_gate_consent_in_txn(wtxn, claim_id)?;
     // Strictly parse a critical-marked row before every marker decision. This
     // keeps malformed attachments fail-closed.
@@ -650,19 +649,14 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
         .filter(|row| pending_row_holds_critical_confirm(row))
         .map(critical_write_confirm_binding)
         .transpose()?;
-    if store
-        .owner_answer_obligation_in_txn(wtxn, claim_id)?
-        .is_some_and(|obligation| obligation.demotes_peer_revisions)
-    {
-        return Ok(true);
-    }
     let (Some(_), Some(pending)) = (live_binding, pending) else {
-        return Ok(false);
+        return Ok(());
     };
     if !body_changed_or_missing {
-        return Ok(false);
+        return Ok(());
     }
-    // The put shows the item for the new revision; this close shows none.
+    // The put shows the item for the new revision; this close shows none. A
+    // removal with no owner answer records the claim's obligation.
     store.close_pending_gate_consent_as_in_txn(
         wtxn,
         claim_id,
@@ -672,11 +666,7 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
         None,
         crate::store::TrayRemoval::Silent,
     )?;
-    if critical_confirm_has_no_deadline(&pending) {
-        return Ok(false);
-    }
-    super::owner_answer::demote_peer_revisions_in_txn(store, wtxn, claim_id)?;
-    Ok(true)
+    Ok(())
 }
 
 /// Whether a claim may lend authority beyond being read: its owner-answer

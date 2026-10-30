@@ -171,6 +171,7 @@ const OWNER_ROUTES: &[Route] = &[
     ("GET", "/v1/ai/options"),
     ("POST", "/v1/ai/quota/{question}"),
     ("DELETE", "/v1/ai/video/{job}"),
+    ("GET", "/v1/ai/voices/{voice_id}"),
     ("DELETE", "/v1/ai/voices/{voice_id}/targets/{target}"),
     ("POST", "/v1/ai/anonymous-chat"),
     ("POST", "/v1/chat/completions"),

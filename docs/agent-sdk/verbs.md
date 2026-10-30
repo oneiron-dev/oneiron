@@ -90,6 +90,7 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.resident_shares.set`
 - `vault.runners.seats.quotas`
 - `vault.runners.seats.top_up`
+- `vault.runners.seats.resume`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
@@ -256,6 +257,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.optimize.preferences.set`
 - `vault.skills.optimize.tradeoff_asks`
 - `vault.skills.optimize.tradeoff_asks.pick`
+- `vault.skills.optimize.tradeoff_asks.resolve`
 - `vault.skills.governance.get`
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
@@ -575,6 +577,7 @@ both bindings and their export-census tests in one change.
 - `vault.settings.inference_defaults`
 - `vault.settings.inference_defaults.replace`
 - `vault.lenses.propose`
+- `vault.lenses.propose_from_pack`
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
@@ -1070,6 +1073,7 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
+- `vault.consolidation.candidate_decisions`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
 - `vault.consolidation.frontier`

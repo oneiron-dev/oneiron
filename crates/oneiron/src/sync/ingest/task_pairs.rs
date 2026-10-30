@@ -35,14 +35,16 @@ pub(super) struct StagedPut {
 }
 
 /// The replicated put that ends a row's ladder: applied at once, or held for
-/// the batch of the component a TASK row is staged in. An AUTHORITY_LOG row is
-/// judged beside the window's other authority rows, as its ingest door judged
-/// it (FIX 11764).
+/// the batch of the component a TASK row is staged in. `blob` is the row as
+/// its window holds it; `data` is the body the put lands. An AUTHORITY_LOG
+/// row is judged beside the window's other authority rows, as its ingest
+/// door judged it (FIX 11764).
 pub(super) fn put_or_stage(
     ctx: &IngestCtx<'_>,
     wtxn: &mut heed::RwTxn<'_>,
     id: EntityId,
     header: &EntityMetadataHeader,
+    blob: &[u8],
     data: &[u8],
 ) -> Result<()> {
     let occurred = TimeRange {
@@ -60,6 +62,10 @@ pub(super) fn put_or_stage(
         });
         return Ok(());
     }
+    // FIX 9600: a MESSAGE row an own machine's proven connection sent takes
+    // its own-device lane to the put, and the batch threads it to the witness
+    // check, which reads it for this row and these bytes only.
+    let own_device = super::own_device::lane_in_txn(ctx, wtxn, &id, blob, data)?;
     let put = ctx.vault.batch_in().put_replicated(
         &id,
         header.entity_type,
@@ -68,8 +74,10 @@ pub(super) fn put_or_stage(
         data,
     );
     match &ctx.authority_beside {
-        Some(authority) => put.apply_with_authority_beside(wtxn, &|| authority.rows()),
-        None => put.apply(wtxn),
+        Some(authority) => {
+            put.apply_ingested(wtxn, Some(&|| authority.rows()), own_device.as_ref())
+        }
+        None => put.apply_ingested(wtxn, None, own_device.as_ref()),
     }
 }
 

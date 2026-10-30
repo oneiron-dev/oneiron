@@ -471,6 +471,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.runners.seats.resume",
+                crate::code_run::vault_read::request_schema::<
+                    crate::dispatch_byoa::RunnerWorkResumeRequest,
+                >(),
+            ),
+            (
                 "vault.fanout.resume",
                 crate::code_run::vault_read::request_schema::<
                     crate::task_verb::sdk::FanoutResumeRequest,
@@ -1289,6 +1295,11 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.skills.optimize.tradeoff_asks.pick",
                 crate::code_run::vault_read::request_schema::<SkillOptimizeTradeoffPickRequest>(),
+            ),
+            (
+                "vault.skills.optimize.tradeoff_asks.resolve",
+                crate::code_run::vault_read::request_schema::<SkillOptimizeTradeoffResolveRequest>(
+                ),
             ),
             (
                 "vault.skills.governance.get",
@@ -3075,6 +3086,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
             (
                 "vault.lenses.propose",
                 crate::code_run::vault_read::request_schema::<crate::lens::LensProposeRequest>(),
+            ),
+            (
+                "vault.lenses.propose_from_pack",
+                crate::code_run::vault_read::request_schema::<
+                    crate::skill_hub::pack_catalog::PackLensProposeRequest,
+                >(),
             ),
             (
                 "vault.lenses.activate",
@@ -5965,6 +5982,12 @@ pub fn input_schema(verb: &str) -> Option<&'static serde_json::Value> {
                 >(),
             ),
             (
+                "vault.consolidation.candidate_decisions",
+                crate::code_run::vault_read::request_schema::<
+                    crate::memory::DreamerCandidateDecisionsRequest,
+                >(),
+            ),
+            (
                 "vault.consolidation.promote",
                 crate::code_run::vault_read::request_schema::<
                     crate::memory::consolidation::ConsolidationPromoteRequest,
@@ -7010,6 +7033,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.budgets.resident_shares.set",
     "vault.runners.seats.quotas",
     "vault.runners.seats.top_up",
+    "vault.runners.seats.resume",
     "vault.commit_message",
     "vault.begin_message_stream",
     "vault.append_to_stream",
@@ -7142,6 +7166,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.skills.optimize.preferences.set",
     "vault.skills.optimize.tradeoff_asks",
     "vault.skills.optimize.tradeoff_asks.pick",
+    "vault.skills.optimize.tradeoff_asks.resolve",
     "vault.skills.governance.get",
     "vault.skills.governance.set",
     "vault.packs.hooks.bind",
@@ -7678,6 +7703,7 @@ pub const OPENAPI_ROWS: &[&str] = &[
     "vault.consolidation.home.get",
     "vault.consolidation.home.pick",
     "vault.consolidation.lineage",
+    "vault.consolidation.candidate_decisions",
     "vault.consolidation.promote",
     "vault.consolidation.pin",
     "vault.consolidation.frontier",
@@ -7960,6 +7986,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         >(),
         "vault.runners.seats.top_up" => crate::code_run::vault_read::request_schema::<
             crate::dispatch_byoa::RunnerSeatTopUpReceipt,
+        >(),
+        "vault.runners.seats.resume" => crate::code_run::vault_read::request_schema::<
+            crate::dispatch_byoa::RunnerWorkResumeView,
         >(),
         "vault.commit_message" => {
             crate::code_run::vault_read::request_schema::<crate::memory::WitnessReceipt>()
@@ -8349,6 +8378,11 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
             Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>,
         >(),
         "vault.skills.optimize.tradeoff_asks.pick" => {
+            crate::code_run::vault_read::request_schema::<
+                crate::task_verb::sdk::SkillOptimizeResultView,
+            >()
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
             crate::code_run::vault_read::request_schema::<
                 crate::task_verb::sdk::SkillOptimizeResultView,
             >()
@@ -9987,6 +10021,9 @@ pub fn output_schema(verb: &str) -> Option<serde_json::Value> {
         "vault.consolidation.lineage" => crate::code_run::vault_read::request_schema::<
             Option<crate::dreamer_runner::ConsolidationLineageView>,
         >(),
+        "vault.consolidation.candidate_decisions" => crate::code_run::vault_read::request_schema::<
+            Vec<crate::memory::DreamerDecidedCandidateView>,
+        >(),
         "vault.consolidation.promote" => crate::code_run::vault_read::request_schema::<
             crate::memory::consolidation::ConsolidationPromotion,
         >(),
@@ -11060,6 +11097,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.runners.seats.top_up" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.runners.seats.resume" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -12234,6 +12278,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -14395,6 +14446,13 @@ pub fn mcp_arguments_schema_from_input(
             &["spec"]
         }
         "vault.lenses.propose" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
+        "vault.lenses.propose_from_pack" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
             }
@@ -17884,6 +17942,13 @@ pub fn mcp_arguments_schema_from_input(
             properties.insert("spec".to_owned(), schema.pointer("")?.clone());
             &["spec"]
         }
+        "vault.consolidation.candidate_decisions" => {
+            if schema == &serde_json::Value::Bool(false) {
+                return None;
+            }
+            properties.insert("spec".to_owned(), schema.pointer("")?.clone());
+            &["spec"]
+        }
         "vault.consolidation.promote" => {
             if schema == &serde_json::Value::Bool(false) {
                 return None;
@@ -19198,6 +19263,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.runners.seats.top_up" => {
             let _input: crate::dispatch_byoa::RunnerSeatCreditTopUpRequest = decode(value.clone())?;
         }
+        "vault.runners.seats.resume" => {
+            let _input: crate::dispatch_byoa::RunnerWorkResumeRequest = decode(value.clone())?;
+        }
         "vault.fanout.resume" => {
             let _input: crate::task_verb::sdk::FanoutResumeRequest = decode(value.clone())?;
         }
@@ -19740,6 +19808,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
             let _input: SkillOptimizeTradeoffPickRequest = decode(value.clone())?;
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
+            let _input: SkillOptimizeTradeoffResolveRequest = decode(value.clone())?;
         }
         "vault.skills.governance.get" => {
             let _input: HubSkillRequest = decode(value.clone())?;
@@ -20771,6 +20842,10 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         }
         "vault.lenses.propose" => {
             let _input: crate::lens::LensProposeRequest = decode(value.clone())?;
+        }
+        "vault.lenses.propose_from_pack" => {
+            let _input: crate::skill_hub::pack_catalog::PackLensProposeRequest =
+                decode(value.clone())?;
         }
         "vault.lenses.activate" => {
             let _input: crate::lens::LensActivateRequest = decode(value.clone())?;
@@ -22495,6 +22570,9 @@ pub fn validate_input(verb: &str, value: &serde_json::Value) -> MemoryResult<()>
         "vault.consolidation.lineage" => {
             let _input: crate::dreamer_runner::ConsolidationLineageRequest = decode(value.clone())?;
         }
+        "vault.consolidation.candidate_decisions" => {
+            let _input: crate::memory::DreamerCandidateDecisionsRequest = decode(value.clone())?;
+        }
         "vault.consolidation.promote" => {
             let _input: crate::memory::consolidation::ConsolidationPromoteRequest =
                 decode(value.clone())?;
@@ -23277,6 +23355,7 @@ pub fn invoke(
         }
         "vault.runners.seats.quotas" => encode(vault_runners_seats_quotas(memory, decode(value)?)?),
         "vault.runners.seats.top_up" => encode(vault_runners_seats_top_up(memory, decode(value)?)?),
+        "vault.runners.seats.resume" => encode(vault_runners_seats_resume(memory, decode(value)?)?),
         "vault.fanout.resume" => encode(vault_fanout_resume(memory, decode(value)?)?),
         "vault.fanout.resume_as" => encode(vault_fanout_resume_as(memory, decode(value)?)?),
         "vault.fanout.ack" => encode(vault_fanout_ack(memory, decode(value)?)?),
@@ -23569,6 +23648,9 @@ pub fn invoke(
         }
         "vault.skills.optimize.tradeoff_asks.pick" => encode(
             vault_skills_optimize_tradeoff_asks_pick(memory, decode(value)?)?,
+        ),
+        "vault.skills.optimize.tradeoff_asks.resolve" => encode(
+            vault_skills_optimize_tradeoff_asks_resolve(memory, decode(value)?)?,
         ),
         "vault.skills.governance.get" => {
             encode(vault_skills_governance_get(memory, decode(value)?)?)
@@ -24266,6 +24348,9 @@ pub fn invoke(
             vault_settings_inference_defaults_replace(memory, decode(value)?)?,
         ),
         "vault.lenses.propose" => encode(vault_lenses_propose(memory, decode(value)?)?),
+        "vault.lenses.propose_from_pack" => {
+            encode(vault_lenses_propose_from_pack(memory, decode(value)?)?)
+        }
         "vault.lenses.activate" => encode(vault_lenses_activate(memory, decode(value)?)?),
         "vault.lenses.deactivate" => encode(vault_lenses_deactivate(memory, decode(value)?)?),
         "vault.lenses.list" => encode(vault_lenses_list(memory, decode(value)?)?),
@@ -25120,6 +25205,9 @@ pub fn invoke(
         "vault.consolidation.lineage" => {
             encode(vault_consolidation_lineage(memory, decode(value)?)?)
         }
+        "vault.consolidation.candidate_decisions" => encode(
+            vault_consolidation_candidate_decisions(memory, decode(value)?)?,
+        ),
         "vault.consolidation.promote" => {
             encode(vault_consolidation_promote(memory, decode(value)?)?)
         }
@@ -26410,6 +26498,15 @@ pub fn vault_runners_seats_top_up(
 ) -> MemoryResult<crate::dispatch_byoa::RunnerSeatTopUpReceipt> {
     memory.vault().top_up_runner_seat_as_owner(
         &memory.embedded_owner("vault.runners.seats.top_up")?,
+        &input,
+    )
+}
+pub fn vault_runners_seats_resume(
+    memory: &Memory<'_>,
+    input: crate::dispatch_byoa::RunnerWorkResumeRequest,
+) -> MemoryResult<crate::dispatch_byoa::RunnerWorkResumeView> {
+    memory.vault().resume_runner_work_as_owner(
+        &memory.embedded_owner("vault.runners.seats.resume")?,
         &input,
     )
 }
@@ -27793,18 +27890,25 @@ pub fn vault_skills_optimize_tradeoff_asks(
     memory: &Memory<'_>,
     _input: EmptyRequest,
 ) -> MemoryResult<Vec<crate::task_verb::sdk::SkillOptimizeTradeoffAskView>> {
-    crate::task_verb::sdk::skill_optimize_tradeoff_asks_as_owner(
-        memory.vault(),
-        &memory.embedded_owner("vault.skills.optimize.tradeoff_asks")?,
-    )
+    crate::task_verb::sdk::skill_optimize_tradeoff_asks_for(memory.vault(), &memory.actor())
 }
 pub fn vault_skills_optimize_tradeoff_asks_pick(
     memory: &Memory<'_>,
     input: SkillOptimizeTradeoffPickRequest,
 ) -> MemoryResult<crate::task_verb::sdk::SkillOptimizeResultView> {
-    crate::task_verb::sdk::skill_optimize_tradeoff_pick_as_owner(
+    crate::task_verb::sdk::skill_optimize_tradeoff_pick_by(
         memory.vault(),
-        &memory.embedded_owner("vault.skills.optimize.tradeoff_asks.pick")?,
+        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
+        &input,
+    )
+}
+pub fn vault_skills_optimize_tradeoff_asks_resolve(
+    memory: &Memory<'_>,
+    input: SkillOptimizeTradeoffResolveRequest,
+) -> MemoryResult<crate::task_verb::sdk::SkillOptimizeResultView> {
+    crate::task_verb::sdk::skill_optimize_tradeoff_resolve_as_owner(
+        memory.vault(),
+        &memory.embedded_owner("vault.skills.optimize.tradeoff_asks.resolve")?,
         &input,
     )
 }
@@ -30491,6 +30595,12 @@ pub fn vault_lenses_propose(
     input: crate::lens::LensProposeRequest,
 ) -> MemoryResult<crate::receipt::LensProposalReceipt> {
     memory.lenses_propose(input)
+}
+pub fn vault_lenses_propose_from_pack(
+    memory: &Memory<'_>,
+    input: crate::skill_hub::pack_catalog::PackLensProposeRequest,
+) -> MemoryResult<crate::receipt::LensProposalReceipt> {
+    memory.lenses_propose_from_pack(input)
 }
 pub fn vault_lenses_activate(
     memory: &Memory<'_>,
@@ -34623,6 +34733,16 @@ pub fn vault_consolidation_lineage(
     crate::dreamer_runner::consolidation_lineage_as(
         memory.vault(),
         &memory.embedded_owner("vault.consolidation.lineage")?,
+        input,
+    )
+}
+pub fn vault_consolidation_candidate_decisions(
+    memory: &Memory<'_>,
+    input: crate::memory::DreamerCandidateDecisionsRequest,
+) -> MemoryResult<Vec<crate::memory::DreamerDecidedCandidateView>> {
+    crate::memory::read_dreamer_candidate_decisions_as(
+        memory.vault(),
+        &memory.embedded_owner("vault.consolidation.candidate_decisions")?,
         input,
     )
 }

@@ -291,13 +291,14 @@ impl Vault {
             }
             (rebinds, carriers, fold.vault_id)
         };
-        // A value this machine cannot open yet leaves its carrier pending.
+        // A value this machine cannot open yet, its carrier key not answered
+        // here among them (FIX 7402), leaves its carrier pending.
         let opened: Vec<_> = match (carriers.is_empty(), vault_id) {
             (false, Some(vault_id)) => match self.machine_secret_outside_txn() {
                 Ok(secret) => carriers
                     .into_iter()
                     .filter_map(|held| {
-                        let value = held.open_value(&vault_id, secret.machine, &secret.secret)?;
+                        let value = self.open_custody_value(&held, &vault_id, &secret)?;
                         Some((held, value))
                     })
                     .collect(),

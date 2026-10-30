@@ -306,7 +306,7 @@ impl Memory<'_> {
                     .is_some_and(|author| author.entity_ref() == self.actor);
             if self.actor_class == EdgeActorClass::System || owns_claim {
                 super::authorship::require_claim_self_grant_in_txn(
-                    self.vault, wtxn, WriteActor::new(self.actor, self.actor_class),
+                    self.vault, wtxn, self.write_actor(),
                     id, &body, "memory.claim.retract",
                 )?;
             }
@@ -344,7 +344,7 @@ impl Memory<'_> {
                 wtxn,
                 &id,
                 now,
-                Some(WriteActor::new(self.actor, self.actor_class)),
+                Some(self.write_actor()),
             )?;
             super::booking_publication::finish_publication_write(self.vault, wtxn, id)?;
             let approval = self.vault.claim_for_restriction_in_txn(wtxn, &id)?.map_or_else(

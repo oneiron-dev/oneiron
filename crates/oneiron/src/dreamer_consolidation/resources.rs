@@ -608,19 +608,25 @@ impl<'a> BranchResources<'a> {
     /// The verified `candidates` sealed into one write for `sink`, carrying
     /// the wake pass's `deadline`, which its promotion's checker turns and
     /// consults spend (FIX 8701). The sink awaits its checker's turn rather
-    /// than hold the executor's thread in line (FIX 9110).
+    /// than hold the executor's thread in line (FIX 9110). The promotion
+    /// door tells `landing` what it landed and refused.
     pub(super) async fn accept_until(
         &self,
         scope: &Scope,
         sink: &mut dyn ConsolidationSink,
         candidates: Vec<super::evidence::VerifiedCandidate>,
         deadline: &crate::WakePassDeadline,
+        landing: &super::stage_log::LandingTally,
     ) -> Result<()> {
         let due =
             std::time::Instant::now() + std::time::Duration::from_millis(deadline.remaining_ms());
         let write = self.prepare_write_verified(scope, candidates)?;
-        sink.accept_scoped_in_line(write.with_checker_deadline(due))
-            .await
+        sink.accept_scoped_in_line(
+            write
+                .with_checker_deadline(due)
+                .with_landing(landing.clone()),
+        )
+        .await
     }
 
     #[cfg(test)]

@@ -32,16 +32,31 @@
 //! group: it holds that segment's permit until it commits the segment after
 //! the base commit.
 //!
+//! A deferred-commit write (Engine ruling 10-30 23:09) is the one caller that
+//! hears its answer before that: it answers once its rows are staged in the
+//! group's open transaction, after every check its closure makes, and does
+//! not wait for the shared commit and its data sync. Its rows keep their
+//! place in arrival order, and the group's leader commits them after the
+//! answer: a writer already leading, or, when the write would lead itself,
+//! the store's own deferred-commit leader, a thread that opens the group for
+//! it with the bounds the write read for it in a snapshot. A crash before
+//! that commit loses the rows of a write whose answer already went out; the
+//! store's drop waits for it. A reader that must see those rows waits until
+//! the commits of the writes already answered are decided
+//! ([`Store::wait_for_deferred_commits`]).
+//!
 //! This is the store's existing single writer taking many rows per commit. It
 //! is not a lock: correctness is still LMDB's one write transaction, and a
 //! writer that opens `env.write_txn()` itself waits for the group like any
 //! other writer. It is not a queue outside the store, and not a coordinator:
-//! the next waiting member leads the next group itself.
+//! the next waiting member leads the next group itself, but for a
+//! deferred-commit write, whose group the store's own leader opens.
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use heed::{RoTxn, RwTxn};
@@ -52,7 +67,7 @@ use crate::learning_setting::{
 };
 
 use super::legal_hold::RefusalBatch;
-use super::{Store, active_write_txn_depth};
+use super::{Store, StoreCore, active_write_txn_depth};
 
 /// Whose closure a write runs, which decides whether its group may go on
 /// after it.
@@ -80,6 +95,17 @@ pub(crate) enum Rows<T, E> {
     /// waits for the group's commit, and a success becomes the commit's error
     /// if it fails, because it may rest on rows an earlier member staged.
     Discard(std::result::Result<T, E>),
+}
+
+/// When a member's answer comes back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AnswerAt {
+    /// Once the shared transaction is durable: every write but a
+    /// deferred-commit one.
+    Commit,
+    /// Once its rows are staged in the open group: a deferred-commit write
+    /// (Engine ruling 10-30 23:09).
+    Stage,
 }
 
 /// This vault's group-commit counters.
@@ -126,6 +152,10 @@ pub(crate) struct GroupCommit {
     arrival: Condvar,
     /// Writes announced as on their way and not yet queued.
     announced: AtomicUsize,
+    /// Leads the group of a deferred-commit write that holds the writer.
+    deferred_leader: DeferredCommitLeader,
+    /// The deferred-commit writes answered, and how many of them settled.
+    deferred: DeferredCommits,
     #[cfg(test)]
     pub(crate) hooks: hooks::GroupCommitHooks,
 }
@@ -135,6 +165,163 @@ struct Waiting {
     /// A group is open or committing; arrivals queue behind it.
     leading: bool,
     queue: VecDeque<Arc<Ticket>>,
+}
+
+/// The store's own leader for deferred-commit writes (Engine ruling 10-30
+/// 23:09): a thread, started by the first such write that holds the writer
+/// (it found it idle, or a group handed it on), that opens a group for that
+/// write, runs the writes queued there as any leader does, commits once and
+/// passes the writer on. It holds the store's core, never a store view, and
+/// the store's drop ends it after the group it leads
+/// ([`GroupCommit::stop_deferred_commit_leader`]).
+#[derive(Default)]
+struct DeferredCommitLeader {
+    requests: Mutex<LeaderRequests>,
+    requested: Condvar,
+    thread: Mutex<Option<JoinHandle<()>>>,
+}
+
+#[derive(Default)]
+struct LeaderRequests {
+    /// The group a deferred-commit write took the writer for, with the limits
+    /// read for it. One at a time: the writer is taken again only once that
+    /// group has passed it on.
+    pending: Option<Limits>,
+    /// The store is dropping: lead what was asked for, then end.
+    stopping: bool,
+}
+
+impl DeferredCommitLeader {
+    /// Asks the leader thread to lead the group a deferred-commit write just
+    /// took the writer for, starting the thread on first use. False when it
+    /// cannot start: that write leads its group itself.
+    fn request(&self, core: &Arc<StoreCore>, limits: Limits) -> bool {
+        {
+            let mut thread = self.thread.lock().unwrap_or_else(PoisonError::into_inner);
+            if thread.as_ref().is_none_or(JoinHandle::is_finished) {
+                let core = Arc::clone(core);
+                let started = std::thread::Builder::new()
+                    .name("oneiron-deferred-commit".into())
+                    .spawn(move || core.lead_deferred_commit_groups());
+                match started {
+                    // A leader thread ends early only in a panic; a new one
+                    // takes its place.
+                    Ok(handle) => {
+                        if let Some(ended) = thread.replace(handle) {
+                            let _ = ended.join();
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            %error,
+                            "the deferred-commit leader did not start; the write leads its own group"
+                        );
+                        return false;
+                    }
+                }
+            }
+        }
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .pending = Some(limits);
+        self.requested.notify_all();
+        true
+    }
+
+    /// The next group asked for, or `None` once the store is dropping.
+    fn next_request(&self) -> Option<Limits> {
+        let mut requests = self.requests.lock().unwrap_or_else(PoisonError::into_inner);
+        loop {
+            if let Some(limits) = requests.pending.take() {
+                return Some(limits);
+            }
+            if requests.stopping {
+                return None;
+            }
+            requests = self
+                .requested
+                .wait(requests)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+
+    /// Ends the leader thread once the group it leads, if any, is committed.
+    fn stop(&self) {
+        let Some(thread) = self
+            .thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take()
+        else {
+            return;
+        };
+        self.requests
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .stopping = true;
+        self.requested.notify_all();
+        if thread.join().is_err() {
+            tracing::warn!("the deferred-commit leader ended in a panic");
+        }
+    }
+}
+
+/// How many deferred-commit writes answered before their group's commit, and
+/// how many of those the commits since settled, committed or lost. Groups
+/// commit one at a time and such a write answers only inside its group, so
+/// both count the same writes in the same order.
+#[derive(Default)]
+struct DeferredCommits {
+    counts: Mutex<DeferredCounts>,
+    settled: Condvar,
+}
+
+#[derive(Default)]
+struct DeferredCounts {
+    answered: u64,
+    settled: u64,
+}
+
+impl DeferredCommits {
+    /// Counts one write answered before its group's commit.
+    fn answer(&self) {
+        self.counts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .answered += 1;
+    }
+
+    /// The writes answered so far.
+    fn answered(&self) -> u64 {
+        self.counts
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .answered
+    }
+
+    /// Every write answered up to `answered` has its group's commit decided.
+    /// Returns how many that commit settled.
+    fn settle_to(&self, answered: u64) -> u64 {
+        let mut counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let settled = answered.saturating_sub(counts.settled);
+        if settled > 0 {
+            counts.settled = answered;
+            self.settled.notify_all();
+        }
+        settled
+    }
+
+    /// Blocks until every write answered so far is settled.
+    fn wait_settled(&self) {
+        let counts = self.counts.lock().unwrap_or_else(PoisonError::into_inner);
+        let answered = counts.answered;
+        drop(
+            self.settled
+                .wait_while(counts, |now| now.settled < answered)
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+    }
 }
 
 /// One queued logical write and its hand-offs with the leader.
@@ -300,6 +487,27 @@ impl GroupCommit {
             None => waiting.leading = false,
         }
     }
+
+    /// Puts a deferred-commit write that holds the writer back at the head of
+    /// the queue, for the store's leader to run it first.
+    fn requeue_first(&self, ticket: &Arc<Ticket>) {
+        self.lock().queue.push_front(Arc::clone(ticket));
+    }
+
+    /// Takes a deferred-commit write back out of the queue: the store's
+    /// leader did not start, and it leads its group itself.
+    fn withdraw(&self, ticket: &Arc<Ticket>) {
+        self.lock()
+            .queue
+            .retain(|queued| !Arc::ptr_eq(queued, ticket));
+    }
+
+    /// Ends the store's deferred-commit leader after the group it leads, if
+    /// any, has committed: the store's drop, so a clean close keeps every
+    /// deferred-commit write it answered (Engine ruling 10-30 23:09).
+    pub(crate) fn stop_deferred_commit_leader(&self) {
+        self.deferred_leader.stop();
+    }
 }
 
 impl Ticket {
@@ -416,6 +624,8 @@ impl Store {
     where
         E: From<Error>,
     {
+        // A keyed request's intent open here counts this write (FIX 10379).
+        let write = super::idempotency_intent::counting_commits(self, write);
         if active_write_txn_depth() > 0 {
             drop(announced);
             return self.solo_write(write);
@@ -439,8 +649,102 @@ impl Store {
         };
         match ticket.wait_for_turn() {
             Assigned::Lead => self.lead(callback, write),
-            Assigned::Run(shared) => self.join(&ticket, shared, write),
+            Assigned::Run(shared) => self.join(&ticket, shared, write, AnswerAt::Commit),
         }
+    }
+
+    /// [`Self::group_write`] whose answer does not wait for the shared commit
+    /// (Engine ruling 10-30 23:09). The write queues in arrival order as any
+    /// write does, its closure runs in the group's open transaction with
+    /// every check it makes, and once its rows are staged there its answer
+    /// comes back. The group's leader commits them after: a writer already
+    /// leading, or the store's own deferred-commit leader, which takes the
+    /// writer for it when the writer is idle or is handed on to it. A crash
+    /// before that commit loses rows whose answer already went out; the
+    /// store's drop waits for it.
+    ///
+    /// It carries the legal-hold refusals queued outside any door's writer, as
+    /// a leading write does. A write whose rows are dropped, or that holds
+    /// what settles only at the commit (hold-log rows it wrote, a session
+    /// segment it commits after the base), answers after the commit as any
+    /// write does, and so does one that leads its group itself because the
+    /// store's leader could not take it.
+    pub(crate) fn group_write_deferred_commit<T, E>(
+        &self,
+        write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+    ) -> std::result::Result<T, E>
+    where
+        E: From<Error>,
+    {
+        let write = super::idempotency_intent::counting_commits(self, write);
+        if active_write_txn_depth() > 0 {
+            return self.solo_write(write);
+        }
+        let group = &self.group_commit;
+        let ticket = Arc::new(Ticket::new(Callback::Audited));
+        let idle = {
+            let mut waiting = group.lock();
+            waiting.queue.push_back(Arc::clone(&ticket));
+            group.arrival.notify_all();
+            !std::mem::replace(&mut waiting.leading, true)
+        };
+        // Holding the writer, idle or handed on, this write asks the store's
+        // leader to take its group, once.
+        let mut asked = false;
+        let mut holds_writer = idle;
+        loop {
+            if holds_writer {
+                if !self.request_deferred_commit_leader() {
+                    group.withdraw(&ticket);
+                    return self.lead(Callback::Audited, write);
+                }
+                asked = true;
+            }
+            match ticket.wait_for_turn() {
+                Assigned::Run(shared) => {
+                    return self.join(&ticket, shared, write, AnswerAt::Stage);
+                }
+                // The store's leader handed the writer back: it could not
+                // open the group, and this write leads it itself.
+                Assigned::Lead if asked => return self.lead(Callback::Audited, write),
+                Assigned::Lead => {
+                    group.requeue_first(&ticket);
+                    holds_writer = true;
+                }
+            }
+        }
+    }
+
+    /// Asks the store's deferred-commit leader to take the group of a write
+    /// that holds the writer. The group's limits are read here, in a snapshot
+    /// taken while this write holds the writer, as its leader would read them
+    /// in the transaction it opens. False when the leader cannot take it.
+    fn request_deferred_commit_leader(&self) -> bool {
+        let limits = match self.env.read_txn() {
+            Ok(txn) => Limits::read(self, &txn),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "the deferred-commit leader's limits did not read; the write leads its own group"
+                );
+                return false;
+            }
+        };
+        self.group_commit
+            .deferred_leader
+            .request(&self.core, limits)
+    }
+
+    /// Blocks until the group commit of every deferred-commit write answered
+    /// so far is decided (Engine ruling 10-30 23:09), so a reader sees what
+    /// such a write answered once it committed: a receipt a reply named. A
+    /// thread inside a write, whose own group cannot commit while it waits,
+    /// does not wait. Returns at once when none is in flight.
+    pub(crate) fn wait_for_deferred_commits(&self) {
+        if active_write_txn_depth() > 0 {
+            return;
+        }
+        self.group_commit.deferred.wait_settled();
     }
 
     /// [`Self::group_write`] for a write whose `Ok` keeps its rows and whose
@@ -524,33 +828,10 @@ impl Store {
             }
         };
         refusals.write_in(&mut shared);
-        let mut members = Vec::new();
-        let mut kept = 1;
         // An opaque leader runs alone (no member is ever opaque).
-        let mut closes = callback == Callback::Opaque || holds_postcommit_permit();
-        while !closes && let Some(ticket) = group.next_member(1 + members.len(), &limits, opened) {
-            let (joined, closed) = ticket.run(SharedTxn::lend(&mut shared));
-            kept += usize::from(joined);
-            closes = closed;
-            members.push(ticket);
-        }
-        #[cfg(test)]
-        group.hooks.before_commit(1 + members.len());
-        #[cfg(not(test))]
-        let committed = shared.commit();
-        #[cfg(test)]
-        let committed = group.hooks.commit(shared);
-        if committed.is_ok() {
-            self.diagnostics.group_commit.record(kept as u64);
-        }
-        refusals.landed(committed.is_ok());
-        // Every member waits for this, kept rows or not: an answer read in the
-        // shared transaction may rest on rows an earlier member staged.
-        for ticket in &members {
-            ticket.set(Turn::Settled(committed.as_ref().err().map(replicate)));
-        }
-        group.hand_off();
-        committed.map_err(|err| E::from(Error::from(err)))?;
+        let closes = callback == Callback::Opaque || holds_postcommit_permit();
+        self.close_group(shared, &limits, opened, (1, 1), closes, Some(refusals))
+            .map_err(|err| E::from(Error::from(err)))?;
         answer
     }
 
@@ -559,29 +840,45 @@ impl Store {
         ticket: &Ticket,
         shared: SharedTxn,
         write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+        answer_at: AnswerAt,
     ) -> std::result::Result<T, E>
     where
         E: From<Error>,
     {
-        let (staged, refusals) = {
+        let (staged, refusals, logged) = {
             // SAFETY: the leader lent its open transaction and stays blocked in
             // `Ticket::run` until this thread reports `Ran` below. This
             // reference and the nested transactions under it all end inside
             // this block, before that report.
             let parent = unsafe { &mut *shared.0 };
-            let (staged, mut refusals) = self.stage(parent, write);
+            let (staged, refusals) = self.stage(parent, write);
+            // A deferred-commit write also carries the refusals queued
+            // outside any door's writer, as the leader it stands in for
+            // would: its group may have no leader write to carry them.
+            let mut refusals = match answer_at {
+                AnswerAt::Commit => refusals,
+                AnswerAt::Stage => refusals.with_queued(),
+            };
             // Its refusals join the group whatever its rows did.
-            if !matches!(staged, Staged::Panicked(_)) {
-                refusals.write_in(parent);
-            }
-            (staged, refusals)
+            let logged = !matches!(staged, Staged::Panicked(_)) && refusals.write_in(parent);
+            (staged, refusals, logged)
         };
         match staged {
             Staged::Kept(answer) => {
-                ticket.set(Turn::Ran {
-                    kept: true,
-                    closes: holds_postcommit_permit(),
-                });
+                let closes = holds_postcommit_permit();
+                // A deferred-commit write answers once its rows are in the
+                // group, unless it holds what settles only at the commit:
+                // hold-log rows it wrote there, or a session segment it
+                // commits after the base. It is counted before it reports, so
+                // the leader settles it with this group's commit.
+                let answers_staged = answer_at == AnswerAt::Stage && !logged && !closes;
+                if answers_staged {
+                    self.group_commit.deferred.answer();
+                }
+                ticket.set(Turn::Ran { kept: true, closes });
+                if answers_staged {
+                    return answer;
+                }
                 let lost = ticket.wait_settled();
                 refusals.landed(lost.is_none());
                 match lost {
@@ -641,6 +938,98 @@ impl Store {
             },
         };
         (staged, attempt.finish())
+    }
+}
+
+impl StoreCore {
+    /// The rest of an open group after its leader's own rows: each queued
+    /// write in turn until the group closes, then one commit, the leader's
+    /// refusals settled, every member settled and the writer passed on. `ran`
+    /// writes ran in it before the members, `kept` of them keeping rows.
+    fn close_group(
+        &self,
+        mut shared: RwTxn<'_>,
+        limits: &Limits,
+        opened: Instant,
+        (ran, mut kept): (usize, usize),
+        mut closes: bool,
+        refusals: Option<RefusalBatch<'_>>,
+    ) -> heed::Result<()> {
+        let group = &self.group_commit;
+        let mut members = Vec::new();
+        while !closes && let Some(ticket) = group.next_member(ran + members.len(), limits, opened) {
+            let (joined, closed) = ticket.run(SharedTxn::lend(&mut shared));
+            kept += usize::from(joined);
+            closes = closed;
+            members.push(ticket);
+        }
+        // Each deferred-commit write this group carries has answered by now,
+        // and none of the next group can answer before this one hands off.
+        let deferred = group.deferred.answered();
+        #[cfg(test)]
+        group.hooks.before_commit(ran + members.len());
+        #[cfg(not(test))]
+        let committed = shared.commit();
+        #[cfg(test)]
+        let committed = group.hooks.commit(shared);
+        if committed.is_ok() && kept > 0 {
+            self.diagnostics.group_commit.record(kept as u64);
+        }
+        let settled = group.deferred.settle_to(deferred);
+        // The deferred-commit writes it carried answered already: a failed
+        // commit loses their rows, said here as no answer can say it.
+        if let Err(error) = &committed
+            && settled > 0
+        {
+            tracing::warn!(
+                %error,
+                lost = settled,
+                "a group commit failed after its deferred-commit writes answered; their rows are lost"
+            );
+        }
+        if let Some(refusals) = refusals {
+            refusals.landed(committed.is_ok());
+        }
+        // Every member waits for this, kept rows or not: an answer read in the
+        // shared transaction may rest on rows an earlier member staged.
+        for ticket in &members {
+            ticket.set(Turn::Settled(committed.as_ref().err().map(replicate)));
+        }
+        group.hand_off();
+        committed
+    }
+
+    /// The deferred-commit leader thread: each group asked for, until the
+    /// store drops (Engine ruling 10-30 23:09).
+    fn lead_deferred_commit_groups(&self) {
+        while let Some(limits) = self.group_commit.deferred_leader.next_request() {
+            self.lead_deferred_commit_group(&limits);
+        }
+    }
+
+    /// Leads the group a deferred-commit write took the writer for. It has no
+    /// write of its own: the writes queued there run in arrival order, as in
+    /// any group, and it commits once. Its deferred-commit members carry the
+    /// legal-hold refusals queued outside any writer, which a leader with a
+    /// write would carry.
+    fn lead_deferred_commit_group(&self, limits: &Limits) {
+        let group = &self.group_commit;
+        let shared = match self.env.write_txn() {
+            Ok(txn) => txn,
+            Err(error) => {
+                // The first queued write takes the writer and leads itself.
+                tracing::warn!(
+                    %error,
+                    "the deferred-commit leader could not open its group; the write leads its own"
+                );
+                group.hand_off();
+                return;
+            }
+        };
+        let opened = Instant::now();
+        // A failed commit reaches each member that waits for it, and the
+        // group says what it lost of the writes that did not wait.
+        let _ = self.close_group(shared, limits, opened, (0, 0), false, None);
     }
 }
 

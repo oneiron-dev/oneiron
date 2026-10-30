@@ -24,32 +24,49 @@ impl BatchBuilder<'_> {
     /// callers must abort the transaction (drop without committing) to discard
     /// it.
     pub fn apply(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None)
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, None, None)
     }
 
-    /// [`Self::apply`] judging each replicated AUTHORITY_LOG put beside
-    /// `beside`, the other authority rows its sync window carries (FIX
-    /// 11764), so history that arrives in two or more rows together lands as
-    /// the ingest door admitted it.
+    /// [`Self::apply`] for the replicated put a sync window's ingest door
+    /// admitted, with what that door judged beside it. A replicated
+    /// AUTHORITY_LOG put is judged beside `authority_beside`, the other
+    /// authority rows the window carries (FIX 11764), so history that arrives
+    /// in two or more rows together lands as the ingest door admitted it. A
+    /// replicated MESSAGE put meets the witness check with `own_device`, the
+    /// lane the door gave its row when one of the owner's own machines sent
+    /// it, which counts only for that row and its exact bytes (FIX 9600).
     #[cfg(feature = "sync")]
-    pub(crate) fn apply_with_authority_beside(
+    pub(crate) fn apply_ingested(
         self,
         wtxn: &mut RwTxn<'_>,
-        beside: crate::authority::RowsBeside<'_>,
+        authority_beside: Option<crate::authority::RowsBeside<'_>>,
+        own_device: Option<&crate::sync::VerifiedOwnDeviceLane>,
     ) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), None, Some(beside))
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true),
+            None,
+            authority_beside,
+            own_device,
+        )
     }
 
     /// Applies queued promotion operations while recording their gate decisions
     /// in the caller's transaction.
     pub(crate) fn apply_recording_gate_decisions(self, wtxn: &mut RwTxn<'_>) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None)
+        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(true, true), None, None, None)
     }
 
     /// Local actor-bound batch: every direct record and reducer-touched parent
     /// is captured from the operation set, then gated before commit.
     pub(crate) fn apply_actor(self, wtxn: &mut RwTxn<'_>, actor: &crate::WriteActor) -> Result<()> {
-        self.apply_with_gate_mode(wtxn, ApplyOpsGateMode::new(false, true), Some(actor), None)
+        self.apply_with_gate_mode(
+            wtxn,
+            ApplyOpsGateMode::new(false, true),
+            Some(actor),
+            None,
+            None,
+        )
     }
 
     fn apply_with_gate_mode(
@@ -58,6 +75,7 @@ impl BatchBuilder<'_> {
         gate_mode: ApplyOpsGateMode,
         actor: Option<&crate::WriteActor>,
         authority_beside: Option<crate::authority::RowsBeside<'_>>,
+        own_device: Option<&VerifiedOwnDeviceLane>,
     ) -> Result<()> {
         // The commit-only checks stay behind: this terminal's puts meet the
         // same gates inside `wtxn` (see `CommitCheck`).
@@ -97,6 +115,8 @@ impl BatchBuilder<'_> {
             || super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &self.ops)?;
         let tasks = super::vad_postcommit::ops_put_tasks(&self.ops);
         let rows = super::vad_postcommit::ops_written_rows(&self.ops);
+        #[cfg(feature = "sync")]
+        let removed_edges = super::vad_postcommit::ops_removed_edges(&self.ops);
         let gate_mode = gate_mode
             .with_birth_mask(self.birth_mask)
             .with_text_births(std::mem::take(&mut self.text_births))
@@ -128,6 +148,7 @@ impl BatchBuilder<'_> {
                 gate_mode,
                 self.origin,
                 authority_beside,
+                own_device,
             )?;
         }
         crate::embed::finalize_repo_derived_index_copies_in_txn(vault, wtxn, derived)?;
@@ -143,6 +164,10 @@ impl BatchBuilder<'_> {
         }
         super::vad_postcommit::queue_task_updates(vault, wtxn, tasks);
         super::vad_postcommit::queue_committed_rows(vault, wtxn, rows);
+        // FIX 9599: each edge the batch removed leaves its window a durable
+        // marker; the write door marks the rows.
+        #[cfg(feature = "sync")]
+        vault.mark_pending_edge_removals_in_txn(wtxn, &removed_edges)?;
         Ok(())
     }
 }

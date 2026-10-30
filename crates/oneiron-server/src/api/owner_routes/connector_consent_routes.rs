@@ -7,11 +7,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::connector_key::{
     ConnectorConsentTarget, ConnectorConsentView, ConnectorToolConsent, ConnectorToolConsentRow,
     ConnectorToolGrant,
@@ -19,7 +18,7 @@ use oneiron::connector_key::{
 use oneiron::outbound_consent::DataClass;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -27,8 +26,27 @@ use crate::config::connectors::normalize_name;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/connectors/consent", get(read).post(consent))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/connectors/consent",
+                summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/consent",
+                summary: "Grants the named tool rows to one actor (a held call's, a named one, else the owner's) at the installed endpoint.",
+                row: None,
+            },
+            post(consent),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]

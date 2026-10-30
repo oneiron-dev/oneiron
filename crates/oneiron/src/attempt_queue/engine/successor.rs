@@ -103,6 +103,7 @@ impl AttemptQueue<'_> {
             successor.run_id.as_deref(),
             successor.id.as_bytes(),
         )?;
+        crate::attempt_queue::index::put_created_in_txn(self.store, txn, &successor)?;
         // The entry comes from the scope the successor copied, as a retry's
         // does: one chain, one key family.
         if let Some(dedupe_key) = successor.dedupe_key.as_deref() {

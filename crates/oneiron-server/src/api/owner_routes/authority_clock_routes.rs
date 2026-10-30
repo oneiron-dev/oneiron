@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::header::AUTHORIZATION;
@@ -22,16 +21,23 @@ use axum::response::Json;
 use axum::routing::post;
 use oneiron::authority::{AuthorityClockRepair, CapabilitySlip};
 
-use super::OwnerReply;
+use super::{OwnerReply, OwnerRoute, OwnerTable};
 use crate::auth::{AUTHORITY_CLOCK_REPAIR_PATH, BindingProof, parse_signature};
 use crate::error::{ApiError, ApiErrorDetails};
 use crate::server::SyncServer;
 
 /// Mounted under `/v1/owner`, at the one path the binding door leaves to
 /// the repair.
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    let path = AUTHORITY_CLOCK_REPAIR_PATH.trim_start_matches("/v1/owner");
-    Router::new().route(path, post(repair))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: AUTHORITY_CLOCK_REPAIR_PATH.trim_start_matches("/v1/owner"),
+            summary: "Repair a damaged authority clock floor (FIX 10106) on its own ingress: the owner's own full human slip and its holder proof headers, which the engine judges, spending the proof's nonce, in the repair's own writer. Answers `sound`, `repaired` or `unproven`; a vault that proves no clock at all answers `authority_clock_corrupt`.",
+            row: Some("vault.authority.clock.repair"),
+        },
+        post(repair),
+    )]
 }
 
 /// The bearer slip token the request carries.

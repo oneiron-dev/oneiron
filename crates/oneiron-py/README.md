@@ -99,7 +99,7 @@ credential.
 | method | returns |
 |---|---|
 | `Oneiron.open(path=None, *, dimensions=None, device_class=None)` | an embedded handle; `device_class` is the host's declaration, `"computer"` (the default) or `"phone"` |
-| `Oneiron.open_with_host_root(path, host_root_secret, *, dimensions=None, device_class=None)` | `{"memory", "host_root"}` (`HostRootOpened`): an embedded handle whose install the vault's host root (its exact `bytes`, borrowed for the call) profiled as `Unanswered`, so the owner's acts carry from it, and `host_root` `{"enrolled", "wrong_root"}`: `wrong_root` says the root is not the vault's settled one and went unused (reported, never refused). Rooted-only; `FORBIDDEN` under a managed or relay posture |
+| `Oneiron.open_with_host_root(path, host_root_secret, *, dimensions=None, device_class=None, hold_checkpoint_root_signer=None)` | `{"memory", "host_root"}` (`HostRootOpened`): an embedded handle whose install the vault's host root (its exact `bytes`, borrowed for the call) profiled as `Unanswered`, so the owner's acts carry from it, and `host_root` `{"enrolled", "wrong_root"}`: `wrong_root` says the root is not the vault's settled one and went unused (reported, never refused). With `hold_checkpoint_root_signer` the handle holds that root as its checkpoint signer, unless the secret went unused. Rooted-only; `FORBIDDEN` under a managed or relay posture |
 | `Oneiron.connect(url, key)` | a remote handle |
 | `Oneiron.pair(link)` | `{"memory", "credential", "pin", "comm"}` (`Paired`): a remote handle, the credential to store, the checkpoint pin the link named (`None` when the vault has none) for a local replica to adopt by, and the credential's comm reach |
 | `handle.as_actor(actor_key)` | a new handle bound to another actor |

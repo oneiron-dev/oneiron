@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
@@ -15,7 +14,7 @@ use axum::routing::{get, post};
 use oneiron::agent_dispatch::{AgentDispatcher, BudgetHoldState, PartialResultHold};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::api::run_tree::parse_attempt_id_param;
@@ -23,10 +22,27 @@ use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/runs/hold", get(hold))
-        .route("/runs/hold/resume", post(resume))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/runs/hold",
+                summary: "The run's hold, with whether its spend scope has spend left read again now.",
+                row: None,
+            },
+            get(hold),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/runs/hold/resume",
+                summary: "Resume one held run (`run`, 32 hex) as the owner and answer its hold. Each attempt it still parks is queued again and resumes from its checkpoint; one someone else paused or settled since is left as it is.",
+                row: None,
+            },
+            post(resume),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]

@@ -37,12 +37,7 @@ pub(super) fn apply_delete_arm(
         state.mutation_recorded_at,
     )?;
     // A pad row's key leaves custody with it (KS-5, FIX 7192).
-    crate::world_keys::erase_batch_pad_row_in_txn(
-        store,
-        wtxn,
-        &id,
-        state.mutation_recorded_at,
-    )?;
+    crate::world_keys::erase_batch_pad_row_in_txn(store, wtxn, &id, state.mutation_recorded_at)?;
     // A FEDERATION_GRANT row torn here is withdrawn: marked, and its hard
     // erasure staged for sync, since a batch delete stages none (FIX 11779).
     crate::authority::withdraw_grant_row_in_txn(store, wtxn, id)?;
@@ -58,7 +53,10 @@ pub(super) fn apply_delete_arm(
             wtxn,
             revisions,
             text_index_trusted,
-            ApplyOpsGateMode::new(state.record_gate_decisions, state.persist_gate_pending_consent),
+            ApplyOpsGateMode::new(
+                state.record_gate_decisions,
+                state.persist_gate_pending_consent,
+            ),
             origin,
         )?;
     }

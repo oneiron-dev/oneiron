@@ -172,6 +172,32 @@ pub struct ClaimSettlement {
     pub claim: crate::memory::ClaimView,
     /// When it settled (Unix seconds).
     pub settled_at: u64,
+    /// The work still owed after the settlement committed (FIX 7600); empty
+    /// when none is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<SettleWarning>,
+}
+
+/// Why a committed settlement warns (FIX 7600).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SettleWarningCode {
+    /// The approved claim's VAD consolidation failed after the commit: the
+    /// settlement stands, and the claim's VAD is pending.
+    VadPending,
+}
+
+/// A warning a committed settlement carries: a stable code, the claim it is
+/// about and one human line (FIX 7600). The settlement it rides on is
+/// durable; the warning names work still owed after it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SettleWarning {
+    /// Why it warns.
+    pub code: SettleWarningCode,
+    /// The claim it is about (32 hex).
+    pub claim_ref: String,
+    /// One human line.
+    pub detail: String,
 }
 
 /// What a review reads of one claim, in one snapshot.
@@ -476,6 +502,10 @@ impl Memory<'_> {
                         now,
                     )?
                 };
+                // The approval's commit carries its consolidation debt (FIX 11858).
+                if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
+                    self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
+                }
                 let mut record = crate::memory::authorship::decision(
                     actor,
                     CLAIM_SETTLEMENT_CONTENT_KIND,
@@ -523,10 +553,17 @@ impl Memory<'_> {
             crate::dreamer_runner::maintenance::apply_curator_after_consent(self.vault, [id], now);
         }
         // Consent is committed before the consolidator opens its own writer;
-        // a VAD failure is returned with the settlement durable.
-        if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
-            self.vault.consolidate_claim_vad_now(&id, now)?;
-        }
+        // a VAD failure warns and the settlement answers success (FIX 7600,
+        // Engine 09:24).
+        let warnings =
+            if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
+                self.vault
+                    .consolidate_settled_claim_vad(&id, now)
+                    .into_iter()
+                    .collect()
+            } else {
+                Vec::new()
+            };
         self.produced_from([id]);
         let claim_ref = id.to_hex();
         let revert = (verdict == ClaimSettlementVerdict::Landed).then(|| ClaimSettlementRevert {
@@ -559,6 +596,7 @@ impl Memory<'_> {
             revert,
             claim: self.served_claim_view(&id, &settled.body)?,
             settled_at: now,
+            warnings,
         })
     }
 

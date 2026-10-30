@@ -1,7 +1,7 @@
 //! Base-apply Put arm: validated puts with births and projections.
 
-use super::*;
 use super::validation::{birth_stamp_target, consume_preflight_decisions, validate_put_type};
+use super::*;
 use crate::error::RegistryError;
 use crate::ppr;
 use crate::temporal::TimeRange;
@@ -29,6 +29,7 @@ pub(super) fn apply_put_arm(
     origin: BaseWriteOrigin<'_>,
     text_index_trusted: bool,
     authority_beside: Option<crate::authority::RowsBeside<'_>>,
+    own_device: Option<&VerifiedOwnDeviceLane>,
 ) -> Result<()> {
     let mut data = Zeroizing::new(data);
     entity_type = validate_put_type(
@@ -112,16 +113,16 @@ pub(super) fn apply_put_arm(
         ppr::invalidate_ppr_for_edge(store, wtxn, &id, &facet)?;
         state.had_graph_mutation = true;
     }
-    let preflight_decision_id = if entity_type == crate::registry::ENTITY_TYPE_CLAIM
-        && !allow_reserved_predicate
-    {
-        state.preflight_gate_decision_ids
-            .get_mut(&id)
-            .and_then(VecDeque::pop_front)
-            .flatten()
-    } else {
-        None
-    };
+    let preflight_decision_id =
+        if entity_type == crate::registry::ENTITY_TYPE_CLAIM && !allow_reserved_predicate {
+            state
+                .preflight_gate_decision_ids
+                .get_mut(&id)
+                .and_then(VecDeque::pop_front)
+                .flatten()
+        } else {
+            None
+        };
     put_options.consent.can_resolve_pending =
         state.pending_gate_consent_at_batch_start.contains(&id);
     put_options.decision.preflight = preflight_decision_id;
@@ -163,6 +164,7 @@ pub(super) fn apply_put_arm(
             },
         },
         authority_beside,
+        own_device,
     )?;
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if rewritten {
@@ -171,8 +173,7 @@ pub(super) fn apply_put_arm(
         crate::dreamer_wake::owe_sieve_read_in_txn(store, wtxn, &id)?;
     } else if matches!(
         entity_type,
-        crate::registry::ENTITY_TYPE_ACCESS_GRANT
-            | crate::registry::ENTITY_TYPE_POLICY_MANIFEST
+        crate::registry::ENTITY_TYPE_ACCESS_GRANT | crate::registry::ENTITY_TYPE_POLICY_MANIFEST
     ) {
         // A grant, or a policy manifest's read grant, may let the
         // Dreamer read words the sieve left.
@@ -191,7 +192,10 @@ pub(super) fn apply_put_arm(
             wtxn,
             revisions,
             text_index_trusted,
-            ApplyOpsGateMode::new(state.record_gate_decisions, state.persist_gate_pending_consent),
+            ApplyOpsGateMode::new(
+                state.record_gate_decisions,
+                state.persist_gate_pending_consent,
+            ),
             origin,
         )?;
     }
@@ -213,8 +217,11 @@ pub(super) fn apply_put_arm(
                 hub_sync_imported: false,
             }],
             text_index_trusted,
-            ApplyOpsGateMode::new(state.record_gate_decisions, state.persist_gate_pending_consent)
-                .with_birth_mask(state.birth_mask),
+            ApplyOpsGateMode::new(
+                state.record_gate_decisions,
+                state.persist_gate_pending_consent,
+            )
+            .with_birth_mask(state.birth_mask),
             origin,
         )?;
     }
@@ -222,7 +229,9 @@ pub(super) fn apply_put_arm(
         let authored = materialization.is_some() && !allow_reserved_predicate;
         claim_materialization::record_committed_claim(store, wtxn, &id, authored)?;
     }
-    state.evicted_shell_sources.extend(applied.evicted_shell_sources);
+    state
+        .evicted_shell_sources
+        .extend(applied.evicted_shell_sources);
     #[cfg(feature = "sync")]
     let pending_embedding_priority = if allow_maintenance && allow_reserved_predicate {
         crate::embed::EMBED_PRIORITY_SERVER
@@ -232,7 +241,8 @@ pub(super) fn apply_put_arm(
     if let Some(token) = applied.pending_embedding_token {
         state.pending_embedding_tokens_written.insert(id, token);
         #[cfg(feature = "sync")]
-        state.pending_embedding_enqueue_priorities
+        state
+            .pending_embedding_enqueue_priorities
             .entry(id)
             .and_modify(|priority| {
                 *priority = (*priority).min(pending_embedding_priority);
@@ -249,16 +259,14 @@ pub(super) fn apply_put_arm(
         && !(allow_maintenance && allow_reserved_predicate)
         && !applied.is_lexical_query_hint_claim
     {
-        let deleted = delete_lexical_query_hint_claims_for_target(
-            store,
-            wtxn,
-            &id,
-            &HashSet::new(),
-        )?;
+        let deleted =
+            delete_lexical_query_hint_claims_for_target(store, wtxn, &id, &HashSet::new())?;
         for (deleted_id, neighbors) in &deleted.deleted {
             state.pending_embedding_tokens_written.remove(deleted_id);
             #[cfg(feature = "sync")]
-            state.pending_embedding_enqueue_priorities.remove(deleted_id);
+            state
+                .pending_embedding_enqueue_priorities
+                .remove(deleted_id);
             ppr::invalidate_ppr_for_delete(store, wtxn, deleted_id, neighbors)?;
         }
         state.had_graph_mutation |= deleted.had_graph_mutation;
@@ -291,12 +299,8 @@ pub(super) fn apply_put_arm(
             manifest_checked: &mut state.text_manifest_checked,
             trusted: text_index_trusted,
         };
-        let materialized = materialize_lexical_query_hints_for_target(
-            store,
-            wtxn,
-            &mut text_indexing,
-            &id,
-        )?;
+        let materialized =
+            materialize_lexical_query_hints_for_target(store, wtxn, &mut text_indexing, &id)?;
         state.had_graph_mutation |= materialized;
     }
     // Type-76 rows are never legal participants/actors. Their

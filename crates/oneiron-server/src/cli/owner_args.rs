@@ -213,6 +213,12 @@ pub struct RestoreArgs {
     #[arg(long, value_name = "ID", conflicts_with_all = ["activate", "rehearse", "inspect"])]
     pub pad_machine: Option<String>,
 
+    /// With `--unlock kit`, on `--open-pads` or a restore where no vault is
+    /// yet: read the custody head from the residence home at this address,
+    /// with the kit alone, in place of the folder beside the backup.
+    #[arg(long, value_name = "URL", conflicts_with_all = ["activate", "rehearse", "inspect"])]
+    pub custody_home: Option<String>,
+
     #[command(flatten)]
     pub wrap: RestoreWrapArgs,
 
@@ -422,6 +428,10 @@ pub struct ExportArgs {
     /// Write the export to this new file (owner-only); stdout when omitted.
     #[arg(long)]
     pub out: Option<PathBuf>,
+
+    /// The linked machine, 32 hex digits, that receives each unopened secret sealed (FIX 11842).
+    #[arg(long, value_name = "ID")]
+    pub secrets_recipient: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

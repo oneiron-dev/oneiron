@@ -310,8 +310,15 @@ impl Vault {
     /// the quiet interval. Each MESSAGE is born, or its continuation appended,
     /// with exactly the text its seed checkpointed, and left partial; nothing
     /// past the checkpoint is invented, and saved text is never dropped.
-    /// A policy refusal aborts open and retains the seed for explicit repair.
-    pub(crate) fn recover_message_streams(&self) -> MessageStreamResult<()> {
+    /// A refused replay (a revoked grant, an actor that no longer proves, a
+    /// policy that moved) is that stream's alone (FIX 9974): its seed stays
+    /// for explicit repair, its typed refusal is logged and returned (the open
+    /// does not keep the list yet: FIX-LIST 11933), and the open goes on for
+    /// every other stream. A storage failure fails the open.
+    pub(crate) fn recover_message_streams(
+        &self,
+    ) -> MessageStreamResult<Vec<StreamRecoveryRefusal>> {
+        let mut refused = Vec::new();
         // However many seeds survived, each is retired: none is refused for
         // the count. They are read a page at a time, so the decode holds one
         // page in memory, never the whole table.
@@ -345,7 +352,7 @@ impl Vault {
                 seeds
             };
             let Some(last) = seeds.last().map(|seed| seed.message_id) else {
-                return Ok(());
+                return Ok(refused);
             };
             for mut seed in seeds {
                 // A seed holds its text as admitted; no raw copy outlives
@@ -367,7 +374,8 @@ impl Vault {
                     _turn: None,
                 };
                 // A Retry that no longer stands is retired, landing
-                // nothing (FIX 3152); any other refusal aborts open.
+                // nothing (FIX 3152); any other refusal of the stream's own
+                // is isolated to it (FIX 9974).
                 if let Err(error) = commit_terminal(
                     self,
                     &mut state,
@@ -381,11 +389,53 @@ impl Vault {
                     None,
                 ) && !state.terminal
                 {
-                    return Err(error);
+                    if !stream_refusal(&error) {
+                        return Err(error);
+                    }
+                    let refusal = StreamRecoveryRefusal {
+                        message_id: state.seed.message_id,
+                        conversation: state.seed.conversation,
+                        actor: state.seed.actor,
+                        error,
+                    };
+                    tracing::warn!(
+                        stream_message = %refusal.message_id.to_hex(),
+                        conversation = %refusal.conversation.to_hex(),
+                        actor = %refusal.actor.to_hex(),
+                        error = %refusal.error,
+                        "a surviving stream seed's recovery was refused; its seed stays for repair"
+                    );
+                    refused.push(refusal);
                 }
             }
             after = Some(last);
         }
+    }
+}
+
+/// One surviving stream seed open-time recovery could not replay (FIX
+/// 9974): the MESSAGE it names, where and by whom it was streamed, and the
+/// refusal its write met. Its seed stays for explicit repair.
+#[derive(Debug)]
+pub(crate) struct StreamRecoveryRefusal {
+    pub(crate) message_id: EntityId,
+    pub(crate) conversation: EntityId,
+    pub(crate) actor: EntityId,
+    pub(crate) error: MessageStreamError,
+}
+
+/// Whether `error`, a seed's refused replay, is that stream's own refusal,
+/// which recovery isolates (FIX 9974). A storage failure, a corrupt index or
+/// a poisoned lock is the vault's, and fails the open as before.
+fn stream_refusal(error: &MessageStreamError) -> bool {
+    match error {
+        MessageStreamError::Poisoned => false,
+        MessageStreamError::Engine(error) => !matches!(
+            error,
+            Error::Storage(_) | Error::Io(_) | Error::MapFull | Error::CorruptedIndex(_)
+        ),
+        MessageStreamError::Memory(error) => error.code != crate::memory::MEMORY_CODE_INTERNAL,
+        _ => true,
     }
 }
 /// Seeds open-time recovery reads and retires at a time.

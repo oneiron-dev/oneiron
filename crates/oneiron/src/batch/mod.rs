@@ -23,6 +23,7 @@ mod lexical_query_hints;
 mod ops_pipeline;
 mod person_substrate;
 mod phonetic_apply;
+mod session_delete;
 pub(crate) use phonetic_apply::checkpoint;
 pub(crate) mod phonetic_codes;
 pub use self::phonetic_codes::generate_phonetic_codes;

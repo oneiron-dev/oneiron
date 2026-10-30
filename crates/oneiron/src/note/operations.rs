@@ -13,7 +13,7 @@ use crate::provenance::ActorStamp;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::HexId;
-use crate::{EdgeActorClass, EntityId, WriteActor};
+use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
 pub(super) const MAX_RECEIPT_PAYLOAD: usize = 8 * 1024 * 1024;
@@ -31,9 +31,16 @@ pub struct NoteOperation {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum NoteChange {
-    Edit { base: Vec<u8>, edits: Vec<NoteScalarEdit> },
-    Cite { pin: NotePin },
-    SetTitle { title: String },
+    Edit {
+        base: Vec<u8>,
+        edits: Vec<NoteScalarEdit>,
+    },
+    Cite {
+        pin: NotePin,
+    },
+    SetTitle {
+        title: String,
+    },
 }
 
 /// Durable provenance authored only by the admission door. Commit messages
@@ -288,11 +295,8 @@ impl Memory<'_> {
             return Err(invalid("replica NOTE edits require authenticated authority").into());
         }
         super::lifecycle::refuse_sealed_note_in_txn(&self.vault().store, txn, note)?;
-        self.vault().authorize_shared_note_write_in_txn(
-            txn,
-            note,
-            &WriteActor::new(self.actor(), self.actor_class()),
-        )?;
+        self.vault()
+            .authorize_shared_note_write_in_txn(txn, note, &self.write_actor())?;
         require_note_writer(self, txn, note)?;
         let doc = load(self.vault(), txn, note)?;
         let hash = operation.hash()?;
@@ -313,7 +317,7 @@ impl Memory<'_> {
         // A required gate policy cannot disappear between citation detection and
         // candidate admission. Even free prose resolves the policy in this txn.
         let policy = crate::gate::resolve_policy_manifest(&self.vault().store, txn)?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         // Each commit names the actor's stamp token (FIX 10930).
         let stamp = crate::provenance::actor_stamp_in_txn(self.vault(), txn, actor)?;
         let outcome = match &operation.change {
@@ -437,7 +441,7 @@ fn propose_claim(
     } else {
         ClaimSource::Generated
     };
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     let envelope = WriteEnvelope::new(
         actor,
         source,
