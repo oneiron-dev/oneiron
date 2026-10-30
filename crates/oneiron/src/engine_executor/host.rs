@@ -288,6 +288,10 @@ impl JsCodeModeHost for RecordingJsHost<'_, '_> {
         self.start_callable_check_at(seq, program);
     }
 
+    fn caller_entity(&self) -> Option<EntityId> {
+        Some(self.gated_write.actor().entity_ref())
+    }
+
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),

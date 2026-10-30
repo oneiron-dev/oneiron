@@ -202,9 +202,7 @@ pub(crate) fn discard_creation_record(vault_path: &Path) {
     let removed = (|| -> Result<()> {
         let root = custody_root(vault_path)?;
         match read_record(&root)? {
-            Some(record) if record.names_path(&root) => {
-                remove_synced(&record_beside(&root)?)
-            }
+            Some(record) if record.names_path(&root) => remove_synced(&record_beside(&root)?),
             _ => Ok(()),
         }
     })();
