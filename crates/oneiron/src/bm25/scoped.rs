@@ -101,6 +101,37 @@ where
     // the square of the vault size.
     let mut admitted = HashMap::<EntityId, bool>::new();
     let walks = crate::ports::any_pending_walk(store, rtxn)?;
+    // L15 try lazy_gate: score every posting, then admit in rank order until
+    // `limit` are admitted. A document's score never depends on admission,
+    // so the admitted top `limit` is the same list.
+    if !walks && crate::stage_timing::try_on("lazy_gate") {
+        let mut ranked = scoring::score_query_terms(
+            store,
+            rtxn,
+            config,
+            &terms,
+            options.scope.recency,
+            |_| Ok(true),
+        )?;
+        scoring::retain_best(&mut ranked, usize::MAX);
+        let mut kept = Vec::with_capacity(limit.min(ranked.len()));
+        for (id, score) in ranked {
+            if kept.len() == limit {
+                break;
+            }
+            let admit = match lexical_query_hint_scope_id(store, rtxn, &id)? {
+                None => false,
+                Some(target) => match options.category.as_mut() {
+                    Some(category) => category(&target)?,
+                    None => (options.scope.exact_posting_matches_scope)(&target)?,
+                },
+            };
+            if admit {
+                kept.push((id, score));
+            }
+        }
+        return Ok(scoring::scored_entities(kept));
+    }
     let mut best =
         scoring::score_query_terms(store, rtxn, config, &terms, options.scope.recency, |id| {
             if let Some(admit) = admitted.get(id) {
