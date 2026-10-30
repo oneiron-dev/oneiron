@@ -42794,7 +42794,7 @@
       "const": 1,
       "crate-vis": 10,
       "enum": 1,
-      "fn": 28,
+      "fn": 26,
       "re-export": 2,
       "struct": 2
      }
@@ -42809,6 +42809,16 @@
      "purpose": "Why the run admission refuses a call or an edit, and the model error each refusal reads as",
      "surface": {
       "enum": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/llm/run_admission/admission/media.rs",
+     "purpose": "Media and single-route doors for one run's admission handle",
+     "surface": {
+      "fn": 4
      }
     },
     {
@@ -42955,7 +42965,7 @@
      "surface": {
       "crate-vis": 1,
       "mod": 1,
-      "re-export": 13
+      "re-export": 14
      }
     },
     {
@@ -43087,6 +43097,23 @@
       "enum": 1,
       "fn": 5,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "WorkCancel",
+      "WorkContext",
+      "WorkPhysical"
+     ],
+     "path": "src/llm/run_admission/work_context.rs",
+     "purpose": "Host scheduling and physical-custody context for one run-admission handle",
+     "surface": {
+      "enum": 1,
+      "fn": 4,
+      "struct": 2,
+      "type": 1
      }
     },
     {
@@ -83009,7 +83036,7 @@
      "purpose": "Live work the engine holds open for its callers: message streams and live text documents (rule 5: ARCH-0044…"
     },
     "llm": {
-     "files": 160,
+     "files": 162,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -83725,7 +83752,7 @@
    },
    "over_bar": 116,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5609,
+   "source_files": 5611,
    "test_files": 902
   },
   "oneiron-android": {
@@ -92737,7 +92764,83 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "AdmissionSnapshot",
+      "AdmissionStop",
+      "DeviceAdmission",
+      "DeviceGrant",
+      "ExecutorRegistration",
+      "LoadGrant",
+      "PressureDecision",
+      "PressureState",
+      "WorkRequest",
+      "WorkTicket",
+      "WorkerQueueStatus"
+     ],
+     "path": "src/supervisor/inference_admission.rs",
+     "purpose": "Host/device admission for inference work (DESIGN-V2 R4)",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 3,
+      "fn": 20,
+      "re-export": 1,
+      "struct": 8,
+      "type": 2
+     }
+    },
+    {
      "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/inference_admission/load.rs",
+     "purpose": "Pre-launch grants and their class inheritance",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "BackgroundFairness",
+      "PressureAction",
+      "QueueOrder",
+      "ResidentFreshness",
+      "UnknownMemoryPolicy",
+      "UnmediatedPolicy"
+     ],
+     "path": "src/supervisor/inference_admission/policy.rs",
+     "purpose": "R4 admission policy constants",
+     "surface": {
+      "const": 13,
+      "enum": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/inference_admission/status.rs",
+     "purpose": "Admission status and host-observed pause state",
+     "surface": {
+      "fn": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/supervisor/inference_admission/ticket.rs",
+     "purpose": "Ticket waits and cancellation for the parent device queue",
+     "surface": {
+      "fn": 5
+     }
+    },
+    {
+     "bucket": "m",
      "kind": "src",
      "notable": [
       "DeclaredEnvelope",
@@ -92745,14 +92848,16 @@
       "DeviceRow",
       "DeviceSnapshot",
       "ResidentReport",
-      "ResidentSource"
+      "ResidentSource",
+      "TryReserveOutcome",
+      "WorkEnvelope"
      ],
      "path": "src/supervisor/inference_device.rs",
-     "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2): what each worker on it declared it would…",
+     "purpose": "One physical device's memory ledger (DESIGN-V2 §7, INFERENCE R2/R4): declarations and measured residency…",
      "surface": {
-      "enum": 1,
-      "fn": 10,
-      "struct": 5
+      "enum": 2,
+      "fn": 20,
+      "struct": 6
      }
     },
     {
@@ -92762,6 +92867,7 @@
       "InferenceWorker",
       "LaunchFailure",
       "RunningWorker",
+      "UnloadOutcome",
       "WorkerActivity",
       "WorkerExit",
       "WorkerLauncher",
@@ -92773,7 +92879,8 @@
      "purpose": "One model worker's lifecycle (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per worker, over an…",
      "surface": {
       "const": 5,
-      "fn": 16,
+      "enum": 1,
+      "fn": 21,
       "struct": 7,
       "trait": 2,
       "type": 1
@@ -92818,7 +92925,7 @@
      "path": "src/supervisor/mod.rs",
      "purpose": "The wake-pass supervisor (ONE-1683): the loop that pumps [`DreamerWakeDriver::run_wake_pass`] — the starter…",
      "surface": {
-      "re-export": 9
+      "re-export": 10
      }
     },
     {
@@ -93086,7 +93193,7 @@
      "purpose": "RT-03 (ONE-1685): the driver owns the SESSION lifecycle; apps send hints"
     },
     "supervisor": {
-     "files": 22,
+     "files": 27,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -93116,7 +93223,7 @@
    },
    "over_bar": 0,
    "purpose": "oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02)",
-   "source_files": 29,
+   "source_files": 34,
    "test_files": 10
   },
   "oneiron-ffi": {
@@ -95502,8 +95609,10 @@
       "WorkerBuildEvidence",
       "WorkerDescriptor",
       "WorkerFailure",
+      "WorkerFailureDetail",
       "WorkerKind",
       "WorkerMode",
+      "WorkerPhase",
       "WorkerReadiness",
       "WorkerStatus"
      ],
@@ -95511,9 +95620,9 @@
      "purpose": "What a model worker is and what one physical call to it reported (FIX 8314, INFERENCE R1): the worker's…",
      "surface": {
       "const": 1,
-      "enum": 6,
+      "enum": 7,
       "fn": 6,
-      "struct": 4
+      "struct": 5
      }
     },
     {
@@ -112671,7 +112780,17 @@
      "path": "src/models/native_exl3/transport.rs",
      "purpose": "One native call on the house EXL3 worker's Unix socket: its connection, peer-checked; its `generate` frame…",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/models/native_exl3/updates.rs",
+     "purpose": "In-flight native schedule updates for one device",
+     "surface": {
+      "crate-vis": 4
      }
     },
     {
@@ -112940,6 +113059,11 @@
      "bucket": "m",
      "kind": "src",
      "notable": [
+      "DeviceDeclarationStatus",
+      "DeviceExecutorStatus",
+      "DevicePressureStatus",
+      "DeviceRowStatus",
+      "DeviceStatus",
       "DiscoveredStatus",
       "HealthState",
       "LimitHold",
@@ -112958,7 +113082,8 @@
      "surface": {
       "crate-vis": 8,
       "enum": 2,
-      "struct": 10
+      "fn": 1,
+      "struct": 15
      }
     },
     {
@@ -113032,7 +113157,7 @@
      "path": "src/models/worker_host.rs",
      "purpose": "This process's model workers (FIX 8315, DESIGN-V2 §8, INFERENCE R2): one supervisor per configured worker…",
      "surface": {
-      "crate-vis": 13
+      "crate-vis": 25
      }
     },
     {
@@ -116541,7 +116666,7 @@
      "purpose": "Pinned model weights beyond the embedder: LLM targets, speculative drafters, voice checkpoints and, later…"
     },
     "models": {
-     "files": 106,
+     "files": 107,
      "impl_vault": false,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -116697,7 +116822,7 @@
    },
    "over_bar": 32,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1455,
+   "source_files": 1456,
    "test_files": 182
   },
   "oneiron-spawn": {
