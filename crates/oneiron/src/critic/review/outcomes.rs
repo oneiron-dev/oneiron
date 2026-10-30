@@ -4,6 +4,8 @@ use crate::learning::{LearningEvidence, Observation};
 use crate::ports::EntityStore;
 use crate::side_table::{self, Raw, SideTable};
 
+mod settled_actor;
+
 /// Accept/dismiss a finding with an anchored outcome. Critic agreement never trains a cell.
 pub fn record_review_outcome(
     vault: &Vault,
@@ -38,8 +40,9 @@ pub(super) enum OutcomeWriter {
     /// The owner's own act: an active human owner, checked here.
     Owner(WriteActor),
     /// An anchored settlement no owner decided, such as a held-out team
-    /// outcome (FIX 12106): the review's own principal, the actor that wrote
-    /// the review and its automatic outcomes.
+    /// outcome (FIX 12106): the review's own actor, the one that wrote the
+    /// review and its automatic outcomes, under the run attempt and
+    /// authority frontier it carried (FIX 12188).
     Review,
 }
 
@@ -49,7 +52,8 @@ pub(super) enum OutcomeWriter {
 /// such as a later settlement with another anchor or a replaced held-out
 /// result, supersedes the one that stood (FIX 12160). Its calibration evidence
 /// is kept under the critique's own receipt, so it reads the standing outcome
-/// only. It keeps no dissent: an overruled critique's dissent opens writes of
+/// only, or the fact the critique's kept dissent settled, which outranks it
+/// (FIX 12190). It keeps no dissent: an overruled critique's dissent opens writes of
 /// its own, which [`record_review_outcome`] runs after its commit and the
 /// measured-state sweep keeps for every other writer (FIX 12105).
 #[allow(clippy::too_many_arguments)]
@@ -119,7 +123,15 @@ pub(super) fn record_review_outcome_in_txn(
             body.evidence = Some(Value::from(outcome_key(verdict_claim, artifact_id)));
             body.scope = Some(Value::from(super::findings::finding_key(&artifact)));
             body.session_tag = Some(session.to_hex());
-            write_claim(vault, txn, &id, &body, actor, at)?;
+            let actor = match writer {
+                OutcomeWriter::Owner(_) => {
+                    write_claim(vault, txn, &id, &body, actor, at)?;
+                    actor
+                }
+                OutcomeWriter::Review => settled_actor::write_settled_outcome_in_txn(
+                    vault, txn, &id, &body, actor, at,
+                )?,
+            };
             if let Some((old, _)) = &standing {
                 let old_start = vault
                     .port_entity_get(txn, old)?
@@ -192,9 +204,11 @@ fn standing_outcome_in_txn(
 
 /// Records `outcome` as the calibration evidence of the critique `artifact`
 /// of the review `verdict`, on its critic's cell, under the critique's own
-/// receipt, which replaces any it held. A verdict still waiting for its
-/// owner's answer is not evidence: then nothing is recorded, and it gives
-/// back false.
+/// receipt, which replaces any outcome evidence it held. A fact the
+/// critique's kept dissent settled outranks its outcome (FIX 12190): a
+/// receipt holding that world-outcome evidence keeps it, and this gives back
+/// true. A verdict still waiting for its owner's answer is not evidence:
+/// then nothing is recorded, and it gives back false.
 fn record_outcome_evidence_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -203,6 +217,17 @@ fn record_outcome_evidence_in_txn(
     outcome: &StandingOutcome,
     at: u64,
 ) -> Result<bool> {
+    let receipt = calibration_receipt(verdict, &artifact.artifact_id);
+    if crate::learning::evidence::EVIDENCE
+        .get(
+            &vault.store,
+            txn,
+            &(artifact.calibration.digest(), receipt.clone()),
+        )?
+        .is_some_and(|row| row.anchor == crate::learning::Anchor::WorldOutcome)
+    {
+        return Ok(true);
+    }
     if !crate::gate::claim_consolidation_eligible_in_txn(
         &vault.store,
         txn,
@@ -221,7 +246,7 @@ fn record_outcome_evidence_in_txn(
         txn,
         &artifact.calibration,
         &LearningEvidence::anchored(
-            calibration_receipt(verdict, &artifact.artifact_id),
+            receipt,
             evidence_at,
             outcome.anchor,
             Observation::Success(outcome.accepted),

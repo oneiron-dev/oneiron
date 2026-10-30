@@ -105,6 +105,8 @@ pub(super) fn persist_review(
         let stored = StoredReview {
             principal: request.actor.entity_ref(),
             principal_class: Some(request.actor.actor_class() as u8),
+            principal_run_attempt: request.actor.run_attempt(),
+            principal_authority_frontier: request.actor.authority_frontier(),
             dissent: BTreeMap::new(),
             dissent_claims: BTreeMap::new(),
             verdict: id.to_hex(),
@@ -197,6 +199,12 @@ struct StoredReview {
     /// question it keeps (FIX 1588). None on a review stored before it was kept.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     principal_class: Option<u8>,
+    /// The run attempt the review's actor wrote under, when its host bound
+    /// one (FIX 12188).
+    principal_run_attempt: Option<[u8; 16]>,
+    /// The authority state the review's actor observed, when it carried one
+    /// (FIX 12188).
+    principal_authority_frontier: Option<crate::authority::AuthorityEntryHash>,
     dissent: BTreeMap<String, ReviewDissent>,
     /// Each critique whose dissent a caller is authoring now, with the process
     /// run that claimed it (FIX 12161).
@@ -441,9 +449,9 @@ pub(super) fn persisted_artifact_in_txn(
 }
 
 /// The actor that wrote `verdict`'s review: its principal, as the class it
-/// authenticated as. It writes the outcome an anchored settlement no owner
-/// decided gives a critique of that review (FIX 12106). The review keeps no
-/// run attempt or authority frontier of that actor (FIX 12188).
+/// authenticated as, with the run attempt and authority frontier it carried
+/// (FIX 12188). It writes the outcome an anchored settlement no owner
+/// decided gives a critique of that review (FIX 12106).
 pub(super) fn review_actor_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -457,7 +465,14 @@ pub(super) fn review_actor_in_txn(
         .principal_class
         .and_then(crate::EdgeActorClass::try_from_u8)
         .ok_or_else(|| invalid_critic_config("review keeps no principal class"))?;
-    Ok(WriteActor::new(stored.principal, class))
+    let mut actor = WriteActor::new(stored.principal, class);
+    if let Some(attempt) = stored.principal_run_attempt {
+        actor = actor.with_run_attempt(attempt);
+    }
+    if let Some(frontier) = stored.principal_authority_frontier {
+        actor = actor.with_authority_frontier(frontier);
+    }
+    Ok(actor)
 }
 
 fn result_hash(vault: &Vault, txn: &heed::RoTxn<'_>, verdict: &EntityId) -> Result<[u8; 32]> {
