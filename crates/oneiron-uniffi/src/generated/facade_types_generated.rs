@@ -45033,6 +45033,12 @@ pub struct SlideAbstention {
     pub target: PptxCommentTarget,
     #[serde(rename = "decision", default, skip_serializing_if = "Option::is_none")]
     pub decision: Option<TypedDecision>,
+    #[serde(
+        rename = "judged_live",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub judged_live: Option<LivePin>,
 }
 
 /// `oneiron::edit_roundtrip::slides_review::SlideUnitRefusalReason`.
