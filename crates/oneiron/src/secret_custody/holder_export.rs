@@ -21,13 +21,14 @@
 //! it ([`Vault::open_export_secret_supplement`]) into the archive row the
 //! owner imports (`crate::batch::export`'s secret supplement). The copy is
 //! kept with the second it was sealed at, and rides the window plane to the
-//! owner's other installs, each of which keeps it once it folds the result
-//! that names it (`relay`, FIX 11843); a copy past one row rides in
-//! numbered parts the receiver joins first (FIX 12063). A kept copy whose
-//! secret an admitted revoke ended or an erase here fenced is forgotten
-//! (`settle`, FIX 12064). Once the owner's import of a copy commits, the
-//! recipient marks its request imported, and no install relays the copy any
-//! more (`import_mark`, FIX 12062).
+//! owner's other installs, each of which keeps it once a signed result names
+//! it (`relay`, FIX 11843): the result it carries as its witness, checked as
+//! the fold checks one, before the receiver folds the result (FIX 12312); a
+//! copy past one row rides in numbered parts the receiver joins first (FIX
+//! 12063). A kept copy whose secret an admitted revoke ended or an erase
+//! here fenced is forgotten (`settle`, FIX 12064). Once the owner's import
+//! of a copy commits, the recipient marks its request imported, and no
+//! install relays the copy any more (`import_mark`, FIX 12062).
 
 mod import_mark;
 mod relay;
@@ -41,8 +42,9 @@ pub(crate) use self::relay::KeptExportOutput;
 use self::relay::kept_output_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::relay::{
-    MAX_RELAYED_OUTPUT_BYTES, held_export_outputs, keep_relayed_export_output_in_txn,
-    kept_export_output_sealed_at_in_txn, relayed_export_output_due_in_txn,
+    MAX_EXPORT_OUTPUT_WITNESS_BYTES, MAX_RELAYED_OUTPUT_BYTES, held_export_outputs,
+    keep_relayed_export_output_in_txn, kept_export_output_sealed_at_in_txn,
+    relayed_export_output_due_in_txn, witnessed_output,
 };
 use self::sealed::{SupplementBinding, open_supplement, output_of, seal_supplement};
 use super::control::permits::{permit_for, permitted_keys};
@@ -141,9 +143,12 @@ impl Vault {
                 .map_err(|_| Error::InvariantViolation("sealed export secret length"))?,
             envelopes,
         };
+        // Its witness, the result that names it, is signed after this in the
+        // same commit; its relay reads it from the log (FIX 12312).
         let kept = KeptExportOutput {
             sealed_at: self.instant_in_txn(txn)?.secs(),
             request: hash,
+            witness: Vec::new(),
             sealed,
         };
         OUTPUTS.put(&self.store, txn, &hash, &kept.encode())?;
