@@ -22,13 +22,20 @@ impl SlotOwners {
         Ok(Self(slots))
     }
 
-    /// The entity whose document slot `hex` holds: the one whose retained
-    /// head names it, else the slot's own id, as NOTE and text-plane rows
-    /// are keyed.
-    pub(super) fn entity(&self, hex: &str) -> Result<EntityId> {
-        match self.0.get(hex) {
-            Some(entity) => Ok(*entity),
-            None => Ok(EntityId::from_hex(hex)?),
+    /// The entity whose document slot `hex` holds, if a live one owns it:
+    /// the one whose retained head names it, else the slot's own id, as
+    /// NOTE and text-plane rows are keyed — but only when that id is a
+    /// live entity. A slot no retained head names and whose own id is not
+    /// live (orphan, moved away, shared) has no owner to compact it as, so
+    /// it reports none and the slot loop leaves its rows as they are
+    /// (FIX 11188).
+    pub(super) fn entity(&self, vault: &Vault, hex: &str) -> Result<Option<EntityId>> {
+        if let Some(entity) = self.0.get(hex) {
+            return Ok(Some(*entity));
         }
+        let id = EntityId::from_hex(hex)?;
+        let rtxn = vault.store.env.read_txn()?;
+        let live = crate::vault::live_entity_row_in_txn(&vault.store, &rtxn, &id)?.is_live();
+        Ok(live.then_some(id))
     }
 }
