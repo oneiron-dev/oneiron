@@ -256,7 +256,7 @@ impl Book {
                     .children(list)
                     .filter(|(_, node)| node.is(SML, "tableColumn"))
                 {
-                    columns.push(column.attr("name").unwrap_or_default().to_owned());
+                    columns.push(decode_escapes(column.attr("name").unwrap_or_default()));
                     calculated.push(
                         table
                             .children(at)
