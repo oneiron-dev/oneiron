@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
+use crate::store::Store;
 use crate::{Error, Result, Vault};
 
 const DAY: u64 = 24 * 60 * 60;
@@ -169,6 +170,96 @@ pub(crate) fn set_cursor_in(
     caller: &[u8],
 ) -> Result<()> {
     CURSOR.put(dbs, wtxn, &queue.code().to_owned(), &caller.to_vec())
+}
+
+/// One queue's deadline index: `m:retained-deadline:v1:<code>:` then the
+/// deadline (u64 big-endian) then the waiting item's key, empty-valued, in
+/// the sync queue database. The writer that puts an item notes it, and the
+/// writer that ends, lands or drops it drops its note, so the index holds
+/// exactly the waiting items, earliest first, and the wake read takes its
+/// first row (FIX 11183).
+fn deadline_prefix(queue: RetainedWorkQueue) -> Vec<u8> {
+    format!("m:retained-deadline:v1:{}:", queue.code()).into_bytes()
+}
+
+fn deadline_key(queue: RetainedWorkQueue, deadline: u64, item: &[u8]) -> Vec<u8> {
+    let mut key = deadline_prefix(queue);
+    key.extend_from_slice(&deadline.to_be_bytes());
+    key.extend_from_slice(item);
+    key
+}
+
+/// The deadline and item key of one index row under `prefix`.
+fn deadline_row(prefix: &[u8], key: &[u8]) -> Result<(u64, Vec<u8>)> {
+    let corrupt = || Error::CorruptedIndex("retained work deadline");
+    let rest = key.get(prefix.len()..).ok_or_else(corrupt)?;
+    let (deadline, item) = rest.split_at_checked(8).ok_or_else(corrupt)?;
+    let deadline = u64::from_be_bytes(deadline.try_into().map_err(|_| corrupt())?);
+    Ok((deadline, item.to_vec()))
+}
+
+/// Notes `item` of `queue` as waiting until `deadline`.
+pub(crate) fn note_deadline_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    queue: RetainedWorkQueue,
+    deadline: u64,
+    item: &[u8],
+) -> Result<()> {
+    store
+        .sync_queue
+        .put(wtxn, &deadline_key(queue, deadline, item), &[])?;
+    Ok(())
+}
+
+/// Drops the note of `item` of `queue` at `deadline`: it waits no more.
+pub(crate) fn drop_deadline_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    queue: RetainedWorkQueue,
+    deadline: u64,
+    item: &[u8],
+) -> Result<()> {
+    store
+        .sync_queue
+        .delete(wtxn, &deadline_key(queue, deadline, item))?;
+    Ok(())
+}
+
+/// The earliest deadline of `queue`'s waiting items, from one index row;
+/// `None` when none waits.
+pub(crate) fn earliest_deadline_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    queue: RetainedWorkQueue,
+) -> Result<Option<u64>> {
+    let prefix = deadline_prefix(queue);
+    let Some(row) = store.sync_queue.prefix_iter(txn, &prefix)?.next() else {
+        return Ok(None);
+    };
+    let (key, _) = row?;
+    Ok(Some(deadline_row(&prefix, key)?.0))
+}
+
+/// Each of `queue`'s waiting items whose deadline is at or before `now`,
+/// with that deadline, earliest first: the index rows up to `now` alone.
+pub(crate) fn deadlines_through_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    queue: RetainedWorkQueue,
+    now: u64,
+) -> Result<Vec<(u64, Vec<u8>)>> {
+    let prefix = deadline_prefix(queue);
+    let mut items = Vec::new();
+    for row in store.sync_queue.prefix_iter(txn, &prefix)? {
+        let (key, _) = row?;
+        let (deadline, item) = deadline_row(&prefix, key)?;
+        if deadline > now {
+            break;
+        }
+        items.push((deadline, item));
+    }
+    Ok(items)
 }
 
 impl Vault {

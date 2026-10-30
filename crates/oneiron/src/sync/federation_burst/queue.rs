@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 
 const DEFERRED_PREFIX: &[u8] = b"m:federation-deferred:v1:";
 
+/// The schedule queue these rows wait in: its deadline index notes each one.
+const QUEUE: RetainedWorkQueue = RetainedWorkQueue::FederationBurst;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(in crate::sync) enum WorkKind {
     Selector,
@@ -239,7 +242,20 @@ impl DeferredWork {
             value.len(),
             vault.config.map_size / 32,
         )?;
+        // A row put again under another deadline drops its old note.
+        let replaced = vault
+            .store
+            .sync_queue
+            .get(txn, &self.key())?
+            .and_then(|saved| Self::decode(saved).ok())
+            .map(|saved| saved.deadline);
+        if let Some(replaced) = replaced
+            && replaced != self.deadline
+        {
+            schedule::drop_deadline_in_txn(&vault.store, txn, QUEUE, replaced, &self.key())?;
+        }
         vault.store.sync_queue.put(txn, &self.key(), &value)?;
+        schedule::note_deadline_in_txn(&vault.store, txn, QUEUE, self.deadline, &self.key())?;
         erase::register_in_txn(
             &vault.store,
             txn,
@@ -290,6 +306,7 @@ impl DeferredWork {
     /// carrier rows. Its receipt is the caller's to settle.
     pub(super) fn remove_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
         store.sync_queue.delete(txn, &self.key())?;
+        schedule::drop_deadline_in_txn(store, txn, QUEUE, self.deadline, &self.key())?;
         super::review_doors::scrub_in_txn(store, txn, &self.peer, &self.id)?;
         erase::forget_in_txn(
             store,
@@ -468,45 +485,42 @@ pub(super) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, key: &[u8])
 /// (FIX 7997). Returns how many ended.
 pub(crate) fn expire_retained_work(vault: &Vault) -> Result<u64> {
     let now = vault.now_recorded_at();
+    // The deadline index names them, up to now alone.
     let expired = {
         let txn = vault.store.env.read_txn()?;
-        let mut expired = Vec::new();
-        for row in vault.store.sync_queue.prefix_iter(&txn, DEFERRED_PREFIX)? {
-            let (key, value) = row?;
-            if DeferredWork::decode(&value)?.deadline <= now {
-                expired.push(key.to_vec());
-            }
-        }
-        expired
+        schedule::deadlines_through_in(&vault.store, &txn, QUEUE, now)?
     };
     if expired.is_empty() {
         return Ok(0);
     }
     vault.with_write_txn_grouped(|txn| {
         let mut ended = 0;
-        for key in &expired {
-            let work = match vault.store.sync_queue.get(txn, key)? {
-                Some(value) => DeferredWork::decode(&value)?,
-                None => continue,
-            };
-            if work.key() == *key && work.deadline <= now {
+        for (deadline, key) in &expired {
+            let saved = vault
+                .store
+                .sync_queue
+                .get(txn, key)?
+                .map(DeferredWork::decode)
+                .transpose()?;
+            if let Some(work) = saved
+                && work.key() == *key
+                && work.deadline <= now
+            {
                 work.retire_in_txn(&vault.store, txn, FederationBurstWorkState::Expired)?;
                 ended += 1;
             }
+            // No note stays at a past deadline: a row still waiting is noted
+            // at its own, and a note whose row is gone waits for nothing.
+            schedule::drop_deadline_in_txn(&vault.store, txn, QUEUE, *deadline, key)?;
         }
         Ok(ended)
     })
 }
 
 /// The earliest deadline of the retained batches, or `None` when none is
-/// retained: the same rows [`expire_retained_work`] ends (FIX 11183).
+/// retained: the same rows [`expire_retained_work`] ends (FIX 11183), read
+/// from the first row of their deadline index.
 pub(crate) fn earliest_retained_deadline(vault: &Vault) -> Result<Option<u64>> {
     let txn = vault.store.env.read_txn()?;
-    let mut earliest: Option<u64> = None;
-    for row in vault.store.sync_queue.prefix_iter(&txn, DEFERRED_PREFIX)? {
-        let (_, value) = row?;
-        let deadline = DeferredWork::decode(&value)?.deadline;
-        earliest = Some(earliest.map_or(deadline, |seen| seen.min(deadline)));
-    }
-    Ok(earliest)
+    schedule::earliest_deadline_in(&vault.store, &txn, QUEUE)
 }

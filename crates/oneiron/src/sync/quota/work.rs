@@ -28,6 +28,10 @@ use crate::{EntityId, Error, Result, Vault};
 const WORK: SideTable<String, RetainedMaintenance, Named> =
     SideTable::new(&side_table::SYNC_MAINTENANCE_RETAINED_WORK);
 
+/// The schedule queue these operations wait in: its deadline index notes
+/// each Pending one.
+const QUEUE: RetainedWorkQueue = RetainedWorkQueue::MaintenanceIngest;
+
 /// The most retained operations one drain pass replays; the next pass starts
 /// with the signer after the last one served.
 pub const MAINTENANCE_DRAIN_TURNS: usize = 4096;
@@ -168,19 +172,20 @@ pub(super) fn retain_in_txn(
         state: MaintenanceWorkState::Pending,
     };
     WORK.put(vault, wtxn, &key, &work)?;
+    schedule::note_deadline_in_txn(&vault.store, wtxn, QUEUE, work.deadline, key.as_bytes())?;
     erase::register_in_txn(vault, wtxn, &[*op.id], &CarriedBy::Maintenance(key))
 }
 
 /// Ends the Pending op at `key` with `state`: its bytes go, and only the
 /// content-free receipt stays.
 fn end_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     key: &str,
     state: MaintenanceWorkState,
 ) -> Result<()> {
     let key = key.to_owned();
-    let Some(mut work) = WORK.get(dbs, wtxn, &key)? else {
+    let Some(mut work) = WORK.get(store, wtxn, &key)? else {
         return Ok(());
     };
     if work.state != MaintenanceWorkState::Pending {
@@ -188,9 +193,10 @@ fn end_in_txn(
     }
     work.blob = None;
     work.state = state;
-    WORK.put(dbs, wtxn, &key, &work)?;
+    WORK.put(store, wtxn, &key, &work)?;
+    schedule::drop_deadline_in_txn(store, wtxn, QUEUE, work.deadline, key.as_bytes())?;
     let id = entity_of(&key)?;
-    erase::forget_in_txn(dbs, wtxn, &[id], &CarriedBy::Maintenance(key))
+    erase::forget_in_txn(store, wtxn, &[id], &CarriedBy::Maintenance(key))
 }
 
 /// Scrubs the retained op at `key` for an erase of its row (FIX 7998).
@@ -244,12 +250,13 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
         if let EntityStep::Quarantine(refusal) = step {
             drop(savepoint);
             if refusal.retry == RefusalRetry::Terminal {
-                end_in_txn(vault, wtxn, key, MaintenanceWorkState::Rejected)?;
+                end_in_txn(&vault.store, wtxn, key, MaintenanceWorkState::Rejected)?;
             }
             return Ok(false);
         }
         savepoint.commit()?;
         WORK.delete(vault, wtxn, &key.to_owned())?;
+        schedule::drop_deadline_in_txn(&vault.store, wtxn, QUEUE, work.deadline, key.as_bytes())?;
         erase::forget_in_txn(vault, wtxn, &[id], &CarriedBy::Maintenance(key.to_owned()))?;
         Ok(true)
     })
@@ -339,7 +346,7 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
                     .get(vault, wtxn, key)?
                     .is_some_and(|work| work.deadline <= now)
                 {
-                    end_in_txn(vault, wtxn, key, MaintenanceWorkState::Expired)?;
+                    end_in_txn(&vault.store, wtxn, key, MaintenanceWorkState::Expired)?;
                 }
             }
             Ok(())
@@ -361,18 +368,11 @@ pub(crate) fn drain_retained_maintenance(vault: &Vault) -> Result<u64> {
 }
 
 /// The earliest deadline of the Pending retained ops, or `None` when none
-/// waits: the same rows [`drain_retained_maintenance`] ends (FIX 11183).
+/// waits: the same rows [`drain_retained_maintenance`] ends (FIX 11183),
+/// read from the first row of their deadline index.
 pub(crate) fn earliest_retained_deadline(vault: &Vault) -> Result<Option<u64>> {
     let txn = vault.store.env.read_txn()?;
-    let mut earliest: Option<u64> = None;
-    for row in WORK.iter_from(vault, &txn, &[])? {
-        let (_, work) = row?;
-        if work.state != MaintenanceWorkState::Pending {
-            continue;
-        }
-        earliest = Some(earliest.map_or(work.deadline, |seen| seen.min(work.deadline)));
-    }
-    Ok(earliest)
+    schedule::earliest_deadline_in(&vault.store, &txn, QUEUE)
 }
 
 /// Every retained maintenance operation and receipt, without bytes, by
