@@ -468,6 +468,7 @@ impl EditSession for NativeCellSession {
             &changes,
             self.limits,
             &crate::office_body::document_resources(),
+            None,
         )
         .map_err(|_| failed())?
         .bytes;
