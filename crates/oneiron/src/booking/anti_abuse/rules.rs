@@ -126,11 +126,14 @@ pub enum AmendmentDirection {
 }
 
 /// What a successful amendment stored, plus whether the owner must be shown
-/// a notice. Every activation is owner-visible.
+/// a notice. Every activation and every retained proposal is owner-visible.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RuleAmendmentOutcome {
     pub stored: BookingAntiAbuseRuleRow,
     pub owner_notice_required: bool,
+    /// `false`: the change is retained as a proposal awaiting its holder
+    /// (FIX 9627), and the active row is unchanged.
+    pub activated: bool,
 }
 
 mod entity_ref_serde {

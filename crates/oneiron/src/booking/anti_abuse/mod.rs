@@ -44,7 +44,8 @@ mod storage;
 
 pub use self::amendment::{
     amendment_direction, applicable_booking_anti_abuse_rules, apply_rule_amendment,
-    booking_anti_abuse_notices, booking_anti_abuse_rules, booking_rule_row_version_hash,
+    booking_anti_abuse_notices, booking_anti_abuse_rule_proposals, booking_anti_abuse_rules,
+    booking_rule_row_version_hash,
 };
 pub use self::evaluation::{
     BookingAbuseVerdict, BookingRequestFacts, EmailValidationEvidence, book_rate_knobs,
