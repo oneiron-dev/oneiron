@@ -621,7 +621,8 @@ pub(in crate::api::facade) fn door_admits(
         | Row::VaultCustodyMembersDrainBegin
         | Row::VaultCustodyMembersDrainCommit
         | Row::VaultCustodyMembersDrainFolder
-        | Row::VaultCustodyMembersReenrol => owner_proof(auth, server, verb).map(drop),
+        | Row::VaultCustodyMembersReenrol
+        | Row::VaultMessageStreamsRefused => owner_proof(auth, server, verb).map(drop),
         Row::VaultSharedProposeDelete
         | Row::VaultSharedProposeTransfer
         | Row::VaultSharedProposeRemoveOwner
