@@ -328,7 +328,8 @@ fn outcome_of(hold: &DeckExportHold) -> ExportOutcome {
 /// even when it merged into a head that moved since. Each commit writes
 /// under a fresh peer, so its receipt's span ends at that operation.
 fn rebind_frontier(receipt: &TextCommitReceipt) -> Vec<u8> {
-    loro::Frontiers::from_id(loro::ID::new(receipt.peer, receipt.end - 1)).encode()
+    let last = loro::ID::new(receipt.peer, receipt.end - 1);
+    loro::Frontiers::from_id(last).encode()
 }
 
 /// The export record of version `version` of `artifact`, projected at
