@@ -2643,7 +2643,7 @@ declare namespace Sdk {
   type MergeQueueBatchRequest = { repo: EntityId; batch_ref: string };
   type MergeQueueObserveRequest = { repo: EntityId; batches: string[] };
   type CommandOutput = { status: number; stdout: number[]; stderr: number[] };
-  type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } };
+  type ContractDiff = { RemovedPublicName: { name: string } } | { SchemaDrift: { contract: string; pointer: string; before?: unknown | null; after?: unknown | null } } | { OutputDrift: { contract: string; before?: CommandOutput | null; after?: CommandOutput | null } } | { SchemaBytesDrift: { contract: string; offset: number; before?: string | null; after?: string | null } };
   type ContractVerdict = { schema_version: number; id: string; baseline_id: string; candidate: string; tests_passed: boolean; diffs: ContractDiff[] };
   type QueueDriveStatus = "unenrolled" | "driving" | "waiting_check" | "waiting_symbols" | "waiting_review" | "waiting_admission" | "held_needs_new_base" | "held_diverged" | "held_binding" | "held_materialization" | "held_overlap" | "held_task_authority" | "held_recovery" | "held_check" | "needs_configuration" | "held_seal" | "unavailable" | "done";
   type QueueConflictView = { source_proposals: string[]; conflict: string; task?: string | null; resolution_batch?: string | null };

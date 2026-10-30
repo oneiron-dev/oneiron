@@ -13037,7 +13037,14 @@ class ContractDiffOutputDriftBody(TypedDict):
     after: NotRequired[CommandOutput | None]
 class ContractDiffOutputDrift(TypedDict):
     OutputDrift: ContractDiffOutputDriftBody
-ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift
+class ContractDiffSchemaBytesDriftBody(TypedDict):
+    contract: str
+    offset: int
+    before: NotRequired[str | None]
+    after: NotRequired[str | None]
+class ContractDiffSchemaBytesDrift(TypedDict):
+    SchemaBytesDrift: ContractDiffSchemaBytesDriftBody
+ContractDiff = ContractDiffRemovedPublicName | ContractDiffSchemaDrift | ContractDiffOutputDrift | ContractDiffSchemaBytesDrift
 class ContractVerdict(TypedDict):
     schema_version: int
     id: str
