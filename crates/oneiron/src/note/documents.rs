@@ -114,8 +114,11 @@ pub enum NoteProgramEditOutcome {
     },
 }
 
-pub use NoteProgramEdit as NoteEdit;
-pub use NoteProgramEditOutcome as NoteEditOutcome;
+// The old paths inside this crate-visible module (it is `pub(crate) mod documents`).
+#[allow(unused_imports)]
+pub(crate) use NoteProgramEdit as NoteEdit;
+#[allow(unused_imports)]
+pub(crate) use NoteProgramEditOutcome as NoteEditOutcome;
 
 pub struct NoteDocument {
     pub(super) note: EntityId,
