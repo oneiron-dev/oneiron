@@ -9,19 +9,29 @@
 //! (FIX 11075). The guest's lifecycle endpoint reads both from the board the
 //! carrier publishes at each turn, and takes the owner's answers to a
 //! diverged copy, which the carrier carries out at its next turn: `keep`
-//! records his answer and the copy stays; `remove` removes the guest's own
-//! copy while it still hashes to the digest he answered, or, for the host's
-//! copy, takes that copy as the agreed version, so the guest's next scan
-//! retires it as an ordinary removal naming its digest (or replaces it with
-//! the guest's own newer version). Nothing here removes a copy without his
-//! answer.
+//! moves the copy aside under its own name, a hidden sibling of the member
+//! ([`local::move_aside`]), so the origin's next version lands (FIX 11736);
+//! `remove` removes the guest's own copy while it still hashes to the digest
+//! he answered, or, for the host's copy, takes that copy as the agreed
+//! version, so the guest's next scan retires it as an ordinary removal
+//! naming its digest (or replaces it with the guest's own newer version).
+//! The guest tells the host of every other answer at its next turn
+//! (FIX 11737): the host moves its own kept copy aside, or offers its own
+//! version again once the guest's copy is out of its way. Nothing here
+//! removes a copy without his answer.
 
+use super::link::Link;
 use super::local;
 use super::store::{Diverged, DivergedAnswer, SourceStatus};
 use super::{Carrier, Mode};
-use oneiron_vault_contract::vm_outbox::{VmOutboxKind, VmOutboxSide};
+use oneiron_vault_contract::vm_outbox::{VmOutboxFrame, VmOutboxKind, VmOutboxSide};
 use serde::{Deserialize, Serialize};
+use std::fs::File;
+use std::io::{Read, Write};
 use std::sync::{Arc, Mutex, PoisonError};
+
+/// A diverged copy's answer the guest sent the host, by kind and member.
+pub(super) type Notice = (VmOutboxKind, String, Diverged);
 
 /// The owner route that takes his answer to a diverged copy.
 pub(crate) const DIVERGED_ANSWER_ROUTE: &str = "POST /v1/owner/outbox/diverged";
@@ -174,14 +184,41 @@ impl Carrier {
         else {
             return;
         };
+        let answered = Diverged {
+            answer: Some(answer.answer),
+            ..diverged.clone()
+        };
+        let own = diverged.held_by == self.side;
         record.diverged = match answer.answer {
-            DivergedAnswer::Keep => Some(Diverged {
-                answer: Some(DivergedAnswer::Keep),
-                ..diverged
-            }),
-            DivergedAnswer::Remove if diverged.held_by == self.side => {
+            // The kept copy moves aside under its own name, out of the way
+            // of the origin's next version (FIX 11736).
+            DivergedAnswer::Keep if own => {
+                match self.move_own_copy_aside(kind, member, &diverged.held.blake3) {
+                    Ok(aside) => {
+                        said_moved_aside(self.side, kind, member, aside.as_deref());
+                        record.notice = Some(answered);
+                        None
+                    }
+                    Err(error) => {
+                        let what = format!("its kept copy did not move aside: {error}");
+                        self.say(kind, member, &what);
+                        return;
+                    }
+                }
+            }
+            // The host moves its copy aside once told, and this end's
+            // version it refused for that copy goes again.
+            DivergedAnswer::Keep => {
+                record.refused = None;
+                record.notice = Some(answered.clone());
+                Some(answered)
+            }
+            DivergedAnswer::Remove if own => {
                 match self.remove_own_copy(kind, member, &diverged.held.blake3) {
-                    Ok(()) => None,
+                    Ok(()) => {
+                        record.notice = Some(answered);
+                        None
+                    }
                     Err(error) => {
                         self.say(
                             kind,
@@ -197,10 +234,7 @@ impl Carrier {
                 // naming its digest: it is the agreed version now.
                 record.agreed = Some(diverged.held.clone());
                 record.refused = None;
-                Some(Diverged {
-                    answer: Some(DivergedAnswer::Remove),
-                    ..diverged
-                })
+                Some(answered)
             }
         };
         tracing::info!(
@@ -226,21 +260,148 @@ impl Carrier {
         member: &str,
         blake3: &str,
     ) -> std::io::Result<()> {
+        match self.own_copy_root(kind, member, blake3)? {
+            Some(root) => local::remove(&root, kind, member),
+            None => Ok(()),
+        }
+    }
+
+    /// Moves this end's own copy of `kind`'s `member` aside under its side
+    /// name while it still hashes to `blake3` (FIX 11736): the side name, or
+    /// `None` when no copy is there now. A copy that changed is left as it
+    /// is.
+    fn move_own_copy_aside(
+        &self,
+        kind: VmOutboxKind,
+        member: &str,
+        blake3: &str,
+    ) -> std::io::Result<Option<String>> {
+        match self.own_copy_root(kind, member, blake3)? {
+            Some(root) => local::move_aside(&root, member, blake3),
+            None => Ok(None),
+        }
+    }
+
+    /// This end's root for `kind` while its own copy of `member` is there
+    /// and still hashes to `blake3`; `None` when no copy is there.
+    fn own_copy_root(
+        &self,
+        kind: VmOutboxKind,
+        member: &str,
+        blake3: &str,
+    ) -> std::io::Result<Option<File>> {
         let Some(root) = self.roots.open(kind)? else {
             return Err(std::io::Error::other(
                 "this end has no root for the kind now",
             ));
         };
         let Some((file, _)) = local::open_member(&root, member, None)? else {
-            return Ok(());
+            return Ok(None);
         };
         if local::digest(&file)?.blake3 != blake3 {
             return Err(std::io::Error::other(
                 "the copy changed since the owner answered",
             ));
         }
-        drop(file);
-        local::remove(&root, kind, member)
+        Ok(Some(root))
+    }
+
+    /// On the guest: sends the host each owner answer to a diverged copy it
+    /// is still to be told of (FIX 11736, FIX 11737), and returns those
+    /// sent, for [`Self::divergence_notices_told`] once the turn's frames
+    /// are flushed.
+    pub(super) fn send_divergence_notices<S: Read + Write>(
+        &self,
+        link: &mut Link<S>,
+    ) -> anyhow::Result<Vec<Notice>> {
+        let notices: Vec<Notice> = self
+            .store
+            .records()
+            .filter_map(|(kind, member, record)| {
+                Some((kind, member.to_owned(), record.notice.clone()?))
+            })
+            .collect();
+        for (kind, member, notice) in &notices {
+            link.send(&VmOutboxFrame::DivergenceCleared {
+                kind: *kind,
+                member: member.clone(),
+                held: notice.held.blake3.clone(),
+                held_by: notice.held_by,
+            })?;
+        }
+        Ok(notices)
+    }
+
+    /// Forgets each notice in `told`, sent and flushed, under this end's
+    /// gate; one answered again since stays to send. A record that does not
+    /// write is kept to write again, as [`Self::received_failed`] keeps one.
+    pub(super) fn divergence_notices_told(&mut self, told: Vec<Notice>) {
+        if told.is_empty() {
+            return;
+        }
+        let gate = Arc::clone(&self.gate);
+        let held = gate.hold();
+        if *held == Mode::Draining {
+            return;
+        }
+        for (kind, member, notice) in told {
+            let mut record = self.store.get(kind, &member);
+            if record.notice.as_ref() != Some(&notice) {
+                continue;
+            }
+            record.notice = None;
+            if let Err(error) = self.store.put(kind, &member, record.clone()) {
+                self.received_failed(kind, &member, record, &error);
+            }
+        }
+        drop(held);
+    }
+
+    /// On the host: takes the guest's notice that the owner answered the
+    /// diverged copy of `kind`'s `member` hashing to `held`, which `held_by`
+    /// keeps (FIX 11736, FIX 11737), under this end's gate, once this end's
+    /// record keeps that copy. One this end holds, which the owner kept,
+    /// moves aside under its own name, so the guest's next version lands.
+    /// The guest's copy is out of the member's way, so a refusal of this
+    /// end's version for it no longer holds and the next scan offers that
+    /// version again, as [`Self::reoffer`] does.
+    pub(super) fn take_divergence_cleared(
+        &mut self,
+        kind: VmOutboxKind,
+        member: &str,
+        held: &str,
+        held_by: VmOutboxSide,
+    ) {
+        let gate = Arc::clone(&self.gate);
+        let mode = gate.hold();
+        if *mode == Mode::Draining {
+            return;
+        }
+        let mut record = self.store.get(kind, member);
+        let kept = record.diverged.as_ref().is_some_and(|diverged| {
+            diverged.held_by == held_by && diverged.held.blake3 == held
+        });
+        if !kept {
+            return;
+        }
+        if held_by == self.side {
+            match self.move_own_copy_aside(kind, member, held) {
+                Ok(aside) => said_moved_aside(self.side, kind, member, aside.as_deref()),
+                Err(error) => {
+                    let what = format!("its kept copy did not move aside: {error}");
+                    self.say(kind, member, &what);
+                    return;
+                }
+            }
+        } else {
+            record.refused = None;
+        }
+        record.diverged = None;
+        self.settled(kind, member);
+        if let Err(error) = self.store.put(kind, member, record.clone()) {
+            self.received_failed(kind, member, record, &error);
+        }
+        drop(mode);
     }
 
     /// Says once that `transfer`'s member is kept as a copy the carrier
@@ -262,4 +423,22 @@ impl Carrier {
              agreed on is kept; it stays until its owner answers remove or keep"
         );
     }
+}
+
+/// Says that `side`'s copy of `kind`'s `member` the owner kept moved aside to
+/// `aside`, or was no longer at the member's name.
+fn said_moved_aside(
+    side: VmOutboxSide,
+    kind: VmOutboxKind,
+    member: &str,
+    aside: Option<&str>,
+) {
+    tracing::info!(
+        reason = "vm_outbox_diverged_moved_aside",
+        ?side,
+        %kind,
+        member,
+        aside = ?aside,
+        "a diverged outbox copy the owner kept moved aside under its own name"
+    );
 }
