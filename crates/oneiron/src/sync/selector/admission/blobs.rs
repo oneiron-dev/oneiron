@@ -160,6 +160,20 @@ fn admit_federated_entity_blob_graded(
             }
             _ => id,
         };
+        // A guest's AGENT_DEF world and saved-query worlds name the WORLDs
+        // that land under foreign ids here (FIX 3892); every check below
+        // judges the renamed body.
+        let renamed = match guest {
+            Some(guest) => super::world_refs::rename_typed_world_refs(
+                header.entity_type,
+                guest.saved_query,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+                guest.worlds,
+            )?
+            .map(|body| [&blob[..ENTITY_METADATA_HEADER_LEN], body.as_slice()].concat()),
+            None => None,
+        };
+        let blob = renamed.as_deref().unwrap_or(blob);
         // The same registry classification decides writability and admission.
         // Unknown bytes cannot become peer-writable because they lie in a range.
         vault
@@ -202,6 +216,7 @@ fn admit_federated_entity_blob_graded(
         body.world =
             Some(crate::federation::guest_claim_world(guest.source, body.world)?.entity_id());
         rename_world_edge_subject(&mut body.subject, guest.worlds);
+        super::world_refs::rename_entity_subject(&mut body.subject, guest.worlds);
     }
     crate::gate::check_federated_claim_admission(&vault.store, &body, policy)?;
     let encoded = crate::claim::encode_claim_body(&body)?;

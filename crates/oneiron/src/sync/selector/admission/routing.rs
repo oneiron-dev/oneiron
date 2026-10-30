@@ -37,7 +37,9 @@ use crate::sync::types::WindowKey;
 /// names that foreign id even before its WORLD row arrives, and so does the
 /// target of the edge a CLAIM is about (FIX 3891). A source names it only
 /// once its WORLD row is proven. A target the same update carries as a row of
-/// another kind refuses that edge, or that CLAIM, alone. An edge whose two
+/// another kind refuses that edge, or that CLAIM, alone. A CLAIM about a
+/// WORLD, an AGENT_DEF's world and a saved query's worlds name the foreign
+/// id under the same proofs (`world_refs`, FIX 3892). An edge whose two
 /// endpoints are proven to sit in two different worlds, one of them foreign,
 /// is quarantined alone ([`contains_cross_world_edge`], FIX 3660, FIX 3893).
 #[cfg(feature = "sync")]
@@ -58,6 +60,9 @@ pub(super) struct Routes<'a> {
     pub(super) worlds: BTreeMap<EntityId, EntityId>,
     /// The key each edge naming one of those WORLDs lands under, by its own.
     rekeyed: BTreeMap<String, String>,
+    /// This vault's saved-query kind, whose declared worlds are renamed too
+    /// (FIX 3892).
+    saved_query: Option<u8>,
 }
 
 /// A guest's update as its rows are copied: the source vault its pact names
@@ -67,6 +72,7 @@ pub(super) struct Routes<'a> {
 pub(super) struct GuestCopy<'a> {
     pub(super) source: &'a [u8; 32],
     pub(super) worlds: &'a BTreeMap<EntityId, EntityId>,
+    pub(super) saved_query: Option<u8>,
 }
 
 #[cfg(feature = "sync")]
@@ -81,6 +87,7 @@ impl<'a> Routes<'a> {
             edges: BTreeMap::new(),
             worlds: BTreeMap::new(),
             rekeyed: BTreeMap::new(),
+            saved_query: None,
         }
     }
 
@@ -123,6 +130,11 @@ impl<'a> Routes<'a> {
         // types a WORLD (FIX 3891).
         let mut named = BTreeSet::new();
         let mut typed_world_targets = BTreeSet::new();
+        // The ids an AGENT_DEF's world or a saved query's worlds name, which
+        // their schemas type WORLDs (FIX 3892).
+        let saved_query = super::world_refs::saved_query_kind(vault);
+        routes.saved_query = saved_query;
+        let mut typed_row_refs = BTreeSet::new();
         map_for_each_value_bytes(&remote.get_map("entities"), |raw, blob| {
             let (Some(blob), Ok(id)) = (blob, EntityId::from_hex(raw)) else {
                 return;
@@ -130,7 +142,15 @@ impl<'a> Routes<'a> {
             let Some(header) = EntityMetadataHeader::parse(blob) else {
                 return;
             };
-            if id.to_hex() != raw || header.entity_type != ENTITY_TYPE_CLAIM {
+            if id.to_hex() != raw {
+                return;
+            }
+            if header.entity_type != ENTITY_TYPE_CLAIM {
+                typed_row_refs.extend(super::world_refs::typed_world_refs(
+                    header.entity_type,
+                    saved_query,
+                    &blob[ENTITY_METADATA_HEADER_LEN..],
+                ));
                 return;
             }
             let Ok(body) =
@@ -161,6 +181,11 @@ impl<'a> Routes<'a> {
                 }
                 named.insert(source);
                 typed_world_targets.insert(target);
+            }
+            // A CLAIM about an entity is about a WORLD only once that WORLD
+            // row is proven (FIX 3892).
+            if let Some(subject) = super::world_refs::entity_subject(&body.subject) {
+                named.insert(subject);
             }
             placed.claims.insert(id, body.world);
             if key.world().is_none() && body.world.is_none() {
@@ -201,6 +226,13 @@ impl<'a> Routes<'a> {
             }
             edges.push((raw.to_owned(), (src, kind, tgt)));
         });
+        // A typed ref the update carries as a row of another kind keeps the
+        // sender's id; its row is refused or kept as before, never here.
+        typed_world_targets.extend(
+            typed_row_refs
+                .into_iter()
+                .filter(|id| !carried_as_non_world(&carried, *id)),
+        );
         routes.rename_worlds(vault, guest, carried_worlds, typed_world_targets, named)?;
         for (raw, (src, kind, tgt)) in edges {
             if routes.withheld.contains(&src) || routes.withheld.contains(&tgt) {
@@ -252,10 +284,12 @@ impl<'a> Routes<'a> {
     }
 
     /// Names the guest's WORLDs that land under foreign ids here (FIX 3657,
-    /// FIX 3891): each `carried` WORLD row; each id in `typed_world_targets`,
-    /// the target an InWorld or SetIn edge, or a CLAIM about one, names,
-    /// which the edge's kind types a WORLD (ARCH-0022) before its row
-    /// arrives; and each other `named` id whose foreign copy this vault
+    /// FIX 3891, FIX 3892): each `carried` WORLD row; each id in
+    /// `typed_world_targets`, the target an InWorld or SetIn edge, or a CLAIM
+    /// about one, names, which the edge's kind types a WORLD (ARCH-0022)
+    /// before its row arrives, and an AGENT_DEF's world or a saved query's
+    /// worlds, which their schemas type; and each other `named` id, an edge
+    /// source or a CLAIM's entity subject, whose foreign copy this vault
     /// already stores as a WORLD row, which only that WORLD's earlier copy
     /// from `guest` puts there. Any other id keeps its own, PERSON and CLAIM
     /// sources among them.
@@ -314,6 +348,7 @@ impl<'a> Routes<'a> {
         self.guest.map(|source| GuestCopy {
             source,
             worlds: &self.worlds,
+            saved_query: self.saved_query,
         })
     }
 

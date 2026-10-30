@@ -25,6 +25,7 @@ mod blobs;
 mod revalidate;
 mod routing;
 mod state;
+mod world_refs;
 
 pub(crate) use self::state::{AdmittedUpdate, StagedBirths};
 pub(in crate::sync) use self::state::staged_births;
