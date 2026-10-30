@@ -13,6 +13,7 @@ use crate::api::transfer::{self, BodyReader};
 use crate::machine::{DiskClaim, DiskFloor, MemoryLease, MemoryRefusal};
 use axum::body::Body;
 use axum::extract::FromRequestParts;
+use futures_util::StreamExt;
 use oneiron::blob_artifact::esign::{EsignCapability, EsignIngress, SigningAction};
 use oneiron::limit_ask::EngineLimit;
 use serde::Deserialize;
@@ -221,10 +222,7 @@ async fn spool_whole<T: Send + 'static>(
     progress: impl FnMut(u64) + Send + 'static,
     read: impl FnOnce(File, u64) -> T + Send + 'static,
 ) -> Result<T, Response> {
-    let declared = headers
-        .get(header::CONTENT_LENGTH)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.parse::<u64>().ok());
+    let declared = declared_length(headers);
     let floor = server.transfers.disk.clone();
     let claim = floor.claim();
     // A declared body claims its spool and the stored copy it may come to
@@ -311,6 +309,64 @@ fn spool(
     file.seek(SeekFrom::Start(0))
         .map_err(|_| Unspooled::Failed)?;
     Ok((file, read))
+}
+
+/// The body length `headers` declare, when they declare one.
+pub(super) fn declared_length(headers: &HeaderMap) -> Option<u64> {
+    headers
+        .get(header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<u64>().ok())
+}
+
+/// A capability-free door's body, read whole into memory its caller leased
+/// before a byte of it is read (FIX 12304): `leased` bytes, the length the
+/// request declared or, when it declared none, its route's body limit, are
+/// reserved first, and the body's pieces are copied into them as they
+/// arrive. A body past `limit` is answered as that limit answered it
+/// ([`body_past_limit`]); one that fails, or runs past the length it
+/// declared, as a body the route could not buffer.
+pub(super) async fn leased_body(body: Body, leased: u64, limit: u64) -> Result<Vec<u8>, Response> {
+    let mut whole = Vec::new();
+    let reserved = usize::try_from(leased)
+        .ok()
+        .and_then(|size| whole.try_reserve_exact(size).ok());
+    if reserved.is_none() {
+        return Err(whole_body_refused(WholeBody::Unallocated));
+    }
+    let mut pieces = body.into_data_stream();
+    while let Some(piece) = pieces.next().await {
+        let piece = piece.map_err(|error| unbuffered(&error.to_string()))?;
+        let read = (whole.len() as u64).saturating_add(piece.len() as u64);
+        if read > limit {
+            return Err(body_past_limit());
+        }
+        if read > leased {
+            return Err(unbuffered("past its declared length"));
+        }
+        whole.extend_from_slice(&piece);
+    }
+    Ok(whole)
+}
+
+/// A capability-free body past its route's limit, answered as axum's
+/// `DefaultBodyLimit` answers it.
+pub(super) fn body_past_limit() -> Response {
+    (
+        StatusCode::PAYLOAD_TOO_LARGE,
+        "Failed to buffer the request body: length limit exceeded",
+    )
+        .into_response()
+}
+
+/// A capability-free body that could not be buffered, answered as axum's
+/// body extractor answers it.
+fn unbuffered(why: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        format!("Failed to buffer the request body: {why}"),
+    )
+        .into_response()
 }
 
 /// The vault's disk is at its free-space reserve (`limits.disk_reserve_bytes`):
