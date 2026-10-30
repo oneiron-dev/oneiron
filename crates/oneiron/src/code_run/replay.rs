@@ -818,15 +818,6 @@ impl CodeRunReplayRecord {
     pub fn agent_verb_rows(&self) -> Option<Vec<EntityId>> {
         agent_verb_rows_of(&self.bridge_calls)
     }
-
-    /// The rows this run's results were served from, as a step's host
-    /// counts them: its verb answers' rows ([`Self::agent_verb_rows`]) and
-    /// the rows its callables answered from (FIX 5763). `None` when one kept
-    /// no set.
-    #[must_use]
-    pub fn result_rows(&self) -> Option<Vec<EntityId>> {
-        self.callable_rows.beside(self.agent_verb_rows()?)
-    }
 }
 
 /// The served rows of the verb answers among `calls`, as

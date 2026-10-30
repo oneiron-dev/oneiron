@@ -3,7 +3,7 @@
 //! read took from another run. A step's host counts them beside the rows its
 //! verb answers were served from; the replay record keeps them across steps,
 //! so a later step's host starts from them and the record lists them
-//! ([`super::CodeRunReplayRecord::result_rows`]).
+//! ([`CodeRunReplayRecord::result_rows`]).
 //!
 //! The record spells them under its `callable_rows` entry, written only once
 //! a callable or a read added a row or lost the set: a run whose callables
@@ -11,6 +11,7 @@
 
 use rmpv::Value;
 
+use super::replay::CodeRunReplayRecord;
 use super::support::{decode_array, entity_id_value, entity_value, pinned_map, required};
 use crate::{EntityId, Result};
 
@@ -69,9 +70,20 @@ impl CodeRunCallableRows {
     /// `verbs`, the rows the run's verb answers were served from, with these
     /// beside them, as a step's host counts its result rows; `None` once a
     /// read kept no set.
-    pub(crate) fn beside(&self, verbs: Vec<EntityId>) -> Option<Vec<EntityId>> {
+    fn beside(&self, verbs: Vec<EntityId>) -> Option<Vec<EntityId>> {
         let reads = self.reads.as_deref()?;
         Some([verbs.as_slice(), reads, self.skills.as_slice()].concat())
+    }
+}
+
+impl CodeRunReplayRecord {
+    /// The rows this run's results were served from, as a step's host
+    /// counts them: its verb answers' rows ([`Self::agent_verb_rows`]) and
+    /// the rows its callables answered from (FIX 5763). `None` when one kept
+    /// no set.
+    #[must_use]
+    pub fn result_rows(&self) -> Option<Vec<EntityId>> {
+        self.callable_rows.beside(self.agent_verb_rows()?)
     }
 }
 
