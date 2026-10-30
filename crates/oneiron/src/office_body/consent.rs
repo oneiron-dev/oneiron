@@ -22,7 +22,10 @@ use loro::ExportMode;
 use oneiron_docedit::live::ApproveScope;
 use serde::{Deserialize, Serialize};
 
-use super::{ConflictKind, OfficeBodyDiff, invalid, loro_kind, open_fork, three_way, validate};
+use super::{
+    ConflictKind, OfficeBodyDiff, OfficeBodyKind, invalid, land_moved_xlsx, loro_kind, open_fork,
+    three_way, validate,
+};
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::consent::{
@@ -582,7 +585,7 @@ pub(super) fn settle_in_txn(
                     .map_err(|_| invalid("office body fork import"))?;
                 validate(kind, &scratch)?;
                 let admission = MergeAdmission { fork: member.fork };
-                let after = merge_admitted_typed_body_fork_in_txn(
+                let mut after = merge_admitted_typed_body_fork_in_txn(
                     vault,
                     wtxn,
                     artifact,
@@ -591,6 +594,19 @@ pub(super) fn settle_in_txn(
                     actor,
                     &admission,
                 )?;
+                // Writes made beside a row or column edit move with it.
+                if kind == OfficeBodyKind::Xlsx
+                    && let Some(frontier) = land_moved_xlsx(
+                        vault,
+                        wtxn,
+                        artifact,
+                        (&fork_record.base, &head.frontier),
+                        &fork_doc,
+                        actor,
+                    )?
+                {
+                    after.frontier = frontier;
+                }
                 let member = &mut record.members[index];
                 member.verdict = MemberVerdict::Landed;
                 member.answer = Some(MemberAnswer {

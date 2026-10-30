@@ -79,7 +79,9 @@ pub use verbs::{
     OfficeBodyProposalSettleRequest, OfficeBodyReadRequest, OfficeBodyReviewedFork, OfficeBodyView,
     XlsxBodyView, XlsxSheetView,
 };
-pub use xlsx::{BodyCell, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp};
+pub use xlsx::{
+    BodyCell, BodyConditionalFormat, BodyFormat, BodyName, BodySheet, XlsxBody, XlsxBodyOp,
+};
 
 use crate::Vault;
 use crate::batch::secret_scan::LiftedKeys;
@@ -120,9 +122,9 @@ pub use resources::{
 };
 pub(crate) use resources::{document_error, document_refused, docx_error};
 use support::{
-    apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, loro_kind,
-    open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate, version_key,
-    writer,
+    apply_all, apply_xlsx, bounded_ops, check_made_by, claim_source, fork_view, land_moved_xlsx,
+    loro_kind, open_fork, recalc_label, recalc_xlsx, source, three_way, timestamp, validate,
+    version_key, writer,
 };
 pub(crate) use support::{erase_in_txn, fork_waits};
 

@@ -191,6 +191,13 @@ pub(super) fn axis(
             tables.push(shift.table);
         }
         sheet.tables = tables;
+        // Its rows' heights and formats and its columns' widths and formats
+        // move as the export's do, and inserted lines take their neighbour's
+        // (FIX 9081).
+        match edit.axis {
+            XlsxAxis::Row => sheet.rows = shift_lines(&sheet.rows, edit),
+            XlsxAxis::Column => sheet.columns = shift_lines(&sheet.columns, edit),
+        }
         let mut cells = BTreeMap::new();
         for ((row, col), cell) in std::mem::take(&mut sheet.cells) {
             match edit.cell((col, row)) {
@@ -230,12 +237,23 @@ pub(super) fn axis(
     }
     for sheet in &mut body.sheets {
         let BodySheet {
+            key: own_key,
             name: home,
             cells,
             tables,
+            conditional,
             ..
         } = sheet;
         let home = home.as_str();
+        // Its conditional formats follow as its cells do (FIX 3468).
+        shift_conditional(
+            conditional,
+            home,
+            name,
+            edit,
+            &dropped,
+            own_key.as_str() == key,
+        );
         for (&(row, col), cell) in cells.iter_mut() {
             // An unqualified structured reference is to the table holding
             // the cell (FIX 3438).
@@ -371,10 +389,12 @@ pub(super) fn retarget(
             held.formula = formula;
         }
     }
+    retarget_conditional(body, &rewrite);
 }
 
 /// Write what differs between two typed reads of the document: cells,
-/// read-only ranges, defined names and the row and column log.
+/// read-only ranges, defined names, the row and column log and the
+/// conditional formats.
 pub(super) fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> Result<()> {
     let grids = doc.get_map(CELLS);
     for sheet in &after.sheets {
@@ -427,6 +447,32 @@ pub(super) fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> 
             },
         )
         .collect();
+    let relined: Vec<&BodySheet> = after
+        .sheets
+        .iter()
+        .filter(
+            |sheet| match before.sheets.iter().find(|held| held.key == sheet.key) {
+                Some(held) => held.rows != sheet.rows || held.columns != sheet.columns,
+                None => !sheet.rows.is_empty() || !sheet.columns.is_empty(),
+            },
+        )
+        .collect();
+    if !relined.is_empty() {
+        let mut lines: HashMap<String, LoroValue> = match office.get("lines") {
+            Some(ValueOrContainer::Value(LoroValue::Map(held))) => held
+                .iter()
+                .map(|(key, lines)| (key.clone(), lines.clone()))
+                .collect(),
+            _ => HashMap::new(),
+        };
+        for sheet in relined {
+            lines.insert(
+                sheet.key.clone(),
+                encode_lines(&sheet.rows, &sheet.columns)?,
+            );
+        }
+        office.insert("lines", lines).map_err(loro)?;
+    }
     if !retabled.is_empty() {
         let mut tables: HashMap<String, LoroValue> = match office.get("tables") {
             Some(ValueOrContainer::Value(LoroValue::Map(held))) => held
@@ -462,5 +508,5 @@ pub(super) fn write_back(doc: &LoroDoc, before: &XlsxBody, after: &XlsxBody) -> 
             .insert("axes", encode_axes(&after.axes))
             .map_err(loro)?;
     }
-    Ok(())
+    write_conditional(doc, before, after)
 }
