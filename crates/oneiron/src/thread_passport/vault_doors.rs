@@ -178,13 +178,16 @@ impl Vault {
 
     /// The mask a thread already wears, judged against what a caller wants.
     ///
-    /// The thread's FIRST passport pins the mask and nothing later moves it.
-    /// A `requested` mask that disagrees comes back as
-    /// [`StickyMaskDecision::Conflict`] carrying both sides — the composer
-    /// decides what to say about it, and a human handoff stays message
-    /// content. There is no arm that changes the pin, because changing the
-    /// From address mid-thread breaks client threading, reply-history scoring,
-    /// and allow-list continuity all at once.
+    /// The thread's FIRST RECORDED passport pins the mask and nothing later
+    /// moves it, not even a passport recorded after it whose observed time
+    /// (or Message-ID, at an equal time) sorts ahead of it. A `requested`
+    /// mask that disagrees comes back as [`StickyMaskDecision::Conflict`]
+    /// carrying both sides; with no request, such later evidence that wears
+    /// another mask comes back the same way. The composer decides what to say
+    /// about it, and a human handoff stays message content. There is no arm
+    /// that changes the pin, because changing the From address mid-thread
+    /// breaks client threading, reply-history scoring, and allow-list
+    /// continuity all at once.
     ///
     /// # Errors
     ///
@@ -204,14 +207,28 @@ impl Vault {
         // A held passport routes nothing, but a held first passport still pins.
         rows.extend(held_passport_rows(self, &rtxn)?);
         let ordered = passports_on_thread(rows, edges, &canonical)?;
-        let Some(pinning) = ordered.into_values().next() else {
+        let Some(pinned) = ordered
+            .iter()
+            .min_by_key(|(key, _)| key.claim_id())
+            .map(|(_, passport)| passport.mask)
+        else {
             return Ok(StickyMaskDecision::Unset);
         };
-        let pinned = pinning.mask;
+        // The passport that sorts first by observed time: the pin itself,
+        // unless evidence recorded later sorts ahead of it.
+        let observed_first = ordered.values().next().map(|passport| passport.mask);
         Ok(match requested {
-            None => StickyMaskDecision::Keep(pinned),
-            Some(requested) if requested == pinned => StickyMaskDecision::Keep(pinned),
-            Some(requested) => StickyMaskDecision::Conflict { pinned, requested },
+            Some(requested) if requested != pinned => {
+                StickyMaskDecision::Conflict { pinned, requested }
+            }
+            Some(_) => StickyMaskDecision::Keep(pinned),
+            None => match observed_first {
+                Some(evidence) if evidence != pinned => StickyMaskDecision::Conflict {
+                    pinned,
+                    requested: evidence,
+                },
+                _ => StickyMaskDecision::Keep(pinned),
+            },
         })
     }
 

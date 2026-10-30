@@ -27,12 +27,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/contract.rs` | src | m | 1 trait · 1 fn | BrowserDriver | — |
 | `src/demonstration.rs` | src | m | 6 struct · 4 enum · 1 type · 15 crate-vis | DemonstrationOutput, DemonstrationSource, DemonstrationStartInput, DemonstrationStarted, DemonstrationStopCause, DemonstrationStopInput, LocatorGap, RecordedStep +2 | A demonstration (CUA E9; DESIGN-2 "The owner, by demonstration"): one opted-in span of a browser session… |
 | `src/desktop.rs` | src | m | 1 struct · 1 re-export | DesktopSession | A desktop session (OF-523): one Linux desktop in an isolated guest, driven through cua-driver's MCP server… |
-| `src/desktop/acts.rs` | src | s | 8 crate-vis | — | — |
+| `src/desktop/acts.rs` | src | m | 10 crate-vis | — | — |
 | `src/desktop/images.rs` | src | s | 2 crate-vis | — | — |
 | `src/desktop/point.rs` | src | s | 1 crate-vis | — | A click at a point of a held screenshot (OF-523; FIX 5740, FIX 5741) |
-| `src/desktop/press_holds.rs` | src | s | 5 fn · 2 crate-vis | — | The act a desktop press held, kept for the host to bind (FIX 11499), and the one press an owner's answer… |
+| `src/desktop/press_holds.rs` | src | s | 5 fn · 3 crate-vis | — | The act a desktop press held, kept for the host to bind (FIX 11499), and the one press an owner's answer… |
 | `src/desktop/reads.rs` | src | m | 12 crate-vis | — | — |
-| `src/desktop/session.rs` | src | m | 2 struct · 2 enum · 18 fn | AbandonedTakeover, DesktopGuest, PersonInput, Takeover | — |
+| `src/desktop/session.rs` | src | m | 2 struct · 2 enum · 19 fn | AbandonedTakeover, DesktopGuest, PersonInput, Takeover | — |
 | `src/desktop/tree.rs` | src | m | 1 crate-vis | — | — |
 | `src/desktop/verbs.rs` | src | m | — | — | — |
 | `src/driver.rs` | src | m | 14 crate-vis | — | The CDP driver: one page in a browser guest, read as an outline and acted on by ref |
@@ -81,14 +81,14 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/row.rs` | src | s | 2 struct · 2 enum | Row, RowFieldGap, RowGapField, RowGapReason | A row: one element a program reads or acts on, and what its page shows of it beyond its role and name (FIX… |
 | `src/secret.rs` | src | m | 1 enum · 1 trait · 1 fn · 14 crate-vis | SecretCustody, SecretUse | The host's secret custody, as a browser or desktop session holds it (FIX 8028, OF-560; ARCH-0069) |
 | `src/secret_fields.rs` | src | m | 1 struct · 2 enum · 11 crate-vis | RowSecret, SecretKind, SecretNote | One classifier for the secrets a page or a window shows (FIX 8028, OF-560; ARCH-0069 secret custody): card… |
-| `src/session.rs` | src | m | 2 struct · 5 re-export · 6 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
+| `src/session.rs` | src | m | 2 struct · 5 re-export · 7 crate-vis | BrowserGuest, BrowserSession | A browser session: one browser guest in a container and the CDP driver attached to it, with the host's rules… |
 | `src/session/demonstration.rs` | src | m | 3 fn · 11 crate-vis | — | `demonstration.start` and `demonstration.stop` on a browser session (CUA E9a): the one recording that runs… |
 | `src/session/draft.rs` | src | s | 4 crate-vis | — | `library.draft` on a browser session (CUA E7): the session's own history (`trail`) as draft steps, its open… |
 | `src/session/fresh.rs` | src | s | 1 trait · 1 fn · 1 crate-vis | FreshGuest | The fresh guest a proposal's replay runs on (CUA E1): admission's second check runs on a browser of its own… |
 | `src/session/guest.rs` | src | s | 1 struct · 1 trait · 2 crate-vis | BrowserGuestStarter, StartedGuest | A session's engine guest (FIX 6680, BROWSER-SPLIT PR3): the browser guest, its lease and manifest, and the… |
 | `src/session/held.rs` | src | s | 1 struct · 1 enum · 6 fn · 2 crate-vis | HeldPress, PressNeed | The act a press held, kept for the host to bind (FIX 10423), and the one press an owner's answer arms for it |
 | `src/session/lifecycle.rs` | src | m | 23 fn · 9 crate-vis | — | — |
-| `src/session/press.rs` | src | s | 1 trait · 3 fn · 6 crate-vis | PressGrants | The press each effect class's sends run under (FIX 4613, 4615, 8009) |
+| `src/session/press.rs` | src | s | 1 trait · 3 fn · 11 crate-vis | PressGrants | The press each effect class's sends run under (FIX 4613, 4615, 8009) |
 | `src/session/request.rs` | src | s | 2 fn · 2 crate-vis | — | The session's side of the host's custody of its requests (FIX 7122, `crate::request`): the destination… |
 | `src/session/site.rs` | src | s | 1 fn · 8 crate-vis | — | The session's site skills (CUA E10, `crate::site`): the host's loader, the last open's matches waiting for… |
 | `src/session/solved.rs` | src | s | 1 struct · 1 enum · 4 fn · 1 const | CapturedSolvedSpan, SolvedSnapshotGap | A solved run's span as evidence keeps it (CUA E8a; DESIGN-2 "The Coach"): the checks the caller names are… |

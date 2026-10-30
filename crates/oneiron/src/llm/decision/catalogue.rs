@@ -464,6 +464,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     AI_VERDICT_ROUTINE,
     THINK_MORE,
     ASK_UP,
+    IMAGE_PRESENCE,
     IMAGE_FULL,
     POLICY_OWNER_ROW,
     POLICY_HOSTED_ROW,

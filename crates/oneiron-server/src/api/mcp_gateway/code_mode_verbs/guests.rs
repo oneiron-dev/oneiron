@@ -398,6 +398,12 @@ impl RunDesktop {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
+        // Each classified send reads the grants again (FIX 4613, 12133),
+        // those whose scope covers this caller's sends (FIX 10422, 11905);
+        // the sends a budget paid stay on the session every door shares
+        // (FIX 4615).
+        let grants = VaultPressGrants::new(&self.vault, &decider.asker, self.run_id);
+        driver.set_press_grants(Box::new(grants));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (FIX 8899): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));

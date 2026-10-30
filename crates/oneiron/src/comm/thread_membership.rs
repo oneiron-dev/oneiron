@@ -238,6 +238,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     .max(peer_transition),
             )?;
             require_at_most_one(&active)?;
+            let mut heads = Vec::new();
             if active.is_empty() {
                 let history = matching_thread_membership_with_boundary_in_txn(
                     vault, wtxn, party_ref, thread, false, None,
@@ -271,6 +272,9 @@ pub(super) fn apply_thread_membership_in_txn(
                 {
                     vault.retract_claim_in_txn(wtxn, &claim_id, boundary)?;
                 }
+                if minted {
+                    heads.push(claim_id);
+                }
             }
             // The source event row is stamped `projected` by the same commit,
             // so this join becomes part of the boundary history either way —
@@ -288,6 +292,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     )
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
+                heads,
             })
         }
         ProjectorAction::LeaveThread => {
@@ -318,6 +323,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     .max(peer_transition),
             )?;
             require_at_most_one(&active)?;
+            let mut heads = Vec::new();
             if let Some((_, matched)) = active.into_iter().next() {
                 // Latest-event-wins: a leave older than the newest projected
                 // transition for this membership is stale and must not end
@@ -336,6 +342,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     )? {
                         if claim.is_standing() {
                             vault.retract_claim_in_txn(wtxn, &claim_id, occurred_at)?;
+                            heads.push(claim_id);
                         }
                     }
                 }
@@ -350,6 +357,7 @@ pub(super) fn apply_thread_membership_in_txn(
                     )
                         .max(peer_transition.unwrap_or((0, false))),
                 )),
+                heads,
             })
         }
         _ => Err(CommError::InvalidRecord),

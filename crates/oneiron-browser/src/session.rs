@@ -94,7 +94,7 @@ pub use press::PressGrants;
 pub use solved::{CapturedSolvedSpan, SOLVED_PAST_PRESS, SolvedSnapshotGap};
 
 use self::guest::EngineGuest;
-use self::press::PressBook;
+pub(crate) use self::press::PressBook;
 pub(crate) use self::press::effect_class_on;
 use self::storage::{Collector, OriginSnapshots};
 use self::switch::OriginHistory;
