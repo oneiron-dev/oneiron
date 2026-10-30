@@ -55,8 +55,30 @@ impl OutboundDispatchPipeline {
         crate::provenance::validate_actor_class(actor_type, request.actor.actor_class())?;
         let effect = publish_effect(request);
         let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
-        let (gate_id, decision, _) =
-            gate::check_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy, true)?;
+        let (gate_id, decision, _) = match gate::check_external_effect_policy_paced(
+            &vault.store,
+            &mut wtxn,
+            &effect,
+            &policy,
+        )? {
+            gate::ExternalEffectCheck::Decided(id, decision, charge) => (id, decision, charge),
+            // FIX 12156: a full count-bound window paces the publish: drop
+            // the writer with nothing recorded or charged, and name the
+            // instant to bring it back.
+            gate::ExternalEffectCheck::Paced { next_eligible_at } => {
+                drop(wtxn);
+                return Ok(ArtifactPublishVerbOutcome {
+                    status: ArtifactPublishVerbStatus::Paced {
+                        retry_at: next_eligible_at,
+                    },
+                    pointer: None,
+                    receipt: None,
+                    // No gate decision was recorded; never name one that
+                    // cannot be read back.
+                    gate_decision_ref: String::new(),
+                });
+            }
+        };
         if decision.outcome() != GateOutcome::Allow {
             wtxn.commit()?;
             return Ok(ArtifactPublishVerbOutcome {
