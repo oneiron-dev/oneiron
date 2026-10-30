@@ -16,6 +16,7 @@
 //! notices to a person can filter it out. It is appended LAST, so it can
 //! never become the single body a caller surfaces.
 
+use crate::error::Result;
 use crate::store::{
     GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN, GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN,
     GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeAction,
@@ -259,11 +260,7 @@ pub(super) fn policy_model_rationale_notice(
     pass_plane: PolicyPlane,
     policy_version: Option<&str>,
 ) -> Option<GateSystemNoticeRecord> {
-    let audit = verdict.audit.as_deref()?;
-    let rationale = audit.model_rationale.as_deref()?.trim();
-    if rationale.is_empty() {
-        return None;
-    }
+    let rationale = stated_rationale(verdict)?;
     // The verdict's own attribution wins where it has one; the calling plane
     // is what answers for a verdict that names none.
     let plane = verdict.plane().unwrap_or(pass_plane);
@@ -294,6 +291,36 @@ pub(super) fn policy_model_rationale_notice(
         },
         docs_url: None,
     })
+}
+
+/// [`policy_model_rationale_notice`] for a door that holds no writer: the
+/// MAC is read in a snapshot under the custody read guard, opened only when
+/// the verdict carries a reason, so a verdict with none reads no key (FIX
+/// 10532).
+pub(super) fn policy_model_rationale_notice_in_snapshot(
+    store: &Store,
+    verdict: &PolicyClassifyVerdict,
+    pass_plane: PolicyPlane,
+    policy_version: Option<&str>,
+) -> Result<Option<GateSystemNoticeRecord>> {
+    if stated_rationale(verdict).is_none() {
+        return Ok(None);
+    }
+    let snapshot = store.custody_snapshot()?;
+    Ok(policy_model_rationale_notice(
+        store,
+        &snapshot,
+        verdict,
+        pass_plane,
+        policy_version,
+    ))
+}
+
+/// The safeguard model's stated reason on `verdict`, trimmed; `None` when
+/// the pass obtained none or an empty one.
+fn stated_rationale(verdict: &PolicyClassifyVerdict) -> Option<&str> {
+    let rationale = verdict.audit.as_deref()?.model_rationale.as_deref()?.trim();
+    (!rationale.is_empty()).then_some(rationale)
 }
 
 /// The vault-keyed MAC a durable receipt keeps of a model's stated reason,

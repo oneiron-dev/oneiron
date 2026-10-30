@@ -11,7 +11,9 @@ use super::super::binding::{
     PolicyContentBinding, content_binding, relay_skip_content_binding, relay_verify_content_binding,
 };
 use super::super::classify::OwnerPlanePass;
-use super::super::notice::{policy_model_rationale_notice, policy_notice};
+use super::super::notice::{
+    policy_model_rationale_notice, policy_model_rationale_notice_in_snapshot, policy_notice,
+};
 use super::super::pattern::CompiledPatternRules;
 use super::super::planes::{HostedLegalPolicy, PolicyPlane};
 use super::super::receipt::policy_model_reason_codes;
@@ -396,13 +398,12 @@ impl Vault {
                 // clean allow the model examined after a pattern fired — is
                 // still a hosted-plane row. This door holds no writer yet, so
                 // the MAC is read in a snapshot under the custody read guard.
-                notices.extend(policy_model_rationale_notice(
+                notices.extend(policy_model_rationale_notice_in_snapshot(
                     &self.store,
-                    &self.store.custody_snapshot()?,
                     verdict,
                     PolicyPlane::HostedLegal,
                     receipt.hosted.map(|hosted| hosted.version.as_str()),
-                ));
+                )?);
                 (
                     format!("relay_boundary_{}", verdict.decision.ledger_str()),
                     verdict.clone(),
