@@ -161,6 +161,19 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// `Ping` or an image manifest, the carrier stays at wire revision 2, and
 /// this version stays 3.
 ///
+/// VM diverged-copy notice (FIX 11736, FIX 11737): after the owner answers
+/// a copy the carrier never agreed on, the guest tells the host
+/// ([`VmOutboxFrame::DivergenceCleared`](crate::vm_outbox::VmOutboxFrame::DivergenceCleared)):
+/// a guest copy removed or moved aside clears the host's refusal of its own
+/// version, and a host copy the owner kept moves aside on the host. It
+/// carries a build floor, at the engine revision it merged in: carrier
+/// revision 3 ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION)),
+/// and each end refuses the other's revision 2 at the hello, with no reader
+/// of it kept. The host library, the guest image and its companion are all
+/// at or after the floor, and LC's image acceptance moves its outbox
+/// revision to 3 at the floor. No `Ping` field is added and this version
+/// stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
