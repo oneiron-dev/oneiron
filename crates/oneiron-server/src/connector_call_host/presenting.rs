@@ -22,6 +22,7 @@
 //! (CONNECTOR_PRESENT_BY_RECORD_ID).
 
 use oneiron::limit_ask::EngineLimit;
+use oneiron::secret_lease::ConnectorGrantRedemption;
 use zeroize::Zeroizing;
 
 use super::*;
@@ -148,16 +149,33 @@ impl Presenting {
                 grant,
                 target,
                 custody,
-            } => {
-                match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
+            } => match row {
+                Some((key_ref, tool)) => match vault.redeem_connector_grant_at_door(
+                    &grant,
+                    &target,
+                    key_ref,
+                    tool,
+                    &mut present,
+                ) {
+                    Ok(ConnectorGrantRedemption::Redeemed(redeemed)) => Ok(custody
+                        .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
+                    Ok(ConnectorGrantRedemption::Held { reason }) => {
+                        return Sent::held(reason);
+                    }
+                    Err(error) => {
+                        grant_refused = matches!(error, oneiron::Error::Secret(_));
+                        Ok(None)
+                    }
+                },
+                None => match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
                     Ok(redeemed) => Ok(custody
                         .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
                     Err(error) => {
                         grant_refused = matches!(error, oneiron::Error::Secret(_));
                         Ok(None)
                     }
-                }
-            }
+                },
+            },
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
@@ -203,9 +221,14 @@ impl Presenting {
     /// Presents this credential again, inside its door, for a live exchange
     /// taken up after a restart (FIX 9157): the callback only rebuilds the
     /// header and the clearing value, and nothing is sent here. A grant door
-    /// counts the redemption as a send. `None` when the door refuses it or
-    /// the route's secret names no live record.
-    pub(super) fn present_again(self, vault: &Vault) -> Option<Presented> {
+    /// counts the redemption as a send, unless the call's row meets an
+    /// issuer hold, which counts nothing. `None` when the door refuses it,
+    /// the row is held, or the route's secret names no live record.
+    pub(super) fn present_again(
+        self,
+        vault: &Vault,
+        row: Option<(&EntityId, &str)>,
+    ) -> Option<Presented> {
         let Some(door) = self.door else {
             return Some(Presented {
                 auth: None,
@@ -222,9 +245,24 @@ impl Presenting {
         };
         let effector = self.effector.as_str();
         let opened = match door {
-            Door::Grant { grant, target, .. } => vault
-                .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                .is_ok(),
+            Door::Grant { grant, target, .. } => match row {
+                Some((key_ref, tool)) => {
+                    match vault.redeem_connector_grant_at_door(
+                        &grant,
+                        &target,
+                        key_ref,
+                        tool,
+                        &mut present,
+                    ) {
+                        Ok(ConnectorGrantRedemption::Redeemed(_)) => true,
+                        Ok(ConnectorGrantRedemption::Held { .. }) => return None,
+                        Err(_) => false,
+                    }
+                }
+                None => vault
+                    .redeem_secret_grant_at_door(&grant, &target, &mut present)
+                    .is_ok(),
+            },
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
                 .is_ok(),
