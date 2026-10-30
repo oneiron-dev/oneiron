@@ -1,7 +1,9 @@
 //! The tested stack's per-member checks (moved from `reviewed_stack.rs`,
 //! G4 PR2): the tested change is exactly its immutable reviewed operation,
 //! its receipt binds it, and its document base has not moved.
-use super::proposal::{RepoProposal, RepoProposalOperation, invalid};
+use super::proposal::{
+    QueueReviewAdmission, RepoProposal, RepoProposalOperation, RepoProposalStatus, invalid,
+};
 use super::snapshot::{StoredRepoSnapshot, StoredRepoSnapshotEntry, StoredRepoSnapshotEntryKind};
 use super::types::{RepoForkHash, RepoMutationOplogEntry};
 use crate::{
@@ -9,6 +11,60 @@ use crate::{
     codebase::RepoRef,
     error::{Error, Result},
 };
+
+/// Why a stored stack member is not admitted now, as the driver's hold
+/// text and as the stack admission's refusal (FIX 7309).
+pub(super) struct StackMemberHold {
+    pub(super) hold: String,
+    pub(super) refusal: Error,
+}
+
+/// The one member rule a reviewed stack's admission and its driver's
+/// readiness share (FIX 7309): an open stored proposal with no landed
+/// operation, bound to no stack (or, with `bound_here`, to `batch`
+/// itself), whose masked copy holds no uncleared cause, that met the
+/// review the one policy point holds it to. The review it met, or why not.
+///
+/// # Errors
+/// A store failure, a review policy or a masked copy that does not read.
+pub(super) fn stack_member_rule_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &RepoProposal,
+    batch: &str,
+    bound_here: bool,
+) -> Result<std::result::Result<QueueReviewAdmission, StackMemberHold>> {
+    let id = row.id.to_hex();
+    let unbound = row
+        .merge_stack
+        .as_deref()
+        .is_none_or(|stack| bound_here && stack == batch);
+    if !matches!(
+        row.status,
+        RepoProposalStatus::Proposed | RepoProposalStatus::Approved
+    ) || row.operation_seq.is_some()
+        || !unbound
+    {
+        return Ok(Err(StackMemberHold {
+            hold: format!("proposal {id} lacks an unused unanimous critic approval"),
+            refusal: invalid("every stack member needs unused unanimous critic approval"),
+        }));
+    }
+    // A masked copy's uncleared typed cause holds it (FIX 7608).
+    if let Some(cause) = super::received_file::projected_hold_in_txn(vault, txn, row)? {
+        return Ok(Err(StackMemberHold {
+            hold: cause.to_owned(),
+            refusal: invalid(cause),
+        }));
+    }
+    let requirement = crate::merge_queue::queue_review_requirement_in_txn(vault, txn, &row.review)?;
+    Ok(row
+        .queue_review_admission(&requirement, batch)?
+        .map_err(|wait| StackMemberHold {
+            hold: wait.hold(&id),
+            refusal: wait.refusal(),
+        }))
+}
 
 pub(super) fn require_candidate(
     row: &RepoProposal,
