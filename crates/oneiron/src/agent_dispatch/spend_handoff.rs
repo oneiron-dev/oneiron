@@ -232,6 +232,14 @@ impl HomeTable for FreeTimeSpendRows {
     /// No try still spends under an open scope of a free-time tree: each has
     /// ended, or is a free-time item that never started, which the move
     /// carries and its new home queues again.
+    ///
+    /// A child scope is its attempt's ([`SpendScopeId::for_attempt`]), a try
+    /// spends under the scope of the nearest try its retry lineage reaches
+    /// back to, and every try a retry or a landing superseded has settled,
+    /// so only the newest try of each open scope's lineage can still spend
+    /// under it: each check reads that one try (FIX 6216). A lineage that
+    /// forks or does not read, or a scope no attempt names, reads the whole
+    /// ledger, as before.
     fn quiescent(vault: &Vault, txn: &RoTxn<'_>, _movement: &HomeMove) -> Result<bool> {
         let open: BTreeSet<SpendScopeId> = selected_in_txn(vault, txn)?
             .into_values()
@@ -242,16 +250,19 @@ impl HomeTable for FreeTimeSpendRows {
             return Ok(true);
         }
         let dispatcher = AgentDispatcher::new(vault);
-        for record in AttemptQueue::new(vault).list_in_txn(txn)? {
-            if record.state.is_terminal()
-                || crate::dreamer_runner::free_time_item_waits_unstarted(&record)
-            {
-                continue;
-            }
-            if dispatcher
-                .scope_for_attempt_in_txn(txn, record.id)?
-                .is_some_and(|scope| open.contains(&scope))
-            {
+        let queue = AttemptQueue::new(vault);
+        let mut newest = Vec::with_capacity(open.len());
+        for scope in &open {
+            let tip = scope_attempt(scope)
+                .and_then(|attempt| queue.newest_retry_in_txn(txn, attempt).ok().flatten());
+            let Some(tip) = tip else {
+                return ledger_quiescent(&dispatcher, txn, &open);
+            };
+            newest.push(tip);
+        }
+        // Read as the ledger's working set reads them.
+        for record in queue.working_rows_in_txn(txn, newest)? {
+            if spends_under(&dispatcher, txn, &record, &open)? {
                 return Ok(false);
             }
         }
@@ -359,6 +370,44 @@ impl HomeTable for FreeTimeSpendRows {
         );
         Ok(managed)
     }
+}
+
+/// The attempt a child scope is ([`SpendScopeId::for_attempt`]); `None` for
+/// a launch root, which no attempt names.
+fn scope_attempt(scope: &SpendScopeId) -> Option<crate::attempt_queue::AttemptId> {
+    let entity = EntityId::from_hex(scope.as_str()).ok()?;
+    crate::attempt_queue::AttemptId::from_bytes(entity.as_bytes()).ok()
+}
+
+/// Whether `record` is a try that still spends under one of `open`: not
+/// settled, not a free-time item that never started, and booked under one
+/// of them.
+fn spends_under(
+    dispatcher: &AgentDispatcher<'_>,
+    txn: &RoTxn<'_>,
+    record: &crate::attempt_queue::AttemptRecord,
+    open: &BTreeSet<SpendScopeId>,
+) -> Result<bool> {
+    if record.state.is_terminal() || crate::dreamer_runner::free_time_item_waits_unstarted(record) {
+        return Ok(false);
+    }
+    Ok(dispatcher
+        .scope_for_attempt_in_txn(txn, record.id)?
+        .is_some_and(|scope| open.contains(&scope)))
+}
+
+/// The free-time quiescence check over every try in the ledger.
+fn ledger_quiescent(
+    dispatcher: &AgentDispatcher<'_>,
+    txn: &RoTxn<'_>,
+    open: &BTreeSet<SpendScopeId>,
+) -> Result<bool> {
+    for record in AttemptQueue::new(dispatcher.vault).list_in_txn(txn)? {
+        if spends_under(dispatcher, txn, &record, open)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// Every scope of every free-time tree here, by id: the roots this node's

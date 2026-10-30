@@ -36,6 +36,7 @@ use crate::{EdgeActorClass, Vault, WriteActor};
 
 use super::super::store::PARKED;
 use super::authority::TurnProgramBound;
+use super::hold_index::held_for_in_txn;
 use super::run::{STEP, StepState, actor_gone_in_txn, turn_program_code_run};
 use super::{ATTEMPT, PROGRAM_PARK_OWNER};
 
@@ -236,14 +237,19 @@ impl DreamerRunnerStore<'_> {
     /// Storage errors.
     pub fn programs_held_for_host(&self) -> Result<bool> {
         let rtxn = self.vault.store.env.read_txn()?;
-        Ok(PARKED
-            .scan(&self.vault.store, &rtxn)?
-            .into_iter()
-            .any(|(_, park)| {
-                park.park_owner == PROGRAM_PARK_OWNER
-                    && park.cause == DreamerParkCause::Other
-                    && ProgramHold::of_reason(&park.reason) == Some(ProgramHold::Unbound)
-            }))
+        for attempt in held_for_in_txn(self.vault, &rtxn, ProgramHold::Unbound)? {
+            if PARKED
+                .get(&self.vault.store, &rtxn, &attempt)?
+                .is_some_and(|park| {
+                    park.park_owner == PROGRAM_PARK_OWNER
+                        && park.cause == DreamerParkCause::Other
+                        && ProgramHold::of_reason(&park.reason) == Some(ProgramHold::Unbound)
+                })
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Transaction-composable [`Self::resume_returned_program_holds`]: the
@@ -358,18 +364,28 @@ impl Vault {
 }
 
 /// The program runtime's own holds whose cause has returned at `txn`'s
-/// revision, by attempt.
+/// revision, by attempt. Only a lapsed authority and, with `host`, a want
+/// of a host can return, so only those holds are read, by their index
+/// (FIX 6062).
 fn returned_holds_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     host: Option<&dyn Fn(WriteActor) -> bool>,
 ) -> Result<Vec<AttemptId>> {
-    Ok(PARKED
-        .scan(&vault.store, txn)?
-        .into_iter()
-        .filter(|(attempt, park)| returned_hold(vault, txn, *attempt, park, host))
-        .map(|(attempt, _)| attempt)
-        .collect())
+    let mut holds = vec![ProgramHold::AuthorityLapsed];
+    holds.extend(host.map(|_| ProgramHold::Unbound));
+    let mut returned = Vec::new();
+    for hold in holds {
+        for attempt in held_for_in_txn(vault, txn, hold)? {
+            if let Some(park) = PARKED.get(&vault.store, txn, &attempt)?
+                && returned_hold(vault, txn, attempt, &park, host)
+            {
+                returned.push(attempt);
+            }
+        }
+    }
+    returned.sort_unstable();
+    Ok(returned)
 }
 
 /// Whether `park` is the program runtime's own hold of `attempt` whose cause
