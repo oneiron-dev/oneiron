@@ -390,7 +390,10 @@ fn apply_admitted(
     // relocation. The content-hash index row is maintained by
     // `deindex_entity` inside `apply_ops`, and verdicts anchor to the
     // content bytes rather than to any departing holder.
-    let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops);
+    // A write to a watched unit queues the proactivity wake too, as the
+    // caller-transaction terminal does (FIX 11705).
+    let changes_claims = super::super::vad_postcommit::ops_change_proactivity(&batch.ops)
+        || super::super::vad_postcommit::ops_touch_watched_units(vault, wtxn, &batch.ops)?;
     let tasks = super::super::vad_postcommit::ops_put_tasks(&batch.ops);
     // A WORLD delete stages its pads' tombstones under this scope (FIX 3334).
     // Only their windows are taken from it: this terminal reads the rest of

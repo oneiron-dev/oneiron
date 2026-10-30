@@ -188,9 +188,15 @@ pub(super) fn hydrate_entity(
     else {
         return Ok(None);
     };
+    // Whether the read revision is another than the live row, judged on the
+    // stored bytes before a file-plane ASSET's body replaces its manifest.
+    let other_revision = raw != live_raw;
+    // A file-plane ASSET's live row hydrates its body, not its manifest;
+    // an older revision keeps the manifest it was stored as.
+    let raw = vault.materialized_revision_in_txn(rtxn, &id, raw)?;
     // A history pin cannot restore a claim inadmissible at the current door,
     // its live support included, as the scoped read lane admits a pin.
-    if raw != live_raw && live_raw[0] == ENTITY_TYPE_CLAIM {
+    if other_revision && live_raw[0] == ENTITY_TYPE_CLAIM {
         match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
             Ok(body)
                 if claim_surfaceable(&body)
@@ -233,7 +239,7 @@ pub(super) fn hydrate_entity(
         // no verdict in this run stands for it: it is not served.
         let cached = options.claim_bodies.and_then(|cache| cache.get(&id));
         let pinned = matches!(options.read_mode, crate::vault::ReadMode::Pinned(_));
-        let judged_here = cached.is_none() || pinned || raw != live_raw;
+        let judged_here = cached.is_none() || pinned || other_revision;
         match (cached, &decoded_here) {
             // Pipeline-gated result: the body the gate admitted.
             (Some(cached), Some(body)) if same_claim_body(cached, body) => {

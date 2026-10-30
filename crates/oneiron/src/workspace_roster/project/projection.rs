@@ -187,9 +187,10 @@ fn authority_refs(authority: &ProjectAuthority, ids: &mut Vec<EntityId>) -> Resu
 
 fn slice_refs(slice: &crate::llm::Scope, ids: &mut Vec<EntityId>) {
     ids.extend(
-        [slice.world, slice.facet, slice.relationship, slice.project]
+        [slice.world, slice.facet, slice.project]
             .into_iter()
-            .flatten(),
+            .flatten()
+            .chain(slice.relationship.iter().flatten().copied()),
     );
     for resource in slice.readable.iter().chain(&slice.writable) {
         if let crate::llm::ScopeResource::DocumentVersion { document, .. } = resource {
