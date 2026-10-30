@@ -7,8 +7,9 @@
 //! - Admission takes a row only whole, filed under its own request, in its
 //!   sealing month's base window, within one row's bound, and, once this
 //!   vault folds the request's signed result, only the copy that result
-//!   names (FIX 12065). With no result folded yet, whether it names the
-//!   copy is judged where the copy is kept.
+//!   names (FIX 12065), a part only as that copy is cut (FIX 12294). With
+//!   no result folded yet, whether it names the copy is judged where the
+//!   copy is kept.
 //! - Reverse rematerialization relays each copy this vault keeps that stands
 //!   on its fold (`KeptExportOutput::stands`), and drops a row once its
 //!   request is refused here, its result names another copy, or its secret
@@ -70,7 +71,7 @@ pub(super) fn admit_export_output(
     if bytes.len() > MAX_RELAYED_OUTPUT_BYTES {
         return Err(refused("export secret supplement past one row's bound"));
     }
-    if let Some(admitted) = parts::admit_part(key, row_key, bytes) {
+    if let Some(admitted) = parts::admit_part(vault, key, row_key, bytes) {
         return admitted;
     }
     let kept = KeptExportOutput::decode(bytes)

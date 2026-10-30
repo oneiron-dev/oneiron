@@ -14,7 +14,11 @@
 //!   most the count's rows and stops at the first one missing.
 //! - Agreed: every part must name the request, the sealing second and the
 //!   count the first part names, at its own place. Any disagreement drops
-//!   the whole set, logged by its key alone.
+//!   the whole set, logged by its key alone. Once this vault folds the
+//!   request's signed result, a part is admitted only while its head agrees
+//!   with it: the part count the copy it names is cut into, and the second
+//!   the copy this install keeps was sealed at, if it keeps one (FIX 12294).
+//!   A refused part is logged by its key alone and drops only itself.
 //! - Joined once: the runs are joined by `carrier_parts::join_parts`, which
 //!   checks the cut and the host's memory before it copies a byte, and the
 //!   joined copy is kept only once it stands, as a copy in one row is.
@@ -26,12 +30,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use loro::{LoroDoc, LoroMap, LoroValue, ValueOrContainer};
 
-use super::super::{CUSTODY_MAP, commit_custody, holds_custody_map, refused};
+use super::super::{CUSTODY_MAP, admission_read_fault, commit_custody, holds_custody_map, refused};
 use super::EXPORT_OUTPUT_ROW_PREFIX;
-use crate::authority::AuthorityFold;
+use crate::Vault;
+use crate::authority::{AuthorityFold, SealedWorkOutput};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
-use crate::secret_custody::holder_export::KeptExportOutput;
+use crate::secret_custody::holder_export::{
+    KeptExportOutput, MAX_RELAYED_OUTPUT_BYTES, kept_export_output_sealed_at_in_txn,
+};
 use crate::sync::carrier_parts::{PART_BYTES, Parts, join_parts, part_key, split_parts};
 use crate::sync::loro_support::{map_get_bytes, map_insert_bytes};
 use crate::sync::types::WindowKey;
@@ -95,6 +102,19 @@ impl OutputPart {
     }
 }
 
+/// How many parts [`mirror_parts`] cuts the copy `output` names into, from
+/// its sealed length alone (FIX 12294): none for a copy whose frame fits one
+/// row, which rides whole. The result names no run's bytes, so the joined
+/// copy is still judged whole where it is kept.
+fn part_count_of(output: &SealedWorkOutput) -> Option<u64> {
+    let frame = KeptExportOutput::frame_len(output.bytes)?;
+    Some(if frame > MAX_RELAYED_OUTPUT_BYTES as u64 {
+        frame.div_ceil(PART_BYTES as u64)
+    } else {
+        0
+    })
+}
+
 /// The label, the sealing second, the request, the index and the part
 /// count, then the run.
 fn encode_part(output: &KeptExportOutput, index: u32, count: u32, run: &[u8]) -> Vec<u8> {
@@ -125,29 +145,73 @@ pub(super) fn filed(row_key: &str, value: &[u8]) -> bool {
 
 /// Admits one part under `row_key`, the map key after its prefix: one that
 /// decodes, filed under its own request and place, in its sealing month's
-/// base window. `None` for bytes that are no part.
+/// base window. When `vault` folds the request's signed result, its head
+/// must agree with it (FIX 12294; L03 05:1x): the part count the copy that
+/// result names is cut into ([`part_count_of`]; a result that names no copy
+/// has none), and the second the copy this install keeps for the request
+/// was sealed at, if it keeps one. A refused part is that row's refusal
+/// alone: no other part of its set is touched, and a set left without it
+/// waits as any incomplete set does. With no result folded, whether the
+/// parts join to the copy it names is judged where the copy is kept.
+/// `None` for bytes that are no part.
 pub(super) fn admit_part(
+    vault: &Vault,
     key: Option<&WindowKey>,
     row_key: &str,
     bytes: &[u8],
 ) -> Option<Result<()>> {
-    if !bytes.starts_with(PART_LABEL) {
-        return None;
-    }
-    let Some(part) = OutputPart::decode(bytes) else {
-        return Some(Err(refused("malformed export secret supplement part")));
-    };
+    bytes
+        .starts_with(PART_LABEL)
+        .then(|| admit_part_head(vault, key, row_key, bytes))
+}
+
+/// [`admit_part`] for bytes that start with the part label.
+fn admit_part_head(
+    vault: &Vault,
+    key: Option<&WindowKey>,
+    row_key: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    let part = OutputPart::decode(bytes)
+        .ok_or_else(|| refused("malformed export secret supplement part"))?;
     if part_suffix(&part.request, part.index) != row_key {
-        return Some(Err(refused(
+        return Err(refused(
             "export secret supplement part filed under another request or place",
-        )));
+        ));
     }
     if key.is_some_and(|key| *key != WindowKey::from_timestamp(part.sealed_at)) {
-        return Some(Err(refused(
+        return Err(refused(
             "export secret supplement part outside its sealing month's base window",
-        )));
+        ));
     }
-    Some(Ok(()))
+    // Reading this vault's own authority is the store's work: its fault is
+    // this machine's, never the peer's refused update (FIX 5925).
+    let rtxn = vault.store.env.read_txn().map_err(admission_read_fault)?;
+    let fold = vault
+        .authority_view_readonly_in_txn(&rtxn)
+        .map_err(admission_read_fault)?;
+    let Some(answer) = fold.owner_work_result(&part.request) else {
+        return Ok(());
+    };
+    let kept_at = kept_export_output_sealed_at_in_txn(vault, &rtxn, &part.request)
+        .map_err(admission_read_fault)?;
+    let count = answer
+        .outcome
+        .sealed_output()
+        .map_or(Some(0), part_count_of);
+    if count != Some(u64::from(part.count))
+        || kept_at.is_some_and(|sealed_at| sealed_at != part.sealed_at)
+    {
+        // The row's key alone: never a byte of the run.
+        tracing::warn!(
+            request = row_key,
+            "an export secret supplement part its request's signed result does not name was refused"
+        );
+        return Err(refused(
+            "export secret supplement part its request's signed result does not name",
+        ));
+    }
+    Ok(())
 }
 
 /// Writes `frame`, the kept copy `output`'s bytes past one row, into `doc`'s
