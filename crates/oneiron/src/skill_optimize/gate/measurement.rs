@@ -145,6 +145,10 @@ pub struct JudgeMeasurements {
     pub world_labels_digest: String,
     /// The judge against the human picks in the skill's anchor, read before scoring.
     pub anchor: AnchorLabelScore,
+    /// The pin of the judge rubric in force while the verdict was scored,
+    /// beside its `judge_revision` (FIX 3585): the rubric text's BLAKE3,
+    /// lower hex; `None` while no rubric is in force.
+    pub judge_rubric_digest: Option<String>,
 }
 
 /// One held-out replay as the honesty audit reads it: the run's task inputs and
@@ -223,8 +227,9 @@ fn checked(score: f32) -> Result<f32> {
 
 /// Run both independent audits, then compare the judge's predictions to labels
 /// from the durable outcome ledger; `anchor` carries its score against the
-/// skill's human picks. No audit result is passed to the scalar scorer, and no
-/// audit result changes admission.
+/// skill's human picks, and `judge_rubric_digest` the rubric pin scored
+/// under. No audit result is passed to the scalar scorer, and no audit result
+/// changes admission.
 pub(super) fn measure(
     scorer: &dyn HeldOutReplayNotes,
     before: &HeldOutReplayCase<'_>,
@@ -232,6 +237,7 @@ pub(super) fn measure(
     outcomes: &[(String, bool)],
     blind: &[BlindPreference],
     anchor: AnchorLabelScore,
+    judge_rubric_digest: Option<String>,
 ) -> Result<JudgeMeasurements> {
     validate_blind(blind)?;
     // Coverage sees only the task identity and instructions: no responses,
@@ -293,6 +299,7 @@ pub(super) fn measure(
         world_axes,
         world_labels_digest: world_labels_digest(outcomes),
         anchor,
+        judge_rubric_digest,
     })
 }
 
@@ -338,6 +345,11 @@ pub(super) fn validate_measurements(
         || !anchor.digest.bytes().all(|byte| byte.is_ascii_hexdigit())
     {
         return Err(invalid("judge anchor score is malformed"));
+    }
+    if measurements.judge_rubric_digest.as_ref().is_some_and(|digest| {
+        digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) {
+        return Err(invalid("judge rubric digest is malformed"));
     }
     for pair in [&measurements.structural, &measurements.contrastive] {
         checked(pair.before)?;
