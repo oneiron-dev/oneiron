@@ -24,13 +24,15 @@ use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
 use oneiron::claim::CallerLocality;
 use oneiron::sync::residence::{
-    BundlePartRead, IndexPage, RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry,
-    SealedBundleObject, SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn,
-    authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
-    authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
-    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_index, sealed_bundle_part,
-    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
-    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
+    AuthorityAppendPart, AuthorityAppendProgress, AuthorityAppendStage, BundlePartRead, IndexPage,
+    RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
+    SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn, authority_append_part_for,
+    authority_append_progress_for, authority_checkpoint_part_for, authority_entry_part_for,
+    authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
+    index_selection_revision, promotion_snapshot_with, replace_sealed_bundle_pads,
+    sealed_bundle_index, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex, selected_item_blob_with,
+    split_authority_page, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -355,12 +357,34 @@ struct AuthorityAppendRequest {
     entries: Vec<String>,
 }
 
+/// A part of an authority entry a page named by reference (FIX 8246): the
+/// entry's hash in base64 and the byte offset the part starts at.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityEntryRequest {
+    hash: String,
+    offset: u64,
+}
+
+/// A part of an authority entry a machine appends past one request frame
+/// (FIX 8246): the entry's hash in base64 and its length, the part's offset,
+/// and its bytes in base64.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityAppendPartRequest {
+    hash: String,
+    total: u64,
+    offset: u64,
+    part: String,
+}
+
 pub(super) fn run(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
+    append_stage: &mut Option<AuthorityAppendStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
     // A forwarded search's verified caller, whom its receipt names (FIX 3550).
@@ -406,6 +430,10 @@ pub(super) fn run(
             }
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
+            "residence.authority.append.part" => {
+                authority_append_part(server, peer, request.params, append_stage)
+            }
+            "residence.authority.entry" => authority_entry(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
             "residence.authority.checkpoint.roots" => {

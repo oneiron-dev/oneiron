@@ -134,6 +134,9 @@ pub struct SyncServer {
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
+    /// The live sockets of proven machines and the custody carrier leaf-key
+    /// requests relayed between them, in memory only (FIX 11785).
+    pub(crate) leaf_keys: crate::handler::LeafKeyRelay,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.

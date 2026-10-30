@@ -7,13 +7,17 @@
 //! update) is not split: it stays under the vault-wide seal, named by its
 //! family, as before. A restore puts an opened carrier's rows back through
 //! the restore-only sink, each from a holder's copy that opened; a row a
-//! holder that did not open holds up goes, and nothing else does.
+//! holder that did not open holds up goes, and nothing else does. The
+//! image's rows the port keeps as structure are recounted at a restore as
+//! the capture placed them, and one linking to an owner that did not open
+//! goes ([`prune_carrier_structure`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
 
-use super::rows::{Class, Client, kind_class};
+use super::super::CanonicalRows;
+use super::rows::{Class, Client, DbClass, Families, class_for_row, kind_class};
 use super::{Carrier, DocumentCarrierRow, Getter, ImageFilter, MixedCarrierProjection, db_name};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -251,6 +255,73 @@ impl<D: ManifestDbs> MixedCarrierProjection for SyncCarriers<'_, D> {
         };
         project_checkpoint_documents(&captured, &owners, &mut basis, &mut emit)
     }
+}
+
+/// The owners the row `key` of the mixed sync family `carrier` holds an id
+/// link to as structure, placed by the family's codec as the capture places
+/// it: none for a row it seals, dispatches or names. A masked copy's row
+/// names the copy: the capture's aliases are not in the image.
+fn structure_dependencies(carrier: Carrier, key: &[u8], value: &[u8]) -> Vec<OwnerRef> {
+    let rows = CapturedSyncRows::new(vec![CapturedSyncRow {
+        carrier: sync_carrier(carrier),
+        key,
+        value,
+    }]);
+    let aliases = RepoCopyAliases::default();
+    let owners = RegistryOwners { aliases: &aliases };
+    // Nothing is sealed here: every atom answers the same ordinal.
+    let mut emit = |_: OwnerRef, _: SyncAtom| -> Result<AtomRef> { Ok(AtomRef(0)) };
+    let Ok(skeleton) = project_checkpoint_sync(&rows, &owners, &mut emit) else {
+        return Vec::new();
+    };
+    skeleton
+        .rows
+        .into_iter()
+        .flat_map(|row| match row {
+            SkeletonRow::Structure { dependencies, .. } => dependencies,
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+/// Takes every row of a mixed sync family out of `databases`, the image a
+/// restore lands, that the port keeps as structure linking to one of
+/// `gone`, each placed as the capture placed it (FIX 6376): how many went.
+/// A family a registry gap holds out stays, as the capture left it.
+pub(super) fn prune_carrier_structure(
+    databases: &mut BTreeMap<String, CanonicalRows>,
+    gone: &BTreeSet<OwnerRef>,
+) -> usize {
+    let preflight = super::preflight::preflight();
+    let families = Families::new();
+    let mut pruned = 0;
+    for &(name, class) in preflight.databases() {
+        if matches!(class, DbClass::Rows(declared) if !matches!(declared, Class::Mixed(_))) {
+            continue;
+        }
+        let Some(rows) = databases.get_mut(name) else {
+            continue;
+        };
+        let before = rows.len();
+        rows.retain(|(key, value)| {
+            let declared = match class {
+                DbClass::Rows(declared) => Some(declared),
+                DbClass::Families(db) => families
+                    .of(db, key)
+                    .filter(|(decl, _)| !preflight.holds_out(decl))
+                    .map(|(_, declared)| declared),
+            };
+            let placed = declared.map(|declared| class_for_row(name, key, value, declared));
+            let Some(Class::Mixed(carrier)) = placed else {
+                return true;
+            };
+            !structure_dependencies(carrier, key, value)
+                .iter()
+                .any(|owner| gone.contains(owner))
+        });
+        pruned += before - rows.len();
+    }
+    pruned
 }
 
 /// One owner's opened rows as the atoms the port emitted, in their order: a

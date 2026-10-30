@@ -230,6 +230,7 @@ pub(in crate::skill_optimize::gate) fn apply_in_txn(
                 &key(ASK_PREFIX, &verdict.proposal),
                 &SkillTradeoffAsk {
                     pending: verdict.id,
+                    skill: verdict.skill,
                     question: question.clone(),
                     jev: jev.clone(),
                     rung,

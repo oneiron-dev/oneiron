@@ -161,6 +161,19 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// `Ping` or an image manifest, the carrier stays at wire revision 2, and
 /// this version stays 3.
 ///
+/// VM diverged-copy notice (FIX 11736, FIX 11737): after the owner answers
+/// a copy the carrier never agreed on, the guest tells the host
+/// ([`VmOutboxFrame::DivergenceCleared`](crate::vm_outbox::VmOutboxFrame::DivergenceCleared)):
+/// a guest copy removed or moved aside clears the host's refusal of its own
+/// version, and a host copy the owner kept moves aside on the host. It
+/// carries a build floor, at the engine revision it merged in: carrier
+/// revision 3 ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION)),
+/// and each end refuses the other's revision 2 at the hello, with no reader
+/// of it kept. The host library, the guest image and its companion are all
+/// at or after the floor, and LC's image acceptance moves its outbox
+/// revision to 3 at the floor. No `Ping` field is added and this version
+/// stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
@@ -398,19 +411,20 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// Catalog rate currency (FIX 9534): a model catalog cost (the engine's
 /// `llm::LlmCatalogCost`, on every facade, SDK and binding surface that
 /// carries a catalog entry, and in each stored registry row and mesh peer
-/// row) requires `currency`, the provider's three-letter code or `null` when
-/// it named none, and a usage rate snapshot (the host's `UsageCostRates`, on
-/// usage events posted and stored) now requires `currency` as a code or
-/// `null` in place of a code alone. An unpriced call gains the reason
-/// `unknown_currency`: rates with a `null` currency that are not zero
-/// throughout, kept with their snapshot, and no amount. Only the installed
-/// first-party model pack's rows, which have always quoted US dollars, read
-/// a missing `currency` as `USD`: at that pack's decode, and at the decode of
-/// a stored registry row whose source rows name that pack. It carries a
-/// build floor, at the engine revision it merged in, with no `Ping` field: a
-/// reader or writer of catalog rows or usage events runs at or after the
-/// floor, and no other missing-field default or reader of a row without it
-/// is kept. This version stays 3.
+/// row) carries `currency`, the provider's three-letter code or `null` when
+/// it named none (a missing key reads as `null`, FIX 11778), and a usage
+/// rate snapshot (the host's `UsageCostRates`, on usage events posted and
+/// stored) now requires `currency` as a code or `null` in place of a code
+/// alone. An unpriced call gains the reason `unknown_currency`: rates with
+/// a `null` currency that are not zero throughout, kept with their snapshot,
+/// and no amount. Only a legacy pre-9534 stored copy of the installed
+/// first-party model pack's row, which has always quoted US dollars, reads
+/// a missing `currency` key as `USD`: its source rows name that pack (FIX
+/// 11778 narrows the pack decode out; first-party bytes name their own
+/// currency). It carries a build floor, at the engine revision it merged
+/// in, with no `Ping` field: a reader or writer of catalog rows or usage
+/// events runs at or after the floor, and no other missing-field default or
+/// reader of a row without it is kept. This version stays 3.
 ///
 /// Wire health check revisions (FIX 9531): each kept call-volume question is
 /// a health check of its own on the owner's `/v1/owner/wire-health` read,
@@ -462,6 +476,16 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// field: a supervisor sends and reads them only with engines and vault VM
 /// images at or after it, no reader without them is kept, the restore input
 /// and receipt schemas stay 1, and this version stays 3.
+///
+/// A vault's deletion on `Ping` (FIX 11710,
+/// [`PingDeletion`](crate::PingDeletion)): an optional `deletion`, present
+/// once the vault's Owners deleted it, with `deleted_at` and
+/// `backup_retain_until`. It carries a build floor, at the engine revision
+/// it merged in, with no revision field: a vault built before it sends
+/// none, so a supervisor reads an absent `deletion` as a standing vault
+/// only from installed engines at or after the floor, and as unknown from
+/// one before it. A block that does not read is unknown too, never a failed
+/// `Ping`. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

@@ -118,6 +118,7 @@ vaultBudgetsResidentShares(input: unknown): unknown
 vaultBudgetsResidentSharesSet(input: unknown): unknown
 vaultRunnersSeatsQuotas(input: unknown): unknown
 vaultRunnersSeatsTopUp(input: unknown): unknown
+vaultRunnersSeatsResume(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -603,6 +604,7 @@ vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsInferenceDefaults(input: unknown): unknown
 vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
+vaultLensesProposeFromPack(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
