@@ -62,6 +62,7 @@ pub use self::program::{
 pub use self::projector::ProjectorPolicy;
 pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub(crate) use self::projector::held_round_members_away_in_txn;
+pub(crate) use self::projector::words_taken_in_txn;
 pub use self::recipe::*;
 pub use self::recipes::WakeRecipePolicy;
 pub use self::scheduling::*;
