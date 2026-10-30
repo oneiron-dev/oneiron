@@ -129,7 +129,7 @@ pub struct RerankDocument<'a> {
 /// leaves, and the recall ranks by fusion.
 pub struct RerankEgress<'a> {
     vault: &'a crate::Vault,
-    /// The routes the sent rows' worlds allow, in their owner's order.
+    /// The routes the sent rows' carried worlds allow, in their owner's order.
     model_routes: crate::authority::WorldModelRoutes,
     /// Each row sent with words, and the world its item names at the
     /// revision scored; `None` when the host's model runs on this device,
@@ -613,8 +613,9 @@ impl Memory<'_> {
     /// a row a device-only world keeps (the vault's own flag, whoever reads),
     /// unless the host's model runs on this device (`on_device`). With the
     /// texts come the rows each is read from (FIX 7001), and the rows that
-    /// leave with words, to be judged again. It reads the worlds of the
-    /// recall's pinned selection (`pin`).
+    /// leave with words, to be judged again. It reads through the recall's
+    /// pinned selection (`pin`); the model routes meet the carried worlds
+    /// of the rows sent with words (FIX 12313).
     fn rerank_documents(
         &self,
         scope: &RecallScope,
@@ -690,16 +691,26 @@ impl Memory<'_> {
                     .collect(),
             )
         };
-        // Only the worlds of texts the host actually reads decide its rungs:
-        // rows sent empty are no model input, and base reality inherits.
-        let model_routes = self.vault.world_model_routes(
-            block
-                .iter()
-                .zip(&pinned_worlds)
-                .zip(&texts)
-                .filter(|(_, text)| !text.is_empty())
-                .filter_map(|((_, world), _)| *world),
-        )?;
+        // Only the carried worlds of texts the host actually reads decide its rungs:
+        // rows sent empty are no model input, base reality inherits, and an
+        // unknown carried world fails closed under an ordered route.
+        let rtxn = self.vault.store.env.read_txn()?;
+        let mut carried = crate::settings::CarriedWorlds::default();
+        for (candidate, text) in block.iter().zip(&texts) {
+            if text.is_empty() {
+                continue;
+            }
+            let worlds =
+                crate::settings::carried_worlds_in(&self.vault.store, &rtxn, &candidate.id)?;
+            carried.absorb(&worlds);
+        }
+        let mut model_routes = self
+            .vault
+            .world_model_routes_in_txn(&rtxn, carried.worlds.iter().copied())?;
+        if carried.unknown && matches!(&model_routes, crate::authority::WorldModelRoutes::Ordered(_))
+        {
+            model_routes = crate::authority::WorldModelRoutes::Ordered(Vec::new());
+        }
         let egress = RerankEgress {
             vault: self.vault,
             model_routes,
