@@ -15,6 +15,7 @@ use std::cell::Cell;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::SyncError;
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::sync::federation_burst::erase::{self, CarriedBy};
@@ -205,6 +206,21 @@ pub(crate) fn erase_retained_in_txn(
 /// its share passed over; `true` when it landed. A refusal a later pass may
 /// lift leaves it waiting; any other refusal ends it as Rejected.
 fn replay(vault: &Vault, key: &str) -> Result<bool> {
+    // The window first, in a read of its own: the tombstone index below
+    // loads the window document, which opens its own read transactions and
+    // takes the materializer lock on a live window — neither crosses into
+    // the write below (lock order materializer → LMDB).
+    let window = {
+        let txn = vault.store.env.read_txn()?;
+        let Some(work) = WORK.get(vault, &txn, &key.to_owned())? else {
+            return Ok(false);
+        };
+        let (MaintenanceWorkState::Pending, Some(_)) = (work.state, &work.blob) else {
+            return Ok(false);
+        };
+        work.window.clone()
+    };
+    let tombstones = window_tombstones(vault, &window);
     vault.with_write_txn_grouped(|wtxn| {
         let Some(work) = WORK.get(vault, wtxn, &key.to_owned())? else {
             return Ok(false);
@@ -212,9 +228,12 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
         let (MaintenanceWorkState::Pending, Some(blob)) = (work.state, &work.blob) else {
             return Ok(false);
         };
+        if work.window != window {
+            // Re-retained under another window between the two reads; the
+            // next pass loads that window's tombstones instead.
+            return Ok(false);
+        }
         let id = entity_of(key)?;
-        let doc = loro::LoroDoc::new();
-        let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let ctx = IngestCtx::new(vault, &work.window, work.lease_vault_id, &tombstones);
         let mut savepoint = vault.store.env.nested_write_txn(wtxn)?;
         let step = {
@@ -234,6 +253,54 @@ fn replay(vault: &Vault, key: &str) -> Result<bool> {
         erase::forget_in_txn(vault, wtxn, &[id], &CarriedBy::Maintenance(key.to_owned()))?;
         Ok(true)
     })
+}
+
+/// The tombstones of `window`, indexed for one replay (FIX 11185): the live
+/// document's when the window is open here, else the persisted state with
+/// its pending updates. A window that does not read replays as it did
+/// before its index, gated by the `dt:` marker and the row fence the ladder
+/// still checks.
+fn window_tombstones(vault: &Vault, window: &str) -> TombstoneIndex {
+    let Some(key) = crate::sync::WindowKey::try_new(window) else {
+        tracing::warn!(
+            "retained maintenance: window key does not parse; replaying without CRDT tombstones"
+        );
+        return empty_tombstones();
+    };
+    if let Some((live, materializer, _)) = vault.live_window(&key) {
+        let _guard = materializer.lock();
+        return TombstoneIndex::build(&live.doc.get_map("tombstones"));
+    }
+    let doc = match crate::sync::window::load_window_from_state(vault, "local", &key) {
+        Ok(doc) => doc,
+        Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+            match crate::sync::window::rebuild_window_from_updates(vault, "local", &key) {
+                Ok(doc) => doc,
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "retained maintenance: window rebuild failed; replaying without CRDT tombstones"
+                    );
+                    return empty_tombstones();
+                }
+            }
+        }
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "retained maintenance: window load failed; replaying without CRDT tombstones"
+            );
+            return empty_tombstones();
+        }
+    };
+    TombstoneIndex::build(&doc.get_map("tombstones"))
+}
+
+/// No tombstones: what a replay the window's index does not cover falls
+/// back to.
+fn empty_tombstones() -> TombstoneIndex {
+    let doc = loro::LoroDoc::new();
+    TombstoneIndex::build(&doc.get_map("tombstones"))
 }
 
 /// Replays the retained maintenance work whose turn has come, at most
