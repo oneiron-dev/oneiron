@@ -568,7 +568,7 @@ mod document_store;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
 pub(crate) use document_store::{
-    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
 };
 mod files;
 pub use files::{

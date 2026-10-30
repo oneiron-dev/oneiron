@@ -8,6 +8,25 @@ use crate::store::GateDecisionId;
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
 
+// The proof the sync ingest door gives a replicated MESSAGE put that one of
+// the owner's own machines sent its row's exact bytes (FIX 9600). The batch
+// carries it to the witness check and mints none.
+#[cfg(feature = "sync")]
+pub(in crate::batch) use crate::sync::VerifiedOwnDeviceLane;
+
+/// Without sync no import lands a replicated row, so no put carries an
+/// own-device lane (FIX 9600): the type has no value.
+#[cfg(not(feature = "sync"))]
+pub(in crate::batch) enum VerifiedOwnDeviceLane {}
+
+#[cfg(not(feature = "sync"))]
+impl VerifiedOwnDeviceLane {
+    /// Never answers: there is no lane to ask.
+    pub(in crate::batch) fn machine_for(&self, _id: &EntityId, _data: &[u8]) -> Option<EntityId> {
+        match *self {}
+    }
+}
+
 /// One entity put through the `apply_put` chokepoint.
 pub(in crate::batch) struct PutRequest<'a> {
     pub(in crate::batch) row: PutRow<'a>,

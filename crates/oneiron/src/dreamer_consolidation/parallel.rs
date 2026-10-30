@@ -20,7 +20,6 @@ use super::sieve_ports::{NeighbourhoodExtraction, SliceCall, SliceStep};
 use super::stage_log::{PartitionStages, ms_since};
 use super::step_charge::StepChargeTally;
 use super::thing_agent::{ThingPass, ThingPassEnd};
-use crate::{Result, Vault};
 use crate::attempt_queue::{AttemptId, ReadSetProducer};
 use crate::autoreason_campaign::authoring::{ClaimAuthoringChoice, authoring_campaign};
 use crate::autoreason_campaign::beam_promotion::default_strategy;
@@ -46,6 +45,7 @@ use crate::llm::{
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
+use crate::{Result, Vault};
 
 impl ConsolidationExecutor<'_> {
     /// The partition's model work; `stages` takes the wall ms of its
@@ -134,14 +134,18 @@ impl ConsolidationExecutor<'_> {
             parent,
             axes.world_ref,
             axes.facet_ref,
-            resources.scope().relationship,
+            resources.scope().relationship.clone(),
         );
         // Each child's reply check reads the citations its candidates would
         // carry into verification against the branch's own pinned text: a
         // range verification refuses the whole partition over refuses the
         // reply here, never memoized (FIX 7274).
         let citations = Arc::new(extraction::CitationCheck::new(
-            resources, axes, attempt_id, ctx.now_ms, namespace,
+            resources,
+            axes,
+            attempt_id,
+            ctx.now_ms,
+            namespace.clone(),
         ));
         // A thing's branch runs as one scoped code-mode agent first (FIX
         // 7508): each slice it extracts is the very durable step below, so
@@ -153,7 +157,7 @@ impl ConsolidationExecutor<'_> {
                 resources,
                 slices: &slices,
                 step: &step_ctx,
-                namespace,
+                namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations: &citations,
                 attempt_id,
@@ -179,7 +183,7 @@ impl ConsolidationExecutor<'_> {
                         sources: &slice.sources,
                     })
                     .collect(),
-                namespace,
+                namespace: namespace.clone(),
                 rules: rules.as_ref(),
                 citations,
                 width,
@@ -478,14 +482,15 @@ impl ConsolidationExecutor<'_> {
 
     /// The incumbent confidence when `candidate` is admitted to the
     /// tournament and carries a string value the judges can read; `None`
-    /// when it stays single-pass.
+    /// when it stays single-pass. Contested is the conflict loop's outcome
+    /// (FIX 12084), never invented: an accumulated member or a merged head.
     fn tournament_admitted(
         &self,
         vault: &Vault,
         selector: &BoundClaimAuthoringSelector,
         candidate: &VerifiedCandidate,
     ) -> Option<f32> {
-        let claim = tournament_claim_of_verified(candidate, false).ok()?;
+        let claim = tournament_claim_of_verified(candidate, candidate.contested).ok()?;
         let admission = selector
             .claim_admission(vault, ClaimAuthoringChoice::Tournament, &claim)
             .ok()?;
@@ -599,8 +604,7 @@ impl ConsolidationExecutor<'_> {
                 ranking,
             )?],
         )?;
-        let fork =
-            DreamerTournamentAuthorFork::new(run_id.clone(), attempt_id, branch_attempts)?;
+        let fork = DreamerTournamentAuthorFork::new(run_id.clone(), attempt_id, branch_attempts)?;
         DreamerTournamentRun::new(
             run_id,
             fork,

@@ -15,16 +15,20 @@ const BARRIER_CHAR: char = '\u{FFFC}';
 const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const MC_NS: &str = "http://schemas.openxmlformats.org/markup-compatibility/2006";
 
-/// Recursively clear `namespaces` (the xmlns declaration map) from an element
+/// Clear `namespaces` (the xmlns declaration map) from every element of a
 /// tree so that serialized bytes don't carry redundant namespace declarations.
 /// The element's own `namespace` (singular — its namespace URI) and `prefix`
-/// are left intact.
+/// are left intact. An explicit stack, so depth costs heap (FIX 10655).
 fn strip_ns_decls(element: &mut Element) {
-    element.namespaces = None;
-    for child in &mut element.children {
-        if let XMLNode::Element(child_el) = child {
-            strip_ns_decls(child_el);
-        }
+    let mut stack = vec![element];
+    while let Some(element) = stack.pop() {
+        element.namespaces = None;
+        stack.extend(
+            element
+                .children
+                .iter_mut()
+                .filter_map(XMLNode::as_mut_element),
+        );
     }
 }
 
@@ -33,40 +37,35 @@ fn strip_ns_decls(element: &mut Element) {
 /// re-declare exactly those prefixes on the root, making the serialized bytes
 /// self-contained regardless of whether the prefix appears in
 /// `KNOWN_OOXML_NAMESPACES`.
+///
+/// The first binding of a prefix in document order wins. The walk is the
+/// explicit-stack pre-order of [`crate::word_xml::preorder_elements`], so
+/// depth costs heap (FIX 10655).
 pub(crate) fn collect_prefix_uri_bindings(element: &Element) -> HashMap<String, String> {
     let mut bindings = HashMap::new();
-    collect_prefix_uri_bindings_inner(element, &mut bindings);
+    for element in crate::word_xml::preorder_elements(element) {
+        // Element's own namespace URI. A prefixed element (e.g. `w:p`) binds its
+        // prefix; an un-prefixed element carrying a namespace (e.g. a foreign
+        // `<Insert xmlns="...">` placeholder) binds the DEFAULT namespace, keyed by
+        // the empty prefix `""`. Dropping the default binding would strip the
+        // `xmlns="..."` declaration and silently re-home the element into the
+        // surrounding default namespace on round-trip — a corruption, not a no-op.
+        if let Some(uri) = &element.namespace {
+            let prefix = element.prefix.clone().unwrap_or_default();
+            bindings.entry(prefix).or_insert_with(|| uri.clone());
+        }
+
+        // Attribute prefixes + namespace URIs (attributes never use the default
+        // namespace, so an un-prefixed attribute carries no binding).
+        for attr_name in element.attributes.keys() {
+            if let (Some(prefix), Some(uri)) = (&attr_name.prefix, &attr_name.namespace) {
+                bindings
+                    .entry(prefix.clone())
+                    .or_insert_with(|| uri.clone());
+            }
+        }
+    }
     bindings
-}
-
-fn collect_prefix_uri_bindings_inner(element: &Element, bindings: &mut HashMap<String, String>) {
-    // Element's own namespace URI. A prefixed element (e.g. `w:p`) binds its
-    // prefix; an un-prefixed element carrying a namespace (e.g. a foreign
-    // `<Insert xmlns="...">` placeholder) binds the DEFAULT namespace, keyed by
-    // the empty prefix `""`. Dropping the default binding would strip the
-    // `xmlns="..."` declaration and silently re-home the element into the
-    // surrounding default namespace on round-trip — a corruption, not a no-op.
-    if let Some(uri) = &element.namespace {
-        let prefix = element.prefix.clone().unwrap_or_default();
-        bindings.entry(prefix).or_insert_with(|| uri.clone());
-    }
-
-    // Attribute prefixes + namespace URIs (attributes never use the default
-    // namespace, so an un-prefixed attribute carries no binding).
-    for attr_name in element.attributes.keys() {
-        if let (Some(prefix), Some(uri)) = (&attr_name.prefix, &attr_name.namespace) {
-            bindings
-                .entry(prefix.clone())
-                .or_insert_with(|| uri.clone());
-        }
-    }
-
-    // Recurse into child elements
-    for child in &element.children {
-        if let XMLNode::Element(child_el) = child {
-            collect_prefix_uri_bindings_inner(child_el, bindings);
-        }
-    }
 }
 
 /// Serialize an XML element to bytes for roundtripping.

@@ -25,6 +25,7 @@
 mod admission;
 mod credentials;
 mod pads;
+mod source;
 mod takeover;
 mod unopened;
 
@@ -41,7 +42,6 @@ use super::anchor::{anchor_record, anchored_position};
 use super::body_history::merge_history_into_rows;
 use super::erase_evidence::CredentialFenceFact;
 use super::files::{EntryState, LocalCustody, container, make_new_dir};
-use super::folder::FolderTarget;
 use super::fork::ForkedCustodyDir;
 use super::head::{CustodyOpener, serde_bytes_vec};
 use super::identity::{CustodyBinding, CustodyId, CustodyKind, CustodySubject, decode_native_path};
@@ -308,6 +308,9 @@ pub(crate) enum CustodyRoute {
 /// the kit, and an admitted machine's key when one is given (FIX 9178).
 pub(crate) struct CustodySourceAt<'a> {
     pub(crate) folder: &'a std::path::Path,
+    /// The head and frames fetched from the residence home (FIX 5846), read
+    /// in place of the folder when given, never with it.
+    pub(crate) fetched: Option<&'a super::protocol::FetchedCustodySource>,
     pub(crate) anchor: Option<&'a dyn AnchorStore>,
     pub(crate) root: Option<&'a oneiron_crypto::HybridSecretKey>,
     pub(crate) machine: Option<(crate::EntityId, &'a oneiron_crypto::HybridSecretKey)>,
@@ -472,7 +475,7 @@ pub(crate) fn route_custody(
     let wanted = required
         .position()
         .map_err(because(R::CustodyRequirementInvalid))?;
-    let target = FolderTarget::at(source.folder.to_path_buf());
+    let target = source.reader();
     // No head beside the backup: an image that needs no live key has
     // nothing for one to recover, and with no anchor configured nothing
     // says one is owed. With an anchor, admission refuses (fail-closed).

@@ -582,10 +582,7 @@ impl Vault {
         if evidence.is_empty() {
             return Err(invalid("no held-out reserve for shared base"));
         }
-        let _ = self.measure_limit(
-            EngineLimit::SharedMergeEvidenceRows,
-            evidence.len() as u64,
-        );
+        let _ = self.measure_limit(EngineLimit::SharedMergeEvidenceRows, evidence.len() as u64);
         let scan = crate::skill_scan::scan_gate_for_activation_in_txn(
             &self.store,
             txn,

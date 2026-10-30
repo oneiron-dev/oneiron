@@ -318,6 +318,9 @@ impl PartialServeConfig {
         if let Some(value) = self.line {
             resolved.line = value;
         }
+        if let Some(value) = self.channel_endpoints {
+            resolved.channel_endpoints = value;
+        }
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
         }

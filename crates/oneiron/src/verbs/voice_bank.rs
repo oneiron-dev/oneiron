@@ -174,6 +174,9 @@ pub struct VoiceTargetReceipt {
     /// Unix seconds.
     pub cloned_at: u64,
     pub revision: String,
+    /// The vendor holds the clone until the voice is verified there: no
+    /// finished clone yet (FIX 1567, FIX 11479).
+    pub awaiting_verification: bool,
 }
 
 /// `vault.voices.targets.evict`'s input: the voice and the target whose

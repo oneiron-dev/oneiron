@@ -383,6 +383,9 @@ fn withdraw_in_txn(
 ) -> Result<()> {
     mark_one_stale_in_txn(store, txn, id)?;
     record_withdrawn_in_txn(store, txn, id, worlds)?;
+    // A reply TURN that copied a scope summary's words, now stale, takes the
+    // withdrawn record's Shell (FIX 931, 11804).
+    crate::scope_summary::scrub_withdrawn_copy_in_txn(store, txn, id)?;
     // An epoch summary copies the words of what it was written from, so it
     // is withdrawn with any of them, through nested epochs (agent-runtime-v1
     // §d7), for the same worlds.

@@ -843,7 +843,7 @@ impl Vault {
                     version: Some(version),
                     ..
                 }),
-            ) => self.update_shape_skill(owner, entity.ok_or_else(stale)?, version),
+            ) => self.update_shape_skill(owner, entity.ok_or_else(stale)?, version, sources),
             (ShapeChange::Retire, ShapeTarget::Skill { .. }, _) => {
                 // Retiring a skill quarantines it: out of every pack, its
                 // evidence kept, revivable. The owner's word is the consent

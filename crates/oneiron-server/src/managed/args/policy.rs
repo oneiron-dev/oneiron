@@ -192,6 +192,11 @@ const MANAGED_ARGV: &[ArgvRule] = &[
         ArgvUse::Read,
     ),
     (
+        "seal-key-handle",
+        |args| args.seal_key_handle.is_some(),
+        ArgvUse::Read,
+    ),
+    (
         "seal-chain-file",
         |args| args.seal_chain_file.is_some(),
         ArgvUse::Read,

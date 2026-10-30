@@ -40,7 +40,7 @@ use std::cell::{Cell, RefCell};
 use crate::claim::ScopedReadActorKey;
 use crate::code_run::consent;
 use crate::code_run::replay::CodeRunBridgeCall;
-use crate::code_run::storage::ExecutorStorage;
+use crate::code_run::storage::{ExecutorStorage, RunAssertionCollector};
 use crate::code_run::types::{
     AgentVerbRefusal, RunCall, SelfCall, SelfContextCall, SelfContextResult, SelfDeniedResult,
     SelfDispatchOutcome, SelfDispatcher, SelfDurableWaitReason, SelfEffect,
@@ -149,6 +149,8 @@ pub struct HostSelfDispatcher<'a> {
     /// first step's replay capsule tags. Host configuration; no guest call
     /// reaches it.
     pub(super) replay_exposures: Vec<crate::code_run::TaskExposure>,
+    /// The committed-write refs the next speech bubble asserts (FIX 11456).
+    pub(super) assertions_created: RefCell<RunAssertionCollector>,
     /// The model provider the host's ladder says answered the run's last
     /// turn, whose program is the one running (OF-560). Host-internal: only
     /// [`Self::observe_model_provider`] sets it, from the served receipt,

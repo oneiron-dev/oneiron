@@ -5,27 +5,30 @@ use std::collections::HashSet;
 use rmpv::Value;
 
 use crate::Vault;
+use crate::dreamer_runner::maintenance::agent_health::REVIEWER_POLICY_FILE;
 use crate::edit_distance::miner::{MinedSkillEditProposal, pending_substitution_skill_edits};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::limit_ask::EngineLimit;
 use crate::llm::CallPurpose;
 use crate::skill_attribution::{
-    AttributionVerdict, SkillEditProposal, attribution_judgments, pending_edit_proposals,
+    AttributionVerdict, SkillEditProposal, attribution_judgment_row_ids, attribution_judgments,
+    edit_proposal_row_ids, pending_edit_proposals,
 };
-use crate::skill_reliability::SkillReliabilityPosterior;
+use crate::skill_reliability::{SkillReliabilityPosterior, skill_reliability_prior_rows};
 
 use super::gate::{
     SkillEditDisposition, dev_receipts, receipt_is_held_out, skill_body_binding_digest,
     skill_edit_verdicts,
 };
 use super::job::{PROVENANCE_OPTIMIZE_PRINCIPAL_KEY, PROVENANCE_OPTIMIZE_RATIONALE_KEY};
-use super::selection::SkillOptimizeCandidate;
+use super::selection::{SkillOptimizeCandidate, attempt_row_ids};
+use super::union_source_rows;
 
-/// How many of the reserved receipts a gate verdict lists for display, the
-/// newest; the verdict keeps the whole scored set's count and digest beside
-/// them. The optimize brief is not cut to it: the author reads all of its DEV
-/// evidence.
+/// How many of the reserved receipts a gate verdict used to list for display, the
+/// newest, before FIX 5099 kept the whole scored set instead; the verdict keeps
+/// the whole set's count and digest beside the list itself. The optimize brief
+/// was never cut to it: the author reads all of its DEV evidence.
 pub const SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE: usize = 64;
 
 /// Upper bound on an author's rationale, matching `skill_convert`'s.
@@ -89,6 +92,17 @@ pub struct SkillOptimizeBrief {
     /// input the Coach hands its author, never an outcome aggregate, so the
     /// held-out partition is untouched. `None` for an ordinary optimization.
     pub failure: Option<SkillFailureContext>,
+    /// A policy-bearing skill's dials: each top-level key of its
+    /// `policy.json` with its current value (FIX 12071). An edit moves one
+    /// by naming its key with the new number (`key: 4`), which the improved
+    /// revision's `policy.json` then takes. `None` when it carries none.
+    pub policy_dials: Option<serde_json::Map<String, serde_json::Value>>,
+    /// The rows this brief was read from (FIX 7102): the DEV attempt rows, the
+    /// forwarded proposals, the rejected verdicts with their proposals, the
+    /// prior's rows and the reliability claim, unioned. `None` unless every
+    /// constituent is witnessed; the author's call carries it, and calls never
+    /// refuse for `None`.
+    pub source_rows: Option<Vec<EntityId>>,
 }
 
 /// The failure a heal's skill repair is aimed at: its class as its source
@@ -228,18 +242,25 @@ pub(crate) fn optimize_brief_bound_at(
     // filters — a second spelling of the rule is a second thing to get wrong.
     let dev: HashSet<String> = dev_receipts(vault, &candidate.skill)?.into_iter().collect();
     let mut defect_receipts = Vec::new();
+    let mut defect_judgments = Vec::new();
     for judgment in attribution_judgments(vault)? {
         if judgment.verdict != AttributionVerdict::SkillDefect
             || judgment.subject != Some(candidate.skill)
         {
             continue;
         }
+        let before = defect_receipts.len();
         defect_receipts.extend(
             judgment
                 .evidence_receipts
-                .into_iter()
-                .filter(|receipt| dev.contains(receipt)),
+                .iter()
+                .filter(|receipt| dev.contains(receipt.as_str()))
+                .cloned(),
         );
+        // Only a judgment the brief forwards a receipt of is a row it read.
+        if defect_receipts.len() > before {
+            defect_judgments.push(judgment);
+        }
     }
 
     // The same partition, applied to the PROPOSALS rather than only to the
@@ -285,6 +306,7 @@ pub(crate) fn optimize_brief_bound_at(
     // removed or since-mutated proposal cannot truthfully describe the body
     // the gate scored; do not display it as that body's edit.
     let mut rejected_edits = Vec::new();
+    let mut rejection_rows: Vec<EntityId> = Vec::new();
     for verdict in skill_edit_verdicts(vault)? {
         if verdict.skill != candidate.skill || verdict.disposition != SkillEditDisposition::Rejected
         {
@@ -318,6 +340,8 @@ pub(crate) fn optimize_brief_bound_at(
         }) else {
             continue;
         };
+        rejection_rows.push(verdict.id);
+        rejection_rows.push(verdict.proposal);
         rejected_edits.push(RejectedSkillEdit {
             proposal: verdict.proposal,
             desc: proposal.desc,
@@ -333,7 +357,8 @@ pub(crate) fn optimize_brief_bound_at(
             },
         });
     }
-    let mut cited_receipts: Vec<String> = reliability_citations(vault, &candidate.skill)?
+    let (citations, claim) = reliability_citations(vault, &candidate.skill)?;
+    let mut cited_receipts: Vec<String> = citations
         .into_iter()
         .filter(|receipt| dev.contains(receipt))
         .collect();
@@ -342,6 +367,28 @@ pub(crate) fn optimize_brief_bound_at(
     // themselves, in the same receipt-id shape. Unreadable rows were already
     // skipped with a WARN at the read; a failed read cites nothing.
     cited_receipts.extend(rule_outcome_citations(vault, &candidate.skill, &dev));
+    // The rows the author's call carries (FIX 7102, FIX 12088): the DEV attempt
+    // rows, the forwarded defect judgments and discovery proposals by their own
+    // row ids, the forwarded substitution proposals, the rejected verdicts with
+    // their proposals, the prior's rows and the reliability claim. Capture
+    // only, never a refusal.
+    let dev_rows = attempt_row_ids(&dev);
+    let defect_rows = Some(attribution_judgment_row_ids(&defect_judgments));
+    let discovery_rows = Some(edit_proposal_row_ids(&discovery_proposals));
+    let substitution_rows: Vec<EntityId> = substitution_proposals
+        .iter()
+        .map(|proposal| proposal.proposal_id)
+        .collect();
+    let prior_rows = skill_reliability_prior_rows(vault, &candidate.skill)?;
+    let source_rows = union_source_rows([
+        dev_rows,
+        defect_rows,
+        discovery_rows,
+        Some(substitution_rows),
+        Some(rejection_rows),
+        Some(prior_rows),
+        claim.map(|claim| vec![claim]),
+    ]);
     // The brief carries every list whole; the longest is measured.
     let items = [
         cited_receipts.len(),
@@ -354,6 +401,7 @@ pub(crate) fn optimize_brief_bound_at(
     .max()
     .unwrap_or(0);
     let _ = vault.measure_limit(EngineLimit::MaintenanceRowItems, items as u64);
+    let policy_dials = policy_dials(vault, &candidate.skill, &record);
 
     Ok(SkillOptimizeBrief {
         skill: candidate.skill,
@@ -370,7 +418,36 @@ pub(crate) fn optimize_brief_bound_at(
         substitution_proposals,
         rejected_edits,
         failure: None,
+        policy_dials,
+        source_rows,
     })
+}
+
+/// The top-level entries of `skill`'s `policy.json`, when its package
+/// carries one that reads as one JSON object (FIX 12071): the dials the
+/// improved revision's re-derive moves. A package that does not read shows
+/// none, and the brief goes on.
+fn policy_dials(
+    vault: &Vault,
+    skill: &EntityId,
+    record: &crate::skill::SkillRecord,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let rtxn = vault.store.env.read_txn().ok()?;
+    let package = match vault.runtime_skill_package_in_txn(&rtxn, skill, record) {
+        Ok(package) => package?,
+        Err(error) => {
+            tracing::debug!(kind = ?error.kind(), "a skill's package is unreadable for its brief");
+            return None;
+        }
+    };
+    let policy = package
+        .files
+        .into_iter()
+        .find(|file| file.path == REVIEWER_POLICY_FILE)?;
+    match serde_json::from_slice::<serde_json::Value>(&policy.content).ok()? {
+        serde_json::Value::Object(entries) => Some(entries),
+        _ => None,
+    }
 }
 
 /// Whether every receipt a proposal rests on falls on the DEV side of this
@@ -394,11 +471,14 @@ pub(super) fn rests_only_on_dev(skill: &EntityId, evidence: &[String]) -> bool {
     !evidence.is_empty() && !evidence.iter().any(|id| receipt_is_held_out(skill, id))
 }
 
-/// The receipts the active `skill.reliability` claim cites, or none when the
-/// skill has never been projected.
-fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>> {
+/// The receipts the active `skill.reliability` claim cites and the claim row
+/// they were read from, or none when the skill has never been projected.
+fn reliability_citations(
+    vault: &Vault,
+    skill: &EntityId,
+) -> Result<(Vec<String>, Option<EntityId>)> {
     let rtxn = vault.store.env.read_txn()?;
-    let mut best: Option<(usize, Vec<String>)> = None;
+    let mut best: Option<(usize, Vec<String>, EntityId)> = None;
     for id in vault.claims_for_subject_in_txn(&rtxn, skill)? {
         let Some(body) = vault.get_claim_in_txn(&rtxn, &id)? else {
             continue;
@@ -426,11 +506,16 @@ fn reliability_citations(vault: &Vault, skill: &EntityId) -> Result<Vec<String>>
         // A read landing mid-fork must not answer with whichever head the
         // edge index yielded first; the richest trace is the one to reason
         // from, exactly as the posterior read resolves on weight.
-        if best.as_ref().is_none_or(|(len, _)| receipts.len() > *len) {
-            best = Some((receipts.len(), receipts));
+        if best
+            .as_ref()
+            .is_none_or(|(len, _, _)| receipts.len() > *len)
+        {
+            best = Some((receipts.len(), receipts, id));
         }
     }
-    Ok(best.map(|(_, receipts)| receipts).unwrap_or_default())
+    Ok(best
+        .map(|(_, receipts, id)| (receipts, Some(id)))
+        .unwrap_or_default())
 }
 
 /// The DEV `health_review:` rule outcomes the posterior counts, as receipt ids
@@ -469,6 +554,6 @@ impl Vault {
         &self,
         skill: &EntityId,
     ) -> Result<Vec<String>> {
-        reliability_citations(self, skill)
+        reliability_citations(self, skill).map(|(citations, _)| citations)
     }
 }

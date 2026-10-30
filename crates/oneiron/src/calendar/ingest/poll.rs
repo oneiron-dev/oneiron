@@ -266,8 +266,9 @@ fn is_feed_poll_row(record: &AttemptRecord, dedupe_key: &str) -> bool {
         .is_some_and(|stored| stored == dedupe_key || stored.starts_with(&generation_prefix))
 }
 
-/// Runs one poll with the safeguard dial off and no screener — the
-/// production default until the host wires CAL-09's config key.
+/// Runs one poll with the safeguard dial off and no screener. An installed
+/// feed's poll ([`super::feed_door::run_installed_poll`]) reads the owner's
+/// CAL-09 dial instead.
 ///
 /// # Errors
 ///

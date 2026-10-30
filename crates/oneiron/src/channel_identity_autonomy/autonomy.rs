@@ -33,6 +33,8 @@ use crate::error::GateError;
 impl Vault {
     /// Read authorization is disjoint from action reservation. Populated
     /// allowlists are conjunctive; empty lists do not widen the other axis.
+    /// A full-mailbox envelope admits every item of its identity. Supplied
+    /// date bounds hold for both.
     pub fn authorize_channel_identity_scoped_read(
         &self,
         grant_ref: &EntityId,
@@ -93,22 +95,25 @@ impl Vault {
             Err(Error::Gate(GateError::InvalidConsentBound(_))) => return Ok(false),
             Err(error) => return Err(error),
         }
-        Ok((envelope.label_allowlist.is_empty()
+        let label_in_scope = envelope.label_allowlist.is_empty()
             || candidate
                 .label
                 .as_ref()
-                .is_some_and(|label| envelope.label_allowlist.contains(label)))
-            && (envelope.thread_allowlist.is_empty()
-                || candidate
-                    .thread_ref
-                    .as_ref()
-                    .is_some_and(|thread| envelope.thread_allowlist.contains(thread)))
-            && envelope
-                .not_before
-                .is_none_or(|at| candidate.occurred_at >= at)
-            && envelope
-                .not_after
-                .is_none_or(|at| candidate.occurred_at <= at))
+                .is_some_and(|label| envelope.label_allowlist.contains(label));
+        let thread_in_scope = envelope.thread_allowlist.is_empty()
+            || candidate
+                .thread_ref
+                .as_ref()
+                .is_some_and(|thread| envelope.thread_allowlist.contains(thread));
+        Ok(
+            (envelope.full_mailbox || (label_in_scope && thread_in_scope))
+                && envelope
+                    .not_before
+                    .is_none_or(|at| candidate.occurred_at >= at)
+                && envelope
+                    .not_after
+                    .is_none_or(|at| candidate.occurred_at <= at),
+        )
     }
 
     /// Authenticated atomic apply. Exact replay is read-only, including receipts.

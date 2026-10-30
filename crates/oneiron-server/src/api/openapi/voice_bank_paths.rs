@@ -11,6 +11,7 @@ use serde_json::{Map, Value, json};
 use oneiron::task_verb::sdk::{
     VoiceBankPackReceipt, VoiceRenderConsentReceipt, VoiceTargetEvictReceipt, VoiceTargetReceipt,
 };
+use oneiron::voice_identity::ref_bank::VoiceBankView;
 use oneiron_contracts::code_run::vault_read::request_schema;
 
 use crate::api::ai::{ConsentBody, PackBody, ProvisionBody};
@@ -42,6 +43,22 @@ const BANK_FAILED: (&str, &str) = (
 );
 
 const VOICE_ROUTES: &[VoiceRoute] = &[
+    VoiceRoute {
+        method: "get",
+        path: "/v1/ai/voices/{voice_id}",
+        summary: "The voice as the bank holds it: its identity, each pack's metadata, its current render decision, and each configured clone target's current clone, read from one snapshot with no provider call.",
+        body: None,
+        answer: request_schema::<VoiceBankView>,
+        refusals: &[
+            (
+                "404",
+                "The bank holds nothing of that voice (`unknown_voice`).",
+            ),
+            OWNER_REQUIRED,
+            BANK_REFUSED,
+            BANK_FAILED,
+        ],
+    },
     VoiceRoute {
         method: "post",
         path: "/v1/ai/voices/{voice_id}/packs",

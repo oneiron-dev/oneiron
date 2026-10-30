@@ -121,6 +121,10 @@ pub enum VaultDataKeyCustody {
     },
     /// Owner-held local key source. No host reference is stored at all.
     OwnerHeldLocal,
+    /// The managed supervisor delivers the vault key at boot; the host
+    /// process holds it to decrypt. No reference and no key material is
+    /// stored.
+    SupervisorDelivered,
 }
 
 impl fmt::Debug for VaultDataKeyCustody {
@@ -134,6 +138,7 @@ impl fmt::Debug for VaultDataKeyCustody {
                 .field("key_ref", &"<redacted>")
                 .finish(),
             Self::OwnerHeldLocal => f.write_str("OwnerHeldLocal"),
+            Self::SupervisorDelivered => f.write_str("SupervisorDelivered"),
         }
     }
 }
@@ -161,10 +166,13 @@ const RELAY_HOLDS_NO_KEY: &str =
 /// |---|---|---|
 /// | `Hosted` | `HostManagedKms` with a non-empty reference | valid, host-readable |
 /// | `Hosted` | `OwnerHeldLocal` | valid, host-readable with the owner's key |
+/// | `Hosted` | `SupervisorDelivered` | valid, host-readable with the supervisor-delivered key |
 /// | `SelfHostLocal` | `OwnerHeldLocal` | valid, owner-held key |
 /// | `SelfHostLocal` | `HostManagedKms` with a non-empty reference | valid, the owner's own KMS |
+/// | `SelfHostLocal` | `SupervisorDelivered` | valid, the supervisor-delivered key |
 /// | `Relay` | `OwnerHeldLocal` | valid, blind relay |
 /// | `Relay` | `HostManagedKms` | rejected: a relay holds no key |
+/// | `Relay` | `SupervisorDelivered` | rejected: a relay holds no key |
 /// | any | `HostManagedKms` with a blank reference | rejected |
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct VaultPrivacyConfig {
@@ -188,8 +196,9 @@ impl Default for VaultPrivacyConfig {
 
 impl VaultPrivacyConfig {
     /// Rejects the pairings no deployment can run, with no fallback between
-    /// them: a KMS reference blank after trimming, and a KMS key on a blind
-    /// relay. Any placement takes either supported custody otherwise. An
+    /// them: a KMS reference blank after trimming, and a KMS or
+    /// supervisor-delivered key on a blind relay. Any placement takes any
+    /// supported custody otherwise. An
     /// invalid pairing is [`crate::Error::InvalidConfig`], raised before any
     /// storage environment is opened. Configuration is not proof a KMS backend
     /// exists: the opener that needs the key still fails if none answers.
@@ -200,12 +209,17 @@ impl VaultPrivacyConfig {
             (_, VaultDataKeyCustody::HostManagedKms { key_ref }) if key_ref.trim().is_empty() => {
                 Err(Error::InvalidConfig(KMS_REQUIRES_KEY_REF.to_owned()))
             }
-            (HostingPrivacyPosture::Relay, VaultDataKeyCustody::HostManagedKms { .. }) => {
+            (HostingPrivacyPosture::Relay, VaultDataKeyCustody::HostManagedKms { .. })
+            | (HostingPrivacyPosture::Relay, VaultDataKeyCustody::SupervisorDelivered) => {
                 Err(Error::InvalidConfig(RELAY_HOLDS_NO_KEY.to_owned()))
             }
             (
                 HostingPrivacyPosture::Hosted | HostingPrivacyPosture::SelfHostLocal,
                 VaultDataKeyCustody::HostManagedKms { .. },
+            )
+            | (
+                HostingPrivacyPosture::Hosted | HostingPrivacyPosture::SelfHostLocal,
+                VaultDataKeyCustody::SupervisorDelivered,
             )
             | (_, VaultDataKeyCustody::OwnerHeldLocal) => Ok(()),
         }
@@ -234,12 +248,18 @@ impl VaultPrivacyConfig {
             (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::OwnerHeldLocal) => {
                 "host-readable-owner-supplied-key"
             }
+            (HostingPrivacyPosture::Hosted, VaultDataKeyCustody::SupervisorDelivered) => {
+                "host-readable-supervisor-delivered-key"
+            }
             (HostingPrivacyPosture::Relay, _) => "blind-relay-owner-held-key",
             (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::OwnerHeldLocal) => {
                 "owner-held-key"
             }
             (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::HostManagedKms { .. }) => {
                 "owner-kms-key"
+            }
+            (HostingPrivacyPosture::SelfHostLocal, VaultDataKeyCustody::SupervisorDelivered) => {
+                "supervisor-delivered-key"
             }
         }
     }

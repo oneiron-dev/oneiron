@@ -49,10 +49,25 @@ impl crate::Vault {
             let judged = row.judged_version.unwrap_or(base_version);
             let blocks = match blocks_by_version.entry(judged) {
                 Entry::Vacant(slot) => {
-                    let parsed = self
+                    // The DOCX read runs in the host's memory (FIX 10651); a
+                    // resource refusal is the engine's error (FIX 10587).
+                    let resources = crate::office_body::document_resources();
+                    let parsed = match self
                         .read_blob_artifact_version_in_txn(txn, artifact, judged)?
-                        .and_then(|bytes| read_docx_blocks(&bytes, limits.docx).ok())
-                        .unwrap_or_default();
+                    {
+                        None => Vec::new(),
+                        Some(bytes) => {
+                            match resources.docx(|| read_docx_blocks(&bytes, limits.docx)) {
+                                Ok(blocks) => blocks,
+                                Err(error) => {
+                                    if let Some(refusal) = error.resource() {
+                                        return Err(crate::office_body::document_refused(refusal));
+                                    }
+                                    Vec::new()
+                                }
+                            }
+                        }
+                    };
                     slot.insert(
                         parsed
                             .into_iter()

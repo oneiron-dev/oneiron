@@ -3,20 +3,20 @@
 
 use std::collections::BTreeMap;
 
+use crate::entity_id::bytes_to_hex_lower;
 use crate::llm::decision::catalogue::SKILL_OPTIMIZE_JUDGMENT;
 use crate::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
     DecisionQuestion, Reversibility, StateCut, TypedDecision, cut_text, fit_reserve_state,
     fit_state,
 };
-use crate::entity_id::bytes_to_hex_lower;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Error, Result};
 use serde_json::{Value, json};
 
 use super::{
-    BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation,
-    JudgeRubric, PreferredResponse,
+    BlindPreference, HeldOutReplayCase, HeldOutReplayNotes, HonestyReplayObservation, JudgeRubric,
+    PreferredResponse,
 };
 
 mod replay_pairs;
@@ -501,13 +501,16 @@ impl dyn HeldOutReplayNotes + '_ {
         // rubric-free. Past the ladder's bound only the rubric text is cut.
         let rubric = self.rubric()?;
         let digest = question.digest()?;
-        let state = fit_state(rubric.as_ref().map_or(0, |rubric| rubric.text.len()), |cut| {
-            let mut state = json!({"question": question, "digest": digest});
-            if let Some(rubric) = &rubric {
-                put_rubric(&mut state, rubric, cut);
-            }
-            state
-        });
+        let state = fit_state(
+            rubric.as_ref().map_or(0, |rubric| rubric.text.len()),
+            |cut| {
+                let mut state = json!({"question": question, "digest": digest});
+                if let Some(rubric) = &rubric {
+                    put_rubric(&mut state, rubric, cut);
+                }
+                state
+            },
+        );
         let (typed, decision) = decisions.decide(
             self.judge_revision(),
             "tradeoff",

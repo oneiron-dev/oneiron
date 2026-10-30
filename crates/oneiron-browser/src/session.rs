@@ -94,7 +94,7 @@ pub use press::PressGrants;
 pub use solved::{CapturedSolvedSpan, SOLVED_PAST_PRESS, SolvedSnapshotGap};
 
 use self::guest::EngineGuest;
-use self::press::PressBook;
+pub(crate) use self::press::PressBook;
 pub(crate) use self::press::effect_class_on;
 use self::storage::{Collector, OriginSnapshots};
 use self::switch::OriginHistory;
@@ -466,6 +466,24 @@ impl BrowserSession {
         self.undelivered()?;
         Ok(observation)
     }
+
+    /// Refuses a library run before its first effect when a typed handle
+    /// argument names a handle this run does not hold (FIX 10424): asked of
+    /// the host's custody, its bytes unread. A handle out of form is left to
+    /// the run's own form check; a text argument is not a handle.
+    fn held_handles(&self, input: &LibraryRunInput) -> Result<(), BrowserError> {
+        for (name, arg) in &input.secret_args {
+            let crate::SecretArg::Handle(handle) = arg else {
+                continue;
+            };
+            if crate::library::handle_form(handle) && !self.secrets.holds_handle(handle)? {
+                return Err(BrowserError::Input(format!(
+                    "the secret argument {name}'s handle names no secret this run holds"
+                )));
+            }
+        }
+        Ok(())
+    }
 }
 
 impl BrowserDriver for BrowserSession {
@@ -582,6 +600,7 @@ impl BrowserDriver for BrowserSession {
     fn library_run(&mut self, input: LibraryRunInput) -> Result<LibraryRunOutput, BrowserError> {
         // A run refused mid-takeover would count as a missed postcondition.
         self.agent_has()?;
+        self.held_handles(&input)?;
         self.stop_pending = None;
         self.site_skills_unsent();
         let mut output = self.with_library(|session, library, decider, writer| {

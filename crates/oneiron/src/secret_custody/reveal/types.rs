@@ -58,7 +58,9 @@ pub enum SecretRevealDecision {
     /// The owner has not answered, or a grant was revoked and the reveal is
     /// asked again.
     Pending,
-    /// Granted: the value comes with this answer, the first time only.
+    /// Granted: the value comes with this answer, the first time, and again
+    /// only to the step that collected it while its lease holds (FIX 2360,
+    /// FIX 11683).
     Granted,
     /// The owner denied it.
     Denied,
@@ -129,7 +131,8 @@ pub struct SecretRevealReceipt {
     /// The Gate decision of its last consent act: the use of a grant, the
     /// owner's approval or denial, or the owner's read.
     pub decision: Option<GateDecisionId>,
-    /// The T1 lease that delivered an agent's reveal.
+    /// The lease that delivered an agent's reveal: its T1 lease, or the one
+    /// a PERSON reveal keeps on its row (FIX 11683).
     pub lease: Option<EntityId>,
     /// When it was asked.
     pub asked_at: u64,
