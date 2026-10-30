@@ -11995,7 +11995,7 @@
       "call": "memory.artifacts_proposals(&input)?",
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false,
       "binding": {
