@@ -43178,7 +43178,7 @@
      "surface": {
       "crate-vis": 8,
       "enum": 6,
-      "fn": 10,
+      "fn": 12,
       "struct": 9
      }
     },
@@ -96289,7 +96289,7 @@
      "purpose": "Per-call description: envelope, pin admission, roles, tier precedence, response format, and locality",
      "surface": {
       "enum": 6,
-      "fn": 6,
+      "fn": 7,
       "struct": 5
      }
     },
@@ -112697,7 +112697,7 @@
      "path": "src/mcp/exec_host.rs",
      "purpose": "MCP code-execution host seam and the engine-native host binding",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "enum": 1,
       "fn": 7,
       "struct": 4,
@@ -113118,7 +113118,7 @@
      "path": "src/models/cooldown/world_hold.rs",
      "purpose": "Whether a fallback may take a call's world where the offer it falls back to sends it, and why not (FIX 4938…",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -114010,7 +114010,7 @@
      "path": "src/models/walk.rs",
      "purpose": "What one call met on the rungs of its ladder before an answer: each rung it passed over and why, the…",
      "surface": {
-      "crate-vis": 17
+      "crate-vis": 19
      }
     },
     {
