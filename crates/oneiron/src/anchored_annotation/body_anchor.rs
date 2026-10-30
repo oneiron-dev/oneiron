@@ -8,8 +8,9 @@
 //! body anchor on a thread that has none, lands the thread on the newest
 //! export, and follows the body's edits to its head, as the version sweep
 //! moves a version anchor: a Word span with its paragraph's edit, a cell
-//! range with the body's row, column and sheet edits. Deleting the spot
-//! detaches the comment to the Unattached list. The body anchor is a hint:
+//! range with the body's row, column and sheet edits, a deck's slide or
+//! shape by its node id ([`super::deck_anchor`], FIX 12264). Deleting the
+//! spot detaches the comment to the Unattached list. The body anchor is a hint:
 //! a frontier that does not read leaves the thread on its version pin, with
 //! a warning, for the next pass.
 
@@ -19,6 +20,7 @@ use oneiron_docedit::xlsx_body::{XlsxAxis, XlsxAxisEdit};
 
 use super::anchor_text::{docx_blocks, remap_span};
 use super::codec::ThreadHead;
+use super::deck_anchor::{deck_body_locator, deck_file_locator, move_deck_locator};
 use super::model::{
     Anchor, AnnotationThread, BodyAnchor, DriftMarker, Locator, ReanchorOp, ReanchorOutcome,
 };
@@ -62,7 +64,7 @@ enum Effect {
 }
 
 impl Vault {
-    /// The housekeeping pass's body-anchor sweep: the DOCX and XLSX bodies'
+    /// The housekeeping pass's body-anchor sweep: the live bodies'
     /// comments, from the artifact `after` an unfinished run stopped at, for
     /// at most [`BODY_ANCHOR_ARTIFACTS_PER_RUN`] bodies or until `stop`.
     /// Returns the heads written, the artifacts that failed (each keeps its
@@ -75,7 +77,7 @@ impl Vault {
     ) -> Result<(u64, u64, Option<Vec<u8>>)> {
         let artifacts = {
             let rtxn = self.store.env.read_txn()?;
-            self.office_text_bodies_in_txn(&rtxn)?
+            self.office_bodies_in_txn(&rtxn)?
         };
         // The engine moves the comments as the vault's owner, as the
         // commitment-lapse sweep writes.
@@ -196,7 +198,7 @@ impl Vault {
                 None => self
                     .stamp_in_txn(
                         txn,
-                        artifact,
+                        (artifact, head.as_slice()),
                         &thread.anchor,
                         (&mut units, &mut filed),
                         &mut unread,
@@ -218,7 +220,10 @@ impl Vault {
             self.load_units(txn, artifact, &head, &mut units, &mut unread);
             if let Some((version, frontier)) = landing {
                 self.load_units(txn, artifact, frontier, &mut units, &mut unread);
-                self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
+                // Only a Word span lands through the file's own blocks.
+                if matches!(thread.anchor.locator, Locator::Docx { .. }) {
+                    self.load_filed(txn, artifact, *version, &mut filed, &mut unread);
+                }
             }
             let plan = plan_thread(thread, body, stamped, &head, landing, &units, &filed);
             plans.extend(plan);
@@ -228,11 +233,12 @@ impl Vault {
 
     /// The body anchor of a version anchor: the same unit in the live body,
     /// when the body held the anchor's version and, for Word, the body's
-    /// paragraph of that block id reads as the version's.
+    /// paragraph of that block id reads as the version's; for a deck, the
+    /// one node the version's ids name there.
     fn stamp_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
-        artifact: &EntityId,
+        (artifact, head): (&EntityId, &[u8]),
         anchor: &Anchor,
         (units, filed): (&mut UnitsAt, &mut FiledAt),
         unread: &mut u64,
@@ -244,6 +250,10 @@ impl Vault {
                 None
             })?;
         self.load_units(txn, artifact, &frontier, units, unread);
+        // A deck's file ids are read from the deck bound to that version.
+        if matches!(anchor.locator, Locator::Pptx { .. }) {
+            self.load_units(txn, artifact, head, units, unread);
+        }
         let held = match (units_at(units, &frontier), &anchor.locator) {
             (Some(OfficeBodyUnits::Docx(blocks)), Locator::Docx { para_path, .. }) => {
                 self.load_filed(txn, artifact, anchor.version, filed, unread);
@@ -256,6 +266,11 @@ impl Vault {
             }
             (Some(OfficeBodyUnits::Xlsx { sheets, .. }), Locator::Xlsx { sheet, .. }) => {
                 sheets.iter().any(|(_, name)| name == sheet)
+            }
+            (Some(OfficeBodyUnits::Pptx(deck)), Locator::Pptx { .. }) => {
+                let head = units_at(units, head);
+                let locator = deck_body_locator(deck, head, anchor.version, &anchor.locator)?;
+                return Some(BodyAnchor { frontier, locator });
             }
             _ => false,
         };
@@ -371,7 +386,14 @@ fn plan_thread(
                     return None;
                 };
                 let filed = filed.get(version).and_then(Option::as_deref);
-                Some((*version, file_locator(filed, target, &at_export)?))
+                let located = match target {
+                    OfficeBodyUnits::Pptx(deck) => {
+                        let head = units_at(units, body_head);
+                        deck_file_locator(deck, head, *version, &at_export)
+                    }
+                    _ => file_locator(filed, target, &at_export),
+                };
+                Some((*version, located?))
             });
             let moved = BodyAnchor {
                 frontier: body_head.to_vec(),
@@ -417,8 +439,9 @@ fn text_of<'a>(units: &'a Units, id: &str) -> Option<&'a str> {
 }
 
 /// Where a body anchor's unit stands at another frontier, read from the
-/// units at both. A deleted block or sheet, or a span or range deleted
-/// whole, drifts. `None` when the edits between them cannot be read in order.
+/// units at both. A deleted block, sheet, slide or shape, or a span or range
+/// deleted whole, drifts. `None` when the edits between them cannot be read
+/// in order.
 fn move_body_locator(
     from: &OfficeBodyUnits,
     to: &OfficeBodyUnits,
@@ -451,6 +474,9 @@ fn move_body_locator(
             },
             Locator::Xlsx { .. },
         ) => Some(replay_locator(locator, &sheet_ops(before, was, after, now)?)),
+        (_, OfficeBodyUnits::Pptx(after), Locator::Pptx { .. }) => {
+            move_deck_locator(after, locator)
+        }
         _ => None,
     }
 }
