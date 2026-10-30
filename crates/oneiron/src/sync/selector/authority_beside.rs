@@ -46,11 +46,11 @@ impl AuthorityBeside {
 
     /// The AUTHORITY_LOG blobs among `rows`, for a caller with no carrier
     /// document, which gathers them from the rows it holds (FIX 11959).
-    pub(in crate::sync) fn of_rows(rows: impl IntoIterator<Item = &'_ [u8]>) -> Self {
+    pub(in crate::sync) fn of_rows<R: AsRef<[u8]>>(rows: impl IntoIterator<Item = R>) -> Self {
         Self::of_blobs(
             rows.into_iter()
-                .filter(|blob| is_authority_row(blob))
-                .map(<[u8]>::to_vec)
+                .filter(|blob| is_authority_row(blob.as_ref()))
+                .map(|blob| blob.as_ref().to_vec())
                 .collect(),
         )
     }
