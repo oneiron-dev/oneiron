@@ -64,6 +64,10 @@ pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.a
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
 pub const COMMITMENT_INSTANCE: &[u8] = b"oneiron.commitment.instance.v1\0";
 
+/// The successor claim that carries one commitment's batched lapse
+/// (`commitment::lapse_claim_id`, FIX 9726). Parts: the commitment (16 bytes).
+pub const COMMITMENT_LAPSE_SUCCESSOR: &[u8] = b"oneiron.commitment.lapse_successor.v1\0";
+
 /// The proposal claim one commitment wake attempt writes
 /// (`commitment_wake::commitment_wake_proposal_claim_id`, FIX 9731). Parts: the
 /// attempt id (16 bytes).
