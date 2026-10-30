@@ -15,7 +15,9 @@
 //! to avoid circular LMDB→CRDT→LMDB loops.
 
 mod app_reads;
-pub use app_reads::{scoped_subscription_pending, scoped_subscription_receipts};
+pub use app_reads::{
+    ScopedContinuation, ScopedPage, scoped_subscription_pending, scoped_subscription_receipts,
+};
 
 mod childof;
 pub(in crate::sync) use childof::{defer_child_of, settle_child_of};

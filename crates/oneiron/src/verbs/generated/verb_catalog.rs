@@ -53,6 +53,7 @@ pub enum AgentVerb {
     VaultShapeGroupsResolve,
     SelfMessage,
     SelfGrantsAsk,
+    SelfGrantsAsked,
     VaultCompanionsAccessRequestsAnswer,
     SelfGrantsAnswer,
     VaultPersonasPreview,
@@ -148,6 +149,8 @@ pub enum AgentVerb {
     VaultRetrievalPolicyAdmit,
     VaultRetrievalPolicyUpdate,
     VaultExport,
+    VaultExportTransferRead,
+    VaultExportTransferRelease,
     SelfCredentialAttenuate,
     SelfActor,
     VaultScopePosition,
@@ -183,6 +186,7 @@ pub enum AgentVerb {
     VaultCampaignProgramArchive,
     VaultTurnProgramsArm,
     VaultTurnProgramsDisarm,
+    VaultTurnProgramsRebind,
     SelfSavedQueryCreate,
     SelfSavedQueryRead,
     SelfSavedQueryUpdate,
@@ -666,6 +670,7 @@ pub enum AgentVerb {
     VaultCodeIngressGet,
     VaultCodeOriginRegister,
     VaultCodeOriginMirrorGet,
+    VaultCodeOriginMirrorPlan,
     VaultCodeOriginMirrorSet,
     VaultCodeOriginMirrorStrategy,
     VaultCodeOriginMirrorClear,
@@ -1280,6 +1285,7 @@ impl AgentVerb {
         Self::VaultShapeGroupsResolve,
         Self::SelfMessage,
         Self::SelfGrantsAsk,
+        Self::SelfGrantsAsked,
         Self::VaultCompanionsAccessRequestsAnswer,
         Self::SelfGrantsAnswer,
         Self::VaultPersonasPreview,
@@ -1375,6 +1381,8 @@ impl AgentVerb {
         Self::VaultRetrievalPolicyAdmit,
         Self::VaultRetrievalPolicyUpdate,
         Self::VaultExport,
+        Self::VaultExportTransferRead,
+        Self::VaultExportTransferRelease,
         Self::SelfCredentialAttenuate,
         Self::SelfActor,
         Self::VaultScopePosition,
@@ -1410,6 +1418,7 @@ impl AgentVerb {
         Self::VaultCampaignProgramArchive,
         Self::VaultTurnProgramsArm,
         Self::VaultTurnProgramsDisarm,
+        Self::VaultTurnProgramsRebind,
         Self::SelfSavedQueryCreate,
         Self::SelfSavedQueryRead,
         Self::SelfSavedQueryUpdate,
@@ -1893,6 +1902,7 @@ impl AgentVerb {
         Self::VaultCodeIngressGet,
         Self::VaultCodeOriginRegister,
         Self::VaultCodeOriginMirrorGet,
+        Self::VaultCodeOriginMirrorPlan,
         Self::VaultCodeOriginMirrorSet,
         Self::VaultCodeOriginMirrorStrategy,
         Self::VaultCodeOriginMirrorClear,
@@ -2510,6 +2520,7 @@ impl AgentVerb {
             Self::VaultShapeGroupsResolve => "vault.shape.groups.resolve",
             Self::SelfMessage => "self.message",
             Self::SelfGrantsAsk => "self.grants.ask",
+            Self::SelfGrantsAsked => "self.grants.asked",
             Self::VaultCompanionsAccessRequestsAnswer => "vault.companions.access_requests.answer",
             Self::SelfGrantsAnswer => "self.grants.answer",
             Self::VaultPersonasPreview => "vault.personas.preview",
@@ -2605,6 +2616,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => "vault.retrieval.policy.admit",
             Self::VaultRetrievalPolicyUpdate => "vault.retrieval.policy.update",
             Self::VaultExport => "vault.export",
+            Self::VaultExportTransferRead => "vault.export.transfer.read",
+            Self::VaultExportTransferRelease => "vault.export.transfer.release",
             Self::SelfCredentialAttenuate => "self.credential.attenuate",
             Self::SelfActor => "self.actor",
             Self::VaultScopePosition => "vault.scope.position",
@@ -2640,6 +2653,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => "vault.campaign.program.archive",
             Self::VaultTurnProgramsArm => "vault.turn_programs.arm",
             Self::VaultTurnProgramsDisarm => "vault.turn_programs.disarm",
+            Self::VaultTurnProgramsRebind => "vault.turn_programs.rebind",
             Self::SelfSavedQueryCreate => "self.saved_query.create",
             Self::SelfSavedQueryRead => "self.saved_query.read",
             Self::SelfSavedQueryUpdate => "self.saved_query.update",
@@ -3141,6 +3155,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => "vault.code.ingress.get",
             Self::VaultCodeOriginRegister => "vault.code.origin.register",
             Self::VaultCodeOriginMirrorGet => "vault.code.origin.mirror.get",
+            Self::VaultCodeOriginMirrorPlan => "vault.code.origin.mirror.plan",
             Self::VaultCodeOriginMirrorSet => "vault.code.origin.mirror.set",
             Self::VaultCodeOriginMirrorStrategy => "vault.code.origin.mirror.strategy",
             Self::VaultCodeOriginMirrorClear => "vault.code.origin.mirror.clear",
@@ -3767,6 +3782,7 @@ impl AgentVerb {
                 | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
@@ -3862,6 +3878,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfCredentialAttenuate
                 | Self::SelfActor
                 | Self::VaultScopePosition
@@ -3897,6 +3915,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -4380,6 +4399,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -5023,6 +5043,7 @@ impl AgentVerb {
                 | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
@@ -5118,6 +5139,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfCredentialAttenuate
                 | Self::SelfActor
                 | Self::VaultScopePosition
@@ -5153,6 +5176,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -5636,6 +5660,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -6428,6 +6453,7 @@ impl AgentVerb {
                 | Self::VaultShapeGroupsResolve
                 | Self::SelfMessage
                 | Self::SelfGrantsAsk
+                | Self::SelfGrantsAsked
                 | Self::VaultCompanionsAccessRequestsAnswer
                 | Self::SelfGrantsAnswer
                 | Self::VaultPersonasPreview
@@ -6512,6 +6538,8 @@ impl AgentVerb {
                 | Self::VaultRetrievalPolicyAdmit
                 | Self::VaultRetrievalPolicyUpdate
                 | Self::VaultExport
+                | Self::VaultExportTransferRead
+                | Self::VaultExportTransferRelease
                 | Self::SelfActor
                 | Self::VaultReceipts
                 | Self::VaultAssetsIngest
@@ -6541,6 +6569,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryRead
                 | Self::SelfSavedQueryUpdate
@@ -7009,6 +7038,7 @@ impl AgentVerb {
                 | Self::VaultCodeIngressGet
                 | Self::VaultCodeOriginRegister
                 | Self::VaultCodeOriginMirrorGet
+                | Self::VaultCodeOriginMirrorPlan
                 | Self::VaultCodeOriginMirrorSet
                 | Self::VaultCodeOriginMirrorStrategy
                 | Self::VaultCodeOriginMirrorClear
@@ -7617,6 +7647,7 @@ impl AgentVerb {
                 | Self::VaultCampaignProgramArchive
                 | Self::VaultTurnProgramsArm
                 | Self::VaultTurnProgramsDisarm
+                | Self::VaultTurnProgramsRebind
                 | Self::SelfSavedQueryCreate
                 | Self::SelfSavedQueryUpdate
                 | Self::SelfSavedQueryArchive
@@ -8324,6 +8355,7 @@ impl AgentVerb {
             Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::SelfGrantsAsked => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
             Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
@@ -8436,6 +8468,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => &["spec"],
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultExportTransferRead => &["spec"],
+            Self::VaultExportTransferRelease => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -8471,6 +8505,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultTurnProgramsArm => &["spec"],
             Self::VaultTurnProgramsDisarm => &["spec"],
+            Self::VaultTurnProgramsRebind => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -8954,6 +8989,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorPlan => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
             Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
@@ -9569,6 +9605,7 @@ impl AgentVerb {
             Self::VaultShapeGroupsResolve => &["spec"],
             Self::SelfMessage => &["spec"],
             Self::SelfGrantsAsk => &["spec"],
+            Self::SelfGrantsAsked => &["spec"],
             Self::VaultCompanionsAccessRequestsAnswer => &["spec"],
             Self::SelfGrantsAnswer => &["spec"],
             Self::VaultPersonasPreview => &["spec"],
@@ -9664,6 +9701,8 @@ impl AgentVerb {
             Self::VaultRetrievalPolicyAdmit => &["spec"],
             Self::VaultRetrievalPolicyUpdate => &["spec"],
             Self::VaultExport => &["spec"],
+            Self::VaultExportTransferRead => &["spec"],
+            Self::VaultExportTransferRelease => &["spec"],
             Self::SelfCredentialAttenuate => &["spec"],
             Self::SelfActor => &["spec"],
             Self::VaultScopePosition => &["spec"],
@@ -9699,6 +9738,7 @@ impl AgentVerb {
             Self::VaultCampaignProgramArchive => &["spec"],
             Self::VaultTurnProgramsArm => &["spec"],
             Self::VaultTurnProgramsDisarm => &["spec"],
+            Self::VaultTurnProgramsRebind => &["spec"],
             Self::SelfSavedQueryCreate => &["spec"],
             Self::SelfSavedQueryRead => &["spec"],
             Self::SelfSavedQueryUpdate => &["spec"],
@@ -10182,6 +10222,7 @@ impl AgentVerb {
             Self::VaultCodeIngressGet => &["spec"],
             Self::VaultCodeOriginRegister => &["spec"],
             Self::VaultCodeOriginMirrorGet => &["spec"],
+            Self::VaultCodeOriginMirrorPlan => &["spec"],
             Self::VaultCodeOriginMirrorSet => &["spec"],
             Self::VaultCodeOriginMirrorStrategy => &["spec"],
             Self::VaultCodeOriginMirrorClear => &["spec"],
@@ -10890,6 +10931,9 @@ impl AgentVerb {
             Self::SelfGrantsAsk => {
                 "Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."
             }
+            Self::SelfGrantsAsked => {
+                "Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."
+            }
             Self::VaultCompanionsAccessRequestsAnswer => {
                 "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant."
             }
@@ -11173,7 +11217,13 @@ impl AgentVerb {
                 "The owner declares one retrieval-policy update: train, admit only a not-worse candidate, and rebuild the learned action posterior."
             }
             Self::VaultExport => {
-                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref read at /v1/core/export-transfers/{transfer_ref}; MCP answers inline."
+                "Exports the whole vault as one re-importable archive, or an OKF bundle; owner only. Delivery transfer keeps it on the server and answers a transfer_ref, read at /v1/core/export-transfers/{transfer_ref} or vault.export.transfer.read."
+            }
+            Self::VaultExportTransferRead => {
+                "Reads one byte range of an export vault.export kept with delivery transfer, as base64, beside the archive's length and BLAKE3; 4 MiB when no length is named, any length answered. Only its exporter reads it."
+            }
+            Self::VaultExportTransferRelease => {
+                "Lets a whole-vault export that vault.export kept on the server go once its exporter has it; admitted as a read of it is."
             }
             Self::SelfCredentialAttenuate => {
                 "Appends a holder-signed caveat to the caller's own slip, optionally transferring it to a recipient public key. Existing caveats and live parent authority remain binding; no actor or grant is minted."
@@ -11279,6 +11329,9 @@ impl AgentVerb {
             }
             Self::VaultTurnProgramsDisarm => {
                 "Disarms one of the caller's own armed turn programs; true when it was armed."
+            }
+            Self::VaultTurnProgramsRebind => {
+                "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."
             }
             Self::SelfSavedQueryCreate => {
                 "Creates a saved query (scope, stage-1 filter, stage-2 matcher and evaluation policy) owned by the caller."
@@ -12702,6 +12755,9 @@ impl AgentVerb {
             }
             Self::VaultCodeOriginMirrorGet => {
                 "Read one served repository's outbound mirror setup, cadence, sync strategy, pushed refs, last run and automatic push status (newest reviewed plan, review or reconcile holds, heads pending checks) as the owner."
+            }
+            Self::VaultCodeOriginMirrorPlan => {
+                "Read one automatic push plan of a served repository's mirror as the owner (the open one, else the last settled, unless named): its frozen refs with each ref's observed tip and outcome, its batches, held heads and one page of its review."
             }
             Self::VaultCodeOriginMirrorSet => {
                 "Set one served origin's HTTPS mirror, its custody-held origin:mirror-push token, cadence and sync strategy (ask_me, schedule or full_auto; ask_me unless named, the same URL keeps its own); the token binding is checked."

@@ -21,11 +21,12 @@ impl crate::Vault {
     ///
     /// Generic public puts of `ENTITY_TYPE_PSYCH_PROFILE` remain rejected as a
     /// maintenance kind; this helper validates the pinned body schema before
-    /// using the internal maintenance write path.
+    /// using the internal maintenance write path. Where each source lives is
+    /// stamped in the same write (FIX 11149).
     pub fn put_psych_profile(&self, id: &EntityId, profile: &PsychProfile) -> Result<()> {
-        let data = encode_psych_profile_body(profile)?;
         let learned_at = self.store.clock.now_recorded_at();
         let mut wtxn = self.store.env.write_txn()?;
+        let data = encode_psych_profile_body(&self.psych_profile_placed_in(&wtxn, profile)?)?;
         apply_ops(
             &self.store,
             &self.config,

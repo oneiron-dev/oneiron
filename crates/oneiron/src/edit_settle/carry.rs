@@ -1104,7 +1104,23 @@ impl Vault {
                         _ => None,
                     })
                     .collect();
-                if items.is_empty() {
+                // The wake holds no credential: its files are read inside the
+                // asking version's saved lane, under the sight that lane holds
+                // now (FIX 2116).
+                let ids: Vec<EntityId> = std::iter::once(wake.artifact)
+                    .chain(items.iter().map(|item| item.artifact))
+                    .collect();
+                let reads = crate::llm::decision::questions::wake_artifact_reads(
+                    self,
+                    wake.principal,
+                    &wake.question,
+                    &ids,
+                )?;
+                let items: Vec<FolderItem> = items
+                    .into_iter()
+                    .filter(|item| reads.readable.contains(&item.artifact))
+                    .collect();
+                if items.is_empty() || !reads.readable.contains(&wake.artifact) {
                     return Ok((Reasked::Nothing, reask_ref));
                 }
                 let run = self.ask_folder_items_into_sheet(
@@ -1115,7 +1131,7 @@ impl Vault {
                         sheet,
                         answer_col: *answer_col,
                         max_count_override: *max_count_override,
-                        sight: crate::secret_custody::SecretSight::Masked,
+                        sight: reads.sight,
                     },
                 )?;
                 let units = crate::llm::decision::questions::artifact_unit_receipts(&run);

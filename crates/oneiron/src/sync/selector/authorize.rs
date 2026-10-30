@@ -206,12 +206,7 @@ pub(super) fn effective_scope_for_grant(
     fold: &AuthorityFold,
     grant_id: &EntityId,
 ) -> Option<Ceiling> {
-    fold.federation_pacts
-        .values()
-        .filter(|pact| pact.grant_ref == *grant_id)
-        .map(|pact| pact.effective_scope.clone())
-        .reduce(|left, right| left.intersect(&right))
-        .map(Ceiling::new)
+    crate::authority::current_grant_scope(fold, grant_id).map(Ceiling::new)
 }
 
 pub(super) fn strip_guest_share_metadata(

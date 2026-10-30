@@ -118,6 +118,7 @@ pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
 pub const OP_KIND_SLIP_MINT: &str = "slip_mint";
 pub const OP_KIND_SLIP_REVOKE: &str = "slip_revoke";
 pub const OP_KIND_SLIP_CONSUME: &str = "slip_consume";
+pub const OP_KIND_SLIP_GRANT_REVOKE: &str = "slip_grant_revoke";
 pub const SLIP_KEY_SLIP_ID: &str = "slip_id";
 pub const SLIP_KEY_VAULT_ID: &str = "vault_id";
 pub const SLIP_KEY_PARENT_ID: &str = "parent_id";

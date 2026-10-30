@@ -45,6 +45,39 @@ pub(crate) struct Scope {
     pub(crate) masking: &'static str,
 }
 
+/// The rectangle a held image shows, in its surface's pixels (a page's CSS
+/// pixels, a window's screen pixels): left, top, width and height. Each
+/// surface's frame carries one, beside what else its surface needs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Viewport {
+    pub(crate) left: f64,
+    pub(crate) top: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
+impl Viewport {
+    /// The viewport of the (`x`, `y`, `width`, `height`) region of an image
+    /// of `image` pixels that shows this viewport.
+    pub(crate) fn region(
+        &self,
+        image: (u32, u32),
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let across = self.width / f64::from(image.0.max(1));
+        let down = self.height / f64::from(image.1.max(1));
+        Self {
+            left: self.left + f64::from(x) * across,
+            top: self.top + f64::from(y) * down,
+            width: f64::from(width) * across,
+            height: f64::from(height) * down,
+        }
+    }
+}
+
 /// A held screenshot's capture: its id, and the scope it was taken in; none
 /// when the page's documents moved while it was taken, so it never
 /// compares.

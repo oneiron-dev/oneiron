@@ -316,8 +316,9 @@ impl Vault {
     ) -> Result<CustodyStatus> {
         // The policy each head follows is read, journaled when it changed
         // and sealed under one lock held for the pass: no pass seals an
-        // older policy at a newer log position (KS-5, FIX 7191).
-        let _policy = self.store.custody_policy_guard()?;
+        // older policy at a newer log position (KS-5, FIX 7191). A lock or
+        // frame fault is warned and the pass still seals (FIX 7314).
+        let policy = self.store.custody_policy_guard();
         let recipients = match self.custody_target_recipients()? {
             Ok(recipients) => recipients,
             // Nothing is noted, sealed or shipped under a policy this pass
@@ -327,7 +328,7 @@ impl Vault {
                 return self.custody_status_of(publication);
             }
         };
-        self.store.note_custody_policy(&recipients)?;
+        self.store.note_custody_policy(&recipients, &policy)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
             .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
@@ -418,7 +419,7 @@ impl Vault {
     pub fn custody_batch_for(&self, spec: &TargetSpec) -> Result<Option<CustodyBatch>> {
         // As a publication pass: the policy read, journaled when it changed
         // and sealed under the policy lock (KS-5, FIX 7191).
-        let _policy = self.store.custody_policy_guard()?;
+        let policy = self.store.custody_policy_guard();
         let recipients = match self.custody_target_recipients()? {
             Ok(recipients) => recipients,
             Err(pending) => {
@@ -430,7 +431,7 @@ impl Vault {
                 return Ok(None);
             }
         };
-        self.store.note_custody_policy(&recipients)?;
+        self.store.note_custody_policy(&recipients, &policy)?;
         self.store.custody_batch_for(spec, recipients.of(spec))
     }
 

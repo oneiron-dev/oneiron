@@ -23,6 +23,7 @@ use crate::error::{Error, Result};
 use crate::learning::Anchor;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionRecord;
+use crate::task_verb::settlement_anchor::anchor_accepted_review_in_txn;
 
 use super::receipt::{
     TeamOutcome, TeamReceipt, settle_team_outcome_sourced_in_txn, team_receipt_in_txn,
@@ -198,13 +199,24 @@ pub(crate) fn settle_team_owner_verdict_in_txn(
         // read and the fingerprint above checks: the one entity row the
         // outcome was read from. The decision's word, the anchor, its time
         // and its receipt id are recorded values (FIX 7103).
-        None => settle_team_outcome_sourced_in_txn(
-            vault,
-            txn,
-            &binding.team_ref,
-            &outcome,
-            Some(vec![binding.claim]),
-        )
-        .map(Some),
+        None => {
+            let settled = settle_team_outcome_sourced_in_txn(
+                vault,
+                txn,
+                &binding.team_ref,
+                &outcome,
+                Some(vec![binding.claim]),
+            )?;
+            // The owner's acceptance anchors the settlement of the TASK the
+            // team ran, on its settled row.
+            if let Some(task) = binding
+                .root_task
+                .as_deref()
+                .and_then(|hex| EntityId::from_hex(hex).ok())
+            {
+                anchor_accepted_review_in_txn(vault, txn, task, decision, None)?;
+            }
+            Ok(Some(settled))
+        }
     }
 }
