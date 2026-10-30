@@ -53,7 +53,7 @@ pub(super) fn apply_kit_request(
     }
     // Its permits in pieces join from its own signer's pieces at its parents
     // (FIX 11866); pieces that do not join leave it without effect.
-    let Some(request) = permit_pieces::joined_request(&state.owner_work, key, request) else {
+    let Some(request) = permit_pieces::joined_request(&mut state.owner_work, key, request) else {
         state.owner_work.refused.insert(hash);
         return Ok(());
     };
