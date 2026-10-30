@@ -75,7 +75,8 @@ pub(crate) use documents::{
     with_copy_generation_in_txn,
 };
 pub use documents::{
-    RepoCopyAliases, repo_document_copy_vector, repo_document_lineage_edit, repo_document_source,
+    RepoCopyAliases, repo_document_copy_id, repo_document_copy_vector, repo_document_lineage_edit,
+    repo_document_source,
 };
 pub(crate) use history::ProjectedHistory;
 pub use release::{

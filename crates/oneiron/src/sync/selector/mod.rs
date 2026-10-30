@@ -32,8 +32,8 @@ mod scope;
 pub(crate) mod secret_projection;
 pub use secret_projection::{
     RepoCopyAliases, RepoSyncAdmission, admit_repo_sync_frame, prepare_repo_sync_frame,
-    prepare_repo_sync_frame_for_home, repo_copy_generation, repo_document_copy_vector,
-    repo_document_lineage_edit, repo_document_source,
+    prepare_repo_sync_frame_for_home, repo_copy_generation, repo_document_copy_id,
+    repo_document_copy_vector, repo_document_lineage_edit, repo_document_source,
 };
 mod text_egress;
 // FIX 10161: the tombstones a narrower grant's export carries.

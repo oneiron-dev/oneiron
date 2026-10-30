@@ -429,6 +429,16 @@ fn held(source: EntityId, cause: &RepoProjectionDiffResult) -> Result<()> {
     Ok(())
 }
 
+/// The copy id a peer knows the marked snapshot ASSET `source`'s document
+/// by: the id its copy lineage's frames go under, and the id a peer that
+/// holds only the copy subscribes by (FIX 10730). Reads nothing.
+///
+/// # Errors
+/// The copy id derivation's own failure.
+pub fn repo_document_copy_id(source: EntityId) -> Result<EntityId> {
+    copy_id(&source)
+}
+
 /// The version vector of `source`'s copy lineage: what a peer's update
 /// under the copy id is acknowledged with. It proves copy delivery only.
 ///
