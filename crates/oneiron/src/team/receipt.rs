@@ -338,8 +338,8 @@ pub fn record_team_receipt_sourced(
 
 /// Settles a team run's anchored outcome and feeds its pattern skill's
 /// payoff. Settling again with the same receipt replaces the outcome. The
-/// outcome names and scores the critics of the team's bound deliverables,
-/// as [`settle_team_work_outcome`] does.
+/// outcome names and scores the critics of the team's bound deliverables
+/// (FIX 12106).
 ///
 /// # Errors
 ///
@@ -407,7 +407,8 @@ pub(crate) fn settle_team_work_outcome(
 }
 
 /// [`settle_team_outcome`] in the caller's transaction, so the source of the
-/// anchor, the outcome and its learning evidence land together.
+/// anchor, the outcome and its learning evidence land together. The outcome
+/// is stored as given: the caller names its critics.
 ///
 /// # Errors
 ///
