@@ -198,7 +198,9 @@ impl Vault {
         Ok(revoked)
     }
 
-    /// The revoke inside the caller's transaction.
+    /// The revoke inside the caller's transaction. Revoking a grant already
+    /// revoked writes nothing and returns it as it was first revoked, as a
+    /// standing consent Grant's revoke does.
     pub(crate) fn revoke_standing_outbound_grant_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -216,6 +218,9 @@ impl Vault {
             return Err(Error::InvalidEntityType(header.entity_type));
         }
         let grant = decode_standing_outbound_grant_body(&raw[ENTITY_METADATA_HEADER_LEN..])?;
+        if grant.status == StandingOutboundGrantStatus::Revoked {
+            return Ok(grant);
+        }
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_standing_outbound_grant_body(&revoked)?;
         self.apply_standing_outbound_grant_body(wtxn, id, revoked_at, data)?;
