@@ -151,13 +151,6 @@ fn message_has_said_by(body: &[u8]) -> bool {
     let Ok(message) = rmpv::decode::read_value(&mut &body[..]) else {
         return true;
     };
-    let field = |value: &rmpv::Value, name: &str| match value {
-        rmpv::Value::Map(entries) => entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value),
-        _ => None,
-    };
     let Some(metadata) = field(&message, "metadata") else {
         return false;
     };
@@ -170,4 +163,15 @@ fn message_has_said_by(body: &[u8]) -> bool {
     entries
         .iter()
         .any(|(key, _)| key.as_str() == Some("said_by"))
+}
+
+/// The value a msgpack map stores under `name`.
+fn field<'a>(value: &'a rmpv::Value, name: &str) -> Option<&'a rmpv::Value> {
+    match value {
+        rmpv::Value::Map(entries) => entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value),
+        _ => None,
+    }
 }
