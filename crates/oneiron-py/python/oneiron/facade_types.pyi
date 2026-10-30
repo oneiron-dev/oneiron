@@ -5142,6 +5142,7 @@ class InboxItemView(TypedDict):
     item: InboxLensRow
     messages: list[InboxItemMessage]
     notification: NotRequired[NotificationRow | None]
+    lens: NotRequired[GeneratedLens | None]
 class InboxItemMarked(TypedDict):
     item_id: str
     read_state: AgentInboxReadState

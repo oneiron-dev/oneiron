@@ -15875,6 +15875,8 @@ pub struct InboxItemView {
         skip_serializing_if = "Option::is_none"
     )]
     pub notification: Option<NotificationRow>,
+    #[serde(rename = "lens", default, skip_serializing_if = "Option::is_none")]
+    pub lens: Option<GeneratedLens>,
 }
 
 /// `oneiron::agent_inbox_lens::read_state::InboxItemMarked`.

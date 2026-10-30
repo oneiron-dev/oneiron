@@ -1011,7 +1011,7 @@ declare namespace Sdk {
   type InboxGroupResolution = { kind: "dreamer"; resolution: InboxBundleResolution } | { kind: "shape"; receipt: ShapeApplyReceipt };
   type InboxItemRequest = { item_id: string };
   type InboxItemMessage = { identity: string; channel: string; payload_ref: string; occurred_at: number; text: string; claims_not_instructions: boolean };
-  type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; notification?: NotificationRow | null };
+  type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; notification?: NotificationRow | null; lens?: GeneratedLens | null };
   type InboxItemMarked = { item_id: string; read_state: AgentInboxReadState; until?: number | null };
   type InboxItemLaterRequest = { item_id: string; until?: number | null };
   type HubPin = { type: "semver"; value: string } | { type: "tag"; value: string } | { type: "commit"; value: string } | { type: "content_hash"; value: string } | { type: "none" };

@@ -1987,7 +1987,7 @@ export type InboxItemRequest = { item_id: string }
 /** `oneiron::agent_inbox_lens::read_state::InboxItemMessage` */
 export type InboxItemMessage = { identity: string; channel: string; payload_ref: string; occurred_at: number; text: string; claims_not_instructions: boolean }
 /** `oneiron::agent_inbox_lens::read_state::InboxItemView` */
-export type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; notification?: NotificationRow | null }
+export type InboxItemView = { item: InboxLensRow; messages: InboxItemMessage[]; notification?: NotificationRow | null; lens?: GeneratedLens | null }
 /** `oneiron::agent_inbox_lens::read_state::InboxItemMarked` */
 export type InboxItemMarked = { item_id: string; read_state: AgentInboxReadState; until?: number | null }
 /** `oneiron::agent_inbox_lens::read_state::InboxItemLaterRequest` */
