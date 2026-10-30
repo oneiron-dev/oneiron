@@ -113,7 +113,7 @@ impl Agent {
 
     /// POSTs `body` to a facade verb; the time covers the round trip only,
     /// not the holder proof made before it.
-    fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
+    pub(super) fn post(&self, verb: &str, body: &Value) -> (f64, Result<Value, String>) {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
