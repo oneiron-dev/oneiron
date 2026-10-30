@@ -3,7 +3,7 @@
 // facade type inventory (scripts/sdk/facade_types.py). Each derives serde with
 // the engine type's own wire shape; a row converts at its boundary through
 // that shape (crate::codec::lower_record / lift_record).
-// UniFFI census: 1216 facade rows, 4405 generated types.
+// UniFFI census: 1216 facade rows, 4406 generated types.
 // Hand-written records in and out: 24; typed arguments or a hand-written input with a generated result: 3; a generated input with a hand-written result: 18; generated in and out: 1168.
 // WireJson rows: vault.append_to_stream (result), vault.flush_stream (result), self.skills.call (result).
 // WireJson leaves inside the generated types, past each serde_json::Value: () (a unit value), SavedQueryCreateRequest.filter (the recursive type SavedQueryFilterSpec), SavedQueryDefinitionView.filter (the recursive type SavedQueryFilterSpec), SavedQueryMatcherSpec.Hard.expression (the recursive type SavedQueryFilterSpec), SavedQueryUpdateRequest.filter (the recursive type SavedQueryFilterSpec).
@@ -18031,6 +18031,19 @@ pub struct HookReplayRow {
     pub result: HookReplayOutcome,
 }
 
+/// `oneiron::verbs::hub::HubHookGoldenRun`.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
+pub struct HubHookGoldenRun {
+    #[serde(rename = "index")]
+    pub index: u64,
+    #[serde(rename = "verb")]
+    pub verb: String,
+    #[serde(rename = "ran")]
+    pub ran: bool,
+    #[serde(rename = "passed")]
+    pub passed: bool,
+}
+
 /// `oneiron::verbs::hub::HubHookReplay`.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, uniffi::Record)]
 pub struct HubHookReplay {
@@ -18040,6 +18053,8 @@ pub struct HubHookReplay {
     pub entries: Vec<HookReplayRow>,
     #[serde(rename = "unreplayed")]
     pub unreplayed: bool,
+    #[serde(rename = "golden")]
+    pub golden: Vec<HubHookGoldenRun>,
 }
 
 /// `oneiron::verbs::hub::HubHookQualificationReceipt`.
