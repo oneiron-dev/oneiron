@@ -2210,7 +2210,7 @@ export type SkillTradeoffQuestion = { goal_id: EntityId; goal_revision: string; 
 /** `oneiron::skill_optimize::gate::tradeoff::JevTradeoffVerdict` */
 export type JevTradeoffVerdict = { question_digest: string; choice: TradeoffChoice; probability: number; pin: ProviderPin }
 /** `oneiron::skill_optimize::gate::tradeoff::SkillTradeoffAsk` */
-export type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number }
+export type SkillTradeoffAsk = { pending: EntityId; skill: EntityId; question: SkillTradeoffQuestion; jev?: JevTradeoffVerdict | null; rung: number; judge_rubric_digest?: string | null }
 /** `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffAskView` */
 export type SkillOptimizeTradeoffAskView = { question_digest: string; ask: SkillTradeoffAsk; tradeoff_capacity_advisory?: TradeoffCapacityAdvisory[] | null }
 /** `oneiron::verbs::goal_optimize::SkillOptimizeTradeoffPickRequest` */
