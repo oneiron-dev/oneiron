@@ -372,6 +372,7 @@ impl crate::store::Store {
         if let Some(now) = clock.leased_now() {
             return Ok(now);
         }
+        let _l15 = crate::stage_timing::stage("recall.grant_clock_write");
         let Some(journal) = LeaseJournal::of(self) else {
             return self.renew_authorization_lease_in_writer();
         };
