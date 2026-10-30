@@ -75,7 +75,14 @@ pub fn forward_rematerialize(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    forward_with_recovery(vault, doc, materializer, window_key, None, MarkerScope::Window)
+    forward_with_recovery(
+        vault,
+        doc,
+        materializer,
+        window_key,
+        None,
+        MarkerScope::Window,
+    )
 }
 
 /// [`forward_rematerialize`] of a sealed window's mirror: it lands the
@@ -88,7 +95,14 @@ pub(crate) fn forward_rematerialize_mirror(
     materializer: &Materializer,
     window_key: &WindowKey,
 ) -> Result<u32> {
-    forward_with_recovery(vault, mirror, materializer, window_key, None, MarkerScope::Mirror)
+    forward_with_recovery(
+        vault,
+        mirror,
+        materializer,
+        window_key,
+        None,
+        MarkerScope::Mirror,
+    )
 }
 
 #[cfg(test)]

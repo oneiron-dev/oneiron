@@ -83,7 +83,9 @@ pub fn scoped_subscription_receipts(
     let mut before = match after {
         Some(ScopedContinuation(Position::Receipt(decision))) => Some(decision),
         Some(ScopedContinuation(Position::Pending(..))) => {
-            return Err(Error::CorruptedIndex("receipt read continued from a consent page"));
+            return Err(Error::CorruptedIndex(
+                "receipt read continued from a consent page",
+            ));
         }
         None => None,
     };
@@ -147,7 +149,9 @@ pub fn scoped_subscription_pending(
             Some((at, decision.as_bytes(), claim))
         }
         Some(ScopedContinuation(Position::Receipt(_))) => {
-            return Err(Error::CorruptedIndex("consent read continued from a receipt page"));
+            return Err(Error::CorruptedIndex(
+                "consent read continued from a receipt page",
+            ));
         }
         None => None,
     };

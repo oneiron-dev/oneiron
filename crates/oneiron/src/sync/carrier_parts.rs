@@ -137,7 +137,9 @@ pub(crate) fn join_parts(map: &LoroMap, parts: &Parts) -> Option<Vec<u8>> {
         return None;
     }
     let mut bytes = Vec::new();
-    bytes.try_reserve_exact(usize::try_from(parts.len).ok()?).ok()?;
+    bytes
+        .try_reserve_exact(usize::try_from(parts.len).ok()?)
+        .ok()?;
     for digest in &parts.parts {
         let part = map_get_bytes(map, &part_key(digest))?;
         if blake3::hash(&part).as_bytes() != digest {

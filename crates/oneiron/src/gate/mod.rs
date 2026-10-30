@@ -51,6 +51,7 @@ mod owner_policy_mutation;
 mod pack_install_policy;
 pub mod policy_manifest_doors;
 mod policy_upgrade;
+mod policy_value_seeds;
 pub(crate) mod policy_values;
 #[cfg(test)]
 pub(crate) use policy_upgrade::ConsentRegate;

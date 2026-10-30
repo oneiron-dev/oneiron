@@ -3,16 +3,48 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::side_table::{self, HexId, Raw, SideTable};
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
 use crate::store::{
     GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord, Store,
 };
 use crate::{EntityId, Vault};
 
-/// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
-/// Key: hex32.
-const TRUSTED_ORIGIN: SideTable<HexId, [u8; 32], Raw> =
+/// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated),
+/// with the time this vault first trusted that body. Key: hex32.
+const TRUSTED_ORIGIN: SideTable<HexId, TrustedOrigin, Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
+
+/// [`TRUSTED_ORIGIN`]'s value: the trusted body's hash, then the second this vault first
+/// trusted that body (FIX 10936), big-endian. A rewrite of the same body keeps the time, so
+/// what counts from it never moves. The vault-bootstrap seed writes the bare hash: it records
+/// no trust time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TrustedOrigin {
+    hash: [u8; 32],
+    trusted_at: Option<u64>,
+}
+
+impl RawValue for TrustedOrigin {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = self.hash.to_vec();
+        if let Some(at) = self.trusted_at {
+            bytes.extend_from_slice(&at.to_be_bytes());
+        }
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (hash, rest) = bytes.split_at(bytes.len().min(32));
+        Ok(Self {
+            hash: <[u8; 32]>::from_raw(hash)?,
+            trusted_at: if rest.is_empty() {
+                None
+            } else {
+                Some(u64::from_raw(rest)?)
+            },
+        })
+    }
+}
 /// Marks a policy-manifest contribution as quarantined by an explicit owner action. Key: hex32.
 const QUARANTINED: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_QUARANTINED);
@@ -120,9 +152,22 @@ pub(crate) fn stamp_manifest_origin(
     let origin_key = HexId(*id);
     if !replicated {
         // Every local re-authoring is authored even if it keeps the seeded ID,
-        // pack name or byte-identical default value.
+        // pack name or byte-identical default value. A body already trusted
+        // keeps the time it was first trusted (FIX 10936).
         SEEDED.delete(store, txn, &origin_key)?;
-        TRUSTED_ORIGIN.put(store, txn, &origin_key, hash.as_bytes())?;
+        let trusted_at = match TRUSTED_ORIGIN.get(store, txn, &origin_key)? {
+            Some(prior) if prior.hash == *hash.as_bytes() => prior.trusted_at,
+            _ => Some(crate::ports::recorded_at_in_txn(store, txn)?),
+        };
+        TRUSTED_ORIGIN.put(
+            store,
+            txn,
+            &origin_key,
+            &TrustedOrigin {
+                hash: *hash.as_bytes(),
+                trusted_at,
+            },
+        )?;
     } else {
         let existing_matches = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .is_some_and(|raw| {
@@ -140,7 +185,7 @@ pub(crate) fn stamp_manifest_origin(
         if !existing_matches
             || TRUSTED_ORIGIN
                 .get(store, txn, &origin_key)?
-                .is_none_or(|old| old != *hash.as_bytes())
+                .is_none_or(|old| old.hash != *hash.as_bytes())
         {
             TRUSTED_ORIGIN.delete(store, txn, &origin_key)?;
         }
@@ -156,7 +201,22 @@ pub(crate) fn manifest_is_trusted(
 ) -> Result<bool> {
     Ok(TRUSTED_ORIGIN
         .get(store, txn, &HexId(*id))?
-        .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
+        .is_some_and(|origin| origin.hash == *blake3::hash(body).as_bytes()))
+}
+
+/// The second this vault first trusted `body` at manifest `id` (FIX 10936): its trust stamp's
+/// time, kept across a rewrite of the same body. `None` when that body is not trusted there,
+/// or its stamp records no time (the bootstrap seed's).
+pub(crate) fn manifest_trusted_at(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<u64>> {
+    Ok(TRUSTED_ORIGIN
+        .get(store, txn, &HexId(*id))?
+        .filter(|origin| origin.hash == *blake3::hash(body).as_bytes())
+        .and_then(|origin| origin.trusted_at))
 }
 
 pub(crate) fn manifest_is_quarantined(

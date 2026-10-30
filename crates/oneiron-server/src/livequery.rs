@@ -490,7 +490,10 @@ fn scoped_pages<T>(
     let mut rows = Vec::new();
     let mut after = None;
     while rows.len() < limit {
-        let page = read((limit - rows.len()).min(crate::api::CORE_MAX_LIST_LIMIT), after)?;
+        let page = read(
+            (limit - rows.len()).min(crate::api::CORE_MAX_LIST_LIMIT),
+            after,
+        )?;
         rows.extend(page.rows);
         let Some(next) = page.next else {
             break;

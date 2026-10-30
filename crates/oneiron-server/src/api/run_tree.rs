@@ -354,6 +354,8 @@ pub(crate) async fn core_run_tree_observe(
     // Subscribe first: a commit during the initial read is either reflected in
     // that snapshot or queued for the next read. No polling timer is involved.
     let receiver = oneiron::AttemptQueue::new(&server.vault).subscribe();
+    // FIX 10381: a revoke wakes the stream to judge its credential again.
+    let revocations = server.vault.subscribe_credential_revocations();
     let initial = oneiron::RunTreeAdapter::new(&server.vault)
         .read_run(&run_id)
         .map_err(|e| core_engine_error("core run tree observe failed", e))?;
@@ -361,7 +363,7 @@ pub(crate) async fn core_run_tree_observe(
         .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
     // FIX 8221: the stream keeps the admitted credential and judges its read
     // authority again before each snapshot it sends.
-    let updates = scoped::observe(server, auth, receiver, run_id, initial);
+    let updates = scoped::observe(server, auth, receiver, revocations, run_id, initial);
     Ok(Sse::new(updates).keep_alive(KeepAlive::default()))
 }
 

@@ -36,8 +36,9 @@ pub(crate) enum Requirement {
 /// intent names, with the newest one a carried-out retirement destroys.
 /// A subject required by exact id (a holder's known-value history, KS-3)
 /// copies those ids alone: no slot an aborted writer left, nor one no row
-/// commits to. A subject a restore may land without (a world key pad, KS-5)
-/// is optional: a fork that cannot read it there copies it not, warned.
+/// commits to. A subject a restore may land without (a world key pad, KS-5;
+/// the host issuer seed escrow) is optional: a fork that cannot read it
+/// there copies it not, warned with its kind.
 pub(crate) struct CustodyPlan {
     source: Option<CustodyBinding>,
     subjects: BTreeMap<CustodySubject, (u64, Option<u64>)>,
@@ -119,11 +120,11 @@ impl CustodyPlan {
     }
 
     /// [`Self::require`] for an id a restore may land without (KS-5, FIX
-    /// 5686 part 2): a world key pad an image row names. `None` when no
-    /// custody is there to hold it, or its entry there is missing; its
-    /// subject is planned all the same, optional, and a fork copies nothing
-    /// it lacks or cannot read. The row's restore decides what a missing one
-    /// means.
+    /// 5686 part 2): a world key pad an image row names, or the host issuer
+    /// seed escrow a side restore carries. `None` when no custody is there
+    /// to hold it, or its entry there is missing; its subject is planned all
+    /// the same, optional, and a fork copies nothing it lacks or cannot
+    /// read. The row's restore decides what a missing one means.
     pub(crate) fn require_present(&mut self, id: &CustodyId) -> Result<Option<Requirement>> {
         self.optional.insert(id.subject().clone());
         let (through, committed) = self
@@ -332,8 +333,9 @@ impl LocalCustody<'_> {
                             EntryState::Live => self.read(&id).map(Some),
                             EntryState::Retired | EntryState::Missing => Ok(None),
                         };
-                        // A pad its row may land without (KS-5): a failed
-                        // read never stops the fork; its row's restore decides.
+                        // A key its restore may land without (a world key
+                        // pad, KS-5; the host issuer seed escrow): a failed
+                        // read never stops the fork; its restore decides.
                         let live = match read_live() {
                             Err(error) if crate::store::credential_kind(subject.kind()) => {
                                 fork_step(&id, Err(error))?;
@@ -341,8 +343,10 @@ impl LocalCustody<'_> {
                             }
                             Err(error) if plan.optional.contains(subject) => {
                                 tracing::warn!(
+                                    subject = ?subject.kind(),
+                                    generation,
                                     kind = ?error.kind(),
-                                    "a world key pad custody could not read was not forked"
+                                    "an optional key custody could not read was not forked"
                                 );
                                 None
                             }

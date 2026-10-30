@@ -47,8 +47,8 @@ use crate::api::owner_routes::skill_judge_routes::{
     swap_pick_body_schema, tradeoff_pick_body_schema, tradeoff_settled_schema,
 };
 use crate::owner::secrets::{
-    custody_rotated_schema, register_secret_body_schema, registered_schema,
-    revoke_secret_body_schema, rotate_secret_body_schema,
+    custody_rotated_schema, reenter_kept_value_body_schema, register_secret_body_schema,
+    registered_schema, revoke_secret_body_schema, rotate_secret_body_schema,
 };
 
 /// Binds each route's REST shapes.
@@ -122,6 +122,14 @@ pub(super) fn merge(spec: &mut Value) {
         "/v1/owner/secrets/found/not-a-secret",
         "post",
         found_key_body_schema(),
+        found_key_settled_schema(),
+        &[],
+    );
+    bind(
+        spec,
+        "/v1/owner/secrets/found/re-enter",
+        "post",
+        reenter_kept_value_body_schema(),
         found_key_settled_schema(),
         &[],
     );

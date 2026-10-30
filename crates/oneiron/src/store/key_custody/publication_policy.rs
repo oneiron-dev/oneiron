@@ -138,19 +138,38 @@ fn policy_digest(
 /// The policy lock, held for a pass: none while nothing is in custody.
 pub(crate) struct PolicyGuard {
     _lock: Option<File>,
+    /// The lock did not take and the pass runs without it (FIX 7314): what
+    /// the pass records then proves no policy.
+    unlocked: bool,
 }
 
 impl Store {
     /// Takes the publication policy lock of this vault's custody, before a
     /// pass reads the folded policy its heads are sealed under (KS-5, FIX
     /// 7191). Nothing is taken while nothing is in custody: there is no head
-    /// to seal.
-    ///
-    /// # Errors
-    ///
-    /// Custody faults.
-    pub(crate) fn custody_policy_guard(&self) -> Result<PolicyGuard> {
-        let none = PolicyGuard { _lock: None };
+    /// to seal. A lock that does not take is warned and never stops the pass
+    /// (FIX 7314): the pass runs without it, and its policy record is left
+    /// unproven, so the next pass journals the policy again and every head is
+    /// sealed and acknowledged again under the policy that pass reads.
+    pub(crate) fn custody_policy_guard(&self) -> PolicyGuard {
+        self.custody_policy_lock().unwrap_or_else(|error| {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the custody publication policy lock did not take; the pass runs without it \
+                 and the next pass journals the policy again"
+            );
+            PolicyGuard {
+                _lock: None,
+                unlocked: true,
+            }
+        })
+    }
+
+    fn custody_policy_lock(&self) -> Result<PolicyGuard> {
+        let none = PolicyGuard {
+            _lock: None,
+            unlocked: false,
+        };
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(none);
         };
@@ -167,6 +186,7 @@ impl Store {
         open_dir(journal.dir(), true, None)?;
         Ok(PolicyGuard {
             _lock: Some(platform::lock_at(&journal.dir().join(POLICY_LOCK))?),
+            unlocked: false,
         })
     }
 
@@ -175,13 +195,21 @@ impl Store {
     /// missing, undecodable or unread proves no policy: the frame is
     /// journaled again, so no head acknowledged under an older policy stays
     /// current (KS-5). The record is a cache: a fault reading or writing it is
-    /// warned and never stops the pass. The caller holds the policy guard
+    /// warned and never stops the pass. Neither does a frame that does not
+    /// append (FIX 7314): it is warned, nothing is recorded, and the pass
+    /// seals under the policy it read, so the next pass journals the frame
+    /// again. A pass run without the policy lock (`guard`) records a policy
+    /// no pass matches, for the same end. The caller holds the policy guard
     /// from before it read the policy.
     ///
     /// # Errors
     ///
     /// Custody faults.
-    pub(crate) fn note_custody_policy(&self, recipients: &TargetRecipients) -> Result<()> {
+    pub(crate) fn note_custody_policy(
+        &self,
+        recipients: &TargetRecipients,
+        guard: &PolicyGuard,
+    ) -> Result<()> {
         let Some(custody) = self.core.key_custody.local() else {
             return Ok(());
         };
@@ -208,11 +236,22 @@ impl Store {
                 None
             }
         };
-        if recorded == Some(policy) {
+        if recorded == Some(policy) && !guard.unlocked {
             return Ok(());
         }
-        custody.journal_entry(&LogEntry::PublicationPolicy(policy))?;
-        if let Err(error) = replace_file(journal.dir(), POLICY, &policy) {
+        if recorded != Some(policy)
+            && let Err(error) = custody.journal_entry(&LogEntry::PublicationPolicy(policy))
+        {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "the custody publication policy frame did not append; the pass seals under \
+                 the policy it read and the next pass journals the frame again"
+            );
+            return Ok(());
+        }
+        // Unlocked, an empty record: it decodes as no policy (FIX 7314).
+        let record: &[u8] = if guard.unlocked { &[] } else { &policy };
+        if let Err(error) = replace_file(journal.dir(), POLICY, record) {
             tracing::warn!(
                 kind = ?error.kind(),
                 "the custody publication policy record was not written; the next pass \
