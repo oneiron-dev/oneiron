@@ -117,6 +117,10 @@ pub struct CallReceipt {
     /// The presented credential's revocable id (a slip's id), when it has
     /// one; [`ERASED_CALL_IDENTITY`] once its actor is erased.
     pub credential_ref: Option<String>,
+    /// The linked machine that carried a forwarded call (FIX 3550), as
+    /// canonical hex, when the caller named above is the one a device
+    /// forwarded to its home; `None` for a call its own connection made.
+    pub carrier_machine: Option<String>,
     pub outcome: CallOutcome,
     /// BLAKE3 of the canonical input JSON, lowercase hex.
     pub request_digest: String,
@@ -155,6 +159,9 @@ pub struct CallReceiptInput {
     pub actor_ref: String,
     pub actor_class: String,
     pub credential_ref: Option<String>,
+    /// The forwarding machine of a call a device forwarded for its caller
+    /// (FIX 3550), canonical hex; `None` otherwise.
+    pub carrier_machine: Option<String>,
     pub outcome: CallOutcome,
     pub request_digest: String,
     pub result_digest: Option<String>,
@@ -452,6 +459,7 @@ impl Vault {
             actor_ref: bounded(input.actor_ref),
             actor_class: bounded(input.actor_class),
             credential_ref: input.credential_ref.map(bounded),
+            carrier_machine: input.carrier_machine.map(bounded),
             outcome: match input.outcome {
                 CallOutcome::Ok => CallOutcome::Ok,
                 CallOutcome::Refused { code } => CallOutcome::Refused {

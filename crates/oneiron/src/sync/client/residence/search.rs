@@ -16,6 +16,7 @@ use super::{
     SyncResidenceMode, WindowKey, read_thin_item, refused, residence_budgets,
 };
 use crate::EntityId;
+use crate::claim::CallerLocality;
 use crate::sync::residence::{ResidenceSearchCursor, ResolvedRecallSelection};
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
@@ -41,7 +42,7 @@ struct SearchPageReply {
 }
 
 /// Asks the home for `limit` hits a page at a time over `rpc`, as the caller
-/// a forwarded search names, within `scope`.
+/// a forwarded search names, at its locality, within `scope`.
 pub(super) async fn search_pages(
     vault: &crate::Vault,
     rpc: &mut ResidenceRpc,
@@ -49,7 +50,7 @@ pub(super) async fn search_pages(
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
-    caller: Option<&crate::authority::ForwardedCallerProof>,
+    caller: Option<(&crate::authority::ForwardedCallerProof, CallerLocality)>,
 ) -> Result<ResidenceSearch, TransportError> {
     let selector = base64::engine::general_purpose::STANDARD.encode(selector_wire);
     let mut hits: Vec<ResidenceHit> = Vec::new();
@@ -62,13 +63,15 @@ pub(super) async fn search_pages(
         if let Some(page) = &page {
             params["page"] = serde_json::to_value(page).map_err(|_| refused())?;
         }
-        if let Some(caller) = caller {
-            // Each page's request is signed whole, its cursor too.
+        if let Some((caller, locality)) = caller {
+            // Each page's request is signed whole, its cursor and the
+            // caller's locality too (FIX 3550).
             let machine = crate::sync::residence::with_forwarded_search_page(
                 query,
                 limit,
                 selector_wire,
                 scope,
+                locality,
                 page.as_ref(),
                 |request| vault.forwarding_machine_proof(request, caller),
             )
@@ -76,6 +79,7 @@ pub(super) async fn search_pages(
             .ok_or_else(refused)?;
             params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
             params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
+            params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
         }
         let reply = match rpc.call("residence.search", params).await? {
             Ok(reply) => reply,
@@ -130,10 +134,11 @@ pub(super) async fn search_pages(
 /// a query door asks the home without a sync client.
 ///
 /// With `caller`, the search is that caller's (FIX 2907): its own holder
-/// proof goes to the home unchanged, with this install's forwarding proof
-/// over it and the request, and the home answers within the caller's reach
-/// and this device's selector. A forwarded search never falls back to this
-/// device's own scan: no home is no hits.
+/// proof goes to the home unchanged, with where the caller sits relative to
+/// this device (FIX 3550) and this install's forwarding proof over both and
+/// the request, and the home answers within the caller's reach, at that
+/// locality, and this device's selector. A forwarded search never falls
+/// back to this device's own scan: no home is no hits.
 ///
 /// With `scope`, the search is a recall's (FIX 2905): the home narrows it by
 /// the scope the device's recall resolved before its candidate cut, and a
@@ -145,7 +150,7 @@ pub(crate) async fn search_resident(
     query: &str,
     limit: usize,
     scope: Option<&crate::sync::residence::ResolvedRecallSelection>,
-    caller: Option<&crate::authority::ForwardedCallerProof>,
+    caller: Option<(&crate::authority::ForwardedCallerProof, CallerLocality)>,
 ) -> Result<ResidenceSearch, TransportError> {
     if config.residence_mode != SyncResidenceMode::Opened {
         return Err(refused());
@@ -164,18 +169,20 @@ pub(crate) async fn search_resident(
     if let Some(scope) = scope {
         params["scope"] = serde_json::to_value(scope).map_err(|_| refused())?;
     }
-    if let Some(caller) = caller {
+    if let Some((caller, locality)) = caller {
         let machine = crate::sync::residence::with_forwarded_search(
             query,
             limit,
             &selector_wire,
             scope,
+            locality,
             |request| vault.forwarding_machine_proof(request, caller),
         )
         .map_err(|e| TransportError::Storage(e.to_string()))?
         .ok_or_else(refused)?;
         params["forwarded"] = serde_json::to_value(caller).map_err(|_| refused())?;
         params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
+        params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
     }
     match ResidenceRpc::connect(vault, config, budgets).await? {
         // More hits than one page carries come a page at a time (FIX 8865).

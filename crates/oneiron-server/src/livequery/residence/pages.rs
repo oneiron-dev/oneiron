@@ -21,7 +21,10 @@ use oneiron::sync::schema::read_window_list;
 use oneiron::sync::{SyncSelector, WindowKey};
 use serde_json::json;
 
-use super::{Answer, AppError, CoreAuth, SearchRequest, SyncServer, admitted, bound_selector};
+use super::{
+    Answer, AppError, CoreAuth, ForwardedAttribution, SearchRequest, SyncServer, admitted,
+    bound_selector, device_search_read_key,
+};
 
 /// A later page whose list changed since the first: the device starts over.
 fn search_changed() -> AppError {
@@ -32,30 +35,30 @@ fn search_changed() -> AppError {
     )
 }
 
-/// One page of a search served in pages, with the cursor of the next.
+/// One page of a search served in pages, with the cursor of the next. A
+/// forwarded search's verified caller is written to `attribution`, as for
+/// a search of one call (FIX 3550).
 pub(super) fn search_pages(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     input: SearchRequest,
     budgets: ResidenceOperationBudgets,
+    attribution: &mut Option<ForwardedAttribution>,
 ) -> Result<Answer, AppError> {
     let selector_wire = base64::engine::general_purpose::STANDARD
         .decode(&input.selector)
         .map_err(|_| AppError::invalid_params())?;
     let selector = bound_selector(server, auth, &input.selector)?;
-    // A forwarded caller reads under its own credential, and the device's
-    // selector stays the second ceiling every hit passes.
+    // A forwarded caller reads under its own credential, at the locality its
+    // device signed, and the device's selector stays the second ceiling
+    // every hit passes.
     let forwarded = input.forwarded_caller(server, peer, &selector)?;
+    *attribution = forwarded
+        .as_ref()
+        .map(|forwarded| ForwardedAttribution::of(&forwarded.caller));
     let admission = match &forwarded {
-        Some(caller) => ResidenceAdmission::load(
-            &server.vault,
-            caller.caller(),
-            peer,
-            crate::handler::selector_grant_scope(),
-            &selector,
-        )
-        .map_err(|_| AppError::not_found("item", None))?,
+        Some(caller) => caller.admission(server, peer, &selector)?,
         None => admitted(server, auth, peer, &selector)?,
     };
     let grant_before = server
@@ -63,9 +66,9 @@ pub(super) fn search_pages(
         .get_raw(&selector.grant_id)
         .map_err(|_| AppError::internal_server_error("grant unavailable"))?
         .ok_or_else(|| AppError::not_found("grant", None))?;
-    let proof = match &forwarded {
-        Some(caller) => caller.caller(),
-        None => auth.verified_slip().ok_or_else(AppError::unauthorized)?,
+    let actor = match &forwarded {
+        Some(caller) => caller.read_key(),
+        None => device_search_read_key(server, auth)?,
     };
     let as_of = match &input.page {
         Some(page) => page.as_of,
@@ -81,7 +84,7 @@ pub(super) fn search_pages(
     let hits = loop {
         let (candidates, ranked) = home_search_page_candidates(
             &server.vault,
-            proof,
+            actor.clone(),
             &input.query,
             window,
             input.scope.as_ref(),
@@ -158,7 +161,9 @@ pub(super) fn search_pages(
     // and a forwarded caller too.
     let selector = bound_selector(server, auth, &input.selector)?;
     if forwarded.is_some() {
-        input.forwarded_caller(server, peer, &selector)?;
+        input
+            .forwarded_caller(server, peer, &selector)
+            .inspect_err(|_| *attribution = None)?;
     }
     if server
         .vault

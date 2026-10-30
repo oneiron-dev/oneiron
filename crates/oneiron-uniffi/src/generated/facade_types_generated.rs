@@ -12122,6 +12122,12 @@ pub struct CallReceipt {
         skip_serializing_if = "Option::is_none"
     )]
     pub credential_ref: Option<String>,
+    #[serde(
+        rename = "carrier_machine",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub carrier_machine: Option<String>,
     #[serde(rename = "outcome")]
     pub outcome: CallOutcome,
     #[serde(rename = "request_digest")]
