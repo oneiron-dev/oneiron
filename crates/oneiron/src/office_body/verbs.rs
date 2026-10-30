@@ -10,6 +10,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::masked_view::masked_body_view;
 use super::{
     BodyBlockKind, BodyCell, BodyFormat, BodyName, DeckBodyView, DocxBody, DocxBodyOp,
     OfficeBodyDiff, OfficeBodyEdit, OfficeBodyExportRecord, OfficeBodyExportRequest,
@@ -17,7 +18,7 @@ use super::{
     ReviewedFork, SettleVerdict, XlsxArea, XlsxBody, XlsxBodyOp, XlsxPreview, XlsxSheetVisibility,
     XlsxStyle, XlsxTable,
 };
-use crate::batch::secret_scan::{LiftedKeys, mask_spanning_json, mask_unplaced_json};
+use crate::batch::secret_scan::LiftedKeys;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::memory::{Memory, MemoryError, MemoryResult};
@@ -445,7 +446,6 @@ impl Memory<'_> {
         {
             return Ok(read.view);
         }
-        let keys = read.keys;
         // A text that still shows a key no mark places reads as the door's
         // placeholder to a masked reader, its owner's proposal filed, at an
         // earlier frontier and at the head of a live body (FIX 8996, FIX 12233).
@@ -455,18 +455,7 @@ impl Memory<'_> {
         if !self.reads_lifted_keys_masked()? {
             return Ok(read.view);
         }
-        let mut value = serde_json::to_value(&read.view)
-            .map_err(|_| crate::Error::InvariantViolation("an office body view did not encode"))?;
-        let lifted = keys.mask_json(&mut value);
-        let unplaced = mask_unplaced_json(&mut value);
-        let spanning =
-            mask_spanning_json(&mut value, &|view| OfficeBodyView::deserialize(view).is_ok())?;
-        if !(lifted || unplaced || spanning) {
-            return Ok(read.view);
-        }
-        Ok(serde_json::from_value(value).map_err(|_| {
-            crate::Error::InvariantViolation("a masked office body view did not decode")
-        })?)
+        masked_body_view(&read.keys, read.view)
     }
 
     /// Whether this read of `artifact`'s body `view` reads it whole: a reader
@@ -493,13 +482,19 @@ impl Memory<'_> {
 
     /// `view` of `artifact`'s body as the bound actor reads it: a reader
     /// other than the owner reads each key the lift sweep marked in the body
-    /// as its handle (OF-067).
+    /// as its handle (OF-067), and each key no mark places, or one split over
+    /// adjacent texts, as the door's placeholder, as the body read does
+    /// (FIX 12302).
     pub(super) fn lifted_body_view<T: Serialize + serde::de::DeserializeOwned>(
         &self,
         artifact: &EntityId,
         view: T,
     ) -> MemoryResult<T> {
-        self.lifted_view(view, || self.vault().typed_body_lifted_keys(artifact))
+        if !self.reads_lifted_keys_masked()? {
+            return Ok(view);
+        }
+        let keys = self.vault().typed_body_lifted_keys(artifact)?;
+        masked_body_view(&keys, view)
     }
 
     /// `ops` for `artifact`'s body with each handle of a key the body's
