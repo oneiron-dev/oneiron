@@ -47,9 +47,6 @@ use crate::sync::documents::storage;
 const BODY: &str = "body";
 /// The domain the copy lineage's one author is derived in.
 const AUTHOR_CONTEXT: &str = "oneiron.repo-sync-projection.document-author.v2";
-/// The length of the incarnation a document head names: an id's 32 hex
-/// characters, the head of its incarnation-qualified frontier.
-const INCARNATION_LEN: usize = 32;
 
 /// A marked document's copy lineage, current with its source.
 pub(crate) struct DocumentCopy {
@@ -252,17 +249,14 @@ fn project_text_in_txn(
 /// document head takes the source alone.
 ///
 /// # Errors
-/// A store failure reading the document.
+/// A store failure reading the document head (L01 05:53).
 fn author(vault: &Vault, txn: &RoTxn<'_>, source: &EntityId) -> Result<u64> {
-    let pin = crate::entity_doc::source_frontier_in_txn(&vault.store, txn, source)?;
-    let incarnation = pin
-        .as_deref()
-        .and_then(|pin| pin.get(..INCARNATION_LEN))
-        .unwrap_or_default();
-    let mut material = Vec::with_capacity(2 + 16 + INCARNATION_LEN);
+    let incarnation =
+        crate::entity_doc::source_incarnation_in_txn(&vault.store, txn, source)?.unwrap_or_default();
+    let mut material = Vec::with_capacity(2 + 16 + incarnation.len());
     material.extend_from_slice(&SyncSecretProjection::SCHEMA.to_be_bytes());
     material.extend_from_slice(source.as_bytes());
-    material.extend_from_slice(incarnation);
+    material.extend_from_slice(incarnation.as_bytes());
     let key = blake3::derive_key(AUTHOR_CONTEXT, &material);
     let mut head = [0u8; 8];
     head.copy_from_slice(&key[..8]);
@@ -294,8 +288,8 @@ fn save_lineage(vault: &Vault, txn: &mut RwTxn<'_>, copy: EntityId, doc: &LoroDo
         .port_document_state_vector_put(txn, slot, &doc.oplog_vv().encode())
 }
 
-/// Bring `lineage`'s text to `copy` as `source`'s lineage author, read
-/// only when the text changes; whether it changed.
+/// Bring `lineage`'s text to `copy` as `source`'s lineage author, its
+/// head read only when the text changes; whether it changed.
 fn bring_current(
     vault: &Vault,
     txn: &RoTxn<'_>,
