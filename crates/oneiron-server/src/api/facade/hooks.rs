@@ -207,14 +207,7 @@ pub(super) async fn facade_hooks_pre_counted(
     let bound = facade_actor(server, auth).ok();
     let (actor, class) = match bound {
         Some(actor) => actor,
-        None => (
-            verb_hook_boundary::host_actor().map_err(MemoryError::from)?,
-            if auth.is_owner_grade() {
-                EdgeActorClass::Human
-            } else {
-                EdgeActorClass::System
-            },
-        ),
+        None => unbound_hook_caller(auth)?,
     };
     let invocation = call.invocation()?;
     // A credential caller's own call can run again through this door once
@@ -263,6 +256,25 @@ pub(super) async fn facade_hooks_pre_counted(
         server, reader, check, actor, class, invocation, verb, value, resume, None,
     )
     .await?)
+}
+
+/// Whom a row's hooks name as their caller when its credential binds no
+/// actor (FIX 1439). An owner-grade credential is the owner's own: the
+/// host's actor, the vault's owner, in person. Any other credential names a
+/// System actor of its own, never the owner, in the System class its
+/// selectors already met it in, so every hook that ran on its calls still
+/// runs; its reads stay on its own key.
+fn unbound_hook_caller(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), FacadeApiError> {
+    if auth.is_owner_grade() {
+        let owner = verb_hook_boundary::host_actor().map_err(MemoryError::from)?;
+        return Ok((owner, EdgeActorClass::Human));
+    }
+    let caller = EntityId::derive(
+        oneiron_contracts::entity_id::derived_domains::FACADE_UNBOUND_CALLER,
+        &[],
+    )
+    .map_err(MemoryError::from)?;
+    Ok((caller, EdgeActorClass::System))
 }
 
 /// What the facade admits before a host-door row's pre chain, for a door
