@@ -2311,7 +2311,7 @@ export class Oneiron {
         read: (input: Facade.CodeSnapshotReadRequest): Facade.CodeSnapshotPinnedFile | null => this.#call(() => this.#client.vaultCodeSnapshotsRead(input) as Facade.CodeSnapshotPinnedFile | null),
       },
       merge_queue: {
-        /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
+        /** Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
         enqueue: (input: Facade.MergeQueueEnqueueRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueEnqueue(input) as Facade.MergeQueueBatchView),
         /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
         stage: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueStage(input) as Facade.MergeQueueBatchView),

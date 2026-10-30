@@ -5183,7 +5183,7 @@ export type VisibleFilePolicy = { version: number; include_prefixes: string[]; e
 /** `oneiron::memory::code_view_doors::types::CodeViewMaterializeRequest` */
 export type CodeViewMaterializeRequest = { repo: EntityId; tested: EntityId; account: EntityId; policy: VisibleFilePolicy }
 /** `oneiron::memory::code_view_doors::types::CodeViewFile` */
-export type CodeViewFile = { path: string; content_hash_blake3: string; frontier: CodeDocumentFrontier; text_sha256: string }
+export type CodeViewFile = { path: string; content_hash_blake3: string; frontier?: CodeDocumentFrontier | null; text_sha256?: string | null; git_oid?: string | null }
 /** `oneiron::memory::code_view_doors::types::CodeWorkingView` */
 export type CodeWorkingView = { view: EntityId; repo: EntityId; base: EntityId; account: EntityId; fork_hash: string; files: CodeViewFile[]; receipt: EntityId; host_path: string }
 /** `oneiron::memory::code_view_doors::types::CodeViewRequest` */

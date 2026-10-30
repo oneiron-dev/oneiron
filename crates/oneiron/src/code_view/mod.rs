@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+mod erase;
 mod language_server;
 mod run;
+pub use erase::{collect_after_delete, collect_erased_views};
 pub use language_server::{LanguageServer, SharedLanguageServer, StdioLanguageServer};
 pub(crate) use run::{repo_view_receipts_in_txn, view_receipt_in_txn};
 

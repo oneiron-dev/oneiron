@@ -722,11 +722,12 @@ fn queue_attempt_in_txn(
     Ok(())
 }
 
+/// Writes `work`'s row whatever its retained receipts and diagnosis weigh:
+/// no row size refuses the next receipt or verdict (FIX 9978).
 pub(super) fn put_work(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     work: &QueueCheckWork,
 ) -> Result<()> {
-    check_row_size(&CHECK_WORK.encode_value(work)?)?;
     CHECK_WORK.put(store, txn, &work.key, work)
 }
