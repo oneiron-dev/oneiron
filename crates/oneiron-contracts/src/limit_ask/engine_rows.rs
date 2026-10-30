@@ -5,7 +5,7 @@ use super::{EngineLimit, memory_share};
 
 impl EngineLimit {
     /// Every engine row.
-    pub const ALL: [Self; 132] = [
+    pub const ALL: [Self; 136] = [
         Self::KeyedFilterJsonBytes,
         Self::CodeResultInlineBytes,
         Self::CodeResultDiskFloorBytes,
@@ -101,6 +101,8 @@ impl EngineLimit {
         Self::SealDssReferenceWork,
         Self::SealFieldTreeWork,
         Self::SealContentsBytes,
+        Self::SealOperationIdBytes,
+        Self::SealBackendOperationIdBytes,
         Self::OrganAsks,
         Self::OrganAskPerVerb,
         Self::OrganAnswerBytes,
@@ -121,6 +123,8 @@ impl EngineLimit {
         Self::OrganNoteBytes,
         Self::OrganLossCodeBytes,
         Self::OrganMemoryBytes,
+        Self::OrganMeshObjectBytes,
+        Self::OrganMeshStagedBytes,
         Self::DeadlineJobsPerCaller,
         Self::BackupHandoffPendingBackups,
         Self::BackupHandoffPendingBytes,
@@ -238,6 +242,8 @@ impl EngineLimit {
             Self::SealDssReferenceWork => "limits.seal_dss_reference_work",
             Self::SealFieldTreeWork => "limits.seal_field_tree_work",
             Self::SealContentsBytes => "limits.seal_contents_bytes",
+            Self::SealOperationIdBytes => "limits.seal_operation_id_bytes",
+            Self::SealBackendOperationIdBytes => "limits.seal_backend_operation_id_bytes",
             Self::OrganAsks => "limits.organ_asks",
             Self::OrganAskPerVerb => "limits.organ_ask_per_verb",
             Self::OrganAnswerBytes => "limits.organ_answer_bytes",
@@ -258,6 +264,8 @@ impl EngineLimit {
             Self::OrganNoteBytes => "limits.organ_note_bytes",
             Self::OrganLossCodeBytes => "limits.organ_loss_code_bytes",
             Self::OrganMemoryBytes => "limits.organ_memory_bytes",
+            Self::OrganMeshObjectBytes => "limits.organ_mesh_object_bytes",
+            Self::OrganMeshStagedBytes => "limits.organ_mesh_staged_bytes",
             Self::DeadlineJobsPerCaller => "limits.deadline_jobs_per_caller",
             Self::BackupHandoffPendingBackups => "limits.backup_handoff_pending_backups",
             Self::BackupHandoffPendingBytes => "limits.backup_handoff_pending_bytes",
@@ -424,6 +432,10 @@ impl EngineLimit {
             Self::SealDssReferenceWork => 16_384,
             Self::SealFieldTreeWork => 16_384,
             Self::SealContentsBytes => 256 << 10,
+            // The caller id the seal refused past before Rule 5, and its
+            // backend's own bound (FIX 6271).
+            Self::SealOperationIdBytes => 224,
+            Self::SealBackendOperationIdBytes => 256,
             Self::OrganAsks => 32,
             Self::OrganAskPerVerb => 32,
             Self::OrganAnswerBytes => 16 << 20,
@@ -444,6 +456,9 @@ impl EngineLimit {
             Self::OrganNoteBytes => 256,
             Self::OrganLossCodeBytes => 64,
             Self::OrganMemoryBytes => 2 << 30,
+            // The 1 GiB the organ mesh refused one object and one
+            // connection's staging past before Rule 5 (FIX 6193).
+            Self::OrganMeshObjectBytes | Self::OrganMeshStagedBytes => 1 << 30,
             // Ten times the fleet's 200 agents, as `limits.task_work` sits.
             Self::DeadlineJobsPerCaller => 2_048,
             // Two days of hourly backups no stage ack has released.

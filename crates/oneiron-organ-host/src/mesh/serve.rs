@@ -2,10 +2,10 @@
 //! owner node's call as its own, and sends the organ's asks back to it,
 //! all but a fetch and the organ's memory, which this node answers itself.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use oneiron::limit_ask::EngineLimit;
 use oneiron::{EntityId, Vault};
 use oneiron_mesh_transport::{MeshConnection, MeshError, MeshFuture, MeshService, MeshStream};
 use oneiron_organ_protocol::{ASK_MEMORY_GROW, ASK_NET_FETCH, AskCode, AskRefusal};
@@ -80,7 +80,7 @@ impl OrganService {
             return;
         }
         let conn: Arc<dyn MeshConnection> = Arc::from(conn);
-        let staging = Arc::new(Staging::new(self.spill_dir()));
+        let staging = Arc::new(self.staging());
         let mut streams = JoinSet::new();
         loop {
             let stream = tokio::select! {
@@ -107,14 +107,25 @@ impl OrganService {
         conn.close();
     }
 
-    /// Where a connection's staging spills (FIX 6193): the host's measured
-    /// spool disk, when its vault was lent one, else the system's temporary
-    /// directory.
-    fn spill_dir(&self) -> PathBuf {
-        self.vault
+    /// A connection's staging (FIX 6193): it spills to the host's measured
+    /// spool disk, each write admitted on its floor, when its vault was lent
+    /// one, else to the system's temporary directory.
+    fn staging(&self) -> Staging {
+        let spool = self
+            .vault
             .proposal_spool()
-            .and_then(|spool| spool.spool_dir().ok())
-            .unwrap_or_else(std::env::temp_dir)
+            .and_then(|spool| Some((spool.spool_dir().ok()?, spool)));
+        match spool {
+            Some((dir, floor)) => Staging::new(dir, Some(floor)),
+            None => Staging::new(std::env::temp_dir(), None),
+        }
+    }
+
+    /// Asks the staged row what the connection holds spilled now: nothing is
+    /// refused for it (FIX 6193).
+    fn measure_staged(&self, staging: &Staging) {
+        self.vault
+            .measure_limit(EngineLimit::OrganMeshStagedBytes, staging.staged());
     }
 
     async fn serve_stream(
@@ -143,10 +154,20 @@ impl OrganService {
                 total,
                 offset,
                 bytes,
-            } => match staging.put(hash, total, offset, &bytes) {
-                Ok(()) => Reply::Put,
-                Err(why) => Reply::Refused(why),
-            },
+            } => {
+                // One object's size, at its first piece: it is staged whole.
+                if offset == 0 {
+                    self.vault
+                        .measure_limit(EngineLimit::OrganMeshObjectBytes, total);
+                }
+                match staging.put(hash, total, offset, &bytes) {
+                    Ok(()) => {
+                        self.measure_staged(&staging);
+                        Reply::Put
+                    }
+                    Err(why) => Reply::Refused(why),
+                }
+            }
             Request::Get { hash, offset } => match staging.piece(hash, offset) {
                 Ok(piece) => Reply::Piece(piece),
                 Err(why) => Reply::Refused(why),
@@ -163,7 +184,10 @@ impl OrganService {
                 };
                 match encode(&result) {
                     Ok(bytes) => match staging.offer(&bytes) {
-                        Ok(carried) => Reply::Call(carried),
+                        Ok(carried) => {
+                            self.measure_staged(&staging);
+                            Reply::Call(carried)
+                        }
                         Err(why) => Reply::Refused(why),
                     },
                     Err(err) => Reply::Refused(err.to_string()),

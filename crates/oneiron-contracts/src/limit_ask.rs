@@ -370,6 +370,12 @@ pub enum EngineLimit {
     /// signature hole. Past it the row asks; a revision the seal writes grows
     /// its hole to hold it.
     SealContentsBytes,
+    /// Bytes of one seal's caller operation id. Past it the row asks and the
+    /// seal's backend sees the id's alias.
+    SealOperationIdBytes,
+    /// Bytes of the longest operation id one seal sends its backend, its own
+    /// suffix counted. Past it the row asks and the id is sent whole.
+    SealBackendOperationIdBytes,
     /// Asks of every verb one organ call makes, against its install grant's own
     /// count, or this row's for a grant that keeps the factory one. Past it the
     /// row asks and each granted ask is answered.
@@ -438,6 +444,12 @@ pub enum EngineLimit {
     /// receipt, while new calls wait for the budget to drain. Measured against
     /// the host's own budget.
     OrganMemoryBytes,
+    /// Bytes of one object a peer stages on this node for a mesh organ call.
+    /// Past it the row asks and the object is staged whole.
+    OrganMeshObjectBytes,
+    /// Bytes one mesh connection holds staged at once, both ways. Past it the
+    /// row asks and every object is staged.
+    OrganMeshStagedBytes,
     /// Deadline jobs one caller has running at once: the recalls and searches
     /// a door answers at their deadline, each counted until its work ends,
     /// after its answer too (SCAN C030). Past it the job runs on and the row
