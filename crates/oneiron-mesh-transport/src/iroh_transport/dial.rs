@@ -1,6 +1,8 @@
 //! The shared authenticated handshake used by a paired dial and by the
 //! owner's explicit-address admission attempt. The latter returns no stream
 //! or connection: it cannot turn an address into application authority.
+use std::collections::VecDeque;
+
 use super::*;
 
 /// A transport-only acknowledgement, sent after the live inbound gate.
@@ -9,9 +11,33 @@ pub(super) const ADMISSION: &[u8] = b"oneiron/mesh-admitted/1";
 
 /// The owner's complete MACHINE lookup by endpoint key (FIX 8622): every
 /// MACHINE row, however many, read under the owner's proof, where the
-/// lookup any key may make stops at its bound.
+/// lookup any key may make stops at its bound. One lookup serves a dial's
+/// receipt and the receipts earlier lookups left unattributed (FIX 11153).
 pub type OwnerMachineLookup =
-    Box<dyn FnOnce([u8; 32]) -> Result<Option<MachineId>, MeshError> + Send>;
+    Box<dyn Fn([u8; 32]) -> Result<Option<MachineId>, MeshError> + Send>;
+
+/// The receipts a failed lookup left with an unknown MACHINE, each with the
+/// endpoint key it names, oldest first, for the owner's next lookup to
+/// attribute (FIX 11153).
+pub(super) type Unattributed = StdMutex<VecDeque<([u8; 32], MeshPathReceipt)>>;
+
+/// How many unattributed receipts wait for the owner's next lookup; past
+/// it the oldest keeps its unknown MACHINE.
+const UNATTRIBUTED_KEPT: usize = 64;
+
+impl PathRecorder {
+    fn keep_unattributed(&self, receipts: impl IntoIterator<Item = ([u8; 32], MeshPathReceipt)>) {
+        let mut kept = self.unattributed.lock().unwrap_or_else(PoisonError::into_inner);
+        kept.extend(receipts);
+        while kept.len() > UNATTRIBUTED_KEPT {
+            kept.pop_front();
+        }
+    }
+
+    fn take_unattributed(&self) -> VecDeque<([u8; 32], MeshPathReceipt)> {
+        std::mem::take(&mut *self.unattributed.lock().unwrap_or_else(PoisonError::into_inner))
+    }
+}
 
 /// [`OwnerMachineLookup`] through `vault`'s owner door, under `owner`'s proof
 /// (`Vault::mesh_machine_by_endpoint_as_owner`).
@@ -77,7 +103,8 @@ impl IrohTransport {
     /// at its bound. `owner_lookup` then reads every MACHINE and the same
     /// receipt is written again with the one it names. Without it, or when it
     /// fails, the receipt keeps its unknown MACHINE and the lookup's error is
-    /// returned.
+    /// returned; the receipt waits, and the owner's next lookup attributes it
+    /// with that dial's own (FIX 11153).
     pub async fn dial_address_attributed(
         &self,
         address: &crate::MeshMachineAddress,
@@ -144,20 +171,52 @@ impl IrohTransport {
         receipt.id = write_receipt(&recorder.sink, &receipt)
             .await
             .ok_or_else(retained)?;
-        if let Err(bounded) = bounded {
-            let lookup = owner_lookup.ok_or(bounded)?;
-            let key = address.endpoint_key;
-            let found = tokio::task::spawn_blocking(move || lookup(key))
-                .await
-                .map_err(|error| MeshError::Io(error.to_string()))??;
-            if let Some(machine) = found {
-                receipt.machine = Some(machine.to_hex());
-                write_receipt(&recorder.sink, &receipt)
-                    .await
-                    .ok_or_else(retained)?;
+        let mut due: Vec<_> = bounded
+            .is_err()
+            .then(|| (address.endpoint_key, receipt.clone(), true))
+            .into_iter()
+            .collect();
+        let Some(lookup) = owner_lookup else {
+            recorder.keep_unattributed(due.into_iter().map(|(key, kept, _)| (key, kept)));
+            return bounded.map(|_| receipt);
+        };
+        due.extend(
+            recorder
+                .take_unattributed()
+                .into_iter()
+                .map(|(key, kept)| (key, kept, false)),
+        );
+        let looked = tokio::task::spawn_blocking(move || {
+            due.into_iter()
+                .map(|(key, kept, current)| (lookup(key), key, kept, current))
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|error| MeshError::Io(error.to_string()))?;
+        let mut outcome = Ok(());
+        let mut still = Vec::new();
+        for (found, key, mut kept, current) in looked {
+            let error = match found {
+                Ok(None) => continue,
+                Ok(Some(machine)) => {
+                    kept.machine = Some(machine.to_hex());
+                    if write_receipt(&recorder.sink, &kept).await.is_some() {
+                        if current {
+                            receipt = kept;
+                        }
+                        continue;
+                    }
+                    retained()
+                }
+                Err(error) => error,
+            };
+            if current {
+                outcome = Err(error);
             }
+            still.push((key, kept));
         }
-        Ok(receipt)
+        recorder.keep_unattributed(still);
+        outcome.map(|()| receipt)
     }
 }
 
