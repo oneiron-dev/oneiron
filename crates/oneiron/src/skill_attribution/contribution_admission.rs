@@ -257,9 +257,11 @@ fn same_pair(kept: &ContributionPair, submitted: &ContributionPair) -> bool {
 /// (FIX 8988): each pair it recorded, measured or unmatched, names no such
 /// skill or edge end, and the row moves to its run's prefix and a fresh
 /// opaque ULID in place of the target and the identity digest, which a known
-/// id would confirm, so the run's other checks stay apart. The measurement
-/// and both fork outcomes stay. A row that no longer decodes is deleted and
-/// counted.
+/// id would confirm, so the run's other checks stay apart. A pair whose run
+/// or outcome reference spells the id has those references rewritten to
+/// opaque erased ids, and where the run itself spells it the row moves to a
+/// fully opaque key (FIX 11359, CB2-B). The measurement and both fork
+/// outcomes stay. A row that no longer decodes is deleted and counted.
 ///
 /// # Errors
 ///
@@ -270,12 +272,8 @@ pub(crate) fn erase_contribution_checks_in_txn(
     entity: &EntityId,
 ) -> Result<()> {
     let spelled = entity.to_hex();
+    let spelled_lower = spelled.to_ascii_lowercase();
     for (key, mut admission) in super::skill_erase::erase_scan_in_txn(vault, wtxn, CHECK)? {
-        let pairs = admission
-            .matched
-            .iter_mut()
-            .map(|record| &mut record.pair)
-            .chain(admission.unmatched.iter_mut().map(|kept| &mut kept.pair));
         let (run, target) = key
             .split_once('\0')
             .map_or((key.as_str(), ""), |(run, rest)| {
@@ -284,8 +282,25 @@ pub(crate) fn erase_contribution_checks_in_txn(
                     rest.split_once('\0').map_or(rest, |(target, _)| target),
                 )
             });
-        let mut named = target.contains(spelled.as_str());
-        for pair in pairs {
+        let mut named =
+            target.contains(spelled.as_str()) || run.to_ascii_lowercase().contains(&spelled_lower);
+        for pair in admission
+            .matched
+            .iter_mut()
+            .map(|record| &mut record.pair)
+            .chain(admission.unmatched.iter_mut().map(|kept| &mut kept.pair))
+        {
+            if pair
+                .attempt_receipt
+                .to_ascii_lowercase()
+                .contains(&spelled_lower)
+                || pair
+                    .outcome_receipt
+                    .to_ascii_lowercase()
+                    .contains(&spelled_lower)
+            {
+                named = true;
+            }
             let mut ends = vec![&mut pair.skill];
             if let Some(edge) = &mut pair.edge {
                 ends.extend([&mut edge.derived, &mut edge.source]);
@@ -301,7 +316,33 @@ pub(crate) fn erase_contribution_checks_in_txn(
             continue;
         }
         let fresh = crate::entity_id::bytes_to_hex_lower(&vault.store.clock.ulid()?);
-        let moved = format!("{run}\0erased:{fresh}");
+        let erased_ref = format!("erased:{fresh}");
+        for pair in admission
+            .matched
+            .iter_mut()
+            .map(|record| &mut record.pair)
+            .chain(admission.unmatched.iter_mut().map(|kept| &mut kept.pair))
+        {
+            if pair
+                .attempt_receipt
+                .to_ascii_lowercase()
+                .contains(&spelled_lower)
+            {
+                pair.attempt_receipt.clone_from(&erased_ref);
+            }
+            if pair
+                .outcome_receipt
+                .to_ascii_lowercase()
+                .contains(&spelled_lower)
+            {
+                pair.outcome_receipt.clone_from(&erased_ref);
+            }
+        }
+        let moved = if run.to_ascii_lowercase().contains(&spelled_lower) {
+            format!("erased\0{fresh}")
+        } else {
+            format!("{run}\0erased:{fresh}")
+        };
         CHECK.delete(&vault.store, wtxn, &key)?;
         CHECK.put(&vault.store, wtxn, &moved, &admission)?;
     }
