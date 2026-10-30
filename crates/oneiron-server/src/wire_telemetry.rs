@@ -107,7 +107,6 @@ pub struct WireLimitQuestion {
     pub crossings: u64,
     /// Every vault owner or co-owner, by entity id, whose own work crossed
     /// the row in the window, when the host knew whose it was (FIX 5702).
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     pub owners: BTreeSet<String>,
 }
 /// Where crossed rows ask. Each crossing counts in its row's question for
