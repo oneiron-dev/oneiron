@@ -437,8 +437,6 @@ pub(crate) fn validate_claim_body_and_decode(
         crate::skill_reliability::validate_imported_reliability(&body)?;
     } else if crate::learning::is_learning_predicate(&body.predicate) {
         crate::learning::validate_learning_claim_structure(&body)?;
-    } else if body.predicate == PREDICATE_SKILL_EDIT_COST {
-        crate::edit_distance::attribution::validate_imported_skill_cost(&body)?;
     } else if crate::actor_claims::is_actor_claim_predicate(&body.predicate) {
         crate::actor_claims::validate_actor_claim_structure(&body)?;
     } else if crate::counterparty_contact::is_counterparty_contact_claim_predicate(&body.predicate)

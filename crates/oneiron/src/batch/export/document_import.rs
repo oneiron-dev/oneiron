@@ -482,8 +482,6 @@ fn insert_ready_row<R: Read + Seek>(
                 vault.restore_actor_projection_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if claim.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
                 vault.restore_reliability_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
-            } else if claim.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-                vault.restore_skill_cost_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else {
                 vault.put_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             }
@@ -1281,8 +1279,6 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
         crate::actor_claims::imported_actor_body(&body)
     } else if body.predicate == crate::skill_reliability::PREDICATE_SKILL_RELIABILITY {
         crate::skill_reliability::imported_reliability_body(&body)
-    } else if body.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
-        crate::edit_distance::attribution::imported_skill_cost_body(&body)
     } else if crate::learning::is_learning_predicate(&body.predicate) {
         // No archive format (FIX 11626 option B): a learning cell is a
         // projector-only view rebuilt from its receipts after import. The row

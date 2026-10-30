@@ -3,8 +3,7 @@
 use rmpv::Value;
 
 use crate::claim::{
-    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, PREDICATE_ACTOR_EDIT_COST,
-    claim_evidence_taint,
+    ClaimApprovalStatus, ClaimBody, ClaimSource, ClaimSubject, claim_evidence_taint,
 };
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::Result;
@@ -14,7 +13,7 @@ use super::invalid;
 use super::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_SKILL_FIT_SCOPE_KEY,
     PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE,
-    PREDICATE_ACTOR_SKILL_FIT, normalize_edit_cost_scope, normalize_note, valid_unit_interval,
+    PREDICATE_ACTOR_SKILL_FIT, normalize_note, valid_unit_interval,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,7 +32,6 @@ pub fn is_actor_claim_predicate(predicate: &str) -> bool {
             | PREDICATE_ACTOR_FAILURE_MODE
             | PREDICATE_ACTOR_SCOPE_NOTE
             | PREDICATE_ACTOR_SKILL_FIT
-            | PREDICATE_ACTOR_EDIT_COST
     )
 }
 /// Validates a stored `actor.*` body — the shape [`write_actor_claim`] writes.
@@ -106,23 +104,6 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
                 ));
             }
             Some(ACTOR_SKILL_FIT_SCOPE_KEY)
-        }
-        PREDICATE_ACTOR_EDIT_COST => {
-            let Value::F32(cost) = body.value else {
-                return Err(invalid("actor.edit_cost value must be a cost in 0..=1"));
-            };
-            if !valid_unit_interval(cost) {
-                return Err(invalid("actor.edit_cost must be a finite cost in 0..=1"));
-            }
-            let Some(scope) = edit_cost_scope_name(body.scope.as_ref()) else {
-                return Err(invalid(
-                    "actor.edit_cost must scope its (actor, scope) pair",
-                ));
-            };
-            if normalize_edit_cost_scope(scope)? != scope {
-                return Err(invalid("actor.edit_cost scope must be normalized"));
-            }
-            Some(ACTOR_EDIT_COST_SCOPE_KEY)
         }
         _ => {
             let Some(text) = body.value.as_str() else {
