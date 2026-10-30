@@ -98,20 +98,14 @@ pub struct GenerationReceipt {
     pub seed: Option<u64>,
 }
 
-/// Payload ceilings. Past a byte or pixel one, the asset is refused as a
-/// capacity hit naming it ([`GraphicError::Capacity`]), not truncated. The
-/// SVG node, depth, segment and fill-edge counts are observations (FIX
-/// 8574): the compiler reserves their memory through the operation's port
-/// and checkpoints the quadratic fill-rule proof.
+/// Payload byte and pixel ceilings. Past one, the asset is refused as a
+/// capacity hit naming it ([`GraphicError::Capacity`]), not truncated.
+/// Counts are observations: the compiler reserves their memory through the
+/// operation's port and checkpoints the quadratic fill-rule proof
+/// (FIX 10590).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GraphicLimits {
     pub svg_bytes: usize,
-    pub svg_nodes: usize,
-    pub svg_depth: usize,
-    /// Drawing segments in one graphic: an observation.
-    pub segments: usize,
-    /// Edges in one filled outline: an observation.
-    pub fill_edges: usize,
     pub raster_bytes: usize,
     pub raster_pixels: u64,
 }
@@ -120,10 +114,6 @@ impl Default for GraphicLimits {
     fn default() -> Self {
         Self {
             svg_bytes: 1 << 20,
-            svg_nodes: 10_000,
-            svg_depth: 32,
-            segments: 20_000,
-            fill_edges: 2_048,
             raster_bytes: 50 << 20,
             raster_pixels: 64_000_000,
         }

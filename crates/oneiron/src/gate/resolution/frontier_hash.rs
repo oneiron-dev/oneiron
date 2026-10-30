@@ -207,15 +207,7 @@ pub(super) fn hash_policy_frontier_v0(
     }
     if let Some(limits) = resolution.pptx_comment_limits {
         hash_str(hasher, "pptx_comment_limits:nested_narrowing");
-        for value in [
-            limits.max_xml_bytes,
-            limits.max_xml_attributes,
-            limits.max_xml_namespaces,
-            limits.max_xml_depth,
-            limits.max_xml_nodes,
-        ] {
-            hash_u64(hasher, value as u64);
-        }
+        hash_u64(hasher, limits.max_xml_bytes as u64);
     }
     // Behavior-deciding archive policy moves the frontier when vault or exact
     // holder bounds change. Hash declared rows, not only a selected caller.
@@ -279,7 +271,8 @@ pub(super) fn hash_policy_frontier_v0(
         hash_bytes(hasher, &slide_policy);
     }
     // Absent and explicit shipped baseline resolve identically. A stricter
-    // trusted row changes the frontier; its six ceilings are hashed together.
+    // trusted row changes the frontier; its three ceilings are hashed
+    // together (FIX 10590).
     if let Some(bounds) = resolution.docedit_resource_policy {
         let baseline = crate::gate::docedit_resource::DoceditResourcePolicy::shipped();
         if bounds != baseline {
