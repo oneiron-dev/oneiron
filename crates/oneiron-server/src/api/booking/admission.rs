@@ -5,7 +5,7 @@ use oneiron::booking::agent_api::{
 use oneiron::booking::anti_abuse::{
     BookingRequestFacts, EmailValidationEvidence, booking_email_hash, booking_session_hash,
 };
-use oneiron::booking::lifecycle::{confirm_event_type, token_event_type};
+use oneiron::booking::lifecycle::{confirm_event_type, confirm_hold_taken_at, token_event_type};
 use oneiron::booking::{
     ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
     BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingError, BookingSourcePageValue,
@@ -18,7 +18,8 @@ use oneiron::{
 };
 
 use super::BookingAdmissionContext;
-use super::constants::{INTAKE_DOMAIN, SELECTED_SLOT_DOMAIN};
+use super::constants::{INTAKE_DOMAIN, PUBLIC_FORM_HONEYPOT_FIELD_KEY, SELECTED_SLOT_DOMAIN};
+use super::email_evidence::is_syntactically_valid_email;
 use super::helpers::{domain_digest, engine_read_error};
 use super::subject::{booker_contact_ref, session_key};
 use crate::api::booking_anti_abuse::BookingHttpDisposition;
@@ -118,9 +119,37 @@ pub(super) fn admission_facts(
         }
         _ => 0,
     };
+    // The honeypot field and the time-to-submit floor are evidence about a
+    // public form fill, so only an anonymous confirm carries them (FIX 7861):
+    // its form starts when the visitor took the hold its server-minted token
+    // names, and the form's hidden field is the intake answer under
+    // `PUBLIC_FORM_HONEYPOT_FIELD_KEY`. An authenticated caller fills no form;
+    // both signals stay absent for it rather than fabricated.
+    let public_form = transport.credential.is_none();
+    let form_started_at = match request {
+        BookingOperationRequest::Book(BookingBookInput::Confirm(input)) if public_form => {
+            confirm_hold_taken_at(
+                &server.vault,
+                &session_key(page_ref, &input.session_ref),
+                &OpaqueLifecycleToken(input.hold_token.clone()),
+                now,
+            )?
+        }
+        _ => None,
+    };
+    let is_honeypot = |answer: &&BookingIntakeAnswer| {
+        public_form && answer.field_key == PUBLIC_FORM_HONEYPOT_FIELD_KEY
+    };
+    let honeypot_nonempty = intake.is_some_and(|answers| {
+        answers
+            .iter()
+            .filter(is_honeypot)
+            .any(|answer| !answer.value.trim().is_empty())
+    });
     let intake_chars: usize = intake.map_or(0, |answers| {
         answers
             .iter()
+            .filter(|answer| !is_honeypot(answer))
             .map(|answer| answer.value.chars().count())
             .sum()
     });
@@ -131,31 +160,39 @@ pub(super) fn admission_facts(
         ip_hash,
         email_hash,
         session_hash,
-        // The honeypot field and the time-to-submit floor are evidence about
-        // an HTML form fill. This surface has neither: it carries no honeypot
-        // input and no form session, so both signals are asserted as absent
-        // rather than fabricated. Every control that does have evidence here —
-        // the minute windows, the hold cap, the email checks, and the
-        // active-booking cap — is fed real values above and below.
-        started_at_millis: 0,
+        // With no known form start, the elapsed time reads as the whole
+        // epoch and never trips the floor.
+        started_at_millis: form_started_at.map_or(0, |secs| secs.saturating_mul(1_000)),
         submitted_at_millis: now.saturating_mul(1_000),
         // Overwritten by the book guard at its trusted admission boundary.
         submission_fingerprint: [0_u8; 32],
         selected_slot_hash: selected_slot_hash(selected_slot),
         intake_content_hash: intake_content_hash(intake),
-        honeypot_nonempty: false,
+        honeypot_nonempty,
         intake_chars,
         active_future_bookings_for_email: live_email_bookings,
         active_holds_for_session: live_session_holds,
         email: booker_email.map(|email| EmailValidationEvidence {
             syntax_valid: is_syntactically_valid_email(email),
-            // MX resolution and disposable-domain lists are network lookups
-            // this surface does not perform. `None` and `false` are the
-            // engine's "no signal" readings, never a negative one.
+            // The domain readings are resolved by the executor once per
+            // request, only for the checks the owner enabled
+            // (`email_evidence::email_domain_evidence`). Until then they are
+            // the engine's "no signal" readings, never a negative one.
             mx_present: None,
             disposable_domain: false,
         }),
     })
+}
+
+/// Removes the public form's honeypot answer from an anonymous confirm's
+/// intake, so the booking writer never stores it.
+pub(super) fn strip_form_honeypot(
+    transport: &BookingAdmissionContext,
+    intake: &mut Vec<BookingIntakeAnswer>,
+) {
+    if transport.credential.is_none() {
+        intake.retain(|answer| answer.field_key != PUBLIC_FORM_HONEYPOT_FIELD_KEY);
+    }
 }
 
 /// Projects a non-`Continue` admission disposition onto an answer.
@@ -385,20 +422,4 @@ fn intake_content_hash(intake: Option<&[BookingIntakeAnswer]>) -> [u8; 32] {
         None => material.push(0),
     }
     domain_digest(INTAKE_DOMAIN, &material)
-}
-
-/// A deliberately structural check: an address shaped like an address. Deeper
-/// evidence is the engine's `EmailValidationEvidence`, and this surface
-/// supplies only what it can actually observe.
-fn is_syntactically_valid_email(email: &str) -> bool {
-    let email = email.trim();
-    let Some((local, domain)) = email.split_once('@') else {
-        return false;
-    };
-    !local.is_empty()
-        && !domain.is_empty()
-        && !email.contains(char::is_whitespace)
-        && domain.contains('.')
-        && !domain.starts_with('.')
-        && !domain.ends_with('.')
 }

@@ -30,6 +30,9 @@ mod tests_quarantine;
 mod tests_support;
 
 pub(crate) use self::cache::{cached_slot_list_body, remember_slot_list_body};
+// The executor's confirms go through `enforce_book_restorable`.
+#[allow(unused_imports)]
+pub(crate) use self::guards::enforce_book;
 pub(crate) use self::guards::{
-    BookingHttpDisposition, enforce_amend, enforce_book, enforce_hold, enforce_slot_list,
+    BookingHttpDisposition, enforce_amend, enforce_book_restorable, enforce_hold, enforce_slot_list,
 };

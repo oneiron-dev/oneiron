@@ -149,6 +149,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/feedback/send", post(send_feedback))
         .route("/feedback/inbox", get(feedback_inbox))
         .route("/pack-drift", get(pack_drift_repairs))
+        .route(
+            "/booking/quarantine/{claim_ref}/restore",
+            post(super::restore_quarantined_booking),
+        )
         .route("/model-catalog", get(model_catalog).put(set_model_catalog))
         .route("/model-catalog/sync", post(sync_model_catalog))
         .merge(account_routes::routes())
