@@ -1,7 +1,8 @@
 //! Judged-amendment fold writes.
 
 use super::keys::{
-    AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, aggregate_key, invalid,
+    AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, StoredHead, aggregate_key,
+    invalid,
 };
 use super::outcomes::{run_outcome_in_txn, task_of_run_in_txn};
 use super::scope::RoutingScopeKey;
@@ -56,6 +57,7 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         v: ROW_VERSION,
         executor: judgment.executor_key().to_owned(),
         outcome: None,
+        head: None,
     };
 
     vault.with_write_txn_grouped(|wtxn| {
@@ -73,6 +75,7 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         // weighs nothing until then.
         if let Some(fold) = fold_of(&judgment, outcome)? {
             member.outcome.clone_from(&fold.outcome);
+            member.head = Some(StoredHead::from(&scope_row_key));
             let mut aggregate = AGGREGATE
                 .get(&vault.store, &*wtxn, &scope_row_key)?
                 .unwrap_or_default();
@@ -181,14 +184,14 @@ fn judgment_for(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentJudgm
 /// run worked that TASK, in a savepoint of the settling write (FIX 11618):
 /// a fold that landed before the settle counted no outcome, and without
 /// this the counts would wait for the next rebuild. Each member row keeps
-/// the outcome its fold counted, so the refold moves the head's counts from
-/// that outcome to the one that stands now instead of recounting — a
-/// re-settled or re-anchored TASK converges, and a receipt whose judgment
-/// holds counts nothing either way. The head is the one the judgment as it
-/// stands now names: a receipt re-judged onto another executor or scope
-/// since its fold keeps its old head's count until the next rebuild, as
-/// before. A refold that fails lands nothing and never fails the
-/// settlement it rides.
+/// the outcome its fold counted and the head it counted on, so the refold
+/// moves that outcome's count from the folded head to the head the judgment
+/// names now instead of recounting — a re-settled or re-anchored TASK
+/// converges, a receipt re-judged onto another executor or scope carries its
+/// count across heads (FIX 11707), and a receipt whose judgment holds counts
+/// nothing either way. A row folded before the head was kept reads the
+/// now-named head as before and adopts it on its first refold write. A
+/// refold that fails lands nothing and never fails the settlement it rides.
 pub(crate) fn refold_task_outcomes_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -230,19 +233,51 @@ fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) 
         } else {
             None
         };
-        if counted == member.outcome {
+        // A row folded before the head was kept skips exactly as before when
+        // the outcome stands (FIX 11707 ruling 1): with no stored head to
+        // compare, the now-named head is not even derived.
+        if counted == member.outcome && member.head.is_none() {
             continue;
         }
         let key = aggregate_key(&head_of(&judgment))?;
+        let now = StoredHead::from(&key);
+        // Same outcome on the same head: nothing moved, as before (ruling 4).
+        // Same outcome on another head: the count moves heads below (ruling 1).
+        if counted == member.outcome && member.head.as_ref() == Some(&now) {
+            continue;
+        }
+        // No aggregate is ever created here: a now-named head with no row
+        // skips the receipt entirely, as before (ruling 3).
         let Some(mut aggregate) = AGGREGATE.get(&vault.store, &*txn, &key)? else {
             continue;
         };
-        if let Some(old) = &member.outcome
-            && let Some(count) = aggregate.outcomes.get_mut(old)
+        if let Some(old_head) = member.head.as_ref()
+            && old_head != &now
         {
-            *count = count.saturating_sub(1);
-            if *count == 0 {
-                aggregate.outcomes.remove(old);
+            // Re-judged onto another head: the old head's token moves to the
+            // new head. An old head with no row is a no-op decrement
+            // (ruling 3); the new-head increment below still lands.
+            let old_key = old_head.key();
+            if let Some(old) = &member.outcome
+                && let Some(mut old_aggregate) = AGGREGATE.get(&vault.store, &*txn, &old_key)?
+                && let Some(count) = old_aggregate.outcomes.get_mut(old)
+            {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    old_aggregate.outcomes.remove(old);
+                }
+                AGGREGATE.put(&vault.store, txn, &old_key, &old_aggregate)?;
+            }
+        } else {
+            // The same head the fold counted on — or no stored head, which
+            // reads the now-named head exactly as before (rulings 2 and 4).
+            if let Some(old) = &member.outcome
+                && let Some(count) = aggregate.outcomes.get_mut(old)
+            {
+                *count = count.saturating_sub(1);
+                if *count == 0 {
+                    aggregate.outcomes.remove(old);
+                }
             }
         }
         if let Some(new) = &counted {
@@ -250,6 +285,10 @@ fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) 
         }
         AGGREGATE.put(&vault.store, txn, &key, &aggregate)?;
         member.outcome = counted;
+        // The refold adopts the now-named head: a pre-upgrade row gains it on
+        // its first refold write, and a moved count re-anchors (ruling 2). A
+        // same-head row writes back the head it already named.
+        member.head = Some(now);
         MEMBER.put(&vault.store, txn, &receipt_id, &member)?;
     }
     Ok(())

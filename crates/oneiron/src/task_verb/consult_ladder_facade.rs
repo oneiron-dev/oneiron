@@ -28,6 +28,7 @@ use super::entity_delta_facade::counter_lineage_artifact_value;
 use super::follow_up::PEER_HANDLES;
 use super::rate_limit::{record_task_create, task_actor_ceiling, task_verb_contract};
 use super::route_receipts::TaskCreateReceipt;
+use super::settlement_anchor::anchor_kept_review_in_txn;
 use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
 use super::verb_kind::{TaskAssignee, TaskKind, TaskTtl};
 use super::wire_encode::{canonical_bytes, encode_task_verb_body};
@@ -342,7 +343,16 @@ impl Memory<'_> {
             counter_task_ref: Some(counter_task_ref),
         }));
         let encoded = encode_task_verb_body(parent);
-        self.put_task_body_in_txn(wtxn, parent_ref, &encoded, now)
+        self.put_task_body_in_txn(wtxn, parent_ref, &encoded, now)?;
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement, unless this surface keeps no record (FIX 11806).
+        if self.keeps_lifecycle() {
+            anchor_kept_review_in_txn(self.vault(), wtxn, parent_ref, None)?;
+        }
+        // The routing projection counts this settlement on the folds whose
+        // runs worked this TASK before it settled (FIX 11807).
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(self.vault(), wtxn, parent_ref);
+        Ok(())
     }
 
     fn require_auto_ceiling_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<()> {

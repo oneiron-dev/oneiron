@@ -79,6 +79,9 @@ pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
 /// and repairs of failed ones, with no model, through
 /// [`Vault::run_coach_browser_programs`].
 pub const COACH_BROWSER_PROGRAMS_FACET: &str = "coach.browser_programs";
+/// Site-skill knowledge distilled from the same solved browser receipts (FIX 7606),
+/// filed as inert Candidates through [`Vault::run_coach_site_skills`].
+pub const COACH_SITE_SKILLS_FACET: &str = "coach.site_skills";
 /// One offer's promise check, queued for the host on the offer's check date.
 /// The host reads the receipts since and records what they showed through
 /// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
@@ -176,7 +179,7 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 18] = [
+const HOST_FACETS: [&str; 19] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
@@ -184,6 +187,7 @@ const HOST_FACETS: [&str; 18] = [
     COACH_TRAINING_OFFER_FACET,
     COACH_EVAL_AUTHORING_FACET,
     COACH_BROWSER_PROGRAMS_FACET,
+    COACH_SITE_SKILLS_FACET,
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,

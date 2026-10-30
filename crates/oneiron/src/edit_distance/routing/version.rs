@@ -41,6 +41,7 @@ pub fn set_serving_model(vault: &Vault, model: &ModelId) -> Result<()> {
         v: ROW_VERSION,
         executor: model.as_str().to_owned(),
         outcome: None,
+        head: None,
     });
     vault.with_write_txn_grouped(|wtxn| SERVING_MODEL.put(&vault.store, wtxn, &(), &row))
 }

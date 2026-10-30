@@ -72,14 +72,25 @@ struct Site {
     separators_before: u32,
     inserted: Vec<usize>,
     deleted: Vec<usize>,
+    /// Where the site opened: the `at` of its first insert or delete. The
+    /// text before `at` is identical on both sides of the site, and the
+    /// site's surviving inserted span starts exactly at `at`.
+    at: usize,
+    /// Characters this site's runs inserted that still stand: each insert
+    /// adds its run, each delete subtracts the drained characters typed by
+    /// this site's own runs.
+    typed_alive: usize,
 }
 
 /// Reads every recorded change of `record`'s window out of `document` and
 /// counts its runs.
 ///
 /// Runs count in the whitespace-collapsed frame: each run's non-whitespace
-/// characters, plus the word separators its edit site adds or removes, which
-/// go to the site's first inserted (or deleted) run with content. A site whose
+/// characters, plus the word separators its edit site adds or removes. The
+/// separators the site's deletions remove go to its first deleted run with
+/// content; the separators its insertions add, measured over the text with
+/// only the deletions applied, go to its first inserted run with content;
+/// both charges can land in one site. A site whose
 /// runs are all whitespace (re-spacing, re-wrapping, a word split by a space)
 /// counts nothing. Text typed and then deleted again by a later change counts
 /// on both sides; that churn is what this lane sees and an endpoint diff
@@ -110,18 +121,21 @@ pub(super) fn read_window(
                 cursor += retain;
                 continue;
             }
+            let at = cursor.min(chars.len());
             let open = site.get_or_insert_with(|| Site {
                 separators_before: separators(&chars),
                 inserted: Vec::new(),
                 deleted: Vec::new(),
+                at,
+                typed_alive: 0,
             });
-            let at = cursor.min(chars.len());
             match delta {
                 TextDelta::Insert { insert, .. } => {
                     let run: Vec<char> = insert.chars().collect();
                     let typed = std::iter::repeat_n(Origin::Typed(inserted.len()), run.len());
                     origins.splice(at..at, typed).for_each(drop);
                     cursor = at + run.len();
+                    open.typed_alive = open.typed_alive.saturating_add(run.len());
                     open.inserted.push(inserted.len());
                     inserted.push(InsertedRun {
                         mass: non_whitespace(&run),
@@ -134,14 +148,19 @@ pub(super) fn read_window(
                     let end = at.saturating_add(delete).min(chars.len());
                     let removed: Vec<char> = chars.drain(at..end).collect();
                     let mut proposed_only = true;
+                    let mut own_typed = 0_usize;
                     for origin in origins.drain(at..end) {
                         if let Origin::Typed(run) = origin {
                             proposed_only = false;
+                            if open.inserted.contains(&run) {
+                                own_typed = own_typed.saturating_add(1);
+                            }
                             if let Some(run) = inserted.get_mut(run) {
                                 run.survives = false;
                             }
                         }
                     }
+                    open.typed_alive = open.typed_alive.saturating_sub(own_typed);
                     open.deleted.push(deleted.len());
                     deleted.push(DeletedRun {
                         mass: non_whitespace(&removed),
@@ -183,9 +202,11 @@ pub(super) fn read_window(
     })
 }
 
-/// Charges one closed edit site: a site of whitespace only costs nothing;
-/// otherwise the separators it added go to its first inserted run with
-/// content, the separators it removed to its first deleted run with content.
+/// Charges one closed edit site against the text with only its deletions
+/// applied: a site of whitespace only costs nothing; otherwise the separators
+/// its deletions removed go to its first deleted run with content and the
+/// separators its insertions added go to its first inserted run with content,
+/// and both charges can land in one site.
 fn close_site(
     site: Option<Site>,
     chars: &[char],
@@ -210,19 +231,27 @@ fn close_site(
         return;
     }
     let after = separators(chars);
+    let del_only = {
+        let at = site.at.min(chars.len());
+        let end = at.saturating_add(site.typed_alive).min(chars.len());
+        let mut del_only_text = Vec::with_capacity(chars.len().saturating_sub(site.typed_alive));
+        del_only_text.extend_from_slice(&chars[..at]);
+        del_only_text.extend_from_slice(&chars[end..]);
+        separators(&del_only_text)
+    };
+    let added = after.saturating_sub(del_only);
     if let Some(index) = first_inserted.or(first_deleted)
-        && after > site.separators_before
+        && added > 0
     {
-        let added = after - site.separators_before;
         match first_inserted {
             Some(_) => inserted[index].mass = inserted[index].mass.saturating_add(added),
             None => deleted[index].mass = deleted[index].mass.saturating_add(added),
         }
     }
+    let removed = site.separators_before.saturating_sub(del_only);
     if let Some(index) = first_deleted.or(first_inserted)
-        && site.separators_before > after
+        && removed > 0
     {
-        let removed = site.separators_before - after;
         match first_deleted {
             Some(_) => deleted[index].mass = deleted[index].mass.saturating_add(removed),
             None => inserted[index].mass = inserted[index].mass.saturating_add(removed),

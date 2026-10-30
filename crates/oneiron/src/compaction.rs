@@ -128,7 +128,7 @@ pub(crate) use self_writer::{
 pub use self_writer::{
     CompactionCall, CompactionEvidence, CompactionExecution, CompactionHomeRef, CompactionLanding,
     CompactionLandingReceipt, CompactionStepRef, CompactionUsage, HOME_PART_WORN,
-    SelfCompactionUnavailable, compaction_usage_projection,
+    SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
 };
 pub(crate) use stored_epoch::{StoredEpoch, stored_epoch_in};
 pub(crate) use withdrawn::{WithdrawnKeyframe, erased_form, scrub_withdrawn_epoch_in_txn};
