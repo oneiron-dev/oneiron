@@ -173,6 +173,55 @@ pub(in crate::sync) fn admit_document_read_in_txn(
     admit_selected_in_txn(vault, txn, id, selector, &admission)
 }
 
+/// Whether a Connect guest may PROPOSE a write of `id`'s text (FIX 3684;
+/// L02 04:5x): the write a peer's document frame would carry, judged as that
+/// write is in this writer, with `propose` in place of `write`. The guest's
+/// grant, selector and record walk are a write's; the role gate is not, for
+/// a proposal writes nothing, and `proof`, the guest's own credential, must
+/// name `propose` over the record too. A NOTE's raw text is refused, as a
+/// peer's write of it is.
+pub(in crate::sync) fn admit_document_proposal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    scope: FederationGrantScope,
+    selector: &SyncSelector,
+    proof: &crate::authority::VerifiedSlip,
+) -> Result<()> {
+    let raw = vault.get_raw_in(txn, &id)?.ok_or_else(denied)?;
+    let header = EntityMetadataHeader::parse(&raw).ok_or_else(denied)?;
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+        || proof.claims().holder_ref != selector.member_ref.to_hex()
+        || !proof.allows_verb("propose")
+    {
+        return Err(denied());
+    }
+    let mut admission = authorize_in_txn(vault, txn, scope, selector, None)?;
+    if !admission.grant.role.is_guest()
+        || !matches!(admission.grant.scope, FederationGrantScope::Connect { .. })
+    {
+        return Err(denied());
+    }
+    admission.verb = "propose";
+    admit_selected_in_txn(vault, txn, id, selector, &admission)?;
+    let held = [
+        &admission.grant.authority_scope.worlds,
+        &proof.scope().worlds,
+    ];
+    let mut record =
+        note_world::blob_scope_held_at(&vault.store, txn, id, &raw, &held)?.ok_or_else(denied)?;
+    record.verbs = crate::federation::ScopeAxis::Some(std::collections::BTreeSet::from([
+        "propose".to_string(),
+    ]));
+    if !proof
+        .scope()
+        .admits("propose", &record, &crate::federation::Scope::top())
+    {
+        return Err(denied());
+    }
+    Ok(())
+}
+
 pub(in crate::sync) fn admit_document_write_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

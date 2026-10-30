@@ -1911,6 +1911,11 @@ export_facade! {
     let output = client.vault_guests_export_envelope(&input)?;
     crate::codec::lift_record("vault.guests.export_envelope", &output)
 };
+"vault.guests.propose" => fn vault_guests_propose(&self, input: ConnectProposeRequest) -> ConnectProposalLanded = |client| {
+    let input: oneiron::task_verb::sdk::ConnectProposeRequest = crate::codec::lower_record("vault.guests.propose", input)?;
+    let output = client.vault_guests_propose(&input)?;
+    crate::codec::lift_record("vault.guests.propose", &output)
+};
 "vault.guests.reshare" => fn vault_guests_reshare(&self, input: GuestDocumentShareRequest) -> GuestDocumentEnvelope = |client| {
     let input: oneiron::task_verb::sdk::GuestDocumentShareRequest = crate::codec::lower_record("vault.guests.reshare", input)?;
     let output = client.vault_guests_reshare(&input)?;

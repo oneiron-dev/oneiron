@@ -2953,6 +2953,10 @@ export type GuestShareEnvelopeBody = { scope: FederationGrantScope; member_ref: 
 export type GuestShareEnvelope = { body: GuestShareEnvelopeBody; signature: number[] }
 /** `oneiron::verbs::guest_document::GuestDocumentEnvelope` */
 export type GuestDocumentEnvelope = { context: GuestDocumentContext; envelope: GuestShareEnvelope; signer: string; signature: number[] }
+/** `oneiron::verbs::connect_proposal::ConnectProposeRequest` */
+export type ConnectProposeRequest = { grant_ref: EntityId; world_ref: EntityId; entity_ref: EntityId; update: number[] }
+/** `oneiron::verbs::connect_proposal::ConnectProposalLanded` */
+export type ConnectProposalLanded = { proposal_ref: EntityId; grant_ref: EntityId; entity_ref: EntityId; proposed_at: number }
 /** `oneiron::verbs::guest_revoke::GuestRevokeRequest` */
 export type GuestRevokeRequest = { grant_ref: EntityId; peer?: string | null }
 /** `oneiron::receipt::guest_revoke::GuestPactStanding` */

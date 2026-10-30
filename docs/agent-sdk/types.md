@@ -2431,6 +2431,8 @@ class Oneiron:
             """The owner shares a locally authored named-world document through its live guest grant as a filtered signed envelope bound to the pact epoch."""
         def export_envelope(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
             """The guest fetches its actual filtered signed document envelope under its own live grant-bound credential over HTTP or the held socket."""
+        def propose(self, spec: Facade.ConnectProposeRequest) -> Facade.ConnectProposalLanded:
+            """A Connect guest proposes one write of a record's text under its own live grant-bound credential; it lands in the owner's review inbox for that Connect and never writes the vault."""
         def reshare(self, spec: Facade.GuestDocumentShareRequest) -> Facade.GuestDocumentEnvelope:
             """The owner attempts a document re-share through the same local-world-only guest door; received foreign worlds and base are refused."""
         def revoke(self, spec: Facade.GuestRevokeRequest) -> Facade.GuestRevokeResponse: ...
