@@ -189,6 +189,13 @@ fn query_prefixes(kind: u8, data: &[u8]) -> BTreeSet<Vec<u8>> {
         .collect()
 }
 
+/// Whether the named-entity index reads a query prefix from a `kind` row
+/// holding `data`: an ASSET record it reads none from may keep a manifest in
+/// its row in its place (FIX 12150).
+pub(crate) fn indexes_named_entity(kind: u8, data: &[u8]) -> bool {
+    !query_prefixes(kind, data).is_empty()
+}
+
 pub(crate) fn reindex_named_entities(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,

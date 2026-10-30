@@ -46,7 +46,7 @@ mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
 mod lmdb_entity;
-pub(crate) use lmdb_entity::reindex_named_entities;
+pub(crate) use lmdb_entity::{indexes_named_entity, reindex_named_entities};
 mod lmdb_index;
 mod lmdb_short_id_maintenance;
 mod mutation;
@@ -60,8 +60,8 @@ mod safe_read;
 mod time;
 mod vault_read;
 pub(crate) use safe_read::{
-    BodyStale, body_readable_in_txn, raw_readable_apart_from_use_in_txn, raw_readable_in_txn,
-    withdrawn_in_txn,
+    BodyStale, body_is_stale, body_readable_in_txn, raw_readable_apart_from_use_in_txn,
+    raw_readable_in_txn, withdrawn_in_txn,
 };
 pub use safe_read::{safe_read_asset_text, safe_read_text};
 #[cfg(test)]
