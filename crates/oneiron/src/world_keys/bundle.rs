@@ -62,7 +62,6 @@ mod retirement;
 mod sections;
 
 use std::collections::BTreeSet;
-use std::sync::Arc;
 
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use getrandom::SysRng;
@@ -88,10 +87,7 @@ use crate::store::Store;
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
 pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
-use self::frame_seal::{
-    encode_bundle_body, encode_section_body, even_sizes, seal_outer, seal_parts,
-    section_padded_len, signed_digest,
-};
+use self::frame_seal::{seal_outer, section_padded_len, signed_digest};
 pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
 use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;
