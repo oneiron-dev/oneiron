@@ -370,14 +370,20 @@ impl Vault {
         };
 
         let payload = decode_surface_event_attempt_payload(&attempt.payload)?;
-        let disposition = dispatcher.dispatch(SurfaceEventDispatchRequest {
-            event: &payload.event,
-            route: payload.route,
-            agent_ref: &payload.event.actor_ref,
-            correlation_id: &payload.event.correlation_id,
-            idempotency_key: &payload.dispatch_idempotency_key,
-            thread_ref: payload.thread_ref.as_deref(),
-        });
+        // A STOP written as the message is admitted as its sender's OptOut
+        // before any dispatcher wakes anyone on it.
+        let disposition =
+            super::stop_reply::admit_stop_reply_before_dispatch(self, &payload.event, now)
+                .unwrap_or_else(|| {
+                    dispatcher.dispatch(SurfaceEventDispatchRequest {
+                        event: &payload.event,
+                        route: payload.route,
+                        agent_ref: &payload.event.actor_ref,
+                        correlation_id: &payload.event.correlation_id,
+                        idempotency_key: &payload.dispatch_idempotency_key,
+                        thread_ref: payload.thread_ref.as_deref(),
+                    })
+                });
 
         let correlation_id = payload.event.correlation_id.as_str();
         match disposition {

@@ -261,9 +261,9 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
 }
 /// Keeps one native mail inbound in the vault as its provider event
 /// ([`Vault::archive_provider_event`]): the inbound as it arrived, its
-/// threading headers and its quarantine reference included. Its
-/// `payload_ref` becomes the archive's, so a reply to the message reads the
-/// headers it threads on back through the answered event.
+/// threading headers, subject, reply top text and quarantine reference
+/// included. Its `payload_ref` becomes the archive's, so a reply to the
+/// message reads the headers it threads on back through the answered event.
 pub(crate) fn archive_native_mail_inbound(
     vault: &Vault,
     inbound: &mut EmailProviderInbound,
