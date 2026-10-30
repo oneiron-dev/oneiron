@@ -414,10 +414,6 @@ pub(crate) fn check_claim_against_descriptor_in_txn(
 /// # Errors
 /// A subject the class does not admit, a value JSON cannot hold, or one the
 /// schema refuses.
-#[allow(
-    dead_code,
-    reason = "for the stateless claim validator's registry arm in claim::core_types"
-)]
 pub(crate) fn check_claim_against_compiled_descriptor(
     body: &crate::claim::ClaimBody,
 ) -> Result<()> {
@@ -439,10 +435,6 @@ pub(crate) fn check_claim_against_compiled_descriptor(
 
 /// Whether the build compiles `predicate`'s class as `generic`: a class
 /// [`check_claim_against_compiled_descriptor`] checks.
-#[allow(
-    dead_code,
-    reason = "for the stateless claim validator's registry arm in claim::core_types"
-)]
 pub(crate) fn is_compiled_generic_claim_predicate(predicate: &str) -> bool {
     generic_class_seed(predicate).is_some()
 }

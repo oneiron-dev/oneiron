@@ -58,10 +58,6 @@ pub use self::descriptor::{
     ClaimWriteClass, EnforcementStamp, claim_class_descriptor_id, decode_claim_class_descriptor,
     encode_claim_class_descriptor,
 };
-#[allow(
-    unused_imports,
-    reason = "for the stateless claim validator's registry arm in claim::core_types"
-)]
 pub(crate) use self::descriptor::{
     check_claim_against_compiled_descriptor, is_compiled_generic_claim_predicate,
 };
