@@ -1162,7 +1162,9 @@ destination = "collector"     # ONEIRON_FEEDBACK_DESTINATION: cloud, collector o
 endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on loopback
 ```
 
-The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
+The destination's token, if any, comes from the vault secret `[feedback] key_secret` names
+(bind it to the effector `feedback:send` with `POST /v1/owner/secrets/bind`), on a managed host
+too; with no `key_secret`, a self-hosted server reads `ONEIRON_FEEDBACK_TOKEN`. `POST
 /v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
 `feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
 names this bundle going to this destination on your approval, and `previewed_at`.
@@ -1394,7 +1396,9 @@ failure case's heal route (`case`), or a blocked report's when the agent's run h
 (`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
 not-fixed result. It holds no text of the failure.
 
-The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
+The endpoint's token, if any, comes from the vault secret `[failure_signals] key_secret` names
+(effector `failure-signals:send`), on a managed host too; with no `key_secret`, a self-hosted
+server reads `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
 sends nothing, and sealed records wait in the vault. Each send is one JSON batch, `POST`ed as an
 ordinary outbound effect on `failure_signals/send` with its recorded receipt. While the deployment
