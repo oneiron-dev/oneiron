@@ -304,3 +304,33 @@ fn open_proposal_in_txn(
     }
     Ok(proposal)
 }
+
+/// Drops the proposal keyed by the binding claim `binding`: a deleted or
+/// erased binding takes its proposal with it.
+pub(crate) fn erase_hook_proposal_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    binding: &EntityId,
+) -> Result<()> {
+    PROPOSALS.delete(store, txn, binding)?;
+    Ok(())
+}
+
+/// An erased actor leaves no id in the proposals: an ask it made as the
+/// agent goes with it, and where it settled one as the owner the settlement
+/// stays and its `settled_by` is blanked.
+pub(crate) fn scrub_hook_proposal_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    for (binding, mut proposal) in PROPOSALS.scan(&vault.store, txn)? {
+        if proposal.agent == *actor {
+            PROPOSALS.delete(&vault.store, txn, &binding)?;
+        } else if proposal.settled_by == Some(*actor) {
+            proposal.settled_by = None;
+            PROPOSALS.put(&vault.store, txn, &binding, &proposal)?;
+        }
+    }
+    Ok(())
+}
