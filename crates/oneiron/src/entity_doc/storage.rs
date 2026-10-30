@@ -122,6 +122,35 @@ pub(super) fn load(
     Ok(doc)
 }
 
+/// The write door's scan of a document's new `text`: a text whose only hits
+/// are values the lift sweep lifted from this document before is admitted
+/// for them, and marked again (OF-067); any other hit refuses.
+fn door_scan(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    _entity: &EntityId,
+    h: &Head,
+    text: &str,
+) -> Result<bool> {
+    let store = &vault.store;
+    match crate::batch::secret_scan::scan_content_in_txn(store, txn, text.as_bytes()) {
+        Ok(()) => Ok(false),
+        Err(refusal) => match super::lift::screened_in_txn(store, txn, h, text)? {
+            Some(screened)
+                if crate::batch::secret_scan::scan_content_in_txn(
+                    store,
+                    txn,
+                    screened.as_bytes(),
+                )
+                .is_ok() =>
+            {
+                Ok(true)
+            }
+            _ => Err(refusal),
+        },
+    }
+}
+
 pub(super) fn persist(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -129,6 +158,21 @@ pub(super) fn persist(
     h: &mut Head,
     doc: &EntityDoc,
     before: Option<&loro::VersionVector>,
+) -> Result<()> {
+    persist_scanned(vault, txn, entity, h, doc, before, door_scan)
+}
+
+/// [`persist`], its new text read by `scan` in place of the write door's
+/// own scan: the sync plane admits a text whatever it holds (FIX 8872).
+/// `scan` answers whether the text is marked again once it is stored.
+pub(super) fn persist_scanned(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    doc: &EntityDoc,
+    before: Option<&loro::VersionVector>,
+    scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
 ) -> Result<()> {
     let store = &vault.store;
     // A MESSAGE or TURN whose text changes owes its turn a sieve read and,
@@ -139,25 +183,8 @@ pub(super) fn persist(
         Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
         None => None,
     };
-    // A text whose only hits are values the lift sweep lifted from this
-    // document before is admitted for them, and marked again (OF-067).
     let text = doc.text();
-    let remark = match crate::batch::secret_scan::scan_content_in_txn(store, txn, text.as_bytes()) {
-        Ok(()) => false,
-        Err(refusal) => match super::lift::screened_in_txn(store, txn, h, &text)? {
-            Some(screened)
-                if crate::batch::secret_scan::scan_content_in_txn(
-                    store,
-                    txn,
-                    screened.as_bytes(),
-                )
-                .is_ok() =>
-            {
-                true
-            }
-            _ => return Err(refusal),
-        },
-    };
+    let remark = scan(vault, txn, entity, h, &text)?;
     // A NOTE written on this plane keeps the NOTE door's body bound and its
     // seal (OF-073 stage 1).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {

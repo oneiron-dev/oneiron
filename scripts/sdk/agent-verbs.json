@@ -769,6 +769,16 @@
       "section": false
     },
     {
+      "name": "self.grants.asked",
+      "description": "Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing.",
+      "input": "crate::memory::GrantAskedRequest",
+      "output": "crate::memory::GrantAskedPage",
+      "call": "memory.grants_asked(&input)?",
+      "scope": "Read",
+      "admission": {},
+      "section": false
+    },
+    {
       "name": "vault.companions.access_requests.answer",
       "description": "The owner approves or denies one pending companion-profile request, atomically recording the answer and its exact grant.",
       "input": "crate::task_verb::sdk::CompanionAccessRequestAnswerRequest",
@@ -3008,6 +3018,19 @@
       "call": "memory.disarm_turn_program(input.registration)?",
       "scope": "Write",
       "openapi": true,
+      "section": false
+    },
+    {
+      "name": "vault.turn_programs.rebind",
+      "description": "Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes.",
+      "input": "crate::dreamer_runner::TurnProgramRebindRequest",
+      "output": "crate::dreamer_runner::TurnProgramRebindReceipt",
+      "call": "crate::dreamer_runner::rebind_turn_program(memory, &input)?",
+      "scope": "Write",
+      "mcp_fields": {
+        "spec": "$"
+      },
+      "mcp_scope": "unrestricted",
       "section": false
     },
     {
@@ -14433,7 +14456,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14446,7 +14470,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14459,7 +14484,8 @@
       "host_door_lists": true,
       "scope": "Write",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true,
+        "require_granted_scope": true
       },
       "section": false
     },
@@ -14485,7 +14511,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false
     },
@@ -14513,7 +14539,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "mcp_result": "crate::api::mcp_gateway::question_answers_result::mcp_question_answers_result(output)?",
       "mcp_page": true,
@@ -14573,7 +14599,7 @@
       "host_door_lists": true,
       "scope": "Read",
       "admission": {
-        "unrestricted_record_scope": true
+        "lane_record_scope": true
       },
       "section": false,
       "openapi": true

@@ -1,6 +1,7 @@
 //! ARCH-0038 deletion/redaction contract types.
 
 mod actor_fields;
+mod checkpoint_payload;
 mod coop_delivery;
 mod coop_reply;
 mod coop_request;
@@ -23,6 +24,10 @@ mod timeline;
 mod tombstone;
 pub(crate) mod tombstone_scope;
 pub(crate) mod topology_delete_intent;
+// A withdrawn reply copy's Shell generation (FIX 931). Its own-device cutoff
+// is its one caller until the scope-summary withdrawal calls it too.
+#[cfg(feature = "sync")]
+mod withdrawn;
 
 #[cfg(test)]
 mod tests;
@@ -45,8 +50,9 @@ pub use coop_reply::{
 };
 pub use coop_request::{
     COOP_DELETION_REQUEST_BODY_KEYS, COOP_DELETION_REQUEST_DOMAIN,
-    COOP_DELETION_REQUEST_SCHEMA_VERSION, CooperativeDeletionRequest, MAX_COOP_DELETION_WORLDS,
-    SignedCooperativeDeletionRequest, decode_and_verify_cooperative_deletion_request,
+    COOP_DELETION_REQUEST_SCHEMA_VERSION, CooperativeDeletionRequest,
+    MAX_COOP_DELETION_PAGE_WORLDS, SignedCooperativeDeletionRequest,
+    decode_and_verify_cooperative_deletion_request,
     decode_self_signed_cooperative_deletion_request, encode_cooperative_deletion_request_body,
     encode_signed_cooperative_deletion_request, peek_cooperative_deletion_pact,
 };
@@ -118,8 +124,8 @@ pub(crate) use receipt_origin::receipt_attested_by_this_device_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use sweep_queue::withdrawn_generation_cutoff_in_txn;
 pub(crate) use sweep_queue::{
-    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WithdrawnReplacement, decode_hard_erase_sweep_job,
-    decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
+    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WithdrawnCutoff, WithdrawnReplacement,
+    decode_hard_erase_sweep_job, decode_hard_erase_sweep_seq, encode_hard_erase_sweep_job_value,
     enqueue_withdrawn_generation_in_txn,
 };
 pub(crate) use sweep_queue::{
@@ -138,6 +144,8 @@ pub(crate) use tombstone::{
     stage_engine_row_hard_erasure_in_txn,
 };
 pub(crate) use topology_delete_intent::topology_delete_reservation_in_txn;
+#[cfg(feature = "sync")]
+pub(crate) use withdrawn::{holds_withdrawn_record_in, withdraw_received_record_in_txn};
 // The replay outcome is read by sync production (`sync::quarantine`) and by
 // the white-box test modules that pin the base replay law; a plain
 // no-feature library reaches neither.

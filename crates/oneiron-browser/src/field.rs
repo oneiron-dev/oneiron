@@ -23,7 +23,6 @@ mod spec;
 mod write;
 
 pub(crate) use run::fill;
-pub(crate) use spec::Prepared;
 pub use spec::{FieldSpec, TextReference};
 pub use write::{
     FIELD_WRITER, FieldWrite, FieldWriteError, FieldWriter, FieldWritten, NoWriter, TextCheck,

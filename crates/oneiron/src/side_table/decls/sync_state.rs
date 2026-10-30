@@ -502,10 +502,12 @@ side_tables! {
     /// it is Pending and bound to it by the receipt's digest, so its confirmation holds every one
     /// of them again. Key: hex64.
     VAULT_IMPORT_STAMPS: SyncState b"vault_import_stamps:v1:" Raw;
-    /// The newest withdrawn generation (u64be `learned_at`) of a derived artifact whose
-    /// historical sweep finished: sync ingest refuses a body of that generation or older that is
-    /// not its content-free keyframe, and every sweep keeps rewriting such a carrier. Outlives
-    /// the `hw:` row it replaces. Key: hex32 (entity id).
+    /// The newest withdrawn generation of a derived artifact whose historical sweep finished,
+    /// and what stands in for it (FIX 931): nine bytes, the `learned_at` u64be, then the
+    /// replacement's tag byte (1 an epoch keyframe, 2 a Shell, the header alone). Sync ingest
+    /// refuses a body of that generation or older that is not that content-free form, and every
+    /// sweep keeps rewriting such a carrier. Outlives the `hw:` row it replaces. Key: hex32
+    /// (entity id).
     DELETION_WITHDRAWN_GENERATION_FENCE: SyncState b"wg:" Raw;
     /// The serve health check past a threshold (OF-520): one check per crossing subject, and
     /// how far the check has read each kind of kept crossing. Key: "check:" string (the

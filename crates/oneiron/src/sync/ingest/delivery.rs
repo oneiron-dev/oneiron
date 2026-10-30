@@ -20,6 +20,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -311,11 +312,11 @@ impl Vault {
 impl crate::store::Store {
     /// The first consent epoch at which pact `pact_id` delivered `record`
     /// here, as the ledger reads in `txn` (FIX 1322): retrieval holds a copy
-    /// to a retained courtesy ask's epoch cutoff by it. It walks the pact's
-    /// delivery epochs in order from its first and stops at an epoch the
-    /// pact delivered nothing at, so it reads one row per epoch walked, never
-    /// the pact's records. `None` when no epoch it walks delivered `record`:
-    /// the ledger names no delivery of it, or one only past such a gap.
+    /// to a retained courtesy ask's epoch cutoff by it. It walks only the
+    /// epochs the pact delivered something at, in order, seeking past every
+    /// epoch it delivered nothing at (FIX 6695), so it reads one row per
+    /// delivering epoch, never the pact's records. `None` when the ledger
+    /// names no delivery of `record` by the pact.
     ///
     /// # Errors
     ///
@@ -327,38 +328,55 @@ impl crate::store::Store {
         record: EntityId,
     ) -> Result<Option<u64>> {
         let pact = bytes_to_hex_lower(pact_id);
-        let Some((key, _)) = DELIVERED
-            .iter_raw_from(self, txn, format!("{pact}:").as_bytes())?
-            .next()
-            .transpose()?
-        else {
-            return Ok(None);
-        };
-        let mut epoch = std::str::from_utf8(&key)
-            .ok()
-            .and_then(|key| key.strip_prefix(&pact))
-            .and_then(|rest| rest.strip_prefix(':'))
-            .and_then(|rest| rest.split_once(':'))
-            .map(|(epoch, _)| epoch)
-            .filter(|epoch| epoch.len() == 16)
-            .and_then(|epoch| u64::from_str_radix(epoch, 16).ok())
-            .ok_or_else(corrupt)?;
-        loop {
+        let mut from = 0;
+        while let Some(epoch) = self.federation_next_delivery_epoch_in(txn, &pact, from)? {
             if DELIVERED.contains(self, txn, &delivery_key(pact_id, epoch, record))? {
                 return Ok(Some(epoch));
             }
             let Some(next) = epoch.checked_add(1) else {
                 return Ok(None);
             };
-            epoch = next;
-            let delivered_then = DELIVERED
-                .iter_raw_from(self, txn, format!("{pact}:{epoch:016x}:").as_bytes())?
-                .next()
-                .transpose()?
-                .is_some();
-            if !delivered_then {
-                return Ok(None);
-            }
+            from = next;
         }
+        Ok(None)
+    }
+
+    /// The first epoch at or after `from` at which the pact whose lowercase
+    /// hex id is `pact` delivered anything, read from the one ledger row that
+    /// begins it: a seek, so the epochs it delivered nothing at cost nothing.
+    fn federation_next_delivery_epoch_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        pact: &str,
+        from: u64,
+    ) -> Result<Option<u64>> {
+        let table = side_table::FEDERATION_DELIVERED_RECORD.prefix;
+        let start = [table, format!("{pact}:{from:016x}:").as_bytes()].concat();
+        // `;` follows `:`, so this bounds the seek to the pact's own rows.
+        let end = [table, format!("{pact};").as_bytes()].concat();
+        let Some(row) = self
+            .sync_state
+            .range_bytes(
+                txn,
+                &(
+                    Bound::Included(start.as_slice()),
+                    Bound::Excluded(end.as_slice()),
+                ),
+            )?
+            .next()
+        else {
+            return Ok(None);
+        };
+        let (key, _) = row?;
+        key.strip_prefix(table)
+            .and_then(|key| std::str::from_utf8(key).ok())
+            .and_then(|key| key.strip_prefix(pact))
+            .and_then(|rest| rest.strip_prefix(':'))
+            .and_then(|rest| rest.split_once(':'))
+            .map(|(epoch, _)| epoch)
+            .filter(|epoch| epoch.len() == 16)
+            .and_then(|epoch| u64::from_str_radix(epoch, 16).ok())
+            .map(Some)
+            .ok_or_else(corrupt)
     }
 }

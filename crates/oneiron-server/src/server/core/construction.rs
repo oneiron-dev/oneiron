@@ -7,8 +7,8 @@ use super::{
     Materializer, McpConnectorActorRegistry, McpCredentialHashKey, Mutex,
     NEXT_LIFECYCLE_SESSION_ID, Ordering, ROOT_LEASES_MAP, SERVER_USER_ID, SyncEngineContext,
     SyncServer, SyncServerConfig, UsageLedger, WindowManager, add_window_to_root, broadcast,
-    host_root_secret, init_window_list, live_rows, mcp_registry_hash_key, read_window_list,
-    schema_version_bytes, server_state, spawn_local_change_producer,
+    host_root_secret, init_window_list, insert_root_schema_version, live_rows,
+    mcp_registry_hash_key, read_window_list, server_state, spawn_local_change_producer,
 };
 
 impl SyncServer {
@@ -71,13 +71,11 @@ impl SyncServer {
                 let doc = LoroDoc::new();
                 // Initialize root doc meta map
                 let meta = doc.get_map("meta");
-                // i64-LE BYTES (Loro Binary), conforming to the shared schema
-                // (`schema::create_root_doc`) — NOT a Loro i64, which the
-                // byte-only schema readers would not decode.
-                meta.insert("schema_version", schema_version_bytes().as_slice())
-                    .map_err(|e| {
-                        oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
-                    })?;
+                // A native Loro I64, the shared schema's own encoding
+                // (`schema::create_root_doc`).
+                insert_root_schema_version(&meta).map_err(|e| {
+                    oneiron::Error::sync_engine(SyncEngineContext::LoroMapInsert, e)
+                })?;
                 // `meta.windows` must use the shared schema-owned encoding so
                 // fresh server docs, root-doc creation, and client decoding
                 // cannot drift.

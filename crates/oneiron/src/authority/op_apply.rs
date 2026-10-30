@@ -47,7 +47,8 @@ pub(super) fn apply_op(
         }
         AuthorityOp::SlipMint(_)
         | AuthorityOp::SlipRevoke { .. }
-        | AuthorityOp::SlipConsume { .. } => {}
+        | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::SlipGrantRevoke { .. } => {}
         AuthorityOp::FederationConfirm(action) => {
             state.federation_confirms.insert(entry_hash, action.clone());
         }
@@ -524,23 +525,31 @@ pub(super) fn apply_federation_lifecycle(
             pact.terminal_epoch = Some(pact.pact_epoch);
         }
     }
+    // A pact that ends keeps no plaintext scope, only its keyed digest
+    // (FIX 7907); terminal-wins merging carries the erased side.
+    if pact.status.is_terminal() {
+        pact.erase_scope();
+    }
     state.federation_pacts.insert(action.pact_id, pact);
     Ok(())
 }
 
 /// Deterministic, commutative pick between two equally ranked pact states:
-/// the lexicographic-min (scope_digest, grant_ref) side. The pair is always
-/// discriminating for divergent states, since divergence implies at least one
-/// of the two fields differs.
+/// the lexicographic-min (scope_digest, grant_ref, canonical scope bytes)
+/// side. The triple is always discriminating for divergent states, since
+/// divergence implies at least one of the three differs.
 fn pact_merge_tiebreak_side<'a>(
     left: &'a FederationPactState,
     right: &'a FederationPactState,
 ) -> &'a FederationPactState {
-    if (left.scope_digest, left.grant_ref) <= (right.scope_digest, right.grant_ref) {
-        left
-    } else {
-        right
-    }
+    let key = |pact: &FederationPactState| {
+        (
+            pact.scope_digest,
+            pact.grant_ref,
+            encode_federation_pact_scope(&pact.pact_scope).unwrap_or_default(),
+        )
+    };
+    if key(left) <= key(right) { left } else { right }
 }
 
 /// Commutative, associative, idempotent per-pact merge join.
@@ -548,9 +557,10 @@ fn pact_merge_tiebreak_side<'a>(
 /// Terminal-wins regardless of epoch (revocations-win); two terminals resolve
 /// by fixed precedence Dissolved > Disconnected > Promoted; non-terminals
 /// resolve by max epoch. Equal-epoch non-terminals fold as a COMPETITOR SET
-/// keyed by (scope_digest, grant_ref): equal keys combine (effective scopes
-/// intersect, min peer key, Suspended if either side is); divergent keys
-/// suspend fail-closed and carry the lexicographic-min key's fields. Because
+/// keyed by (scope_digest, grant_ref, scope): equal keys combine (effective
+/// scopes intersect, min peer key, Suspended if either side is); divergent
+/// keys suspend fail-closed and carry the lexicographic-min key's fields. A
+/// terminal side carries no scope (FIX 7907). Because
 /// every pairwise step re-takes the min — a Suspended side is never absorbed
 /// verbatim past an Active competitor — any merge tree folds a 3+-way
 /// divergence to the GLOBAL lex-min, so the heal target (the grant_ref an
@@ -597,7 +607,9 @@ pub(super) fn merge_pact_states(
         };
     }
     // Both non-terminal at the same consent epoch: fold the competitor set.
-    if (left.scope_digest, left.grant_ref) == (right.scope_digest, right.grant_ref) {
+    if (left.scope_digest, left.grant_ref) == (right.scope_digest, right.grant_ref)
+        && left.pact_scope == right.pact_scope
+    {
         let mut merged = left.clone();
         // Concurrent unilateral narrows are both honored, each kept under the
         // party that made it; a party's own later narrowing supersedes the
@@ -610,32 +622,24 @@ pub(super) fn merge_pact_states(
             .clone()
             .min(right.peer_owner_key.clone());
         // Same discipline for the peer vault id (duplicate Connects can be
-        // dual-signed with different peers), and — reachable only through a
-        // digest collision — for divergent scope bytes via their canonical
-        // encoding, so this arm stays commutative, associative, and
-        // idempotent on every field it carries.
+        // dual-signed with different peers), so this arm stays commutative,
+        // associative, and idempotent on every field it carries.
         merged.peer_vault_id = left.peer_vault_id.min(right.peer_vault_id);
-        if left.pact_scope != right.pact_scope {
-            let left_scope_bytes =
-                encode_federation_pact_scope(&left.pact_scope).unwrap_or_default();
-            let right_scope_bytes =
-                encode_federation_pact_scope(&right.pact_scope).unwrap_or_default();
-            if right_scope_bytes < left_scope_bytes {
-                merged.pact_scope = right.pact_scope.clone();
-            }
-        }
         // A suspension carried by either side persists under an agreeing
         // competitor: the conflict that caused it is still unhealed.
         merged.status = left.status.max(right.status);
         return merged;
     }
-    // Divergent concurrent re-pacts (digest) or concurrent Connects binding
-    // one pact id to two different grants (grant_ref): both are
-    // equivocation-shaped conflicts on the consent axis. Fail closed at the
-    // shared epoch and carry the min-key side, RE-TAKING the min even when
-    // one side is already Suspended; heals via a fresh dual-signed Rescope
-    // at epoch+1 naming the surviving binding. The losing grant_ref stays
-    // denied via the grant-binding registry.
+    // Divergent concurrent re-pacts (digest), concurrent Connects binding
+    // one pact id to two different grants (grant_ref), or one keyed digest
+    // logged over two scopes: all are equivocation-shaped conflicts on the
+    // consent axis. The last only a forged entry makes, since each intake
+    // door checked its scope against the digest under the opening key, which
+    // this fold does not hold to tell which scope is true (FIX 7907). Fail
+    // closed at the shared epoch and carry the min-key side, RE-TAKING the
+    // min even when one side is already Suspended; heals via a fresh
+    // dual-signed Rescope at epoch+1 naming the surviving binding. The losing
+    // grant_ref stays denied via the grant-binding registry.
     let mut merged = pact_merge_tiebreak_side(left, right).clone();
     merged.status = FederationPactStatus::Suspended;
     merged.successor_vault_id = None;

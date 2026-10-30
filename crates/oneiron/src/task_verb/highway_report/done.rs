@@ -3,6 +3,7 @@
 //! Shared report vocabulary stays in `highway_report`.
 
 use super::*;
+use crate::task_verb::settlement_anchor::{SETTLEMENT_ANCHOR_WORLD_PROOF, anchor_fields};
 
 impl Memory<'_> {
     /// Done: the verdict, then the one write it calls for. Held with a brief
@@ -250,6 +251,15 @@ impl Memory<'_> {
             && let Some(wtxn) = rt.txn.as_deref_mut()
         {
             answer.record_judge_in_txn(self.vault(), wtxn);
+        }
+        // A bound try's typed Done is a world proof: the settled row names
+        // its pin's NOTE as the settlement's anchor.
+        if judged.is_some()
+            && let Some(note) = rt.judged.as_ref().and_then(RunnerDoneAnswer::world_proof)
+        {
+            for (field, value) in anchor_fields(SETTLEMENT_ANCHOR_WORLD_PROOF, &note.to_hex()) {
+                rt.note_decision(&field, value);
+            }
         }
         let decision = judged.unwrap_or_else(|| {
             ask(
