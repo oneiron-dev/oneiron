@@ -153,6 +153,7 @@ pub(crate) use self::doors::{
     check_claim_policy_for_write_with_preflight_decision, check_claim_policy_for_write_with_record,
     check_claim_policy_for_write_with_record_with_reader,
     check_claim_policy_for_write_with_record_with_reader_carrying_refusal,
+    check_claim_policy_for_write_with_record_with_reader_reference_probe,
     check_edge_provenance_claim_policy, check_reserved_claim_policy,
     check_unattributed_claim_lineage, claim_consent_binding_parts, claim_source_trust_admits_auto,
     external_effect_decision_on, receipt_carried_reference_refusal,
