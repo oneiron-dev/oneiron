@@ -35,7 +35,7 @@ use crate::side_table::{self, Named, SideTable};
 use crate::skill::{SkillLifecycle, SkillRole};
 use crate::team::{
     DecidedBy, PatternSkillRef, TeamAxis, TeamOutcome, TeamPattern, TeamReceipt, TeamShape,
-    record_team_receipt, settle_team_outcome,
+    record_team_receipt,
 };
 use crate::{AttemptId, ClaimApprovalStatus, EntityId, Error, Result, Vault};
 
@@ -505,9 +505,13 @@ pub fn authoring_runs(vault: &Vault, root: AttemptId) -> Result<Vec<AuthoringFin
 
 /// Settle a finalized run's anchored outcome on its team receipt, which
 /// feeds the existing payoff and learning evidence, and keep it on the run.
+/// The run's winner is the work the outcome judged: the outcome names and
+/// scores the critics that reviewed it, beside the team's bound
+/// deliverables' (FIX 12106), and the run keeps the outcome as settled.
 /// # Errors
-/// An unknown or already-settled run, any [`settle_team_outcome`] refusal,
-/// or storage errors.
+/// An unknown or already-settled run, any
+/// [`settle_team_outcome`](crate::team::settle_team_outcome) refusal, or
+/// storage errors.
 pub fn settle_claim_tournament_outcome(
     vault: &Vault,
     root: AttemptId,
@@ -523,7 +527,13 @@ pub fn settle_claim_tournament_outcome(
     if run.outcome.is_some() {
         return Err(invalid("the tournament run's outcome is already settled"));
     }
-    settle_team_outcome(vault, &run.team_ref, &outcome)?;
+    let settled = crate::team::receipt::settle_team_work_outcome(
+        vault,
+        &run.team_ref,
+        &outcome,
+        &[run.winner_claim],
+    )?;
+    let outcome = settled.outcome.unwrap_or(outcome);
     vault.with_write_txn_grouped(|txn| {
         let mut run = AUTHORING_RUN
             .get(&vault.store, txn, &key)?

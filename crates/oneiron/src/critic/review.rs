@@ -25,6 +25,8 @@ pub use questions::{
 };
 mod submit;
 pub use submit::{CriticBinding, CriticReviewOutcome, CriticReviewSubmit};
+mod team_outcome;
+pub(crate) use team_outcome::{name_deliverable_critics_in_txn, record_deliverable_outcomes_in_txn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
