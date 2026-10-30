@@ -227,6 +227,8 @@ pub(crate) async fn start_desktop_workers(
     workers.push(sync_server.spawn_connector_send_worker(crate::server::admit_every_pass()));
     // A Dreamer pass hands agent replies off; this worker runs them (FIX 2405).
     workers.push(sync_server.spawn_connector_reply_worker(crate::server::admit_every_pass()));
+    // The calendar safeguard's pattern head, unless the host installed its own (FIX 12099).
+    crate::calendar_host::install_calendar_label_head(crate::calendar_host::PatternLabelHead);
     // Installed ICS feeds poll on their own cadence (FIX 7846).
     workers.push(crate::calendar_host::spawn_ics_feed_polls(
         Arc::clone(&sync_server),

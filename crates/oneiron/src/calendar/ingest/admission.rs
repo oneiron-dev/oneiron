@@ -511,7 +511,7 @@ impl PollAdmission<'_> {
                 value,
                 source_record_id,
                 self.now,
-                imported_screen(&request.verdict),
+                imported_screen(&request.verdict, self.screener),
             );
             Ok((admitted, token))
         })?;

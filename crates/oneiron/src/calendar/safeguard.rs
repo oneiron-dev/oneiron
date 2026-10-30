@@ -78,6 +78,12 @@ impl CalendarScreenVerdict {
 pub trait CalendarBodyScreener: Send + Sync {
     /// Screens one inbound body.
     fn screen(&self, body: &CalendarInboundBody) -> Result<CalendarScreenVerdict>;
+
+    /// The name each screen record carries for this screener, such as the
+    /// model or head that labels the body; `None` records no name.
+    fn name(&self) -> Option<&str> {
+        None
+    }
 }
 
 /// The typed request an admission callback receives.
