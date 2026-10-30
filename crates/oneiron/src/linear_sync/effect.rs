@@ -208,8 +208,9 @@ impl Vault {
     /// [`LinearSyncError::AuthorizationDenied`] when the request is not the
     /// exact current mirror operation, the TASK revision has no verified
     /// writer, or either actor's grant or a connector budget row that does
-    /// not pace refuses it; [`LinearSyncError::Waiting`] while a Rate window
-    /// of either actor's key is full.
+    /// not pace refuses it; [`LinearSyncError::Held`] while the Gate holds it
+    /// for an approve-once press; [`LinearSyncError::Waiting`] while a Rate
+    /// window of either actor's key is full.
     pub fn authorize_linear_effect(
         &self,
         request: &LinearEffectRequest,
@@ -243,7 +244,9 @@ impl Vault {
                         approval_digest = ?hold.approval_digest,
                         "Linear mutation not admitted; a pending one names the approve-once digest to press"
                     );
-                    return Err(LinearSyncError::AuthorizationDenied);
+                    // A pending hold is typed with its digest, as the door
+                    // returns it (FIX 11870, after 6824).
+                    return Err(super::door_recheck::hold_error(hold));
                 }
                 LinearEffectAdmission::Paced { .. } => {
                     turn = self.linear_rate_turn(request, deadline, turn)?;

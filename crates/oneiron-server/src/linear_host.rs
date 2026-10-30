@@ -491,9 +491,12 @@ async fn spawn_bridge(
                     );
                     wait = Duration::from_secs(last_valid_interval);
                 }
-                Ok(Err(_)) => {
+                Ok(Err(error)) => {
+                    // The typed failure (a held push names its approve-once
+                    // digest, FIX 11871); provider bodies never enter one.
                     tracing::warn!(
                         reason = "linear_sync_failed",
+                        %error,
                         "Linear mirror pass failed; will retry"
                     );
                     // A policy read failure cannot authorize a provider call.
