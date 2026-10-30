@@ -137,6 +137,10 @@ pub(crate) struct McpCodeModeVerbs {
     run_id: oneiron::EntityId,
     /// This run's browser and desktop.
     guests: RunGuests,
+    /// The `execute_code` call's attempt collector, taken where the door is
+    /// built: each verb runs on a spawned task, and a live-run hold made
+    /// there reaches the call's receipt only through this (FIX 10938).
+    collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
 }
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to

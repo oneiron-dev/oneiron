@@ -19,6 +19,11 @@
 //! 4624(b)): where it stands and, once the secret's holder sealed it and
 //! this server keeps the copy, the copy, sealed to the machine he chose. No
 //! server it passes through can open it.
+//!
+//! The kept archive also carries the owner's act its render carried out
+//! (FIX 11596): each read checks that act's exact owner against the owner
+//! the caller's fresh proof resolves to, and that he is still a live owner.
+//! A positive lapse lets the export go unread and answers `410 Gone`.
 
 use std::collections::BTreeMap;
 use std::fs::File;
@@ -29,9 +34,11 @@ use axum::body::Bytes;
 use axum::extract::Path;
 use axum::http::header;
 use axum::routing::get;
-use oneiron::authority::{HostActionAuthority, VerifiedSlip};
+use oneiron::authority::{HostActionAuthority, OwnerAct, VerifiedSlip};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::memory::{ExportDelivery, ExportOptions, ExportTransfer, MemoryExportReceipt};
+use oneiron::memory::{
+    ExportDelivery, ExportOptions, ExportTransfer, KeptExportLapse, MemoryExportReceipt,
+};
 use rand_core::RngCore as _;
 use serde_json::Value;
 
@@ -51,10 +58,13 @@ pub(crate) struct ExportTransfers {
     kept: Mutex<BTreeMap<String, Arc<KeptExport>>>,
 }
 
-/// One kept export: who made it, the rows it was derived from, its receipt
-/// and the spool file holding the archive.
+/// One kept export: who made it, the owner's act its render carried out,
+/// the rows it was derived from, its receipt and the spool file holding the
+/// archive.
 struct KeptExport {
     exporter: String,
+    /// The render's own act (FIX 11596): each read checks its exact owner.
+    act: Option<OwnerAct>,
     rows: Vec<EntityId>,
     receipt: MemoryExportReceipt,
     spool: Mutex<File>,
@@ -88,6 +98,7 @@ impl ExportTransfers {
         };
         let kept = KeptExport {
             exporter: exporter_of(auth),
+            act: receipt.act,
             rows,
             receipt,
             spool: Mutex::new(spool),
@@ -375,9 +386,11 @@ fn admitted(
         ));
     }
     let action = crate::api::host_action::facade_host_action(server, auth)?;
-    match (auth.verified_slip(), action) {
+    // The owner the caller's fresh proof resolves to, as its export's
+    // render resolved its own.
+    let reader = match (auth.verified_slip(), action) {
         (Some(proof), _) if proof.claims().holder_ref == "host" => {
-            server.vault.admit_host_owner_export(proof)?;
+            server.vault.admit_host_owner_export(proof)?
         }
         (Some(proof), _) => {
             let (actor, class) = super::identity::facade_actor(server, auth)?;
@@ -385,19 +398,33 @@ fn admitted(
                 .vault
                 .memory(actor, class)
                 .admit_export(Some(proof))?;
+            actor
         }
-        (None, Some(action)) => server.vault.admit_host_action_export(&action)?,
+        (None, Some(action)) => {
+            server.vault.admit_host_action_export(&action)?;
+            action.actor().entity_ref()
+        }
         (None, None) if auth.managed_owner().is_some() => {
-            let owner = super::host_doors::owner_proof(auth, server, EXPORT_VERB)?;
-            server.vault.admit_authenticated_owner_export(&owner)?;
+            let owner = super::host_doors::support::owner_proof(auth, server, EXPORT_VERB)?;
+            server.vault.admit_authenticated_owner_export(&owner)?
         }
         (None, None) => return Err(no_owner_proof()),
-    }
+    };
     let kept = server
         .export_transfers
         .get(transfer_ref)?
         .filter(|kept| kept.exporter == exporter_of(auth))
         .ok_or_else(unknown_transfer)?;
+    // FIX 11596: the render's act must still stand for this caller. A
+    // positive lapse lets the export go, so its spool is never read again.
+    if let Some(lapse) = kept
+        .act
+        .as_ref()
+        .and_then(|act| server.vault.kept_export_lapse(act, reader))
+    {
+        server.export_transfers.release(transfer_ref)?;
+        return Err(export_lapsed(lapse));
+    }
     let vault = server.vault();
     let destination = auth.destination();
     if !super::release::rows_still_admitted(vault, auth, &kept.rows)
@@ -491,6 +518,17 @@ fn no_owner_proof() -> FacadeApiError {
     FacadeApiError::forbidden(
         "full-vault export requires verified owner authority",
         ["Present a verified owner credential."],
+    )
+}
+
+/// The answer to a read of a kept export whose render's act no longer
+/// stands for its caller (FIX 11596): `410 Gone`, the owner door's own code.
+fn export_lapsed(lapse: KeptExportLapse) -> FacadeApiError {
+    FacadeApiError::new(
+        StatusCode::GONE,
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED,
+        format!("this export no longer stands: {}", lapse.message()),
+        ["Export again as this vault's live owner."],
     )
 }
 

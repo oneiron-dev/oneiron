@@ -140,8 +140,9 @@ async fn freeze_gate(
                 }
             }
         }
-        // A person's own act at a member door (FIX 1302 stage 1), which the
-        // supervisor signed for a member who carries no slip of his own.
+        // A person's own act at a member door, his `/mcp` call or the upgrade
+        // of his held MCP socket (FIX 1302), which the supervisor signed for
+        // a member who carries no slip of his own.
         request = match verify_person_action(&state, request).await {
             Ok(request) => request,
             Err(refusal) => return refusal,
@@ -247,18 +248,17 @@ async fn freeze_gate(
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
-/// A member door's person action (FIX 1302 stage 1): on a POST to a door a
-/// person action serves (`auth::managed_person_door`) that carries neither
-/// a caller's slip nor an owner attestation, the supervisor-signed
-/// `ManagedPersonAction` is verified against the per-spawn secret over the
-/// method, path, raw query, placing headers and exact body, and a verified
-/// one names its person as a request extension the credential reads. One
-/// that does not verify names no one: the request goes on as it came, as
+/// A member's person action (FIX 1302): on a request a person action signs
+/// ([`person_signed`]) that carries neither a caller's slip nor an owner
+/// attestation, the supervisor-signed `ManagedPersonAction` is verified
+/// against the per-spawn secret over the method, path, raw query, placing
+/// headers and exact body, and a verified one names its person as a request
+/// extension the credential, the MCP gateway or the socket upgrade reads.
+/// One that does not verify names no one: the request goes on as it came, as
 /// anonymous as before. The body is held up to the facade's own ceiling;
 /// `Err` answers one past it, as the facade would.
 async fn verify_person_action(state: &ManagedState, request: Request) -> Result<Request, Response> {
-    if request.method() != Method::POST
-        || crate::auth::managed_person_door(request.uri().path()).is_none()
+    if !person_signed(&request)
         || request
             .headers()
             .contains_key(oneiron_vault_contract::MANAGED_OWNER_ACTION_HEADER)
@@ -307,6 +307,21 @@ async fn verify_person_action(state: &ManagedState, request: Request) -> Result<
             .insert(super::ManagedPersonHolder(holder));
     }
     Ok(request)
+}
+
+/// Whether a person action signs `request` (FIX 1302): a `POST` to a member
+/// door a person action serves (`auth::managed_person_door`), or to an MCP
+/// endpoint, where the gateway holds his call to those doors
+/// (`api::mcp_gateway::person_call`), or the `GET` upgrade of his held MCP
+/// socket, whose calls reach those doors alone.
+fn person_signed(request: &Request) -> bool {
+    let path = request.uri().path();
+    if request.method() == Method::POST {
+        return crate::auth::managed_person_door(path).is_some()
+            || path == crate::cli::McpSurface::Primary.path()
+            || path == crate::cli::McpSurface::ToolFirst.path();
+    }
+    request.method() == Method::GET && path == "/ws" && request.headers().contains_key(UPGRADE)
 }
 
 /// The answer to an owner attestation managed ingress could not verify on

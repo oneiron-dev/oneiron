@@ -45,8 +45,13 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.shape.read", post(facade_route))
         .route("/vault.shape.plan", post(facade_route))
         .route("/vault.shape.apply", post(facade_route))
+        .route("/vault.shape.plan.card", post(facade_route))
+        .route("/vault.shape.items.receipt", post(facade_route))
+        .route("/vault.shape.groups", post(facade_route))
+        .route("/vault.shape.groups.resolve", post(facade_route))
         .route("/self.message", post(facade_route))
         .route("/self.grants.ask", post(facade_route))
+        .route("/self.grants.asked", post(facade_route))
         .route(
             "/vault.companions.access_requests.answer",
             post(facade_route),
@@ -149,6 +154,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.retrieval.policy.update", post(facade_route))
         .route("/vault.export", post(facade_route))
         .route("/self.credential.attenuate", post(facade_route))
+        .route("/self.actor", post(facade_route))
         .route("/vault.scope.position", post(facade_route))
         .route("/vault.scope.ceiling", post(facade_route))
         .route("/vault.export.scoped", post(facade_route))
@@ -182,6 +188,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.campaign.program.archive", post(facade_route))
         .route("/vault.turn_programs.arm", post(facade_route))
         .route("/vault.turn_programs.disarm", post(facade_route))
+        .route("/vault.turn_programs.rebind", post(facade_route))
         .route("/self.saved_query.create", post(facade_route))
         .route("/self.saved_query.read", post(facade_route))
         .route("/self.saved_query.update", post(facade_route))
@@ -207,6 +214,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.inbox.concerns.review", post(facade_route))
         .route("/vault.inbox.lens", post(facade_route))
         .route("/vault.inbox.groups", post(facade_route))
+        .route("/vault.inbox.groups.resolve", post(facade_route))
         .route("/vault.weave.digest.render", post(facade_route))
         .route("/vault.weave.link.corrections", post(facade_route))
         .route("/self.inbox.lens", post(facade_route))
@@ -496,6 +504,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
             "/vault.coach.training_offers.pilots.get",
             post(facade_route),
         )
+        .route("/vault.coach.training_offers.sources", post(facade_route))
         .route("/vault.research.bind", post(facade_route))
         .route("/vault.research.fork", post(facade_route))
         .route("/vault.research.weave", post(facade_route))
@@ -1259,6 +1268,10 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.identity.events.get", post(facade_route))
         .route("/vault.identity.proposals.resolve", post(facade_route))
         .route("/vault.identity.proposals.for_pair", post(facade_route))
+        .route("/vault.custody.members.drain.begin", post(facade_route))
+        .route("/vault.custody.members.drain.commit", post(facade_route))
+        .route("/vault.custody.members.drain.folder", post(facade_route))
+        .route("/vault.custody.members.reenrol", post(facade_route))
         .route("/connector.answer", post(facade_route))
         .route("/self.browser.open", post(facade_route))
         .route("/self.browser.observe", post(facade_route))

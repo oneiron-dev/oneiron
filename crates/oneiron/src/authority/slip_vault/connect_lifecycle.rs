@@ -133,13 +133,18 @@ impl Vault {
                 epoch: offered.epoch,
                 offer: offer_for(issuer, &action, local, &offered.offer.scope_key)?,
             };
+            let logged_epoch = !state.status.is_terminal()
+                && state.pact_epoch == offered.epoch
+                && Some(state.scope_digest) == action.scope_digest;
+            // The offer's opening key re-checks the logged commitment (FIX
+            // 7907): a live pact that logs another scope under this keyed
+            // digest was never dual-signed over it.
+            if logged_epoch && state.pact_scope != offered.offer.pact_scope {
+                return Err(invalid_authority());
+            }
             // Exact retries still verify the peer's gesture. An arbitrary signature
             // cannot turn a cached state into a successful owner commitment.
-            if !state.status.is_terminal()
-                && state.pact_epoch == offered.epoch
-                && Some(state.scope_digest) == action.scope_digest
-                && state.pact_scope == offered.offer.pact_scope
-            {
+            if logged_epoch {
                 let signature = crate::authority::AuthoritySignature {
                     suite: offered.offer.gesture.signer.suite(),
                     public_key: offered.offer.gesture.signer.clone(),

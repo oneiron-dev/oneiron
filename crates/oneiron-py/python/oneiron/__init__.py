@@ -897,6 +897,9 @@ class Oneiron:
         def revert_run(self, spec):
             """The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why."""
             return json.loads(_translate(lambda: self._client.vault_revert_run(json.dumps(spec))))
+        @property
+        def custody(self) -> "Oneiron._VaultCustodyVerbs":
+            return Oneiron._VaultCustodyVerbs(self._client)
     class _VaultCommitmentsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -978,6 +981,9 @@ class Oneiron:
         @property
         def pilots(self) -> "Oneiron._VaultCoachTrainingOffersPilotsVerbs":
             return Oneiron._VaultCoachTrainingOffersPilotsVerbs(self._client)
+        def sources(self, spec):
+            """Before preparing a training run, read a reservoir scope's sources with other people or unknown people, each with its pairs, and the pairs the run would carry and leave out by reason under the ticks given so far."""
+            return json.loads(_translate(lambda: self._client.vault_coach_training_offers_sources(json.dumps(spec))))
     class _VaultCoachTrainingOffersCandidatesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1074,12 +1080,42 @@ class Oneiron:
         def read(self, spec=None):
             """The vault's stored seed and its live setup plane held as one document (ARCH-0070), as the caller's read admits it: seed rows and open apply items naming structure it cannot read are left out; a free read."""
             return json.loads(_translate(lambda: self._client.vault_shape_read(json.dumps({} if spec is None else spec))))
-        def plan(self, spec):
-            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
-            return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
+        @property
+        def plan(self) -> "Oneiron._VaultShapePlanVerbs":
+            return Oneiron._VaultShapePlanVerbs(self._client)
         def apply(self, spec):
             """Lands a shape plan one item at a time through the vault's named doors, or resumes its apply; a widening lands only on the owner's word for that item while its previewed reach holds, else it asks for a fresh plan."""
             return json.loads(_translate(lambda: self._client.vault_shape_apply(json.dumps(spec))))
+        @property
+        def items(self) -> "Oneiron._VaultShapeItemsVerbs":
+            return Oneiron._VaultShapeItemsVerbs(self._client)
+        @property
+        def groups(self) -> "Oneiron._VaultShapeGroupsVerbs":
+            return Oneiron._VaultShapeGroupsVerbs(self._client)
+    class _VaultShapePlanVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """The difference between a seed, or the stored one, and the vault, item by item at a pinned frontier; structure the caller cannot read is neither shown nor planned as missing; a free read that writes nothing."""
+            return json.loads(_translate(lambda: self._client.vault_shape_plan(json.dumps(spec))))
+        def card(self, spec):
+            """The plan card over the plan vault.shape.plan answers: the whole plan, its resting depth, reach line and every item where it stands, beside the card on the gen-UI envelope; a free read."""
+            return json.loads(_translate(lambda: self._client.vault_shape_plan_card(json.dumps(spec))))
+    class _VaultShapeItemsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def receipt(self, spec):
+            """Reads the shape item a vault_shape:<frontier>#<seq> receipt reference names, as the caller's read admits its apply: the item, where it stands and its run rows; null when none is readable."""
+            return json.loads(_translate(lambda: self._client.vault_shape_items_receipt(json.dumps(spec))))
+    class _VaultShapeGroupsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec=None):
+            """Reads every vault shape apply with an item waiting for the owner's word, one inbox group each, oldest first, under the owner's proof."""
+            return json.loads(_translate(lambda: self._client.vault_shape_groups(json.dumps({} if spec is None else spec))))
+        def resolve(self, spec):
+            """The owner's answer to one shape apply's inbox group under his proof: accept-all lands every waiting item through his doors, reject-all declines each, review-each returns the journal unchanged."""
+            return json.loads(_translate(lambda: self._client.vault_shape_groups_resolve(json.dumps(spec))))
     class _VaultCompanionsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1653,6 +1689,9 @@ class Oneiron:
         def disarm(self, spec):
             """Disarms one of the caller's own armed turn programs; true when it was armed."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_disarm(json.dumps(spec))))
+        def rebind(self, spec):
+            """Rebinds an unsettled turn program try the caller's own turn woke, whose credential no longer stands, to the live credential this request was admitted on; the program never widens, and a try held on the lapse resumes."""
+            return json.loads(_translate(lambda: self._client.vault_turn_programs_rebind(json.dumps(spec))))
         def admission(self, spec):
             """Reads one page of the admissions a landed turn's wakes decided for the caller's own turn programs, or for every program when the owner asks, withholding each field whose record does not read on the caller's credential."""
             return json.loads(_translate(lambda: self._client.vault_turn_programs_admission(json.dumps(spec))))
@@ -1782,15 +1821,24 @@ class Oneiron:
         def lens(self, spec):
             """Reads the owner's cross-identity inbox lens in impact order, optionally filtered by identity or agent, with concern groups per agent."""
             return json.loads(_translate(lambda: self._client.vault_inbox_lens(json.dumps(spec))))
-        def groups(self, spec):
-            """Reads one page of real gate-held Dreamer consent proposals grouped by run-tree root, every group complete, under the owner's proof; a page's next resumes after it."""
-            return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
+        @property
+        def groups(self) -> "Oneiron._VaultInboxGroupsVerbs":
+            return Oneiron._VaultInboxGroupsVerbs(self._client)
     class _VaultInboxConcernsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def review(self, spec=None):
             """Queues the Coach's real health review under the owner's proof; findings and recipients come from engine evidence, never supplied concern rows."""
             return json.loads(_translate(lambda: self._client.vault_inbox_concerns_review(json.dumps({} if spec is None else spec))))
+    class _VaultInboxGroupsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def __call__(self, spec):
+            """Reads one page of the owner's inbox groups under his proof, newest first: Dreamer consent groups by run-tree root and shape applies waiting for his word, each tagged with its kind; a page's next resumes after it."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_groups(json.dumps(spec))))
+        def resolve(self, spec):
+            """The owner's answer to one inbox group by its kind, under his proof: accept-all, reject-all or review-each over a Dreamer group's bundle, optionally one verb class, or over a shape apply's waiting items."""
+            return json.loads(_translate(lambda: self._client.vault_inbox_groups_resolve(json.dumps(spec))))
     class _VaultSkillsVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3432,7 +3480,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def propose(self, spec):
-            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE that holds its prompt, with the trigger the caller names; it mounts only once the owner selects it."""
+            """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
             return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
         def activate(self, spec):
             """The owner selects a proposed lens revision for its pack slot."""
@@ -3441,7 +3489,7 @@ class Oneiron:
             """The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay."""
             return json.loads(_translate(lambda: self._client.vault_lenses_deactivate(json.dumps(spec))))
         def list(self, spec):
-            """One page of the vault's lens proposals, each with its slot state from the owner's current selection. A credential narrowed to some worlds or facets sees only the proposals whose slot skill and pack source it reads, without their trees."""
+            """One page of lens proposals with their slot state. A credential narrowed to some worlds or facets gets a proposal whole, unmounted ones too, within the lens's scope; else one whose slot skill and live pack source it reads, without its tree."""
             return json.loads(_translate(lambda: self._client.vault_lenses_list(json.dumps(spec))))
         def export_pack(self, spec):
             """Exports one lens as a portable pack file, its frozen tree and the born-with text the caller chose (the intent prompt by default), with a local receipt of its digest and source refs and a share receipt."""
@@ -5469,6 +5517,33 @@ class Oneiron:
         def close(self, spec):
             """Closes one live NOTE editor held by this caller; a binding id alone grants no authority."""
             return json.loads(_translate(lambda: self._client.vault_notes_editor_close(json.dumps(spec))))
+    class _VaultCustodyVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def members(self) -> "Oneiron._VaultCustodyMembersVerbs":
+            return Oneiron._VaultCustodyMembersVerbs(self._client)
+    class _VaultCustodyMembersVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        @property
+        def drain(self) -> "Oneiron._VaultCustodyMembersDrainVerbs":
+            return Oneiron._VaultCustodyMembersDrainVerbs(self._client)
+        def reenrol(self, spec):
+            """The owner adds a member he drained back to the vault's key custody set at the next revision, by its id or a folder member's absolute folder here; a member already in the set keeps its revision."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_reenrol(json.dumps(spec))))
+    class _VaultCustodyMembersDrainVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def begin(self, spec):
+            """The owner begins draining one member of the vault's key custody set: it takes no head and no ack from now on, and the ticket its deletion ack must name comes back with the drain's token for the member's own adapter."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_drain_begin(json.dumps(spec))))
+        def commit(self, spec):
+            """The owner commits a member's drain on its deletion ack: an ack naming exactly its begun drain, zero heads left, under the drain's token, takes the member out of the set at the next revision with its history row."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_drain_commit(json.dumps(spec))))
+        def folder(self, spec):
+            """The owner drains a folder member here, this install being its adapter: begun, the folder emptied of the lineage's heads, and committed on its own ack at the next revision."""
+            return json.loads(_translate(lambda: self._client.vault_custody_members_drain_folder(json.dumps(spec))))
     class _FeedbackVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -5511,6 +5586,9 @@ class Oneiron:
         @property
         def credential(self) -> "Oneiron._SelfCredentialVerbs":
             return Oneiron._SelfCredentialVerbs(self._client)
+        def actor(self, spec):
+            """The actor the caller's credential binds, its class, and the person it acts for, as entity refs a claim or note can take as its subject; reads nothing else."""
+            return json.loads(_translate(lambda: self._client.self_actor(json.dumps(spec))))
         @property
         def admission(self) -> "Oneiron._SelfAdmissionVerbs":
             return Oneiron._SelfAdmissionVerbs(self._client)
@@ -5667,6 +5745,9 @@ class Oneiron:
         def ask(self, spec):
             """Asks a person or agent for access on the caller's behalf; the request itself grants nothing, and the vault owner or the authorized asked person or agent answers it."""
             return json.loads(_translate(lambda: self._client.self_grants_ask(json.dumps(spec))))
+        def asked(self, spec):
+            """Lists one page of the pending access requests that ask the caller, so the person or agent asked learns of each without the asker passing on its id; listing answers nothing."""
+            return json.loads(_translate(lambda: self._client.self_grants_asked(json.dumps(spec))))
         def answer(self, spec):
             """The vault owner, or the person or agent an access request asks, approves or denies one pending request on their own proof; an asked member approves up to what their own credential may delegate, and the rest stays pending for the owner."""
             return json.loads(_translate(lambda: self._client.self_grants_answer(json.dumps(spec))))

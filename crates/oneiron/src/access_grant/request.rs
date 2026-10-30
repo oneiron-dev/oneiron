@@ -206,6 +206,32 @@ impl Vault {
         after: Option<&EntityId>,
         limit: usize,
     ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
+        self.pending_access_requests_page_where(after, limit, |_| true)
+    }
+
+    /// [`Self::pending_access_requests_page`] over the pending requests that
+    /// ask `addressee` alone (FIX 11147): the person's or agent's own list of
+    /// what it is asked, so it learns of a request without the asker handing
+    /// it the id. A request that asks anyone else, or no one, never takes a
+    /// page slot. Listing answers nothing and grants nothing.
+    pub fn pending_access_requests_addressed_page(
+        &self,
+        addressee: EntityId,
+        after: Option<&EntityId>,
+        limit: usize,
+    ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
+        self.pending_access_requests_page_where(after, limit, |request| {
+            request.addressed_to == Some(addressee)
+        })
+    }
+
+    /// The page of pending requests `keep` takes, after the cursor `after`.
+    fn pending_access_requests_page_where(
+        &self,
+        after: Option<&EntityId>,
+        limit: usize,
+        keep: impl Fn(&AccessRequest) -> bool,
+    ) -> Result<(Vec<AccessRequest>, Option<EntityId>)> {
         if limit == 0 {
             return Ok((Vec::new(), None));
         }
@@ -216,7 +242,7 @@ impl Vault {
         for entry in REQUESTS.iter_range(&self.store, &txn, start, Bound::Unbounded)? {
             let (id, row) = entry?;
             let request = AccessRequest::from_row(id, row)?;
-            if request.status != AccessRequestStatus::Pending {
+            if request.status != AccessRequestStatus::Pending || !keep(&request) {
                 continue;
             }
             if requests.len() == limit {

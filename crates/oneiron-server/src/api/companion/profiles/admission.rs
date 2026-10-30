@@ -20,9 +20,10 @@ const COMPANION_PROFILE_WITHHELD_STATE: &str = "missing";
 
 /// `principal_ref`'s read of the profile at `key`, as the engine admits it
 /// toward `auth`'s destination. No grant naming the profile is today's 403;
-/// a profile the owner's recipient choice keeps from that destination, or
-/// one a grant names but its delegated bounds keep this read out of, reads
-/// as missing and says nothing of itself.
+/// a profile the owner's recipient choice keeps from that destination, one
+/// whose world or recorded source `auth`'s own credential keeps out, or one
+/// a grant names but its delegated bounds keep this read out of, reads as
+/// missing and says nothing of itself.
 pub(super) fn admitted_companion_profile(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -30,12 +31,16 @@ pub(super) fn admitted_companion_profile(
     key: &PsychProfileKey,
     selected_source_revision_ids: Option<&[oneiron::EntityId]>,
 ) -> Result<CompanionProfileResponse, EnvelopedApiError> {
+    // The caller's own read lane judges the profile's world and sources (FIX
+    // 11174); one that cannot be built leaves the read as it was.
+    let reader = crate::api::scoped_read_for_core_auth(server.vault(), auth).ok();
     let admission = server
         .vault()
         .companion_profile_snapshot_admitted(
             principal_ref,
             key,
             &auth.destination(),
+            reader.as_ref(),
             selected_source_revision_ids,
         )
         .map_err(|error| {

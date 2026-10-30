@@ -1,6 +1,6 @@
 //! Carrier scrubs plus test injection hook.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use super::UPDATE_PREFIX;
 use super::codec::{decode_update_key, decode_update_value_parts};
@@ -55,6 +55,54 @@ pub(crate) fn scrub_window_updates_in_txn(
         vault.store.sync_queue.delete(wtxn, key)?;
     }
     Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
+}
+
+/// Drops every queued send that names no window (FIX 9389): a row whose key
+/// or value does not decode cannot prove which window it belongs to, nor
+/// that it is payload-free, and no window's scrub reaches it while no window
+/// is labelled. The sweep runs this once per pass that drops sends.
+/// Delete-bearing rows stay. Returns how many went.
+pub(crate) fn scrub_unlabelled_updates_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<u32> {
+    let delete_bearing = delete_bearing_seqs_in_txn(vault, wtxn)?;
+    let mut doomed = Vec::new();
+    for row in vault.store.sync_queue.prefix_iter(&*wtxn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        if unlabelled(&delete_bearing, &key, &value) {
+            doomed.push(key.to_vec());
+        }
+    }
+    for key in &doomed {
+        vault.store.sync_queue.delete(wtxn, key)?;
+    }
+    Ok(u32::try_from(doomed.len()).unwrap_or(u32::MAX))
+}
+
+/// How many queued sends [`scrub_unlabelled_updates_in_txn`] would drop, read
+/// in the caller's transaction.
+pub(crate) fn unlabelled_update_count_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<usize> {
+    let delete_bearing = delete_bearing_seqs_in_txn(vault, txn)?;
+    let mut count = 0;
+    for row in vault.store.sync_queue.prefix_iter(txn, UPDATE_PREFIX)? {
+        let (key, value) = row?;
+        if unlabelled(&delete_bearing, &key, &value) {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Whether queued row `key` names no window and carries no delete.
+fn unlabelled(delete_bearing: &HashSet<u64>, key: &[u8], value: &[u8]) -> bool {
+    match decode_update_key(key) {
+        Err(_) => true,
+        Ok(seq) => !delete_bearing.contains(&seq) && decode_update_value_parts(value).is_err(),
+    }
 }
 
 /// Every queued send addressed to `window_key`, as `(seq, update bytes)`.
