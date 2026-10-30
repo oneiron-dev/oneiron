@@ -101,8 +101,9 @@ pub(in crate::recovery::checkpoint) fn seal_image(
         .filter(|owner| !compartments.contains_key(owner))
         .collect();
     if !erased.is_empty() {
-        let links = getter_links(projected);
-        let dependents = structure::dependents(projected.links.iter().chain(&links), &erased);
+        let getters = getter_links(projected);
+        let links: Vec<&structure::Link> = projected.links.iter().chain(&getters).collect();
+        let dependents = structure::dependents(&links, &erased);
         let dropped = structure::strip(databases, &dependents);
         tracing::info!(
             erased = erased.len(),
