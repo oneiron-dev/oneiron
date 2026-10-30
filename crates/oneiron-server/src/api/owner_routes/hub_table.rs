@@ -23,7 +23,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/status",
-                summary: "The kits this vault issued, the current one, and each private world's no-kit state here.",
+                summary: "Where the data lives, the embedder as this server serves it, where feedback goes, the bytes this process's sync links moved, and how its browser stands.",
                 row: None,
             },
             get(status),

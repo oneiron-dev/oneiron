@@ -61,7 +61,7 @@ pub use self::exec_host::{
 };
 pub(crate) use self::exec_host::{
     EngineRunError, OffRecordRunSession, ScopeMeter, enter_engine_native_run, off_record_run_id,
-    run_seat, task_engine_run_seat, task_run_seat,
+    run_read_worlds, run_seat, task_engine_run_seat, task_run_seat,
 };
 pub(crate) use self::live_lease_backend::{LiveLeaseBackend, LiveLeaseRunner};
 pub use self::paging::{

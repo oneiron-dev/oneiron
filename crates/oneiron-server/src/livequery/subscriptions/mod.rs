@@ -73,6 +73,17 @@ pub(crate) trait LiveQuerySource: Send + Sync {
     fn readmits(&self, _pushes: &[Push]) -> Result<bool, AppError> {
         Ok(true)
     }
+    /// The rows of `rows`, a derivation's entity dependencies, that read for
+    /// this source's caller as it derives: the rows its result can carry,
+    /// which each delivery and a resume judge again (FIX 10500). A row that
+    /// did not read then lends the result nothing, so its later erase or
+    /// lost grant never retires the result.
+    fn readable_rows(
+        &self,
+        rows: Vec<oneiron::EntityId>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        Ok(rows)
+    }
     /// Retained, authority-scoped pushes outside the delivery ring.
     fn replay(
         &self,
@@ -154,6 +165,17 @@ fn derived_rows(dependencies: &BTreeSet<String>) -> Vec<oneiron::EntityId> {
         .filter_map(|path| path.strip_prefix("e:"))
         .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
         .collect()
+}
+
+impl LiveQueries {
+    /// The rows a derivation with `dependencies` lends its result, as its
+    /// push carries them ([`LiveQuerySource::readable_rows`], FIX 10500).
+    fn lent_rows(
+        &self,
+        dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        self.source.readable_rows(derived_rows(dependencies))
+    }
 }
 
 impl Push {

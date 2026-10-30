@@ -21,6 +21,10 @@ use crate::error::{bad_request, sdk_error, transport_error, vault_locked};
 
 // FIX 4730: the rooted-only host-root open.
 mod host_root;
+// FIX 647: a delegated reader's credential, verified for a handle's reads.
+mod read_credential;
+
+pub use self::read_credential::verify_read_credential;
 
 /// One native vault and the options it was opened with. The engine Vault
 /// itself owns the lease, so server and embedded Arc holders obey one lifetime.
@@ -362,6 +366,10 @@ pub(crate) struct EmbeddedClient {
     /// The attaching host's [`HostOpenCheck`]; `None` for a handle whose
     /// vault no closable host lends it.
     host_open: Option<HostOpenCheck>,
+    /// The verified slip this handle's delegated reader presented, which
+    /// every read runs under ([`Self::with_read_credential`], FIX 647);
+    /// `None` reads as the bound actor's own verbs do.
+    read_proof: Option<oneiron::authority::VerifiedSlip>,
 }
 
 impl EmbeddedClient {
@@ -382,6 +390,7 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open: None,
+            read_proof: None,
         })
     }
 
@@ -406,6 +415,7 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open,
+            read_proof: None,
         })
     }
 
@@ -431,6 +441,7 @@ impl EmbeddedClient {
             room_turn: None,
             off_record_session: None,
             host_open: self.host_open.clone(),
+            read_proof: None,
         })
     }
 
@@ -462,6 +473,10 @@ impl EmbeddedClient {
     /// (I1/T2).
     pub(crate) fn memory(&self) -> oneiron::memory::Memory<'_> {
         let memory = self.shared.vault().memory(self.actor, self.actor_class);
+        let memory = match &self.read_proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
         match self.off_record_session.as_deref() {
             Some(session) => memory.in_off_record_session(session),
             None => memory,
@@ -477,6 +492,19 @@ impl EmbeddedClient {
         self.ensure_dispatch_pid()?;
         Ok(Self {
             off_record_session: Some(session_ref.to_owned()),
+            ..self.clone()
+        })
+    }
+
+    /// The same handle with every read run under the paired credential `key`
+    /// its delegated reader presented (FIX 647), verified against this vault
+    /// ([`verify_read_credential`]): the slip the server's door binds to a
+    /// served request's handle. A rebind to another actor drops it.
+    pub(crate) fn with_read_credential(&self, key: &str) -> Result<Self, MemoryError> {
+        self.ensure_dispatch_pid()?;
+        let proof = verify_read_credential(self.shared.vault(), key)?;
+        Ok(Self {
+            read_proof: Some(proof),
             ..self.clone()
         })
     }

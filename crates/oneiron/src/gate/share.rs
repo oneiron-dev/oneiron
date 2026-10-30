@@ -41,6 +41,8 @@ pub(crate) fn share_create_effect(
         },
         provenance: GateProvenanceHandles {
             actor_entity_ref: Some(issuer.entity_ref()),
+            // FIX 11921: the run the issuer writes for, if any.
+            run_attempt: issuer.run_attempt(),
             ..GateProvenanceHandles::default()
         },
         verb: "share_brief".to_owned(),

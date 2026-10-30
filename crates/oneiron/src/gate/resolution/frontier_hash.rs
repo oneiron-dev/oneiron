@@ -354,6 +354,7 @@ pub(super) fn hash_policy_frontier_v0(
         hash_u64(hasher, bounds.window_secs);
         hash_u64(hasher, bounds.consent_depth);
         hash_u64(hasher, bounds.actor_writes);
+        hash_u64(hasher, bounds.retrieval_regressions);
     }
 
     if let Some(controls) = &resolution.consult_fanout_controls {

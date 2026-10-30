@@ -22,14 +22,17 @@ mod search;
 use base64::Engine;
 use oneiron::EntityId;
 use oneiron::authority::{Destination, PeerMachine};
+use oneiron::claim::CallerLocality;
 use oneiron::sync::residence::{
-    BundlePartRead, IndexPage, RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry,
-    SealedBundleObject, SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn,
-    authority_append_progress_for, authority_checkpoint_part_for, authority_range_for,
-    authority_tail_for, authority_wanted, home_search_candidates, index_selection_revision,
-    promotion_snapshot_with, replace_sealed_bundle_pads, sealed_bundle_index, sealed_bundle_part,
-    sealed_digest_from_hex, sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex,
-    selected_item_blob_with, stage_sealed_bundle_part, window_index_page,
+    AuthorityAppendPart, AuthorityAppendProgress, AuthorityAppendStage, BundlePartRead, IndexPage,
+    RESIDENCE_PAGE_REPLY_BYTES, ResidenceAdmission, SealedBundleEntry, SealedBundleObject,
+    SealedBundleStage, WindowIndexEntry, ask_sealed_bundle_turn, authority_append_part_for,
+    authority_append_progress_for, authority_checkpoint_part_for, authority_entry_part_for,
+    authority_range_for, authority_tail_for, authority_wanted, home_search_candidates,
+    index_selection_revision, promotion_snapshot_with, replace_sealed_bundle_pads,
+    sealed_bundle_index, sealed_bundle_part, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex, selected_item_blob_with,
+    split_authority_page, stage_sealed_bundle_part, window_index_page,
     window_index_projection_with,
 };
 use oneiron::sync::residence_operation_budgets::ResidenceOperationBudgets;
@@ -44,6 +47,7 @@ pub(super) use self::home_handoff::{machine_method, run_machine};
 use self::index::*;
 use self::search::*;
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};
+use crate::api::call_receipt::ForwardedAttribution;
 use crate::wire_telemetry::LimitRow;
 
 /// A result and the rows it carries (DEC-0005).
@@ -121,6 +125,10 @@ struct SearchRequest {
     /// The device's install-key proof over the request and `forwarded`.
     #[serde(default)]
     machine_proof: Option<oneiron::authority::ForwardingMachineProof>,
+    /// Where the forwarded caller sits relative to its device (FIX 3550),
+    /// signed with the request: with `forwarded` only, and always with it.
+    #[serde(default)]
+    caller_locality: Option<CallerLocality>,
     /// A recall's resolved scope (FIX 2905): the search is narrowed by it
     /// before the candidate cut. It narrows relevance only; every grant,
     /// selector and caller check below stands.
@@ -132,21 +140,23 @@ struct SearchRequest {
 }
 
 impl SearchRequest {
-    /// The forwarded caller, verified for this request (FIX 2907): `None`
-    /// for the device's own search. Either proof alone, or a caller the
-    /// verifier refuses, looks missing; the home never answers it as the
-    /// device instead.
+    /// The forwarded caller, verified for this request (FIX 2907), and the
+    /// locality its device signed (FIX 3550): `None` for the device's own
+    /// search. Any of the proofs or the locality alone is invalid; a caller
+    /// the verifier refuses looks missing, and the home never answers it as
+    /// the device instead.
     fn forwarded_caller(
         &self,
         server: &SyncServer,
         peer: PeerMachine,
         selector: &SyncSelector,
-    ) -> Result<Option<oneiron::authority::VerifiedForwardedCaller>, AppError> {
-        let (caller, machine) = match (&self.forwarded, &self.machine_proof) {
-            (None, None) => return Ok(None),
-            (Some(caller), Some(machine)) => (caller, machine),
-            _ => return Err(AppError::invalid_params()),
-        };
+    ) -> Result<Option<ForwardedSearchCaller>, AppError> {
+        let (caller, machine, locality) =
+            match (&self.forwarded, &self.machine_proof, self.caller_locality) {
+                (None, None, None) => return Ok(None),
+                (Some(caller), Some(machine), Some(locality)) => (caller, machine, locality),
+                _ => return Err(AppError::invalid_params()),
+            };
         let selector_wire = base64::engine::general_purpose::STANDARD
             .decode(&self.selector)
             .map_err(|_| AppError::invalid_params())?;
@@ -161,6 +171,7 @@ impl SearchRequest {
             self.limit,
             &selector_wire,
             self.scope.as_ref(),
+            locality,
             self.page.as_ref(),
             |request| {
                 server
@@ -168,9 +179,58 @@ impl SearchRequest {
                     .verify_forwarded_caller(caller, machine, request, &device)
             },
         )
-        .map(Some)
+        .map(|caller| Some(ForwardedSearchCaller { caller, locality }))
         .map_err(|_| AppError::not_found("item", None))
     }
+}
+
+/// A forwarded search's caller (FIX 2907), verified, and where it sits
+/// relative to the device that carried it (FIX 3550).
+struct ForwardedSearchCaller {
+    caller: oneiron::authority::VerifiedForwardedCaller,
+    locality: CallerLocality,
+}
+
+impl ForwardedSearchCaller {
+    /// What it reads under: its own read key, off this home's device too when
+    /// it sits off its carrier, so no device-local world reaches it.
+    fn read_key(&self) -> oneiron::claim::ScopedReadActorKey {
+        self.caller.read_key().clone().at(self.locality)
+    }
+
+    /// Its residence admission: the carrier the connection proved, and an
+    /// unknown destination beside it when the caller sits off that carrier.
+    fn admission<'v>(
+        &self,
+        server: &'v SyncServer,
+        carrier: PeerMachine,
+        selector: &SyncSelector,
+    ) -> Result<ResidenceAdmission<'v>, AppError> {
+        ResidenceAdmission::load_forwarded(
+            &server.vault,
+            self.caller.caller(),
+            carrier,
+            self.locality,
+            crate::handler::selector_grant_scope(),
+            selector,
+        )
+        .map_err(|_| AppError::not_found("item", None))
+    }
+}
+
+/// The read key a device's own residence search reads under: its bound
+/// credential's. One that reads nothing refuses as the search does.
+fn device_search_read_key(
+    server: &SyncServer,
+    auth: &CoreAuth,
+) -> Result<oneiron::claim::ScopedReadActorKey, AppError> {
+    let proof = auth.verified_slip().ok_or_else(AppError::unauthorized)?;
+    server
+        .vault
+        .credential_read_key(proof)
+        .ok()
+        .flatten()
+        .ok_or_else(|| AppError::internal_server_error("scoped search unavailable"))
 }
 
 /// One part of an upload of the vault's sealed bundle or its pad object
@@ -297,14 +357,38 @@ struct AuthorityAppendRequest {
     entries: Vec<String>,
 }
 
+/// A part of an authority entry a page named by reference (FIX 8246): the
+/// entry's hash in base64 and the byte offset the part starts at.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityEntryRequest {
+    hash: String,
+    offset: u64,
+}
+
+/// A part of an authority entry a machine appends past one request frame
+/// (FIX 8246): the entry's hash in base64 and its length, the part's offset,
+/// and its bytes in base64.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AuthorityAppendPartRequest {
+    hash: String,
+    total: u64,
+    offset: u64,
+    part: String,
+}
+
 pub(super) fn run(
     server: &SyncServer,
     auth: &CoreAuth,
     peer: PeerMachine,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
+    append_stage: &mut Option<AuthorityAppendStage>,
 ) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
+    // A forwarded search's verified caller, whom its receipt names (FIX 3550).
+    let mut attribution = None;
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -316,7 +400,14 @@ pub(super) fn run(
             "residence.touch" => touch(server, auth, peer, request.params),
             "residence.promote" => promote(server, auth, peer, request.params),
             "residence.window.vv" => window_vv(server, auth, peer, request.params),
-            "residence.search" => search(server, auth, peer, request.params, budgets),
+            "residence.search" => search(
+                server,
+                auth,
+                peer,
+                request.params,
+                budgets,
+                &mut attribution,
+            ),
             "residence.bundle.turn" => bundle_turn(server, auth, peer, request.params),
             "residence.bundle.put" => bundle_put(server, auth, peer, request.params),
             "residence.bundle.commit" => {
@@ -339,6 +430,10 @@ pub(super) fn run(
             }
             "residence.authority.tail" => authority_tail(server, peer, request.params),
             "residence.authority.append" => authority_append(server, peer, request.params),
+            "residence.authority.append.part" => {
+                authority_append_part(server, peer, request.params, append_stage)
+            }
+            "residence.authority.entry" => authority_entry(server, peer, request.params),
             "residence.authority.range" => authority_range(server, peer, request.params),
             "residence.authority.checkpoint" => authority_checkpoint(server, peer, request.params),
             "residence.authority.checkpoint.roots" => {
@@ -359,7 +454,14 @@ pub(super) fn run(
             method => custody::run(server, auth, peer, method, request.params),
         }
     })();
-    super::RpcReply::answer(server, auth, call, request.request_id, result)
+    super::RpcReply::answer_attributed(
+        server,
+        auth,
+        attribution.as_ref(),
+        call,
+        request.request_id,
+        result,
+    )
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

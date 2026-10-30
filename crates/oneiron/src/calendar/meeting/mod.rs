@@ -11,6 +11,7 @@ use crate::claim::{
 };
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
+use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, EntityId, WriteActor, WriteEnvelope, WriteProvenance};
 
 mod facts;
@@ -211,7 +212,7 @@ pub fn check_in_answer(
         let resolution = outcome::resolve_owner_check_in(event, answer, due.observed_at);
         let value = resolution.recorded_value();
         let envelope = WriteEnvelope::new(
-            WriteActor::new(memory.actor(), memory.actor_class()),
+            memory.write_actor(),
             ClaimSource::UserStated,
             WriteProvenance::new(rmpv::Value::from("vault.calendar.check_in.answer"))?,
             ClaimApprovalStatus::Auto,

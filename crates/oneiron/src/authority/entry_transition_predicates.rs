@@ -9,7 +9,8 @@ use super::*;
 /// person's conversation training choice, a setting's act, or a machine
 /// revision. The roster rule reads each as a replica with no floor
 /// does; this install never counts what it grants. A frontier join, which
-/// grants nothing, lands so too, so such an act above it keeps its effect.
+/// grants nothing, lands so too, so such an act above it keeps its effect;
+/// so does a custody permit piece, which has no effect alone (FIX 11866).
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -22,6 +23,7 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::PolicySettingSet(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::FrontierJoin(_)
+            | AuthorityOp::CustodyPermitPiece(_)
     )
 }
 

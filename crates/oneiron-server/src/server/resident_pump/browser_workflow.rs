@@ -10,7 +10,7 @@
 //! finds a start with no end hands off as interrupted, its effects unknown,
 //! and never runs it again.
 
-use oneiron::agent_dispatch::{AgentDispatcher, agent_dispatch_actor};
+use oneiron::agent_dispatch::{AgentDispatcher, agent_dispatch_run_actor};
 use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult};
 use oneiron::code_run::{AgentVerbDoor, HostSelfDispatcher, SelfAgentVerbCall};
 use oneiron::dreamer_runner::CompleteDreamerAttempt;
@@ -346,7 +346,7 @@ pub(super) fn complete(
         result_ref: AttemptResultRef::new(receipt.to_hex())?,
         now,
     })?;
-    let actor = agent_dispatch_actor(&claimed.status.input)?;
+    let actor = agent_dispatch_run_actor(&claimed.status.input, attempt.id)?;
     let binding =
         HostSelfDispatcher::for_leased_agent_attempt(vault, actor, attempt)?.task_host_binding()?;
     let typed = match &binding {
