@@ -54,7 +54,9 @@ pub(super) fn run(
         now,
     )?;
     tracing::debug!(?report, "the Coach's project tree fork and promote pass");
-    Ok(())
+    // Each callable helper awaiting its gate asks for its paired measurement
+    // against its parent in the same promotion pass (FIX 12069).
+    crate::ai_host::eval_measurement::request_helper_measurements(server, vault, now)
 }
 
 /// The agent the Coach asks "useful upstream?" for: the leader of the vault's
