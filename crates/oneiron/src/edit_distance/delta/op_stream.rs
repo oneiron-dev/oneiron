@@ -10,7 +10,7 @@
 //! window inserted and kept when their whitespace-collapsed contents match.
 
 use loro::event::Diff;
-use loro::{ContainerID, ContainerType, Frontiers, TextDelta};
+use loro::{ContainerID, ContainerType, Frontiers, IdSpan, JsonOpContent, JsonTextOp, TextDelta};
 
 use crate::edit_distance::myers::collapse_whitespace;
 use crate::edit_distance::{FinalizedProposalText, LoroOpRef, OpSpan};
@@ -94,8 +94,11 @@ struct Site {
 /// runs are all whitespace (re-spacing, re-wrapping, a word split by a space)
 /// counts nothing. Text typed and then deleted again by a later change counts
 /// on both sides; that churn is what this lane sees and an endpoint diff
-/// cannot. A move pairs the two runs' charges, so it leaves `ins` and `del`
-/// in the unit they were charged in.
+/// cannot. Text typed and deleted inside ONE change counts too (FIX 11536):
+/// the net diff between the change's versions is blind to it, so the change's
+/// own JSON ops supply the mass while the diff keeps supplying the content
+/// move-pairing reads. A move pairs the two runs' charges, so it leaves `ins`
+/// and `del` in the unit they were charged in.
 ///
 /// # Errors
 ///
@@ -112,7 +115,12 @@ pub(super) fn read_window(
     let mut inserted: Vec<InsertedRun> = Vec::new();
     let mut deleted: Vec<DeletedRun> = Vec::new();
     let body = ContainerID::new_root(BODY_TEXT, ContainerType::Text);
+    let mut ops_ins = 0_u32;
+    let mut ops_del = 0_u32;
     for (_, span) in &record.ops_by_actor {
+        let (span_ins, span_del) = change_ops_mass(document, span, &body);
+        ops_ins = ops_ins.saturating_add(span_ins);
+        ops_del = ops_del.saturating_add(span_del);
         let mut cursor = 0_usize;
         let mut site: Option<Site> = None;
         for delta in change_deltas(document, span, &body)? {
@@ -186,6 +194,12 @@ pub(super) fn read_window(
         .iter()
         .fold(0_u32, |total, run| total.saturating_add(run.mass));
     let moved = pair_moves(&deleted, &inserted);
+    // Within-change churn (FIX 11536): what the ops wrote over the net diff.
+    // The diff keeps the content pairing reads; the ops repair only the mass,
+    // and only upward — a smaller ops total means the diff's site separators
+    // already charge more, so there is no churn to add.
+    let churn_ins = ops_ins.saturating_sub(ins);
+    let churn_del = ops_del.saturating_sub(del);
     let kept: String = chars
         .iter()
         .zip(&origins)
@@ -193,8 +207,8 @@ pub(super) fn read_window(
         .map(|(c, _)| *c)
         .collect();
     Ok(LoggedRuns {
-        ins: ins.saturating_sub(moved),
-        del: del.saturating_sub(moved),
+        ins: ins.saturating_sub(moved).saturating_add(churn_ins),
+        del: del.saturating_sub(moved).saturating_add(churn_del),
         moved,
         kept: collapsed_len(&kept),
         before_len: collapsed_len(&proposed),
@@ -277,6 +291,39 @@ fn change_deltas(
             _ => None,
         })
         .unwrap_or_default())
+}
+
+/// The authored mass one recorded change wrote to the body, read from the
+/// change's own JSON ops (FIX 11536): every insert's text and every delete's
+/// length, so typing and deleting inside one commit counts even when the net
+/// [`change_deltas`] diff cannot see it.
+///
+/// Only `Text` insert and delete ops on the body container count; `Mark` ops
+/// are style, not text, and other containers are not the proposal body.
+/// Inserts count collapsed, as the diff lane does; deletes carry a length but
+/// no text, so they count raw — the diff keeps the content pairing reads.
+fn change_ops_mass(document: &EntityDoc, span: &OpSpan, body: &ContainerID) -> (u32, u32) {
+    let end = span.counter.saturating_add_unsigned(span.len);
+    let id_span = IdSpan::new(span.peer_id, span.counter, end);
+    let mut ins = 0_u32;
+    let mut del = 0_u32;
+    for change in document.doc.export_json_in_id_span(id_span) {
+        for op in &change.ops {
+            if op.container != *body {
+                continue;
+            }
+            match &op.content {
+                JsonOpContent::Text(JsonTextOp::Insert { text, .. }) => {
+                    ins = ins.saturating_add(collapsed_len(text));
+                }
+                JsonOpContent::Text(JsonTextOp::Delete { len, .. }) => {
+                    del = del.saturating_add(len.unsigned_abs());
+                }
+                _ => {}
+            }
+        }
+    }
+    (ins, del)
 }
 
 /// Charges relocated: a deleted run of proposal text paired with a kept
