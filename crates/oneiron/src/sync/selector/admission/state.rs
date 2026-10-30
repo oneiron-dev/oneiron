@@ -1,5 +1,6 @@
 //! Admitted-update state for one federation import.
-//! The entry point is `AdmittedUpdate`, with `staged_births` for staged artifacts.
+//! The entry point is `AdmittedUpdate`, with `staged_births` for staged artifacts
+//! (their staged content, every part with its window: `super::staged_parts`).
 //! Owned by `super`; the old `admission::` paths are re-exported there.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -56,10 +57,6 @@ impl AdmittedUpdate {
         &self.bytes
     }
 
-    pub(crate) fn into_bytes(self) -> Vec<u8> {
-        self.bytes
-    }
-
     /// The writes the update asks of this vault: its rows and edges, and the
     /// stamps that wait out of it (Astra-b F2 on #1432).
     pub(crate) fn writes(&self) -> u64 {
@@ -86,20 +83,28 @@ impl AdmittedUpdate {
         }
     }
 
-    /// Holds every stamp of a staged artifact under its receipt, the ones
-    /// whose rows it brings too: those births apply only at its confirmation.
-    pub(crate) fn hold_staged(&self, vault: &Vault, key: &WindowKey) -> Result<()> {
-        let Some(lane) = &self.lane else {
-            return Ok(());
-        };
-        hold_stamps(vault, key, (lane, None), &self.early.held, false)?;
-        hold_stamps(vault, key, (lane, None), &self.early.with_birth, false)
+    /// Holds every stamp of a staged artifact under its receipt, every
+    /// part's (FIX 3663), the ones whose rows it brings too: those births
+    /// apply only at its confirmation.
+    pub(crate) fn hold_staged(&self, vault: &Vault) -> Result<()> {
+        for part in self.parts() {
+            let Some(lane) = &part.lane else {
+                continue;
+            };
+            hold_stamps(vault, &part.key, (lane, None), &part.early.held, false)?;
+            hold_stamps(vault, &part.key, (lane, None), &part.early.with_birth, false)?;
+        }
+        Ok(())
     }
 
     /// The record of every stamp [`Self::hold_staged`] holds, which the
     /// receipt keeps while it is Pending.
     pub(crate) fn staged_stamps(&self) -> Vec<u8> {
-        HeldStamp::record(&[&self.early.held, &self.early.with_birth])
+        let groups = self
+            .parts()
+            .flat_map(|part| [part.early.held.as_slice(), part.early.with_birth.as_slice()])
+            .collect::<Vec<_>>();
+        HeldStamp::record(&groups)
     }
 
     /// The rows the update brings whose births its import must watch, each
@@ -172,29 +177,40 @@ impl StagedBirths {
     }
 }
 
-/// [`StagedBirths`] of the artifact staged under `receipt_id`.
+/// [`StagedBirths`] of each of `parts`, the artifact staged under
+/// `receipt_id`, in the parts' order (FIX 3663).
 #[cfg(feature = "sync")]
 pub(in crate::sync) fn staged_births(
     vault: &Vault,
-    key: &WindowKey,
     (receipt_id, stamps_digest): (&[u8; 32], Option<[u8; 32]>),
-    admitted_update: &[u8],
-) -> Result<StagedBirths> {
-    let admitted = create_window_doc("federation-staged", key);
-    admitted.import(admitted_update).map_err(|source| {
-        Error::Sync(SyncError::CrdtDecodeError {
-            context: "import admitted update",
-            source,
-        })
-    })?;
+    parts: &super::staged_parts::StagedParts,
+) -> Result<Vec<StagedBirths>> {
     let lane = staged_lane(receipt_id);
     // The held table restores live and maintenance sweeps it, so a hold can
     // be gone while its receipt is Pending. The receipt's own record holds
-    // every staged stamp again before its birth is judged: an owner's import
-    // never lands a row without the facets it staged (Astra-c F1 on #1432).
+    // every staged stamp again, once, before any part's birth is judged: an
+    // owner's import never lands a row without the facets it staged (Astra-c
+    // F1 on #1432).
     let record = crate::batch::export::vault_import_staged_stamps(vault, receipt_id)?;
     let stamps = HeldStamp::from_receipt_record(&record.unwrap_or_default(), stamps_digest)?;
-    hold_stamps(vault, key, (&lane, None), &stamps, false)?;
-    let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
-    Ok(StagedBirths { lane, births })
+    if let Some((first, _)) = parts.iter().next() {
+        hold_stamps(vault, first, (&lane, None), &stamps, false)?;
+    }
+    parts
+        .iter()
+        .map(|(key, bytes)| {
+            let admitted = create_window_doc("federation-staged", key);
+            admitted.import(bytes).map_err(|source| {
+                Error::Sync(SyncError::CrdtDecodeError {
+                    context: "import admitted update",
+                    source,
+                })
+            })?;
+            let births = pending_births(vault, &lane, &admitted.get_map("entities"), &[])?;
+            Ok(StagedBirths {
+                lane: lane.clone(),
+                births,
+            })
+        })
+        .collect()
 }

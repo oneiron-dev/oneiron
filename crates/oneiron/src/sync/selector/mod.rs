@@ -58,7 +58,10 @@ pub use self::admission::put_selector_test_federation_grant;
 #[cfg(feature = "sync")]
 pub(in crate::sync) use self::admission::validate_sync_identity_body;
 pub(crate) use self::admission::{AdmittedUpdate, admit_staged_window_update};
-pub use self::admission::{FederationAdmissionRole, admit_federated_window_update};
+pub(crate) use self::admission::{StagedParts, staged_guest_source};
+pub use self::admission::{
+    FederationAdmissionRole, admit_federated_window_update, admit_federated_window_update_under,
+};
 pub(in crate::sync) use self::admission::{
     admit_peer_window_update_as, revalidate_admitted_facet_stamps,
     revalidate_admitted_federated_claims, staged_births,
