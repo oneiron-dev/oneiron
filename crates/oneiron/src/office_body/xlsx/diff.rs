@@ -45,6 +45,17 @@ pub(in crate::office_body) fn admit_at(
                 };
                 find(&base) != find(&head)
             }
+            XlsxBodyOp::SetConditionalFormat { sheet, id, .. }
+            | XlsxBodyOp::DeleteConditionalFormat { sheet, id } => {
+                let find = |body: &XlsxBody| {
+                    body.sheets
+                        .iter()
+                        .find(|held| held.name == *sheet)
+                        .and_then(|held| held.conditional.get(id))
+                        .cloned()
+                };
+                find(&base) != find(&head)
+            }
             // A format is immutable, so only another one under this id since
             // the base is lost.
             XlsxBodyOp::DefineFormat { id, format } => {
@@ -209,6 +220,7 @@ pub(in crate::office_body) fn changes(
             (None, None) => continue,
         });
     }
+    changes.extend(conditional_changes(current));
     Ok(changes)
 }
 
@@ -305,7 +317,11 @@ pub(in crate::office_body) fn diff(
     };
     for (written, deleted) in [(&ours, gone(current)), (&theirs, gone(proposal))] {
         for unit in written.keys() {
-            let scope = scope_of(unit.strip_prefix("name:").unwrap_or(unit));
+            let scope = scope_of(
+                unit.strip_prefix("name:")
+                    .or_else(|| unit.strip_prefix("conditional:"))
+                    .unwrap_or(unit),
+            );
             if deleted.contains(scope) && !conflicts.iter().any(|held| held.block == *unit) {
                 conflicts.push(BodyConflict {
                     block: unit.clone(),
@@ -423,7 +439,10 @@ fn moved_conflicts(
     let (moved_base, moved_writer) = (shifted(base, entries)?, shifted(writer, entries)?);
     let mut conflicts = both_set(&side(&moved_base, &moved_writer), &side(&moved_base, mover));
     for unit in side(base, writer).into_keys() {
-        if unit.starts_with("name:") || unit.starts_with("format:") {
+        if ["name:", "format:", "conditional:"]
+            .iter()
+            .any(|prefix| unit.starts_with(prefix))
+        {
             continue;
         }
         let Some((key, (col, row))) = unit
@@ -463,27 +482,39 @@ pub(in crate::office_body) fn landed(
     let (base, writer) = (shifted(base, entries)?, shifted(writer, entries)?);
     let mut out = merged.clone();
     out.axes.clone_from(&mover.axes);
-    let empty = BTreeMap::new();
+    let (empty, no_rules) = (BTreeMap::new(), BTreeMap::new());
     for sheet in &mut out.sheets {
         let after = writer.sheets.iter().find(|held| held.key == sheet.key);
         let Some(held) = mover.sheets.iter().find(|held| held.key == sheet.key) else {
             // A sheet only the writer has holds its cells, formulas moved.
             if let Some(after) = after {
                 sheet.cells.clone_from(&after.cells);
+                sheet.conditional.clone_from(&after.conditional);
             }
             continue;
         };
         sheet.cells.clone_from(&held.cells);
         sheet.locked.clone_from(&held.locked);
         sheet.tables.clone_from(&held.tables);
+        sheet.conditional.clone_from(&held.conditional);
         let Some(after) = after else {
             continue;
         };
-        let before = base
-            .sheets
-            .iter()
-            .find(|held| held.key == sheet.key)
-            .map_or(&empty, |held| &held.cells);
+        let held_base = base.sheets.iter().find(|held| held.key == sheet.key);
+        let ruled = held_base.map_or(&no_rules, |held| &held.conditional);
+        let ids: BTreeSet<&String> = ruled.keys().chain(after.conditional.keys()).collect();
+        for id in ids {
+            match after.conditional.get(id) {
+                new if new == ruled.get(id) => {}
+                Some(format) => {
+                    sheet.conditional.insert(id.clone(), format.clone());
+                }
+                None => {
+                    sheet.conditional.remove(id);
+                }
+            }
+        }
+        let before = held_base.map_or(&empty, |held| &held.cells);
         let addresses: BTreeSet<(u32, u32)> =
             before.keys().chain(after.cells.keys()).copied().collect();
         for at in addresses {
@@ -534,6 +565,7 @@ pub(super) enum State<'a> {
     Sheets(Vec<(&'a str, &'a str, XlsxSheetVisibility)>),
     Axes(&'a [(String, XlsxAxisEdit)]),
     Format(&'a XlsxFormat),
+    Conditional(Option<&'a XlsxConditionalFormat>),
 }
 
 pub(super) fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> Units<'a> {
@@ -571,6 +603,28 @@ pub(super) fn side<'a>(base: &XlsxBody, other: &'a XlsxBody) -> Units<'a> {
             };
             let unit = format!("{}!{}", after.key, a1(key.1, key.0));
             changes.insert(unit, (kind, State::Cell(new)));
+        }
+    }
+    let no_rules = BTreeMap::new();
+    for after in &other.sheets {
+        let before = base
+            .sheets
+            .iter()
+            .find(|held| held.key == after.key)
+            .map_or(&no_rules, |held| &held.conditional);
+        let ids: BTreeSet<&String> = before.keys().chain(after.conditional.keys()).collect();
+        for id in ids {
+            let (old, new) = (before.get(id), after.conditional.get(id));
+            let kind = match (old, new) {
+                (old, new) if old == new => continue,
+                (None, _) => ChangeKind::Added,
+                (_, None) => ChangeKind::Deleted,
+                _ => ChangeKind::Text,
+            };
+            changes.insert(
+                format!("conditional:{}!{id}", after.key),
+                (kind, State::Conditional(new)),
+            );
         }
     }
     let keys: BTreeSet<&String> = base.names.keys().chain(other.names.keys()).collect();

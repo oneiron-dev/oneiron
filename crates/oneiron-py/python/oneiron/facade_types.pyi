@@ -4,7 +4,7 @@ scripts/sdk/agent-verbs.json names; edit the Rust types or the table.
 Keys are the engine's own wire spelling. Shapes the generator could not read
 are `Any`, and the census below counts them.
 
-Census: 1211 facade rows, 4393 declarations.
+Census: 1211 facade rows, 4398 declarations.
 Inputs: 1139 of 1211 fully typed, 72 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Results: 1045 of 1211 fully typed, 166 typed down to an opaque serde_json::Value leaf, 0 with a shape the generator could not read
 Opaque serde_json::Value leaves: 121; unread shapes: 0.
@@ -18866,21 +18866,15 @@ class XlsxTable(TypedDict):
     worksheet: bool
     calculated: NotRequired[list[str | None]]
 XlsxSheetVisibility = Literal["visible", "hidden", "veryHidden"]
-class XlsxSheetView(TypedDict):
-    name: str
-    cells: list[BodyCell]
-    locked: list[XlsxArea]
-    tables: list[XlsxTable]
-    visibility: XlsxSheetVisibility
-class BodyName(TypedDict):
-    name: str
-    sheet: NotRequired[str | None]
+XlsxConditionalOperator = Literal["between", "not_between", "equal", "not_equal", "greater_than", "less_than", "greater_than_or_equal", "less_than_or_equal"]
+class XlsxConditionalRuleCellIs(TypedDict):
+    kind: Literal["cell_is"]
+    operator: XlsxConditionalOperator
+    formulas: list[str]
+class XlsxConditionalRuleExpression(TypedDict):
+    kind: Literal["expression"]
     formula: str
-    hidden: bool
-    locked: NotRequired[XlsxLock | None]
-class XlsxStyle(TypedDict):
-    num_fmt: int
-    format: NotRequired[str | None]
+XlsxConditionalRule = XlsxConditionalRuleCellIs | XlsxConditionalRuleExpression
 class XlsxColorRgb(TypedDict):
     kind: Literal["rgb"]
     argb: str
@@ -18924,6 +18918,35 @@ class XlsxNumberFormatCode(TypedDict):
     kind: Literal["code"]
     code: str
 XlsxNumberFormat = XlsxNumberFormatBuiltin | XlsxNumberFormatCode
+class XlsxDifferentialFormat(TypedDict):
+    font: NotRequired[XlsxFont | None]
+    fill: NotRequired[XlsxFill | None]
+    border: NotRequired[XlsxBorder | None]
+    number_format: NotRequired[XlsxNumberFormat | None]
+class XlsxConditionalFormat(TypedDict):
+    range: str
+    rule: XlsxConditionalRule
+    format: XlsxDifferentialFormat
+    stop_if_true: NotRequired[bool]
+class BodyConditionalFormat(TypedDict):
+    id: str
+    format: XlsxConditionalFormat
+class XlsxSheetView(TypedDict):
+    name: str
+    cells: list[BodyCell]
+    locked: list[XlsxArea]
+    tables: list[XlsxTable]
+    visibility: XlsxSheetVisibility
+    conditional_formats: list[BodyConditionalFormat]
+class BodyName(TypedDict):
+    name: str
+    sheet: NotRequired[str | None]
+    formula: str
+    hidden: bool
+    locked: NotRequired[XlsxLock | None]
+class XlsxStyle(TypedDict):
+    num_fmt: int
+    format: NotRequired[str | None]
 class XlsxAlignment(TypedDict):
     horizontal: NotRequired[str | None]
     vertical: NotRequired[str | None]
@@ -19241,6 +19264,15 @@ class XlsxBodyOpSetFormat(TypedDict):
     sheet: str
     cell: str
     format: str
+class XlsxBodyOpSetConditionalFormat(TypedDict):
+    op: Literal["set_conditional_format"]
+    sheet: str
+    id: str
+    format: XlsxConditionalFormat
+class XlsxBodyOpDeleteConditionalFormat(TypedDict):
+    op: Literal["delete_conditional_format"]
+    sheet: str
+    id: str
 class XlsxBodyOpClear(TypedDict):
     op: Literal["clear"]
     sheet: str
@@ -19294,7 +19326,7 @@ class XlsxBodyOpDeleteColumns(TypedDict):
     sheet: str
     at: int
     count: int
-XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpSetSheetVisibility | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
+XlsxBodyOp = XlsxBodyOpSetValue | XlsxBodyOpSetFormula | XlsxBodyOpSetStyle | XlsxBodyOpDefineFormat | XlsxBodyOpSetFormat | XlsxBodyOpSetConditionalFormat | XlsxBodyOpDeleteConditionalFormat | XlsxBodyOpClear | XlsxBodyOpSetName | XlsxBodyOpDeleteName | XlsxBodyOpAddSheet | XlsxBodyOpRenameSheet | XlsxBodyOpMoveSheet | XlsxBodyOpDeleteSheet | XlsxBodyOpSetSheetVisibility | XlsxBodyOpInsertRows | XlsxBodyOpDeleteRows | XlsxBodyOpInsertColumns | XlsxBodyOpDeleteColumns
 class TableEditInsertRowBody(TypedDict):
     id: NotRequired[NodeId | None]
     after: NotRequired[NodeId | None]

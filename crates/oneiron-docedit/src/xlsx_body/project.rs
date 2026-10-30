@@ -105,6 +105,7 @@ pub fn project_xlsx(
                     | XlsxChange::Shift { .. }
                     | XlsxChange::Formats { .. }
                     | XlsxChange::RenameColumn { .. }
+                    | XlsxChange::ConditionalFormats { .. }
             ) {
                 names.push(change);
             }
@@ -209,6 +210,16 @@ pub fn project_xlsx(
     }
     if !names.is_empty() {
         book.rewrite_names(&names)?;
+    }
+    // The body's conditional formats go on after the cells (FIX 3468).
+    let mut ruled = HashSet::new();
+    for change in changes {
+        if let XlsxChange::ConditionalFormats { sheet, formats } = change {
+            if !ruled.insert(sheet.as_str()) {
+                return Err(refused("two lists of conditional formats for one sheet"));
+            }
+            book.add_conditional_formats(sheet, formats)?;
+        }
     }
     // A layout change or a row or column edit moves the cells the chain
     // indexes.
@@ -431,7 +442,8 @@ impl Book {
                 | XlsxChange::Sheets { .. }
                 | XlsxChange::Shift { .. }
                 | XlsxChange::Formats { .. }
-                | XlsxChange::RenameColumn { .. } => {
+                | XlsxChange::RenameColumn { .. }
+                | XlsxChange::ConditionalFormats { .. } => {
                     continue;
                 }
             };

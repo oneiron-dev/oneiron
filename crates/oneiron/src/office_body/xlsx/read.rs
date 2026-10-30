@@ -180,8 +180,10 @@ pub(in crate::office_body) fn read(doc: &LoroDoc) -> Result<XlsxBody> {
             cells,
             locked: areas,
             tables,
+            conditional: BTreeMap::new(),
         });
     }
+    read_conditional(doc, &mut sheets)?;
     let axes = match meta.get("axes") {
         None => Vec::new(),
         Some(LoroValue::List(list)) => list.iter().map(decode_axis).collect::<Result<Vec<_>>>()?,

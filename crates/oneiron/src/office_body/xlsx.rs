@@ -25,10 +25,12 @@
 //! each `[key, "row"|"col", at, count, delete]`. An address names a cell as the
 //! log leaves its sheet, so an export replays the log on the imported package
 //! first, then writes only the cells and names that differ from the import
-//! moved by the same log.
+//! moved by the same log. Root `conditional` maps `key!id` to a conditional
+//! format the body added to the sheet keyed `key` (FIX 3468).
 
 mod apply;
 mod axis;
+mod conditional;
 mod diff;
 mod read;
 mod sheets;
@@ -39,15 +41,19 @@ use super::invalid;
 use crate::error::Result;
 use loro::{Container, LoroDoc, LoroMap, LoroMapValue, LoroValue, ValueOrContainer};
 use oneiron_docedit::xlsx_body::{
-    SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxFormat, XlsxLock,
-    XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1, calculated_fill,
-    check_cell, check_format, check_name, check_sheet_name, drop_tables, parse_a1, retarget_sheets,
-    shift_axis_formula,
+    SheetFate, XlsxArea, XlsxAxis, XlsxAxisEdit, XlsxBook, XlsxChange, XlsxConditionalFormat,
+    XlsxFormat, XlsxLock, XlsxSheetPlan, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue, a1,
+    calculated_fill, check_cell, check_conditional, check_format, check_name, check_sheet_name,
+    drop_tables, parse_a1, retarget_sheets, shift_axis_formula, shift_conditional_range,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 pub(super) use apply::apply;
 use axis::{axis, gone_tables, retarget, retarget_body, shift};
+use conditional::{
+    conditional_changes, delete_conditional, read_conditional, retarget_conditional,
+    set_conditional, shift_conditional, write_conditional,
+};
 pub(super) use diff::{admit_at, changes, diff, landed, write_body};
 pub(super) use read::{import, read};
 use sheets::{
@@ -64,6 +70,7 @@ const OFFICE: &str = "office";
 const CELLS: &str = "cells";
 const NAMES: &str = "names";
 const FORMATS: &str = "formats";
+const CONDITIONAL: &str = "conditional";
 /// The longest id of a cell format the body composes.
 const MAX_FORMAT_ID: usize = 64;
 pub(super) const SCHEMA: u32 = 2;
@@ -97,6 +104,8 @@ pub struct BodySheet {
     pub locked: Vec<XlsxArea>,
     pub tables: Vec<XlsxTable>,
     pub visibility: XlsxSheetVisibility,
+    /// The conditional formats the body added, by id (FIX 3468).
+    pub conditional: BTreeMap<String, XlsxConditionalFormat>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -117,6 +126,13 @@ pub struct BodyCell {
 pub struct BodyFormat {
     pub id: String,
     pub format: XlsxFormat,
+}
+
+/// A conditional format the body added to a sheet, by its id.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct BodyConditionalFormat {
+    pub id: String,
+    pub format: XlsxConditionalFormat,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -165,6 +181,19 @@ pub enum XlsxBodyOp {
         sheet: String,
         cell: String,
         format: String,
+    },
+    /// Add or replace conditional format `id` (1 to 64 letters, digits, `_`,
+    /// `-` or `.`) on a worksheet: the cells of its range its rule matches
+    /// take its look. Its range and formulas follow row and column edits.
+    SetConditionalFormat {
+        sheet: String,
+        id: String,
+        format: XlsxConditionalFormat,
+    },
+    /// Delete a conditional format the body added.
+    DeleteConditionalFormat {
+        sheet: String,
+        id: String,
     },
     /// Empty a cell's content; its format stays.
     Clear {
