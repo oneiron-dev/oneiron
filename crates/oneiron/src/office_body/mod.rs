@@ -39,6 +39,7 @@ mod doors;
 mod fork;
 mod holder_ask;
 mod live_units;
+mod masked_view;
 mod pptx;
 mod records;
 mod resources;
