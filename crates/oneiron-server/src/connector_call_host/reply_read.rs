@@ -1,5 +1,6 @@
 //! The reply readers both halves of the call host share: one reply body,
-//! JSON read whole or an event stream read event by event.
+//! JSON read whole or an event stream read event by event, and the tool's
+//! reply a `tools/call` answer carries.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -203,4 +204,81 @@ pub(super) fn answers(message: &Value, id: u64) -> bool {
     message.get("method").is_none()
         && message.get("id").and_then(Value::as_u64) == Some(id)
         && (message.get("result").is_some() || message.get("error").is_some())
+}
+
+/// A `tools/call` answer as the tool's reply: its result, or the JSON-RPC
+/// error it answered with; `None` when it carries neither.
+pub(super) fn tool_result(message: &Value) -> Option<UntrustedToolResult> {
+    if let Some(error) = message.get("error") {
+        return Some(UntrustedToolResult {
+            content: Value::Array(Vec::new()),
+            structured_content: None,
+            is_error: true,
+            rpc_error: Some(error.clone()),
+        });
+    }
+    let result = message.get("result")?;
+    Some(UntrustedToolResult {
+        content: result
+            .get("content")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(Vec::new())),
+        structured_content: result.get("structuredContent").cloned(),
+        is_error: result.get("isError").and_then(Value::as_bool) == Some(true),
+        rpc_error: None,
+    })
+}
+
+/// The tool's terminal reply in `message`, or the failure an unreadable one
+/// is.
+pub(super) fn terminal(message: &Value) -> WorkerEvent {
+    match tool_result(message) {
+        Some(result) => WorkerEvent::Result(result),
+        None => WorkerEvent::Failed {
+            sent: true,
+            reason: "connector_reply_unreadable",
+        },
+    }
+}
+
+/// Reads the reply to a retried `tools/call` (`id`), refusing any server
+/// request on its stream.
+#[allow(
+    clippy::result_large_err,
+    reason = "the error is the worker's terminal event, handed on as is"
+)]
+pub(super) fn read_retry_reply(
+    session: &LiveSession,
+    response: reqwest::blocking::Response,
+    id: u64,
+) -> Result<Value, WorkerEvent> {
+    let unreadable = WorkerEvent::Failed {
+        sent: true,
+        reason: "connector_reply_unreadable",
+    };
+    let status = response.status();
+    if status.is_server_error() {
+        return Err(WorkerEvent::Failed {
+            sent: true,
+            reason: "connector_server_error",
+        });
+    }
+    if !status.is_success() {
+        return Err(WorkerEvent::Failed {
+            sent: false,
+            reason: "connector_answer_not_taken",
+        });
+    }
+    let mut stream = match open_reply(response, id, None) {
+        Ok(Reply::Json(Some((message, _)))) => return Ok(message),
+        Ok(Reply::Json(None)) | Err(()) => return Err(unreadable),
+        Ok(Reply::Stream(stream)) => stream,
+    };
+    loop {
+        match stream.next(id) {
+            Ok(StreamEvent::Answer(message, _)) => return Ok(message),
+            Ok(StreamEvent::Request(request)) => session.refuse(&request),
+            Ok(StreamEvent::End) | Err(()) => return Err(unreadable),
+        }
+    }
 }
