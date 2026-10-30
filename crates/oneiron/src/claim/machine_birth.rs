@@ -10,19 +10,22 @@ use ed25519_dalek::Signature;
 use rmpv::Value;
 
 use super::{ClaimApprovalStatus, ClaimLifecycleStatus, decode_claim_body, encode_claim_body};
-use crate::EntityId;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::{EntityId, TimeRange};
 
 /// Upper bound for the complete birth wire value (including its initial CLAIM).
 pub(crate) const MAX_MACHINE_CLAIM_BIRTH_BYTES: usize = 1024 * 1024;
-const KEYS: [&str; 7] = [
+const KEYS: [&str; 10] = [
     "version",
     "vault_id",
     "target",
     "initial_body",
     "machine_public_key",
     "machine_signature",
+    "occurred_start",
+    "occurred_end",
+    "learned_at",
     "digest",
 ];
 
@@ -42,11 +45,19 @@ pub(crate) struct SignedClaimBirth {
     pub(crate) initial_body: Vec<u8>,
     pub(crate) machine_public_key: [u8; 32],
     pub(crate) machine_signature: [u8; 64],
+    /// The live row's occurred range and learned time at its birth, which
+    /// the body does not carry (FIX 11926). The digest binds them and the
+    /// history's host-signed handoff names the digest, so a receiver that
+    /// holds the verified history and never got the row builds the row from
+    /// these, never from an unsigned field.
+    pub(crate) occurred: TimeRange,
+    pub(crate) learned_at: u64,
     pub(crate) digest: [u8; 32],
 }
 
 impl SignedClaimBirth {
-    /// Construct only from an already-signed canonical initial CLAIM body.
+    /// Construct only from an already-signed canonical initial CLAIM body,
+    /// with the live row's header unset: [`Self::with_row_header`] binds it.
     pub(crate) fn new(
         vault_id: [u8; 32],
         target: EntityId,
@@ -60,11 +71,33 @@ impl SignedClaimBirth {
             initial_body,
             machine_public_key,
             machine_signature,
+            occurred: TimeRange { start: 0, end: 0 },
+            learned_at: 0,
             digest: [0; 32],
         };
         birth.digest = birth.compute_digest()?;
         birth.verify()?;
         Ok(birth)
+    }
+
+    /// This birth of a live row put at `occurred`, learned at `learned_at`:
+    /// the header the row carries beside the body, bound by the digest.
+    pub(crate) fn with_row_header(mut self, occurred: TimeRange, learned_at: u64) -> Result<Self> {
+        self.occurred = occurred;
+        self.learned_at = learned_at;
+        self.digest = self.compute_digest()?;
+        self.verify()?;
+        Ok(self)
+    }
+
+    /// Whether `other` is the same signed origin: the vault, the target, the
+    /// body and the MACHINE proof, whatever row header each binds.
+    pub(crate) fn same_origin(&self, other: &Self) -> bool {
+        self.vault_id == other.vault_id
+            && self.target == other.target
+            && self.initial_body == other.initial_body
+            && self.machine_public_key == other.machine_public_key
+            && self.machine_signature == other.machine_signature
     }
 
     /// Fail closed on a changed body, signer, signature, actor evidence, or digest.
@@ -178,6 +211,11 @@ impl SignedClaimBirth {
         let initial_body = binary_vec(values.next().ok_or_else(invalid)??)?;
         let machine_public_key = binary::<32>(&values.next().ok_or_else(invalid)??)?;
         let machine_signature = binary::<64>(&values.next().ok_or_else(invalid)??)?;
+        let occurred = TimeRange {
+            start: unsigned(&values.next().ok_or_else(invalid)??)?,
+            end: unsigned(&values.next().ok_or_else(invalid)??)?,
+        };
+        let learned_at = unsigned(&values.next().ok_or_else(invalid)??)?;
         let digest = binary::<32>(&values.next().ok_or_else(invalid)??)?;
         let birth = Self {
             vault_id,
@@ -185,6 +223,8 @@ impl SignedClaimBirth {
             initial_body,
             machine_public_key,
             machine_signature,
+            occurred,
+            learned_at,
             digest,
         };
         birth.verify()?;
@@ -246,6 +286,10 @@ fn binary_vec(value: Value) -> Result<Vec<u8>> {
     }
 }
 
+fn unsigned(value: &Value) -> Result<u64> {
+    value.as_u64().ok_or_else(invalid)
+}
+
 fn binary<const N: usize>(value: &Value) -> Result<[u8; N]> {
     let Value::Binary(bytes) = value else {
         return Err(invalid());
@@ -273,9 +317,12 @@ fn encode_map(birth: &SignedClaimBirth, with_digest: bool) -> Result<Vec<u8>> {
             Value::from(KEYS[5]),
             Value::Binary(birth.machine_signature.to_vec()),
         ),
+        (Value::from(KEYS[6]), Value::from(birth.occurred.start)),
+        (Value::from(KEYS[7]), Value::from(birth.occurred.end)),
+        (Value::from(KEYS[8]), Value::from(birth.learned_at)),
     ];
     if with_digest {
-        fields.push((Value::from(KEYS[6]), Value::Binary(birth.digest.to_vec())));
+        fields.push((Value::from(KEYS[9]), Value::Binary(birth.digest.to_vec())));
     }
     let mut out = Vec::with_capacity(birth.initial_body.len() + 256);
     rmpv::encode::write_value(&mut out, &Value::Map(fields)).map_err(|_| invalid())?;
