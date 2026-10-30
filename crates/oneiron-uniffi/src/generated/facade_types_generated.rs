@@ -6787,8 +6787,12 @@ pub enum SpendState {
 pub struct SpendPayer {
     #[serde(rename = "party")]
     pub party: String,
-    #[serde(rename = "granted_by")]
-    pub granted_by: String,
+    #[serde(
+        rename = "granted_by",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub granted_by: Option<String>,
     #[serde(rename = "at_ms")]
     pub at_ms: u64,
 }
