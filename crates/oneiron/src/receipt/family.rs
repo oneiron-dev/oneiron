@@ -103,13 +103,27 @@ impl Vault {
         let durable = scan_durable_send_receipts(self)?;
         // The durable projector is exhaustive. The attempt source metadata
         // survives filtering, including when none of its scanned rows match.
+        let durable_undecodable = durable.undecodable;
         scan.records.extend(durable.records);
+        scan.undecodable = scan.undecodable.saturating_add(durable_undecodable);
         scan.records.extend(super::direct_dispatch::receipts(self)?);
         scan.records.extend(dispatch_observations(self)?);
         scan.records
             .extend(scan_suppression_receipts(self)?.records);
         scan.records.retain(|receipt| query.matches(receipt));
         Ok(finalize_receipt_scan(scan, &query, None))
+    }
+
+    /// How many send receipt rows do not decode, for a `vault.receipts` page
+    /// of `kinds` (FIX 12044): none on the gate ledger or without `outbound`,
+    /// else the rows `durable_send_receipts` returns apart. A read error of
+    /// the table itself still fails.
+    pub(crate) fn undecodable_send_receipts_for_kinds(&self, kinds: &[String]) -> Result<u32> {
+        if !kinds.iter().any(|kind| kind.trim() == ReceiptKind::Outbound.as_str()) {
+            return Ok(0);
+        }
+        durable_send_receipts(self)
+            .map(|(_, undecodable)| u32::try_from(undecodable.len()).unwrap_or(u32::MAX))
     }
 
     /// Every outbound receipt whose id is `receipt_id`, read from the whole
@@ -265,6 +279,7 @@ pub(super) fn collect_receipt_records(
         );
         records.extend(
             durable_send_receipts(vault)?
+                .0
                 .into_iter()
                 .filter(|receipt| query.matches(receipt)),
         );

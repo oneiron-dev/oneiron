@@ -63,6 +63,10 @@ pub struct TypedBodyHead {
     pub frontier: Vec<u8>,
     /// Commits on the body, a merged fork's included.
     pub commits: u64,
+    /// When a fork's commits last landed on the body. They keep the times
+    /// they were made at, so a quiet clock runs from here too (FIX 11983).
+    #[serde(default)]
+    pub landed_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -141,6 +145,7 @@ pub(crate) fn birth_typed_body_in_txn<T>(
         birth: frontier.clone(),
         frontier: frontier.clone(),
         commits: 1,
+        landed_at: None,
     };
     HEADS.put(&vault.store, txn, entity, &head)?;
     Ok((value, TypedBodyCommit { frontier, receipt }))
@@ -368,13 +373,15 @@ fn land_typed_body_fork_in_txn(
         .export(ExportMode::updates(&live.oplog_vv()))
         .map_err(|_| invalid("typed body fork export"))?;
     import(&live, &updates)?;
+    let at = vault.now_recorded_at();
     head.frontier = live.oplog_frontiers().encode();
     head.commits += record.commits;
+    head.landed_at = Some(at);
     DOCS.put(&vault.store, txn, entity, &snapshot(&live)?)?;
     HEADS.put(&vault.store, txn, entity, &head)?;
     record.state = TypedForkState::Merged {
         by: BodyActor::Actor(actor.entity_ref()),
-        at: vault.now_recorded_at(),
+        at,
         head: head.frontier.clone(),
     };
     FORKS.put(&vault.store, txn, &key, &record)?;

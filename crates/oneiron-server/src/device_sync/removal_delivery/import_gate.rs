@@ -1,32 +1,33 @@
-//! The admission each removal archive import takes (FIX 11796), and the
-//! reap freeze's thaw that takes in again the archives it refused, in the
-//! same run (FIX 12154). The thaw is the freeze's own signal: its epoch,
-//! which a thaw closes as it starts the next.
+//! The admission each removal archive import takes (FIX 11796, a device sync
+//! admission, FIX 12038), and the reap freeze's thaw that takes in again the
+//! archives it refused, in the same run (FIX 12154). The thaw is the
+//! freeze's own signal ([`ReapFreeze::thawed`]).
 
 use std::convert::Infallible;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use super::{FreezeEpoch, import_kept};
+use super::import_kept;
+use crate::device_sync::ReapFreeze;
 use crate::server::HousekeepingAdmission;
 
-/// The host's import admission, noting each import the reap freeze refuses,
-/// and the freeze's epoch where the host has one.
+/// The freeze's import admission, noting each import it refuses, and the
+/// freeze whose thaw retries them.
 pub(super) struct ImportGate {
     pub(super) admit: HousekeepingAdmission,
     refused: Arc<AtomicBool>,
-    freeze: Option<FreezeEpoch>,
+    freeze: ReapFreeze,
 }
 
 impl ImportGate {
-    /// `admit`, the host's gate, with each refusal noted; `freeze`, the
-    /// host's freeze epoch where it has one.
-    pub(super) fn new(admit: HousekeepingAdmission, freeze: Option<FreezeEpoch>) -> Self {
+    /// `freeze`'s admission, with each refusal noted.
+    pub(super) fn new(freeze: ReapFreeze) -> Self {
         let refused = Arc::new(AtomicBool::new(false));
         let noted = Arc::clone(&refused);
+        let inner = freeze.admission();
         let admit: HousekeepingAdmission = Arc::new(move || {
-            let admission = admit();
+            let admission = inner();
             if admission.is_none() {
                 noted.store(true, Ordering::SeqCst);
             }
@@ -37,6 +38,11 @@ impl ImportGate {
             refused,
             freeze,
         }
+    }
+
+    /// The freeze, for the receiver's own pause between sessions.
+    pub(super) fn freeze(&self) -> ReapFreeze {
+        self.freeze.clone()
     }
 
     /// Each time the freeze that refused an import lifts, takes in the
@@ -51,23 +57,32 @@ impl ImportGate {
     ) -> Infallible {
         loop {
             self.thawed().await;
-            self.refused.store(false, Ordering::SeqCst);
             tracing::info!("the reap freeze lifted; kept removal archives are taken in again");
-            import_kept(vault, &self.admit, credential_file, archives).await;
+            self.import_after_thaw(vault, credential_file, archives)
+                .await;
         }
     }
 
+    /// Takes in the archives kept on disk, the freeze lifted: every import
+    /// a refusal left waits there, so none is owed a retry after this one.
+    pub(super) async fn import_after_thaw(
+        &self,
+        vault: &Arc<oneiron::Vault>,
+        credential_file: &Path,
+        archives: &Path,
+    ) {
+        self.refused.store(false, Ordering::SeqCst);
+        import_kept(vault, &self.admit, credential_file, archives).await;
+    }
+
     /// Returns once an import the freeze refused may be tried again: the
-    /// freeze has lifted. Pending while none was refused, or with no epoch
-    /// to watch. Cancel-safe: it only reads the epoch.
+    /// freeze has lifted. Pending while none was refused. Cancel-safe: it
+    /// only reads the freeze.
     async fn thawed(&self) {
-        match &self.freeze {
-            Some(epoch) if self.refused.load(Ordering::SeqCst) => {
-                // A thaw closes the frozen epoch; an epoch that reads
-                // unpaused holds no freeze.
-                let _ = epoch().wait_for(|paused| !*paused).await;
-            }
-            _ => std::future::pending().await,
+        if self.refused.load(Ordering::SeqCst) {
+            self.freeze.clone().thawed().await;
+        } else {
+            std::future::pending::<()>().await;
         }
     }
 }
