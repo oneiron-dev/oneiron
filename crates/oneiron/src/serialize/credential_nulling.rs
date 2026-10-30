@@ -1,7 +1,9 @@
 //! Unconditional credential removal before any context/export format writer.
+use std::collections::HashMap;
+
 use crate::batch::secret_scan::{
     release_credential_field, release_joined_json, release_reads_json_text,
-    release_reads_whole_json, scan_file_content,
+    release_reads_whole_json, scan_file_content, scan_text_content,
 };
 use serde_json::{Map, Value};
 
@@ -62,7 +64,7 @@ pub(super) fn null_context_credentials(key: &str, value: &Value) -> Value {
 }
 
 fn null_whole(key: &str, value: &Value, reads_whole: fn(&Value) -> bool) -> Value {
-    let nulled = null_at_depth(key, value, 0, false);
+    let nulled = null_at_depth(key, value, 0, false, &mut TextVerdicts::default());
     if matches!(nulled, Value::Array(_) | Value::Object(_)) && reads_whole(&nulled) {
         return Value::Null;
     }
@@ -75,7 +77,7 @@ fn null_whole(key: &str, value: &Value, reads_whole: fn(&Value) -> bool) -> Valu
 /// nulled as an opaque container: an id hashed from its subject is random bytes,
 /// and about 4 in 10,000 of those parse as a whole MessagePack container.
 pub(super) fn null_document_credentials(value: &Value) -> Value {
-    null_at_depth("", value, 0, true)
+    null_at_depth("", value, 0, true, &mut TextVerdicts::default())
 }
 
 /// One member of the whole-vault document as [`null_document_credentials`]
@@ -84,7 +86,7 @@ pub(super) fn null_document_credentials(value: &Value) -> Value {
 /// the section's own array readings never change one: a row read alone at its
 /// depth is the row the whole pass leaves.
 pub(super) fn null_document_member(key: &str, value: &Value, depth: usize) -> Value {
-    null_at_depth(key, value, depth, true)
+    null_at_depth(key, value, depth, true, &mut TextVerdicts::default())
 }
 
 /// One source-tree row as the export writer leaves it: `value` through
@@ -95,7 +97,30 @@ pub(crate) fn null_document_tree_row(value: &Value) -> Value {
     null_document_member("", value, 2)
 }
 
-fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Value {
+/// The release text verdict on each text one nulling pass reads, keyed by
+/// the text itself, borrowed from the value the pass reads, so it holds no
+/// copy of any text: a text read twice in one pass (a key every row repeats,
+/// a value many items share) is scanned once (speed). It lives for one pass.
+#[derive(Default)]
+struct TextVerdicts<'a>(HashMap<&'a str, bool>);
+
+impl<'a> TextVerdicts<'a> {
+    /// Whether `text` reads as a secret by [`scan_file_content`]'s rules.
+    fn reads_as_secret(&mut self, text: &'a str) -> bool {
+        *self
+            .0
+            .entry(text)
+            .or_insert_with(|| scan_text_content(text).is_some())
+    }
+}
+
+fn null_at_depth<'a>(
+    key: &str,
+    value: &'a Value,
+    depth: usize,
+    document: bool,
+    verdicts: &mut TextVerdicts<'a>,
+) -> Value {
     if depth >= 128 || credential_key(key) {
         return Value::Null;
     }
@@ -111,13 +136,13 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
         };
     }
     match value {
-        Value::String(text) if scan_file_content("", text.as_bytes()).is_some() => Value::Null,
+        Value::String(text) if verdicts.reads_as_secret(text) => Value::Null,
         Value::Array(values) if encoded_credentials(values, depth) => Value::Null,
         Value::Array(values) if release_joined_json(values) => Value::Null,
         Value::Array(values) => {
             let kept: Vec<Value> = values
                 .iter()
-                .map(|value| null_at_depth("", value, depth + 1, document))
+                .map(|value| null_at_depth("", value, depth + 1, document, verdicts))
                 .collect();
             // Read again once items are nulled: the text left is what a second
             // pass reads joined, so the array is its own fixed point.
@@ -131,10 +156,13 @@ fn null_at_depth(key: &str, value: &Value, depth: usize, document: bool) -> Valu
             fields
                 .iter()
                 .map(|(key, value)| {
-                    if scan_file_content("", key.as_bytes()).is_some() {
+                    if verdicts.reads_as_secret(key) {
                         ("_redacted_key".to_owned(), Value::Null)
                     } else {
-                        (key.clone(), null_at_depth(key, value, depth + 1, document))
+                        (
+                            key.clone(),
+                            null_at_depth(key, value, depth + 1, document, verdicts),
+                        )
                     }
                 })
                 .collect::<Map<_, _>>(),
@@ -336,11 +364,16 @@ impl<'de> serde::de::Visitor<'de> for JsonVisitor {
 }
 
 fn json_carries_credential(bytes: &[u8], depth: usize) -> bool {
-    matches!(
-        serde_json::from_slice::<Value>(bytes),
-        Ok(value @ (Value::Object(_) | Value::Array(_)))
-            if null_at_depth("", &value, depth + 1, false) != value
-    )
+    // JSON opens an object or an array only with `{` or `[` past its
+    // whitespace (a subset of ASCII whitespace): other bytes are not parsed.
+    let first = bytes.iter().find(|byte| !byte.is_ascii_whitespace());
+    matches!(first, Some(b'{' | b'['))
+        && matches!(
+            serde_json::from_slice::<Value>(bytes),
+            Ok(value @ (Value::Object(_) | Value::Array(_)))
+                if null_at_depth("", &value, depth + 1, false, &mut TextVerdicts::default())
+                    != value
+        )
 }
 
 // JSON byte arrays must be inspected as bytes, not as harmless decimal digits.
@@ -355,6 +388,14 @@ fn encoded_credentials(values: &[Value], depth: usize) -> bool {
     };
     if scan_file_content("", &bytes).is_some() || json_carries_credential(&bytes, depth) {
         return true;
+    }
+    // MessagePack reads a map, an array, binary or an extension value only
+    // from its own leading markers: other bytes are not decoded.
+    if !matches!(
+        bytes.first(),
+        Some(0x80..=0x9f | 0xc4..=0xc9 | 0xd4..=0xd8 | 0xdc..=0xdf)
+    ) {
+        return false;
     }
     let mut cursor = std::io::Cursor::new(&bytes);
     matches!(
