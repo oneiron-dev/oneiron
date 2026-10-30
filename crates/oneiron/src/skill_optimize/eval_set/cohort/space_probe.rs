@@ -1,12 +1,16 @@
 //! The space probes' cohort metadata (FIX 6744; ARCH-0053 `#eval-exposure`), kept in the
 //! ledger's own family, case, cohort and exposure rows under the reserved `space_probe.<kind>`
-//! seats. It is a metadata-only import, not an audited sealed cut: it writes no audit,
-//! releases no case, reads no retirement and names no runnable task. A space move's check
-//! reads none of it.
+//! seats. It is a metadata-only import, not an audited sealed cut: it writes no SEALED audit;
+//! each cut keeps its advisory near-copy row (FIX 10144), releases no case, reads no
+//! retirement and names no runnable task. A space move's check reads none of it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 
+use super::super::cut_audit::{
+    AuditCase, AuditCoverage, CoverageGap, EvalCutAudit, EvalCutAuthor, pinned_method,
+    put_audit_in_txn, score_probe_texts,
+};
 use super::super::{
     CASE_PREFIX, DerivationKind, EvalCase, EvalCaseDraft, EvalSeat, FamilyPurpose,
     assign_family_in_txn, record_case_in_txn, root_family_in_txn, rows_in_txn,
@@ -77,9 +81,9 @@ impl Vault {
             rubric_revision: rubric_revision.to_owned(),
             at,
         };
-        self.with_write_txn_grouped(|txn| {
-            if !exposures.is_empty() {
-                return append_exposures_in_txn(
+        if !exposures.is_empty() {
+            return self.with_write_txn_grouped(|txn| {
+                append_exposures_in_txn(
                     self,
                     txn,
                     &under,
@@ -87,13 +91,22 @@ impl Vault {
                     exposures,
                     consumer,
                     candidate_pin,
-                );
-            }
+                )
+            });
+        }
+        // The probe queries once per import (FIX 10144), read before the
+        // write opens and looked up by each cut below.
+        let probes: BTreeMap<[u8; 16], String> = self
+            .space_probes()?
+            .into_iter()
+            .map(|(id, probe)| (id, probe.query))
+            .collect();
+        self.with_write_txn_grouped(|txn| {
             let kept = keep_cases_in_txn(self, txn, &under, members)?;
             if let Some(window) = reference {
-                freeze_reference_in_txn(self, txn, &under, &kept, &window)?;
+                freeze_reference_in_txn(self, txn, &under, &kept, &window, &probes)?;
             }
-            cut_new_families_in_txn(self, txn, &under, &kept)
+            cut_new_families_in_txn(self, txn, &under, &kept, &probes)
         })
     }
 }
@@ -158,6 +171,7 @@ fn freeze_reference_in_txn(
     under: &Under,
     kept: &[Kept],
     window: &Range<u64>,
+    probes: &BTreeMap<[u8; 16], String>,
 ) -> Result<()> {
     let cohorts = cohorts_in_txn(vault, txn, &under.seat)?;
     if cohorts.iter().any(|cohort| cohort.reference) {
@@ -176,7 +190,7 @@ fn freeze_reference_in_txn(
         .into_iter()
         .filter(|case| matches!(case.receipts.as_slice(), [root] if roots.contains(root.as_str())))
         .collect();
-    put_cohort_in_txn(vault, txn, under, window, cases, true)
+    put_cohort_in_txn(vault, txn, under, window, cases, true, probes)
 }
 
 /// Gives the members' families that no cohort holds one new frozen cohort per window, each
@@ -186,6 +200,7 @@ fn cut_new_families_in_txn(
     txn: &mut heed::RwTxn<'_>,
     under: &Under,
     kept: &[Kept],
+    probes: &BTreeMap<[u8; 16], String>,
 ) -> Result<()> {
     let held = held_families(&cohorts_in_txn(vault, txn, &under.seat)?);
     let mut fresh: BTreeMap<EntityId, (u64, u64)> = BTreeMap::new();
@@ -204,7 +219,7 @@ fn cut_new_families_in_txn(
         }
     }
     for ((from, until), cases) in windows {
-        put_cohort_in_txn(vault, txn, under, &(from..until), cases, false)?;
+        put_cohort_in_txn(vault, txn, under, &(from..until), cases, false, probes)?;
     }
     Ok(())
 }
@@ -293,7 +308,62 @@ fn seat_cases_in_txn(
         .collect())
 }
 
-/// Writes one frozen cohort of `cases` and their families for `window`; nothing for no cases.
+/// A probe id from a case root (`space_probe:<32 hex>`), mirroring the
+/// ledger's hex parse.
+fn probe_id_from_root(root: &str) -> Option<[u8; 16]> {
+    let hex = root.strip_prefix("space_probe:")?;
+    if hex.len() != 32 {
+        return None;
+    }
+    let mut id = [0_u8; 16];
+    for (byte, pair) in id.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
+    }
+    Some(id)
+}
+
+/// One probe case as the advisory audit reads it: the only purpose probes
+/// assign.
+fn probe_audit_case(case: &EvalCase) -> AuditCase {
+    AuditCase {
+        case: case.id,
+        family: case.family,
+        receipts: case.receipts.clone(),
+        parents: case.parents.clone(),
+        assigned_purpose: FamilyPurpose::SealedConfirmation,
+        effective_purpose: FamilyPurpose::SealedConfirmation,
+    }
+}
+
+/// Each case's probe query text, with a gap for every case none could be
+/// read for: a deleted probe or a media query's empty text names its root,
+/// and never reads as clean.
+fn probe_texts(
+    cases: &[AuditCase],
+    probes: &BTreeMap<[u8; 16], String>,
+) -> (Vec<(EntityId, Vec<String>)>, Vec<CoverageGap>) {
+    let mut texts = Vec::new();
+    let mut gaps = Vec::new();
+    for case in cases {
+        let query = match case.receipts.as_slice() {
+            [root] => probe_id_from_root(root)
+                .and_then(|id| probes.get(&id))
+                .filter(|query| !query.trim().is_empty()),
+            _ => None,
+        };
+        match query {
+            Some(query) => texts.push((case.case, vec![query.clone()])),
+            None => gaps.push(CoverageGap {
+                case: case.case,
+                source: case.receipts.first().cloned(),
+            }),
+        }
+    }
+    (texts, gaps)
+}
+
+/// Writes one frozen cohort of `cases` and their families for `window`, with
+/// its advisory near-copy audit (FIX 10144); nothing for no cases.
 fn put_cohort_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -301,11 +371,27 @@ fn put_cohort_in_txn(
     window: &Range<u64>,
     mut cases: Vec<EvalCase>,
     reference: bool,
+    probes: &BTreeMap<[u8; 16], String>,
 ) -> Result<()> {
     if cases.is_empty() {
         return Ok(());
     }
     cases.sort_unstable_by_key(|case| case.id);
+    let members: Vec<AuditCase> = cases.iter().map(probe_audit_case).collect();
+    let mut all = seat_cases_in_txn(vault, txn, &under.seat)?;
+    all.sort_unstable_by_key(|case| case.id);
+    let held: BTreeSet<EntityId> = members.iter().map(|case| case.case).collect();
+    let compared: Vec<AuditCase> = all
+        .iter()
+        .filter(|case| !held.contains(&case.id))
+        .map(probe_audit_case)
+        .collect();
+    let all_ids: Vec<EntityId> = all.iter().map(|case| case.id).collect();
+    let inventory_digest = membership_digest(&all_ids);
+    let (member_texts, mut gaps) = probe_texts(&members, probes);
+    let (compared_texts, mut compared_gaps) = probe_texts(&compared, probes);
+    gaps.append(&mut compared_gaps);
+    let (comparisons, flags) = score_probe_texts(&member_texts, &compared_texts);
     let families = cases.iter().map(|case| case.family).collect();
     let cases: Vec<EntityId> = cases.into_iter().map(|case| case.id).collect();
     let cohort = EvalCohort {
@@ -326,5 +412,24 @@ fn put_cohort_in_txn(
         .store
         .vault_meta
         .put(txn, &cohort_key(&cohort.id), &encode(&cohort)?)?;
+    let audit = EvalCutAudit {
+        cohort: cohort.id,
+        seat: cohort.seat.clone(),
+        cut_at: cohort.cut_at,
+        rubric_revision: cohort.rubric_revision.clone(),
+        membership_digest: cohort.membership_digest.clone(),
+        author: EvalCutAuthor::ProbeImport,
+        inventory_digest,
+        members,
+        compared,
+        method: pinned_method(),
+        comparisons,
+        flags,
+        coverage: AuditCoverage {
+            complete: gaps.is_empty(),
+            gaps,
+        },
+    };
+    put_audit_in_txn(vault, txn, &audit)?;
     Ok(())
 }

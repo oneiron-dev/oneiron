@@ -8680,7 +8680,9 @@ class EvalCutAuthorSkill(TypedDict):
 class EvalCutAuthorOwner(TypedDict):
     kind: Literal["owner"]
     person: EntityId
-EvalCutAuthor = EvalCutAuthorSkill | EvalCutAuthorOwner
+class EvalCutAuthorProbeImport(TypedDict):
+    kind: Literal["probe_import"]
+EvalCutAuthor = EvalCutAuthorSkill | EvalCutAuthorOwner | EvalCutAuthorProbeImport
 class AuditCase(TypedDict):
     case: EntityId
     family: EntityId

@@ -113,8 +113,9 @@ pub struct EvalCutAudit {
     pub cut_at: u64,
     pub rubric_revision: String,
     pub membership_digest: String,
-    /// Who authorized the cut: the actual authoring skill, or the owner
-    /// explicitly setting up the cohort. Owner setup claims no skill use.
+    /// Who authorized the cut: the actual authoring skill, the owner
+    /// explicitly setting up the cohort, or the automated probe import,
+    /// which authorizes nothing. Owner setup claims no skill use.
     pub author: EvalCutAuthor,
     pub inventory_digest: String,
     pub members: Vec<AuditCase>,
@@ -139,6 +140,8 @@ pub enum EvalCutAuthor {
     Owner {
         person: EntityId,
     },
+    /// The automated probe import, which authorizes nothing (FIX 10144).
+    ProbeImport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -574,6 +577,56 @@ pub(super) fn prepare_cut_audit_listing(
         flags,
         gaps,
     }))
+}
+
+/// The pinned near-copy method, for the probe import's advisory audit (FIX
+/// 10144): the same token 5-gram Jaccard the sealed cuts use.
+pub(super) fn pinned_method() -> AuditMethodPin {
+    AuditMethodPin {
+        name: METHOD_NAME.to_owned(),
+        revision: METHOD_REVISION,
+        normalizer: NORMALIZER.to_owned(),
+        shingle_size: u64::try_from(SHINGLE_SIZE).unwrap_or(u64::MAX),
+        threshold: THRESHOLD,
+    }
+}
+
+/// Scores probe query texts the way the sealed audit scores case texts (FIX
+/// 10144): each member with text against each other case with text. Cases
+/// without text compare nothing.
+pub(super) fn score_probe_texts(
+    members: &[(EntityId, Vec<String>)],
+    compared: &[(EntityId, Vec<String>)],
+) -> (u64, Vec<NearCopyFlag>) {
+    let shingled = |cases: &[(EntityId, Vec<String>)]| {
+        cases
+            .iter()
+            .map(|(case, texts)| (*case, shingles(texts)))
+            .filter(|(_, set)| !set.is_empty())
+            .collect::<Vec<_>>()
+    };
+    let left = shingled(members);
+    let right = shingled(compared);
+    let mut comparisons = 0_u64;
+    let mut flags = Vec::new();
+    for (member, member_set) in &left {
+        for (other, other_set) in &right {
+            comparisons = comparisons.saturating_add(1);
+            let intersection = member_set.intersection(other_set).count();
+            let union = member_set.len() + other_set.len() - intersection;
+            let score = intersection as f64 / union as f64;
+            if score >= THRESHOLD {
+                flags.push(NearCopyFlag {
+                    member_case: *member,
+                    other_case: *other,
+                    score,
+                    intersection: u64::try_from(intersection).unwrap_or(u64::MAX),
+                    union: u64::try_from(union).unwrap_or(u64::MAX),
+                });
+            }
+        }
+    }
+    (comparisons, flags)
 }
 
 impl Vault {

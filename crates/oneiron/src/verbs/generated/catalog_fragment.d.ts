@@ -1727,7 +1727,7 @@ declare namespace Sdk {
   type EvalCaseDraft = { seat: EvalSeat; kind: DerivationKind; receipts: string[]; parents: EntityId[]; stratum?: string | null; draw_probability?: number | null; source_at: number };
   type CohortRetirement = { reason: string; skill: EntityId; revision: string; attempt: EntityId; exposure: EvalExposureCounts };
   type EvalCohort = { id: EntityId; seat: EvalSeat; from: number; until: number; families: EntityId[]; cases: EntityId[]; membership_digest: string; rubric_revision: string; reference: boolean; cut_at: number; retired_at?: number | null; retirement?: CohortRetirement | null };
-  type EvalCutAuthor = { kind: "skill"; attempt: EntityId; skill: EntityId; revision: string } | { kind: "owner"; person: EntityId };
+  type EvalCutAuthor = { kind: "skill"; attempt: EntityId; skill: EntityId; revision: string } | { kind: "owner"; person: EntityId } | { kind: "probe_import" };
   type AuditCase = { case: EntityId; family: EntityId; receipts: string[]; parents: EntityId[]; assigned_purpose: FamilyPurpose; effective_purpose: FamilyPurpose };
   type AuditMethodPin = { name: string; revision: number; normalizer: string; shingle_size: number; threshold: number };
   type NearCopyFlag = { member_case: EntityId; other_case: EntityId; score: number; intersection: number; union: number };
