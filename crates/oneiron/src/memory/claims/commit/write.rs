@@ -71,6 +71,11 @@ impl Memory<'_> {
         } else {
             json_to_rmpv(&input.value)
         };
+        // The claim's text as the embedder projects a claim (`embed::claim_text`):
+        // a string value as it is, any other value rendered whole.
+        let text = value
+            .as_str()
+            .map_or_else(|| value.to_string(), str::to_owned);
         let world = match &input.world_ref {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
             None => None,
@@ -238,15 +243,30 @@ impl Memory<'_> {
                     self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
                     let closure_envelope = envelope.clone();
                     let owner_authored = self.owner_authored_write_in_txn(content.read())?;
-                    content.apply_claim_ops(
-                        vec![BatchOp::ClaimCandidate {
+                    // A claim that stands at commit is lexically live in the
+                    // same batch, as a promoted Dreamer claim is (FIX 11914):
+                    // a light recall finds it at once, with no idle pass or
+                    // embedder. A held (proposed) claim stages no text.
+                    let surfaces = matches!(
+                        envelope.approval(),
+                        ClaimApprovalStatus::Auto | ClaimApprovalStatus::Approved
+                    );
+                    let mut ops = vec![BatchOp::ClaimCandidate {
+                        id,
+                        candidate: Box::new(candidate),
+                        envelope,
+                        occurred,
+                        learned_at,
+                        internal_lexical_query_hint: false,
+                    }];
+                    if surfaces && !text.is_empty() {
+                        ops.push(BatchOp::Text {
                             id,
-                            candidate: Box::new(candidate),
-                            envelope,
-                            occurred,
-                            learned_at,
-                            internal_lexical_query_hint: false,
-                        }],
+                            fields: vec![("val".to_owned(), text.clone())],
+                        });
+                    }
+                    content.apply_claim_ops(
+                        ops,
                         self.vault.text_index_trusted.load(Ordering::Acquire),
                         ApplyOpsGateMode::new(true, true).with_owner_authored(owner_authored),
                     )?;
