@@ -56,6 +56,14 @@ pub(crate) struct RunProposal {
     pub(crate) value: serde_json::Value,
     pub(crate) reason_codes: Vec<String>,
     pub(crate) created_at: u64,
+    /// The reminder wording filed for this proposal now, when it is a
+    /// commitment reminder with one filed (FIX 12319).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reminder_wording: Option<String>,
+    /// BLAKE3 of `reminder_wording`, 64 lowercase hex, as `reminder_wordings`
+    /// names it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reminder_wording_hash: Option<String>,
 }
 
 /// The run's one receipt.
@@ -215,15 +223,19 @@ pub(crate) fn review(
 ) -> OwnerResult<RunReview> {
     let run_id = run_named(vault, run)?;
     let (bundle, bodies) = visible_bundle(vault, owner, &run_id, &destination.into())?;
-    Ok(review_of(bundle, bodies))
+    review_of(vault, bundle, bodies)
 }
 
-fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
+fn review_of(
+    vault: &Vault,
+    bundle: GateConsentBundle,
+    bodies: Vec<ClaimBody>,
+) -> OwnerResult<RunReview> {
     let proposals = bundle
         .members
         .into_iter()
         .zip(bodies)
-        .map(|(member, body)| {
+        .map(|(member, body)| -> OwnerResult<RunProposal> {
             // A claim the write door refuses, stored while the ingest scan
             // was off, serves none of its parts: no read follows this
             // projection exactly (a key turned to text), so the whole body is
@@ -240,7 +252,15 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
             oneiron::batch::export::redact_messagepack_credentials(&mut value);
             let mut value = crate::commands::msgpack_value_json(&value);
             oneiron::batch::export::redact_credentials(&mut value);
-            RunProposal {
+            // The wording filed for a commitment reminder now, with the hash
+            // an approval names to pin these words (FIX 12319); every other
+            // proposal reads none.
+            let filed = vault.filed_commitment_reminder_wording_for_proposal(&member.claim_id)?;
+            let (reminder_wording, reminder_wording_hash) = match filed {
+                Some((wording, hash)) => (Some(wording), Some(hex(&hash))),
+                None => (None, None),
+            };
+            Ok(RunProposal {
                 claim_id: member.claim_id.to_hex(),
                 predicate: if secret {
                     "[redacted]".to_owned()
@@ -256,17 +276,19 @@ fn review_of(bundle: GateConsentBundle, bodies: Vec<ClaimBody>) -> RunReview {
                 value,
                 reason_codes: member.reason_codes,
                 created_at: member.created_at,
-            }
+                reminder_wording,
+                reminder_wording_hash,
+            })
         })
-        .collect();
-    RunReview {
+        .collect::<OwnerResult<Vec<_>>>()?;
+    Ok(RunReview {
         bundle_id: hex(&bundle.bundle_id),
         name: redacted(bundle.name),
         run_ref: run_ref(&bundle.dreamer_run_id),
         run_id: redacted(bundle.dreamer_run_id),
         agent_label: bundle.agent_label.map(redacted),
         proposals,
-    }
+    })
 }
 
 /// A stored string as the release redaction serves it: a predicate, a run id
