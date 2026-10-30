@@ -295,7 +295,9 @@ pub(crate) use structural_kind_registry::{
 // FIX 10379: the intent a keyed request's route writes under, counted by
 // each write it commits.
 #[doc(hidden)]
-pub use idempotency_intent::{IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent};
+pub use idempotency_intent::{
+    IdempotencyIntent, carry_idempotency_intent, with_idempotency_intent,
+};
 // KS-2B2: the host's row-held responses in `sync_state`, read by the engine.
 #[cfg(feature = "sync")]
 pub(crate) use sync_responses::media_job_put_fenced_in_txn;

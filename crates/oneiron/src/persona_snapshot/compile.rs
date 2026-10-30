@@ -633,12 +633,12 @@ impl crate::Vault {
         let mut rows = vec![compile.subject_ref];
         for row in &compile.rows {
             rows.push(row.subject_ref);
-            rows.extend(row.provenance_refs.iter().filter_map(|cited| {
-                match cited.split_once(':')? {
+            rows.extend(row.provenance_refs.iter().filter_map(
+                |cited| match cited.split_once(':')? {
                     ("claim" | "relationship", id) => EntityId::from_hex(id).ok(),
                     _ => None,
-                }
-            }));
+                },
+            ));
         }
         rows.extend(compile.label_claims.iter().copied());
         rows.sort_unstable();
