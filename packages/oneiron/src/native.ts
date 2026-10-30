@@ -90,6 +90,8 @@ vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
 selfMemoryDiaryQuery(input: unknown): unknown
+selfMemoryPadsRead(input: unknown): unknown
+selfMemoryPadsAdminReads(input: unknown): unknown
 cancel(input: unknown): unknown
 steer(input: unknown): unknown
 describe(input: unknown): unknown

@@ -60,6 +60,8 @@ pub enum AgentVerb {
     VaultPersonasExport,
     VaultPersonasEdit,
     SelfMemoryDiaryQuery,
+    SelfMemoryPadsRead,
+    SelfMemoryPadsAdminReads,
     Cancel,
     Steer,
     Describe,
@@ -1299,6 +1301,8 @@ impl AgentVerb {
         Self::VaultPersonasExport,
         Self::VaultPersonasEdit,
         Self::SelfMemoryDiaryQuery,
+        Self::SelfMemoryPadsRead,
+        Self::SelfMemoryPadsAdminReads,
         Self::Cancel,
         Self::Steer,
         Self::Describe,
@@ -2541,6 +2545,8 @@ impl AgentVerb {
             Self::VaultPersonasExport => "vault.personas.export",
             Self::VaultPersonasEdit => "vault.personas.edit",
             Self::SelfMemoryDiaryQuery => "self.memory.diary.query",
+            Self::SelfMemoryPadsRead => "self.memory.pads.read",
+            Self::SelfMemoryPadsAdminReads => "self.memory.pads.admin_reads",
             Self::Cancel => "cancel",
             Self::Steer => "steer",
             Self::Describe => "describe",
@@ -3812,6 +3818,8 @@ impl AgentVerb {
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
+                | Self::SelfMemoryPadsRead
+                | Self::SelfMemoryPadsAdminReads
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -5080,6 +5088,8 @@ impl AgentVerb {
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
+                | Self::SelfMemoryPadsRead
+                | Self::SelfMemoryPadsAdminReads
                 | Self::Cancel
                 | Self::Steer
                 | Self::Describe
@@ -6509,6 +6519,8 @@ impl AgentVerb {
                 | Self::VaultPersonasExport
                 | Self::VaultPersonasEdit
                 | Self::SelfMemoryDiaryQuery
+                | Self::SelfMemoryPadsRead
+                | Self::SelfMemoryPadsAdminReads
                 | Self::Steer
                 | Self::TasksWave
                 | Self::VaultFanoutSpawn
@@ -8413,6 +8425,8 @@ impl AgentVerb {
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
+            Self::SelfMemoryPadsRead => &["spec"],
+            Self::SelfMemoryPadsAdminReads => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[
@@ -9670,6 +9684,8 @@ impl AgentVerb {
             Self::VaultPersonasExport => &["spec"],
             Self::VaultPersonasEdit => &["spec"],
             Self::SelfMemoryDiaryQuery => &["spec"],
+            Self::SelfMemoryPadsRead => &["spec"],
+            Self::SelfMemoryPadsAdminReads => &["spec"],
             Self::Cancel => &["task_ref"],
             Self::Steer => &["spec"],
             Self::Describe => &[],
@@ -11016,6 +11032,12 @@ impl AgentVerb {
             }
             Self::SelfMemoryDiaryQuery => {
                 "Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log."
+            }
+            Self::SelfMemoryPadsRead => {
+                "Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log."
+            }
+            Self::SelfMemoryPadsAdminReads => {
+                "The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication."
             }
             Self::Cancel => {
                 "Cancels one TASK under the caller's own-scoped auto default, abandoning only unlanded work."

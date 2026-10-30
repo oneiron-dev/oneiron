@@ -61,6 +61,8 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         .route("/vault.personas.export", post(facade_route))
         .route("/vault.personas.edit", post(facade_route))
         .route("/self.memory.diary.query", post(facade_route))
+        .route("/self.memory.pads.read", post(facade_route))
+        .route("/self.memory.pads.admin_reads", post(facade_route))
         .route("/cancel", post(facade_route))
         .route("/steer", post(facade_route))
         .route("/describe", post(facade_route))

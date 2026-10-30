@@ -727,7 +727,9 @@ pub(in crate::api::facade) fn door_admits(
         "self.credential.attenuate" => crate::api::facade::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" | "vault.artifacts.admit" => artifact_asker(server, auth).map(drop),
-        "self.memory.diary.query" => diary_reader(server, auth).map(drop),
+        "self.memory.diary.query" | "self.memory.pads.read" | "self.memory.pads.admin_reads" => {
+            diary_reader(server, auth).map(drop)
+        }
         "vault.decisions.asks.answer"
         | "vault.decisions.asks.climb"
         | "self.decisions.asks"

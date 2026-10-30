@@ -207,6 +207,12 @@ impl OneironClient {
                 "self.memory.diary.query" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::DiaryQueryOutcome,
                 >(client, verb, &input),
+                "self.memory.pads.read" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::DiaryQueryOutcome,
+                >(client, verb, &input),
+                "self.memory.pads.admin_reads" => remote_agent_verb_output::<
+                    oneiron::task_verb::sdk::AdminPadReadsView,
+                >(client, verb, &input),
                 "cancel" => remote_agent_verb_output::<oneiron::task_verb::TaskCancelReceipt>(
                     client, verb, &input,
                 ),
@@ -4476,6 +4482,31 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("self.memory.diary.query", value)
+    }
+    pub fn self_memory_pads_read(
+        &self,
+        input: &oneiron::task_verb::sdk::DiaryQueryRequest,
+    ) -> Result<oneiron::task_verb::sdk::DiaryQueryOutcome, MemoryError> {
+        input.validate()?;
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.pads.read", value)
+    }
+    pub fn self_memory_pads_admin_reads(
+        &self,
+        input: &oneiron::task_verb::sdk::AdminPadReadsRequest,
+    ) -> Result<oneiron::task_verb::sdk::AdminPadReadsView, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("self.memory.pads.admin_reads", value)
     }
     /// Cancels one task under the ladder's `auto` default. The receipt says
     /// what stopped and what became a proposal instead.

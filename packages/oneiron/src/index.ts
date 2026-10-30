@@ -3186,6 +3186,12 @@ export class Oneiron {
         /** Reads an agent's diary under the caller's diary.read grants, stating a reason the agent sees in its read log. */
         query: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryDiaryQuery(input) as Facade.DiaryQueryOutcome),
       }),
+      pads: {
+        /** Reads an agent's sealed scratchpads as a ruled reader (a vault owner, a work vault's Admin or the Coach), stating a reason the agent sees in its read log. */
+        read: (input: Facade.DiaryQueryRequest): Facade.DiaryQueryOutcome => this.#call(() => this.#client.selfMemoryPadsRead(input) as Facade.DiaryQueryOutcome),
+        /** The companion's owner reads the reads a work vault's Admin made of an agent's sealed scratchpads, newest first, on their own authentication. */
+        admin_reads: (input: Facade.AdminPadReadsRequest): Facade.AdminPadReadsView => this.#call(() => this.#client.selfMemoryPadsAdminReads(input) as Facade.AdminPadReadsView),
+      },
     },
     standing: {
       /** This agent's configured standing block in one world: its handle, name and token floor. */
