@@ -71,13 +71,16 @@ impl HomeSearch {
 
     /// The home's hits when it is reachable, else this device's opened items
     /// alone, marked local-only and incomplete. More hits than the home
-    /// answers at once come a page at a time (FIX 8865).
+    /// answers at once come a page at a time (FIX 8865), each page within
+    /// the residence RPC timeout and `due`, the caller's deadline: a drain
+    /// that stops short keeps the home's pages, marked incomplete (FIX 9256).
     pub async fn search(
         &self,
         query: &str,
         limit: usize,
+        due: Option<std::time::Instant>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, None).await
+        self.ask(query, limit, None, None, due).await
     }
 
     /// [`Self::search`] for a caller narrower than this device's owner
@@ -92,8 +95,10 @@ impl HomeSearch {
         limit: usize,
         caller: &crate::authority::ForwardedCallerProof,
         locality: crate::claim::CallerLocality,
+        due: Option<std::time::Instant>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, None, Some((caller, locality))).await
+        self.ask(query, limit, None, Some((caller, locality)), due)
+            .await
     }
 
     /// A recall's search (FIX 2905): the home narrows it by `scope`, the
@@ -101,7 +106,8 @@ impl HomeSearch {
     /// returns the unit recall returns. `caller` is a narrower caller's own
     /// holder proof and its locality, as for [`Self::search_for`]; `None`
     /// asks as this device's owner. No home, or a refusal, is no home hits:
-    /// a scoped search never falls back to this device's own scan.
+    /// a scoped search never falls back to this device's own scan. `due` is
+    /// as for [`Self::search`].
     pub async fn search_recall(
         &self,
         query: &str,
@@ -111,8 +117,9 @@ impl HomeSearch {
             &crate::authority::ForwardedCallerProof,
             crate::claim::CallerLocality,
         )>,
+        due: Option<std::time::Instant>,
     ) -> Result<ResidenceSearch, TransportError> {
-        self.ask(query, limit, Some(scope), caller).await
+        self.ask(query, limit, Some(scope), caller, due).await
     }
 
     async fn ask(
@@ -124,10 +131,11 @@ impl HomeSearch {
             &crate::authority::ForwardedCallerProof,
             crate::claim::CallerLocality,
         )>,
+        due: Option<std::time::Instant>,
     ) -> Result<ResidenceSearch, TransportError> {
         let mut config = self.config.clone();
         config.residence_mode = *self.mode.borrow();
-        crate::sync::client::search_resident(&self.vault, &config, query, limit, scope, caller)
+        crate::sync::client::search_resident(&self.vault, &config, query, limit, scope, caller, due)
             .await
     }
 }

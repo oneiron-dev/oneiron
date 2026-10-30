@@ -33,7 +33,7 @@ impl SyncClient {
         query: &str,
         limit: usize,
     ) -> Result<ResidenceSearch, TransportError> {
-        search_resident(&self.vault, &self.config, query, limit, None, None).await
+        search_resident(&self.vault, &self.config, query, limit, None, None, None).await
     }
 }
 
@@ -52,6 +52,10 @@ impl SyncClient {
 /// the scope the device's recall resolved before its candidate cut, and a
 /// forwarded caller's proof binds the scope too. A scoped search never
 /// falls back to this device's own scan either: its recall already read it.
+///
+/// With `due`, the caller's deadline, no step runs past it: a search that
+/// reaches it before any home page refuses, and one served in pages keeps
+/// the pages it holds, marked incomplete (FIX 9256).
 pub(crate) async fn search_resident(
     vault: &crate::Vault,
     config: &SyncClientConfig,
@@ -62,7 +66,9 @@ pub(crate) async fn search_resident(
         &crate::authority::ForwardedCallerProof,
         crate::claim::CallerLocality,
     )>,
+    due: Option<std::time::Instant>,
 ) -> Result<ResidenceSearch, TransportError> {
+    let due = due.map(tokio::time::Instant::from_std);
     if config.residence_mode != SyncResidenceMode::Opened {
         return Err(refused());
     }
@@ -95,7 +101,7 @@ pub(crate) async fn search_resident(
         params["machine_proof"] = serde_json::to_value(machine).map_err(|_| refused())?;
         params["caller_locality"] = serde_json::to_value(locality).map_err(|_| refused())?;
     }
-    match ResidenceRpc::connect(vault, config, budgets).await? {
+    match before(due, ResidenceRpc::connect(vault, config, budgets)).await? {
         // More hits than one page carries come a page at a time (FIX 8865).
         Some(mut rpc) if limit > budgets.search_limit => {
             super::search::search_pages(
@@ -103,16 +109,17 @@ pub(crate) async fn search_resident(
                 &mut rpc,
                 query,
                 limit,
+                budgets.search_limit,
                 &selector_wire,
                 scope,
                 caller,
+                due,
             )
             .await
         }
         Some(mut rpc) => {
-            let reply: SearchReply =
-                serde_json::from_value(rpc.request("residence.search", params).await?)
-                    .map_err(|_| refused())?;
+            let reply = before(due, rpc.request("residence.search", params)).await?;
+            let reply: SearchReply = serde_json::from_value(reply).map_err(|_| refused())?;
             if reply.source != "home" || !reply.complete || reply.hits.len() > limit {
                 return Err(refused());
             }
@@ -205,5 +212,18 @@ pub(crate) async fn search_resident(
                 complete: false,
             })
         }
+    }
+}
+
+/// `step`, cut off at `due` when one is set: a step that reaches it refuses.
+async fn before<T>(
+    due: Option<tokio::time::Instant>,
+    step: impl std::future::Future<Output = Result<T, TransportError>>,
+) -> Result<T, TransportError> {
+    match due {
+        Some(due) => tokio::time::timeout_at(due, step)
+            .await
+            .map_err(|_| refused())?,
+        None => step.await,
     }
 }

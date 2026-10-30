@@ -20,17 +20,19 @@ pub(crate) enum HomeText {
     /// no proof to forward), was out of reach, refused or ran late: the page
     /// is the device's alone, and not the whole answer.
     LocalOnly,
-    /// The home's answer. `capped`: the ask was cut to the residence
-    /// `search_limit`.
+    /// The home's answer. `capped`: the home's pages stopped short of the
+    /// search's limit (a page ran late, or its list went on past the pages
+    /// the limit asks), and the pages it gave stand (FIX 9257).
     Answered {
         search: ResidenceSearch,
         capped: bool,
     },
 }
 
-/// Asks `vault`'s home `query` for `caller`, before `due`. A device whose
-/// own sync connection dropped still syncs only what it opened, so its page
-/// stays local-only rather than reading whole.
+/// Asks `vault`'s home `query` for `caller`, before `due`: the whole `limit`,
+/// a page of the residence `search_limit` at a time. A device whose own sync
+/// connection dropped still syncs only what it opened, so its page stays
+/// local-only rather than reading whole.
 pub(crate) async fn ask_home_text(
     vault: &Vault,
     caller: &HomeRecallCaller,
@@ -49,27 +51,21 @@ pub(crate) async fn ask_home_text(
         (false, Some(proof)) => Some(proof),
         (false, None) => return HomeText::LocalOnly,
     };
-    let capped = vault
-        .residence_operation_budgets()
-        .ok()
-        .flatten()
-        .is_some_and(|budgets| limit > budgets.search_limit);
-    let asked = async {
-        match forwarded {
-            Some(proof) => home.search_for(query, limit, proof, caller.locality).await,
-            None => home.search(query, limit).await,
+    // Each page runs within its own RPC timeout and `due`, so a search cut
+    // short keeps the home's pages it got.
+    let answer = match forwarded {
+        Some(proof) => {
+            home.search_for(query, limit, proof, caller.locality, due)
+                .await
         }
-    };
-    let answer = match due {
-        Some(due) => tokio::time::timeout_at(due.into(), asked).await.ok(),
-        None => Some(asked.await),
+        None => home.search(query, limit, due).await,
     };
     match answer {
-        Some(Ok(found)) => HomeText::Answered {
+        Ok(found) => HomeText::Answered {
+            capped: found.source == SearchSource::Home && !found.complete,
             search: found,
-            capped,
         },
-        Some(Err(_)) | None => HomeText::LocalOnly,
+        Err(_) => HomeText::LocalOnly,
     }
 }
 
