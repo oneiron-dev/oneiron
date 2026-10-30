@@ -231,13 +231,13 @@ pub use invite::{
     read_calendar_invite_ics,
 };
 pub use outcome::{
-    CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DEFAULT_OUTCOME_GRACE_SECS,
-    DueOutcomeCheckIn, EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue,
-    MachineOutcomeEvidence, MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, OutcomeCheckInWake,
+    CheckInAnswer, CheckInCardModel, CheckInCopy, CheckInResolution, DueOutcomeCheckIn,
+    EventOutcome, EventOutcomeBasis, EventOutcomeClaimValue, MachineOutcomeEvidence,
+    MeetingClassSignals, OUTCOME_CHECK_IN_REASON_TAG, OutcomeCheckInWake,
     PREDICATE_CALENDAR_EVENT_OUTCOME, accept_check_in_recording, build_check_in_lens,
     check_in_is_still_due, check_in_recording_artifact_id, is_meeting_class,
-    outcome_from_machine_evidence, plan_outcome_check_in, project_event_outcome,
-    read_event_outcome, record_event_outcome, resolve_owner_check_in,
+    outcome_from_machine_evidence, outcome_grace_secs, plan_outcome_check_in,
+    project_event_outcome, read_event_outcome, record_event_outcome, resolve_owner_check_in,
 };
 pub use passport::{
     PassportDecision, all_live_inbound_passports_absent, classify_passport, index_passport_uid,

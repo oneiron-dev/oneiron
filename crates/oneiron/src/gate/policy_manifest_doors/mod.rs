@@ -1,6 +1,10 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod calendar_outcome_grace;
+pub use calendar_outcome_grace::{
+    calendar_outcome_grace_as_owner, set_calendar_outcome_grace_as_owner,
+};
 mod claim_aging;
 pub(crate) use claim_aging::{
     CLAIM_AGING_PROFILES_KEY, claim_aging_profiles_for_run, decode_claim_aging_profiles,
