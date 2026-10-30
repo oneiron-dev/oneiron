@@ -547,3 +547,59 @@ impl Vault {
         })
     }
 }
+
+impl Vault {
+    /// Whether a call on `tool` under connector key `key_ref` meets an issuer
+    /// change, not yet accepted, on a binding its row depends on, read in its
+    /// own read transaction (FIX 9303): the hold reason while it holds. A
+    /// credential-use boundary reads it at the last point before the
+    /// credential leaves. A key that no longer resolves meets none here.
+    pub fn connector_issuer_hold(
+        &self,
+        key_ref: &EntityId,
+        tool: &str,
+    ) -> Result<Option<&'static str>> {
+        let txn = self.store.env.read_txn()?;
+        let Some(key) = read_connector_key_in_txn(&self.store, &txn, key_ref)? else {
+            return Ok(None);
+        };
+        let held = connector_issuer_hold_in_txn(&self.store, &txn, key_ref, &key, tool)?;
+        Ok(held.then_some(CONNECTOR_ISSUER_HOLD_REASON))
+    }
+
+    /// Whether any binding of the catalog connector `connector` meets an
+    /// issuer change not yet accepted, read in its own read transaction (FIX
+    /// 9303): the hold reason while one does. A boundary that knows only the
+    /// connector's name (discovery, probes) reads it before the credential
+    /// leaves. A name no catalog key holds meets none.
+    pub fn connector_issuer_hold_for_connector(
+        &self,
+        connector: &str,
+    ) -> Result<Option<&'static str>> {
+        let txn = self.store.env.read_txn()?;
+        let Some((catalog_key, _)) = catalog_key_in_txn(&self.store, &txn, connector)? else {
+            return Ok(None);
+        };
+        let held = BINDINGS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .any(|(_, binding)| {
+                binding.catalog_key == catalog_key
+                    && binding
+                        .transition
+                        .as_ref()
+                        .is_some_and(ConnectorIssuerTransition::halts)
+            });
+        Ok(held.then_some(CONNECTOR_ISSUER_HOLD_REASON))
+    }
+
+    /// One credential slot's binding as it stands, by its ref (FIX 9304):
+    /// the keys and rows an accepted issuer revision re-runs.
+    pub fn connector_credential_binding(
+        &self,
+        binding_ref: &EntityId,
+    ) -> Result<Option<ConnectorCredentialBinding>> {
+        let txn = self.store.env.read_txn()?;
+        BINDINGS.get(&self.store, &txn, binding_ref)
+    }
+}

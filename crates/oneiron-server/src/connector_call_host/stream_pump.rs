@@ -20,8 +20,8 @@ use std::sync::mpsc::RecvTimeoutError;
 
 use zeroize::Zeroizing;
 
-use super::live_exchange::{Next, terminal};
-use super::reply_read::EventStream;
+use super::live_exchange::Next;
+use super::reply_read::{EventStream, terminal};
 use super::*;
 
 /// What a pumped worker's mailbox carries.
