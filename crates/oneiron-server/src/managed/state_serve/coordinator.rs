@@ -459,10 +459,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
     // The backup schedule, the owner's setting over `[backup]` (FIX 5621),
     // started while it is off too: each tick is admitted like a served write
-    // and holds it through its policy read, its backup and its pruning.
+    // and holds it through its policy read, its backup and its pruning. It
+    // and the custody publication run on past the vault's deletion, so its
+    // backups go at their deadline (FIX 11710).
     let tick = crate::owner::schedule::SCHEDULE_TICK;
-    ladder_workers.extend(sync_server.spawn_backup_schedule_admitted(tick, admitted()));
-    ladder_workers.extend(sync_server.spawn_custody_publication_admitted(admitted()));
+    ladder_workers.extend(
+        sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()),
+    );
+    ladder_workers.extend(sync_server.spawn_custody_publication_admitted(state.backup_admission()));
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
