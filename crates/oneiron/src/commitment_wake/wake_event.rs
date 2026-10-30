@@ -35,13 +35,6 @@ pub const COMMITMENT_WAKE_TRIGGER: &str = "commitment_timer_wake";
 /// Prefix of the canonical commitment receipt reference.
 pub const COMMITMENT_WAKE_TRIGGER_REF_PREFIX: &str = "commitment:";
 
-/// Byte bound on every caller-supplied delivery string on this surface.
-pub const MAX_COMMITMENT_WAKE_STRING_BYTES: usize = 1_024;
-
-/// BLAKE3 domain separator for the deterministic proposal claim id.
-pub(super) const COMMITMENT_WAKE_PROPOSAL_CLAIM_ID_DOMAIN: &[u8] =
-    b"oneiron.commitment.wake_proposal.v1\0";
-
 pub(super) const KEY_SCHEMA_VERSION: &str = "schema_version";
 
 const KEY_EVENT: &str = "event";
@@ -378,8 +371,10 @@ fn parse_commitment_trigger_ref(reference: &str) -> Result<EntityId> {
         })
 }
 
+/// A delivery string must say something; its full length is kept. The claim
+/// and outbound layers own the size of what they store and send.
 pub(super) fn validate_wake_string(value: &str, reason: &'static str) -> Result<()> {
-    if value.is_empty() || value.len() > MAX_COMMITMENT_WAKE_STRING_BYTES {
+    if value.is_empty() {
         return Err(Error::InvalidClaimBody(reason));
     }
     Ok(())

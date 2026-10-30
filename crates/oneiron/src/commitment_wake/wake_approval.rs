@@ -19,7 +19,7 @@ use super::wake_event::{
     PROVENANCE_KEY_JOB_ID, PROVENANCE_KEY_RUN, PROVENANCE_KEY_SURFACE, commitment_trigger_ref,
     required_string, required_u64,
 };
-use super::wake_fire::{WakeEligibility, wake_eligibility};
+use super::wake_fire::{WakeEligibility, current_wake_eligibility};
 use super::wake_proposal::CommitmentWakeProposalDraft;
 use crate::error::ClaimError;
 
@@ -220,7 +220,10 @@ fn require_live_commitment(vault: &Vault, instance_id: &EntityId) -> Result<()> 
         .ok_or(Error::InvalidClaimBody(
             "commitment wake proposal names a missing commitment",
         ))?;
-    if !matches!(wake_eligibility(&record), WakeEligibility::Eligible) {
+    if !matches!(
+        current_wake_eligibility(vault, &record)?,
+        WakeEligibility::Eligible
+    ) {
         return Err(Error::InvalidClaimBody(
             "commitment wake proposal names a closed or ineligible commitment",
         ));

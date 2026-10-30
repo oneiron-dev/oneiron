@@ -50,7 +50,7 @@ pub use self::wake_approval::{
 pub use self::wake_event::{
     COMMITMENT_WAKE_PROPOSAL_SCHEMA_VERSION, COMMITMENT_WAKE_RUN_PREFIX,
     COMMITMENT_WAKE_SCHEMA_VERSION, COMMITMENT_WAKE_TRIGGER, COMMITMENT_WAKE_TRIGGER_REF_PREFIX,
-    CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakePhase, MAX_COMMITMENT_WAKE_STRING_BYTES,
+    CommitmentWakeDue, CommitmentWakeEvent, CommitmentWakePhase,
     PREDICATE_COMMITMENT_WAKE_PROPOSAL, decode_commitment_wake_event, encode_commitment_wake_event,
 };
 pub use self::wake_fire::{
