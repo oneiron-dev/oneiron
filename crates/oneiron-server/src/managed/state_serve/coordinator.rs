@@ -168,8 +168,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), Some(rows)).await?;
     // The browser and desktop guests, as plain serve attaches them: each
     // section's own checks decide, and a run with no guest is refused.
-    // Managed mode reads no environment, so the feedback destination carries
-    // no bearer: our inbox takes none.
+    // Managed mode reads no environment: a private endpoint's bearer comes
+    // from its vault secret alone (FIX 5013); our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
@@ -191,7 +191,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
-                bearer: None,
+                bearer: config.feedback.bearer_from_secret(&vault),
             }
         }))
         .with_feedback_triage(config.feedback.triage.clone())
@@ -439,13 +439,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Checked built-in channels, under the same admission (OF-519).
     let builtin_host = crate::builtin_host::spawn(&sync_server, admitted());
     // Failure signals reach our collector under the same admission (OF-380).
-    // Managed mode reads no environment, so the send carries no bearer.
+    // Managed mode reads no environment: the send's bearer is its vault secret (FIX 5013).
     let failure_signals = crate::ai_host::failure_signals::spawn(
         &sync_server,
         crate::ai_host::failure_signals::FailureSignalHost::new(
             &config.failure_signals,
             true,
-            None,
+            config.failure_signals.bearer_from_secret(&vault),
         ),
         admitted(),
     );
