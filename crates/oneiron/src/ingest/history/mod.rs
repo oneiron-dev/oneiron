@@ -30,6 +30,7 @@ mod tree;
 mod tests;
 
 pub use land::HistoryImportReport;
+pub(crate) use ledger::erase_message_in_txn;
 pub use plan::{HistoryDryRun, HistoryLedgerSnapshot};
 pub use review::history_import_review_id;
 pub(crate) use review::imported_evidence_in_txn;

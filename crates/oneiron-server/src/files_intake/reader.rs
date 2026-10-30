@@ -13,9 +13,10 @@
 //!
 //! A PDF's note is the text of its pages, read from its bytes: no frontmatter
 //! and no links out, though a note's link can name it. A PDF with no text
-//! layer (a scan) holds no text, and one that is encrypted or does not parse
-//! reads none: both are held by name, with the bytes the walk read (FIX
-//! 11276).
+//! layer (a scan) reads its page images through the ingest station's OCR; a
+//! scan with no OCR to read it holds no text, and one that is encrypted or
+//! does not parse reads none: both are held by name, with the bytes the walk
+//! read (FIX 11276).
 //!
 //! A file of any size is read (rule 5). Text past the note bound lands in
 //! parts: the file's own note holds the first, and each next part is a note of

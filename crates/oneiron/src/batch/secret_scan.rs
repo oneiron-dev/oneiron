@@ -27,8 +27,8 @@ pub(crate) use self::lift_history::{
 };
 pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
-    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
-    scan_document_in_txn,
+    Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, predict_masked_body,
+    predict_masked_text, scan_content_in_txn, scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
     CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_text_in_txn,

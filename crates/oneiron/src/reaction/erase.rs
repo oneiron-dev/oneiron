@@ -3,6 +3,11 @@
 //! same reason, and erasing a person from a room erases every reaction that
 //! person made there. Selection reads every family claim, whatever its
 //! approval or lifecycle, so a retracted put is erased with the live ones.
+//!
+//! A person's selection in a room reads the room's records in keyset pages,
+//! however many there are: the count only feeds the advisory
+//! [`EngineScan::EdgePeerRows`] check for the room, which never refuses the
+//! erasure.
 use super::chain::{claim_ids_about, stored_claim_in};
 use super::value::{
     PREDICATE_CONVERSATION_REACTION, PREDICATE_CONVERSATION_REACTION_ECHO, ReactionValue,
@@ -11,10 +16,15 @@ use crate::deletion::DeleteReason;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::ports::{EdgeDirection, EdgeStoreRead};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Vault};
 
-/// Room records one erasure may scan before it refuses loudly.
-const MAX_ROOM_RECORDS: usize = 1_000_000;
+/// The edges by which a record sits in its room: a MESSAGE's own room, and a
+/// DAG TURN's place under it.
+pub(crate) const ROOM_RECORD_KINDS: [EdgeKind; 2] = [EdgeKind::BelongsTo, EdgeKind::ChildOf];
+
+/// Room records one selection page reads.
+pub(crate) const ROOM_RECORD_PAGE: usize = 256;
 
 fn family_claims_about(
     vault: &Vault,
@@ -64,37 +74,72 @@ pub(crate) fn record_reaction_claims_in(
     with_echoes(vault, txn, reactions)
 }
 
-/// Every reaction `person` made on a record of `room`, echo bindings first.
+/// Every reaction `person` made on a record of `room`, echo bindings first,
+/// read page by page in `txn`.
 pub(crate) fn person_reaction_claims_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
     person: EntityId,
 ) -> Result<Vec<EntityId>> {
-    let mut reactions = Vec::new();
-    let mut scanned = 0usize;
-    for kind in [EdgeKind::BelongsTo, EdgeKind::ChildOf] {
-        for edge in vault
-            .store
-            .port_edges(txn, &room, EdgeDirection::In, Some(kind), None)?
-        {
-            scanned += 1;
-            if scanned > MAX_ROOM_RECORDS {
-                return Err(Error::IndexOverflow("room reaction erasure"));
+    let mut claims = Vec::new();
+    for kind in ROOM_RECORD_KINDS {
+        let scope = [
+            &[EdgeDirection::In as u8][..],
+            room.as_bytes(),
+            &[kind as u8][..],
+        ]
+        .concat();
+        let mut count = ScanCount::start(&vault.store, txn, EngineScan::EdgePeerRows, &scope)?;
+        let mut after = None;
+        loop {
+            let (records, page) =
+                person_reaction_page_in(vault, txn, room, person, kind, after, ROOM_RECORD_PAGE)?;
+            count.rows(records.len());
+            claims.extend(page);
+            if records.len() < ROOM_RECORD_PAGE {
+                break;
             }
-            let record = edge?.target;
-            for (id, body) in
-                family_claims_about(vault, txn, record, PREDICATE_CONVERSATION_REACTION)?
+            after = records.last().copied();
+        }
+        count.finish(vault);
+    }
+    Ok(claims)
+}
+
+/// One keyset page of `room`'s records by `kind` (one of
+/// [`ROOM_RECORD_KINDS`]), strictly after the record `after`: the records
+/// read, at most `page`, and every reaction `person` made on them, echo
+/// bindings first. A page shorter than `page` is the kind's last. Each page
+/// stands alone, so an erasure can read each in a transaction of its own and
+/// delete its claims before it reads the next.
+pub(crate) fn person_reaction_page_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    person: EntityId,
+    kind: EdgeKind,
+    after: Option<EntityId>,
+    page: usize,
+) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+    let records = vault
+        .store
+        .port_edges(txn, &room, EdgeDirection::In, Some(kind), after)?
+        .take(page)
+        .map(|edge| edge.map(|info| info.target))
+        .collect::<Result<Vec<_>>>()?;
+    let mut reactions = Vec::new();
+    for &record in &records {
+        for (id, body) in family_claims_about(vault, txn, record, PREDICATE_CONVERSATION_REACTION)?
+        {
+            if ReactionValue::from_value(&body.value).is_ok_and(|value| value.by == person)
+                || crate::memory::claim_author(&body) == Some(person)
             {
-                if ReactionValue::from_value(&body.value).is_ok_and(|value| value.by == person)
-                    || crate::memory::claim_author(&body) == Some(person)
-                {
-                    reactions.push(id);
-                }
+                reactions.push(id);
             }
         }
     }
-    with_echoes(vault, txn, reactions)
+    Ok((records, with_echoes(vault, txn, reactions)?))
 }
 
 /// Deletes each claim with `reason`; one already gone is skipped.
