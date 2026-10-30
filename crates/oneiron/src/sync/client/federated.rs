@@ -251,7 +251,11 @@ impl SyncClient {
         // 7998). The raw payload is what is retained, so the rows it brings
         // that the admitted parts omit are named too (FIX 11184).
         let mut carried = crate::sync::ingest::payload_rows(&key, update);
-        carried.extend(admitted.parts().flat_map(|part| part.delivered().keys().copied()));
+        carried.extend(
+            admitted
+                .parts()
+                .flat_map(|part| part.delivered().keys().copied()),
+        );
         let carried = carried.into_iter().collect::<Vec<_>>();
         let (decision, work) = admit_work(
             &self.vault,

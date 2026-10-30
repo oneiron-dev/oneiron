@@ -63,7 +63,10 @@ impl Vault {
                 Ok(crate::policy_model::owners_in_txn(self, txn)?.contains(&actor))
             }
             OriginPublishAuthority::Grant { grant } => {
-                let (Some(code_repo), Some(anchor)) = (view.code_repo, anchor) else {
+                // A lossy path is one no Grant bound judges (FIX 10003).
+                let (Some(code_repo), Some(anchor), false) =
+                    (view.code_repo, anchor, view.review.lossy_paths)
+                else {
                     return Ok(false);
                 };
                 let target = RepoTarget {
