@@ -118,6 +118,7 @@ pub fn recall_at_door_seeded(
     embed: impl FnOnce(&str) -> MemoryResult<RecallQueryVectors>,
     door: &RecallDoor<'_>,
 ) -> MemoryResult<crate::memory::MemoryPack> {
+    let _l15 = crate::stage_timing::stage("recall.door");
     let (limit, clamped) =
         crate::memory::caps::clamp_search_limit(input.limit.unwrap_or(VAULT_RECALL_LIMIT_DEFAULT));
     if !clamped {
