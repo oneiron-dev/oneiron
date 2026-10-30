@@ -15,6 +15,12 @@
 //! each stage beside the client's round trip. A server without them reports
 //! the round trip only.
 //!
+//! After a run the vault directory holds `seeded.json` (the issuer secret,
+//! owner, agent credential and corpus end), so `--seeded <that dir>` times a
+//! copy of the same vault with another server binary: identical ids, so the
+//! id fingerprints compare across binaries. The secret and credential are
+//! the bench's own throwaway values for a loopback vault.
+//!
 //! The corpus stays outside the repository: pass its path.
 
 use std::collections::BTreeMap;
@@ -27,12 +33,12 @@ use serde_json::{Value, json};
 
 use super::client::Agent;
 use super::phases::loadavg;
-use super::server::{Embedding, Running, Vault, cpu_seconds};
+use super::server::{Credential, Embedding, Running, Vault, cpu_seconds};
 
 const USAGE: &str = "usage: oneiron-bench load corpus-recall --server <oneiron-server> --corpus <turns.jsonl>\n\
   --work <dir> --out <file.json> [--label TEXT] [--query TEXT]... [--repeat 10] [--warmup 2]\n\
   [--limit 20] [--effort light] [--deadline-ms N] [--as-of corpus|none] [--claims notes|none]\n\
-  [--settle-max-seconds 300] [--profile-repeat 0] [--server-env KEY=VALUE]...";
+  [--settle-max-seconds 300] [--profile-repeat 0] [--seeded <dir>] [--server-env KEY=VALUE]...";
 
 /// Marker the per-stage timers print before their JSON.
 const STAGE_MARK: &str = "L15STAGES ";
@@ -77,6 +83,7 @@ struct Plan {
     claims: bool,
     settle_max: Duration,
     profile_repeat: usize,
+    seeded: Option<PathBuf>,
     server_env: Vec<(String, String)>,
 }
 
@@ -97,6 +104,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         claims: true,
         settle_max: Duration::from_secs(300),
         profile_repeat: 0,
+        seeded: None,
         server_env: Vec::new(),
     };
     let mut it = args.iter();
@@ -136,6 +144,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
                 plan.settle_max = Duration::from_secs(num(value)? as u64);
             }
             "--profile-repeat" => plan.profile_repeat = num(value)?,
+            "--seeded" => plan.seeded = Some(PathBuf::from(value)),
             "--server-env" => {
                 let (k, v) = value.split_once('=').ok_or("--server-env is KEY=VALUE")?;
                 plan.server_env.push((k.to_owned(), v.to_owned()));
@@ -440,7 +449,8 @@ fn time_query(
                 *timed.content.entry(content).or_default() += 1;
                 timed.items = ids.len();
                 timed.ids = ids;
-                timed.partial += usize::from(pack["retrieval_meta"]["partial"].as_bool() == Some(true));
+                timed.partial +=
+                    usize::from(pack["retrieval_meta"]["partial"].as_bool() == Some(true));
                 timed.ms.push(ms);
                 if let Some(stages) = stages {
                     timed.stages.push(stages);
@@ -491,8 +501,17 @@ fn execute(plan: &Plan) -> Result<(), String> {
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("clear {}: {e}", dir.display()))?;
     }
-    let vault = Vault::init(&plan.server, &dir, &Embedding::None, &plan.server_env)?;
-    let credential = vault.mint_agent(&plan.server, "corpus-recall-agent")?;
+    let (vault, credential, reused) = match &plan.seeded {
+        Some(from) => {
+            let (vault, credential, last_at) = reuse_seeded(from, &dir)?;
+            (vault, credential, Some(last_at))
+        }
+        None => {
+            let vault = Vault::init(&plan.server, &dir, &Embedding::None, &plan.server_env)?;
+            let credential = vault.mint_agent(&plan.server, "corpus-recall-agent")?;
+            (vault, credential, None)
+        }
+    };
     let server = Running::start(&plan.server, &vault, &plan.server_env, "serve.log", "warn")?;
     say(&format!("server ready in {:.0} ms", server.ready_ms));
     let http = Agent::http()?;
@@ -501,7 +520,18 @@ fn execute(plan: &Plan) -> Result<(), String> {
 
     let cpu_before_seed = cpu_seconds(server.pid);
     let seed_started = Instant::now();
-    let seeded = seed(plan, &agent, &corpus);
+    let seeded = match reused {
+        Some(last_at) => Seeded {
+            runs: 0,
+            messages: 0,
+            claims: 0,
+            errors: BTreeMap::new(),
+            witness_ms: Vec::new(),
+            claim_ms: Vec::new(),
+            last_at,
+        },
+        None => seed(plan, &agent, &corpus),
+    };
     let seed_seconds = seed_started.elapsed().as_secs_f64();
     let seed_cpu = cpu_before_seed
         .zip(cpu_seconds(server.pid))
@@ -576,6 +606,7 @@ fn execute(plan: &Plan) -> Result<(), String> {
         "label": plan.label,
         "started_unix": unix_now(),
         "server_bin": plan.server.display().to_string(),
+        "seeded_from": plan.seeded.as_ref().map(|p| p.display().to_string()),
         "corpus": plan.corpus.display().to_string(),
         "load": loadavg(),
         "plan": {
@@ -612,6 +643,51 @@ fn execute(plan: &Plan) -> Result<(), String> {
         report["fingerprint_all"].as_str().unwrap_or("")
     );
     let exit = server.stop();
+    let record = json!({
+        "secret": vault.secret, "owner": vault.owner, "token": credential.token,
+        "binding_key": credential.binding_key, "last_at": seeded.last_at,
+    });
+    std::fs::write(dir.join("seeded.json"), record.to_string())
+        .map_err(|e| format!("seeded.json: {e}"))?;
     say(&format!("serve exit: {exit}; wrote {}", plan.out.display()));
     Ok(())
+}
+
+/// Copies a vault directory an earlier run left (with its `seeded.json`) to
+/// `dir`, and returns it with its agent credential and corpus end.
+fn reuse_seeded(
+    from: &std::path::Path,
+    dir: &std::path::Path,
+) -> Result<(Vault, Credential, u64), String> {
+    let status = std::process::Command::new("cp")
+        .arg("-a")
+        .arg(from)
+        .arg(dir)
+        .status()
+        .map_err(|e| format!("cp -a {}: {e}", from.display()))?;
+    if !status.success() {
+        return Err(format!("cp -a {} {} failed", from.display(), dir.display()));
+    }
+    let text = std::fs::read_to_string(dir.join("seeded.json"))
+        .map_err(|e| format!("{}/seeded.json: {e}", from.display()))?;
+    let record: Value = serde_json::from_str(&text).map_err(|e| format!("seeded.json: {e}"))?;
+    let field = |name: &str| {
+        record[name]
+            .as_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("seeded.json has no {name}"))
+    };
+    let vault = Vault {
+        dir: dir.to_owned(),
+        path: dir.join("vault"),
+        config: dir.join("vault.toml"),
+        secret: field("secret")?,
+        owner: field("owner")?,
+    };
+    let credential = Credential {
+        token: field("token")?,
+        binding_key: field("binding_key")?,
+    };
+    let last_at = record["last_at"].as_u64().ok_or("seeded.json has no last_at")?;
+    Ok((vault, credential, last_at))
 }
