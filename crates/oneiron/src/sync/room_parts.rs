@@ -85,6 +85,24 @@ pub(super) fn waits(map: &LoroMap, key: &str) -> bool {
         .is_some_and(|parts| parts.keys().any(|part| !map_contains_binary(map, &part)))
 }
 
+/// Each manifest `map` holds whose parts have not all landed, with its key
+/// and parts. Whole rows and joined manifests are left out: the scrub drops
+/// a waiting manifest with its present parts when its room is gone (FIX
+/// 12127).
+pub(super) fn waiting_manifests(map: &LoroMap) -> Vec<(String, Parts)> {
+    let mut waiting = Vec::new();
+    map.for_each(|key, value| {
+        if !is_part_key(key)
+            && let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value
+            && let Some(parts) = manifest(&bytes)
+            && parts.keys().any(|part| !map_contains_binary(map, &part))
+        {
+            waiting.push((key.to_owned(), parts));
+        }
+    });
+    waiting
+}
+
 /// Each row `map` holds under a key `keep` takes, joined, with its key. A
 /// part, and a row that waits for one, are left out.
 pub(super) fn rows(map: &LoroMap, keep: impl Fn(&str) -> bool) -> Vec<(String, Vec<u8>)> {
