@@ -130,6 +130,7 @@ pub(super) fn work_view(receipt: &ViewReceipt, stamp: &RepoRunStamp) -> RepoWork
             .map(|(path, hash)| super::RepoWorkFile {
                 path: path.clone(),
                 content_hash_blake3: bytes_to_hex_lower(hash),
+                projection: receipt.projections.get(path).cloned(),
             })
             .collect(),
     }
@@ -288,8 +289,10 @@ impl Memory<'_> {
             .collect();
         // A run's work holds the masked copy of each admitted file a repo
         // mark covers (FIX 7608); its stamp keeps the canonical green.
-        let selected = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?
-            .into_contents();
+        let copy = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?;
+        // Each masked file's descriptor rides the work's receipt (FIX 8965).
+        let projections = copy.projections();
+        let selected = copy.into_contents();
         // The final writer admits every selected path again (FIX 8799).
         let selected_target = repo_target(input.repo, &input.git_ref, selected.keys());
         let entries = selected
@@ -313,6 +316,7 @@ impl Memory<'_> {
             binding.actor.entity_ref(),
             snapshot.fork_hash,
             &selected,
+            projections,
             |txn, view| {
                 Ok(
                     match self.vault.admit_repo_run_in_txn(
