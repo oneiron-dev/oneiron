@@ -5873,6 +5873,7 @@ class ConnectorPackView(TypedDict):
     status: str
     consent_required: bool
     stamped: bool
+    staged: bool
     manifest: SlateManifest
     rows: list[SlateRow]
     qualification: NotRequired[ConnectorQualificationReceipt | None]

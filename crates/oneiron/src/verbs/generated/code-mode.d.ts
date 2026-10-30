@@ -1167,7 +1167,7 @@ declare namespace Sdk {
   type SlateHolderNarrow = { disposition: SlateDisposition; actor: string; at: number };
   type SlateRow = { draft: SlateDraftRow; owner_override?: SlateOwnerOverride | null; holder_narrow?: SlateHolderNarrow | null };
   type ConnectorPackAdvisory = { contentHash: string; provider: string; scannedAt: number; verdict: string; riskLevel: string; completeness: string; governance: string; scannedAtDeclared?: number | null };
-  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
+  type ConnectorPackView = { basis: ConnectorPackBasis; status: string; consent_required: boolean; stamped: boolean; staged: boolean; manifest: SlateManifest; rows: SlateRow[]; qualification?: ConnectorQualificationReceipt | null; pack?: PackInstallReceipt | null; advisories: ConnectorPackAdvisory[] };
   type ConnectorPackGetRequest = { connector: string };
   type ProbeRequest = { id: string; name: string; arguments: unknown };
   type QualificationCase = { call: ProbeRequest; in_scope: boolean; allowed_predicates: string[] };
