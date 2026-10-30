@@ -144,7 +144,12 @@ pub(super) fn evidence_issue(
     }
     let raw = {
         let txn = vault.store.env.read_txn()?;
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &handoff.evidence)?
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &handoff.evidence)?;
+        match raw {
+            Some(raw) => Some(vault.materialized_row_in_txn(&txn, &handoff.evidence, raw)?),
+            None => None,
+        }
     }
     .ok_or(Error::CorruptedIndex("feedback triage evidence missing"))?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
