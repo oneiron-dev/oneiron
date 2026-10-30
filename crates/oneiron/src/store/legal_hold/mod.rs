@@ -175,7 +175,7 @@ impl LegalHoldRefusals {
         queue.push(note);
     }
 
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.0
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
