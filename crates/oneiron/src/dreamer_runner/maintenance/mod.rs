@@ -18,6 +18,7 @@ pub mod coach_learning;
 mod coach_repair;
 mod coach_research;
 mod coach_resolution;
+pub mod site_skills;
 pub use coach_research::ResearchGoalOracle;
 pub mod code_fix;
 pub mod compaction_check;
