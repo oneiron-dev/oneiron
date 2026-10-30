@@ -10,6 +10,12 @@
 //!
 //! A wake asks a live deck's slides again as the deck renders at its head
 //! (FIX 11981); every other unit's ask reads the live body itself.
+//!
+//! An answer read on the live body is not withdrawn by the export of the edit
+//! it read. Past the newest export since its base, the version half compares
+//! the unit as the export holds it, the live body at the frontier the
+//! export's record names, against the body at the answer's pin, by the same
+//! rules; the versions after that export compare as before (FIX 12017).
 
 use super::{UnitWithdrawal, WithdrawReason, WithdrawnUnit};
 use crate::Vault;
@@ -17,7 +23,8 @@ use crate::edit_roundtrip::pptx::PptxCommentTarget;
 use crate::edit_roundtrip::slides_review::{SlideNow, deck_slides_now};
 use crate::edit_roundtrip::{EditProposal, SheetAnswerBundle, SheetCellAnswer};
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::llm::decision::EvidenceVersion;
 use crate::office_body::{LiveChange, LivePin, LiveSheet};
 use oneiron_docedit::retained_opc::Limits;
 
@@ -48,29 +55,47 @@ impl LiveSheetSplit {
         read_cols: &[u32],
         header_row: Option<u32>,
     ) -> Option<(WithdrawReason, Option<LivePin>)> {
-        if let Some(sheet) = &self.sheet {
-            let row = answer.cell.row;
-            let reason = match sheet.whole() {
-                Some(change) => Some(withdraw_reason(change)),
-                None if sheet.differs(answer.cell.col, row) => {
-                    Some(WithdrawReason::AnswerCellChanged)
-                }
-                None if read_cols.iter().any(|col| {
-                    sheet.differs(*col, row)
-                        || header_row.is_some_and(|header| sheet.differs(*col, header))
-                }) =>
-                {
-                    Some(WithdrawReason::UnitChanged)
-                }
-                None => None,
-            };
-            if let Some(reason) = reason {
-                return Some((reason, self.workbook.clone()));
-            }
+        if let Some(reason) = self
+            .sheet
+            .as_ref()
+            .and_then(|sheet| sheet_row_reason(sheet, answer, read_cols, header_row))
+        {
+            return Some((reason, self.workbook.clone()));
         }
         let file = self.files.get(index)?.as_ref()?;
         Some((WithdrawReason::UnitChanged, Some(file.clone())))
     }
+}
+
+/// Why a sheet row's answer is withdrawn on `sheet`: the sheet gone or
+/// reshaped, its answer cell written, its read cells or the header changed.
+pub(super) fn sheet_row_reason(
+    sheet: &LiveSheet,
+    answer: &SheetCellAnswer,
+    read_cols: &[u32],
+    header_row: Option<u32>,
+) -> Option<WithdrawReason> {
+    let row = answer.cell.row;
+    match sheet.whole() {
+        Some(change) => Some(withdraw_reason(change)),
+        None if sheet.differs(answer.cell.col, row) => Some(WithdrawReason::AnswerCellChanged),
+        None if read_cols.iter().any(|col| {
+            sheet.differs(*col, row) || header_row.is_some_and(|header| sheet.differs(*col, header))
+        }) =>
+        {
+            Some(WithdrawReason::UnitChanged)
+        }
+        None => None,
+    }
+}
+
+/// The newest export of an artifact since a held answer's base, when its
+/// answers were read on the live body (FIX 12017).
+pub(super) struct ExportSpan {
+    /// The frontier the export's record names: the body its version holds.
+    pub(super) frontier: Vec<u8>,
+    /// The export version's bytes, when versions landed after it.
+    pub(super) bytes: Option<Vec<u8>>,
 }
 
 /// The withdraw reason a live unit's change gives.
@@ -172,6 +197,76 @@ pub(super) fn live_field(pin: &LivePin) -> serde_json::Value {
 }
 
 impl Vault {
+    /// The newest version of `artifact` after `base`, up to `head`, that an
+    /// export of its live body landed, with the frontier its record names:
+    /// the body that version holds (FIX 12017).
+    pub(super) fn exported_since(
+        &self,
+        artifact: &EntityId,
+        base: u64,
+        head: u64,
+    ) -> Result<Option<(u64, Vec<u8>)>> {
+        for version in (base.saturating_add(1)..=head).rev() {
+            if let Some(record) = self.office_body_export(artifact, version)? {
+                return Ok(Some((version, record.frontier)));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The newest export of `artifact` after `base`, up to `head`, for
+    /// answers read on the live body at `judged_live`; none for others.
+    pub(super) fn export_span(
+        &self,
+        artifact: &EntityId,
+        judged_live: Option<&LivePin>,
+        base: u64,
+        head: u64,
+    ) -> Result<Option<ExportSpan>> {
+        if judged_live.is_none() {
+            return Ok(None);
+        }
+        let Some((version, frontier)) = self.exported_since(artifact, base, head)? else {
+            return Ok(None);
+        };
+        let bytes = if version == head {
+            None
+        } else {
+            Some(
+                self.read_blob_artifact_version(artifact, version)?
+                    .ok_or(Error::EntityNotFound)?,
+            )
+        };
+        Ok(Some(ExportSpan { frontier, bytes }))
+    }
+
+    /// Whether a folder answer's file, which moved off the version `source`
+    /// it read, changed for the answer. A file read on its live body changed
+    /// only if the newest export since holds it otherwise than the body at
+    /// the answer's pin, or a later version moved it (FIX 12017).
+    pub(super) fn folder_file_changed(
+        &self,
+        answer: &SheetCellAnswer,
+        source: &EvidenceVersion,
+        (head, head_hash): (u64, [u8; 32]),
+    ) -> Result<bool> {
+        let (Some(pin), Some(read)) = (answer.judged_live.as_ref(), answer.judged_version) else {
+            return Ok(true);
+        };
+        let Some((version, frontier)) = self.exported_since(&source.id, read, head)? else {
+            return Ok(true);
+        };
+        if self.live_body_changed_until(&source.id, Some(pin), Some(frontier.as_slice()))? {
+            return Ok(true);
+        }
+        if version == head {
+            return Ok(false);
+        }
+        Ok(self
+            .read_blob_artifact_version(&source.id, version)?
+            .is_none_or(|bytes| *blake3::hash(&bytes).as_bytes() != head_hash))
+    }
+
     /// The live half of splitting `bundle`, held on `artifact`.
     pub(super) fn live_sheet_split(
         &self,
