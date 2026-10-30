@@ -203,3 +203,41 @@ pub(crate) async fn vault_federation_connect_rejoin(
     )
     .await
 }
+
+pub(crate) async fn vault_federation_connect_world_privacy_export(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::policy_model::ForeignWorldPrivacyExportRequest,
+) -> Listed<oneiron::policy_model::ForeignWorldPrivacyDelivery> {
+    const VERB: &str = "vault.federation.connect.world_privacy.export";
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            federation_connect::world_privacy_export(server, owner, input)
+                .map_err(|error| refusal(VERB, error))
+        },
+        |_| Vec::new(),
+    )
+    .await
+}
+
+pub(crate) async fn vault_federation_connect_world_privacy_receive(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: oneiron::policy_model::ForeignWorldPrivacyDelivery,
+) -> Listed<oneiron::policy_model::WorldPrivacyRequest> {
+    const VERB: &str = "vault.federation.connect.world_privacy.receive";
+    as_owner_naming(
+        server,
+        auth,
+        VERB,
+        move |server, owner| {
+            federation_connect::world_privacy_receive(server, owner, input)
+                .map_err(|error| refusal(VERB, error))
+        },
+        |request| request.world_id().into_iter().collect(),
+    )
+    .await
+}

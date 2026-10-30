@@ -1167,6 +1167,16 @@ impl OneironClient {
                 "vault.federation.connect.rejoin" => remote_agent_verb_output::<
                     oneiron::task_verb::sdk::ConnectRejoined,
                 >(client, verb, &input),
+                "vault.federation.connect.world_privacy.export" => {
+                    remote_agent_verb_output::<oneiron::policy_model::ForeignWorldPrivacyDelivery>(
+                        client, verb, &input,
+                    )
+                }
+                "vault.federation.connect.world_privacy.receive" => {
+                    remote_agent_verb_output::<oneiron::policy_model::WorldPrivacyRequest>(
+                        client, verb, &input,
+                    )
+                }
                 "vault.trusted_contacts.name" => remote_agent_verb_output::<
                     oneiron::counterparty_contact::TrustedContact,
                 >(client, verb, &input),
@@ -8381,6 +8391,30 @@ impl OneironClient {
             )
         })?;
         self.typed_agent_verb("vault.federation.connect.rejoin", value)
+    }
+    pub fn vault_federation_connect_world_privacy_export(
+        &self,
+        input: &oneiron::policy_model::ForeignWorldPrivacyExportRequest,
+    ) -> Result<oneiron::policy_model::ForeignWorldPrivacyDelivery, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.connect.world_privacy.export", value)
+    }
+    pub fn vault_federation_connect_world_privacy_receive(
+        &self,
+        input: &oneiron::policy_model::ForeignWorldPrivacyDelivery,
+    ) -> Result<oneiron::policy_model::WorldPrivacyRequest, MemoryError> {
+        let value = serde_json::to_value(input).map_err(|_| {
+            crate::error::bad_request(
+                "SDK input encoding failed",
+                &["Send the documented typed SDK input."],
+            )
+        })?;
+        self.typed_agent_verb("vault.federation.connect.world_privacy.receive", value)
     }
     pub fn vault_trusted_contacts_name(
         &self,
