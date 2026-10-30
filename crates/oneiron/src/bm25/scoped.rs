@@ -140,7 +140,9 @@ where
     F: FnMut(&EntityId) -> Result<bool>,
 {
     let mut ranked =
-        scoring::score_query_terms(store, rtxn, config, terms, options.scope.recency, |_| Ok(true))?;
+        scoring::score_query_terms(store, rtxn, config, terms, options.scope.recency, |_| {
+            Ok(true)
+        })?;
     scoring::retain_best(&mut ranked, usize::MAX);
     let mut kept = Vec::with_capacity(limit.min(ranked.len()));
     for (id, score) in ranked {

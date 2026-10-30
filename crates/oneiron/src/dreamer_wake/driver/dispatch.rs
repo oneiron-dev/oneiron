@@ -203,9 +203,8 @@ impl DreamerWakeDriver<'_> {
                 }
             });
             let caught = poll_fn(|task_cx| {
-                match std::panic::catch_unwind(AssertUnwindSafe(|| {
-                    execute.as_mut().poll(task_cx)
-                })) {
+                match std::panic::catch_unwind(AssertUnwindSafe(|| execute.as_mut().poll(task_cx)))
+                {
                     Ok(poll) => poll.map(Ok),
                     Err(panic) => Poll::Ready(Err(panic)),
                 }

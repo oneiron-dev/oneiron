@@ -58,15 +58,13 @@ impl ReadScope {
     /// registered type.
     #[must_use]
     pub fn entity_kinds(&self) -> Option<Vec<String>> {
-        self.entity_types
-            .as_ref()
-            .map(|types| {
-                types
-                    .iter()
-                    .copied()
-                    .map(crate::serialize::type_kinds::kind)
-                    .collect()
-            })
+        self.entity_types.as_ref().map(|types| {
+            types
+                .iter()
+                .copied()
+                .map(crate::serialize::type_kinds::kind)
+                .collect()
+        })
     }
 
     /// Reuse the already-applied scalar/type intersection for a later read.

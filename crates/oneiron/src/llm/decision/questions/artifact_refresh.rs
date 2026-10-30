@@ -16,8 +16,8 @@
 use std::collections::BTreeSet;
 use std::time::{Duration, Instant};
 
-mod history;
 mod ask_selection;
+mod history;
 mod live;
 mod manual;
 mod unit_receipts;
@@ -364,7 +364,8 @@ impl Asking<'_> {
                 return Ok(None);
             }
             if !scheduled {
-                only = self.changed_units(artifact, &selection, &baseline, &observed, &stamp.live)?;
+                only =
+                    self.changed_units(artifact, &selection, &baseline, &observed, &stamp.live)?;
                 // An edit to a live body never exported moves no version (FIX 2115).
                 if let Some(only) = only.as_mut()
                     && let Some(live) =
@@ -548,12 +549,14 @@ impl Asking<'_> {
                     })
                 };
                 let live_moved = |row: u32| {
-                    exported_sheet.as_ref().is_some_and(|sheet| {
-                        cols.iter().any(|col| sheet.differs(*col, row))
-                    })
+                    exported_sheet
+                        .as_ref()
+                        .is_some_and(|sheet| cols.iter().any(|col| sheet.differs(*col, row)))
                 };
                 let header_moved = header_row.is_some_and(|row| moved(row) || live_moved(row))
-                    || exported_sheet.as_ref().is_some_and(|sheet| sheet.whole().is_some());
+                    || exported_sheet
+                        .as_ref()
+                        .is_some_and(|sheet| sheet.whole().is_some());
                 Some(Changed::Rows(
                     (rows.start.row..=rows.end.row)
                         .filter(|row| header_moved || moved(*row) || live_moved(*row))

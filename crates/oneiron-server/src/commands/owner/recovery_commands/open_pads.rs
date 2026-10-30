@@ -62,7 +62,10 @@ pub(super) fn open_pads(
             Some(key) => key,
             // With no keystore this device unlock refuses, naming the platform
             // backend (FIX 12225): this host holds no device keys.
-            None => opened(CheckpointKey::unlock_on_this_device(backup, keystore.as_ref()))?,
+            None => opened(CheckpointKey::unlock_on_this_device(
+                backup,
+                keystore.as_ref(),
+            ))?,
         };
     let mut pad_machine_note = None;
     let machine: Option<(oneiron::EntityId, HybridSecretKey)> = match &args.pad_machine {

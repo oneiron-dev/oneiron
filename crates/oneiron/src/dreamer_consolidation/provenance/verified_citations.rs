@@ -2,11 +2,11 @@
 
 use rmpv::Value;
 
-use super::LOCATOR_MESSAGES_KEY;
-use super::VerifiedLocator;
 use super::super::support::invalid_consolidation;
 use super::super::turn_text::MessageSpan;
 use super::super::watermark::entity_ref_from_value;
+use super::LOCATOR_MESSAGES_KEY;
+use super::VerifiedLocator;
 use crate::error::Result;
 
 fn decode_offset(value: &Value) -> Result<usize> {

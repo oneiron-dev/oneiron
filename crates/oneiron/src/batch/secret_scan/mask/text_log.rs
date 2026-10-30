@@ -73,7 +73,8 @@ impl TextLog {
     /// Logs `text` with its `spans`, when this log records.
     pub(super) fn record(&mut self, text: &[u8], spans: &TextSpans) {
         if self.records {
-            self.entries.push((*blake3::hash(text).as_bytes(), spans.clone()));
+            self.entries
+                .push((*blake3::hash(text).as_bytes(), spans.clone()));
         }
     }
 }
