@@ -554,8 +554,12 @@ impl Vault {
         }
         // FIX 11844: a custody secret only the fold knows here is named for
         // its holder too, as a held row's unopened value is above.
+        // The manifest names each by id, so the import shows it owed (FIX
+        // 12066).
+        let mut fold_only_secrets = Vec::new();
         if include_secrets && only.is_none() && cut == ExportCut::Archive {
             let fold_only = self.fold_only_holder_needs_in_txn(&rtxn);
+            fold_only_secrets = fold_only.iter().map(|need| need.secret).collect();
             holder_requests.extend(fold_only.into_iter().map(HolderExportRequest::unrecorded));
         }
         // Each carried thread's binding, read in this snapshot, so its
@@ -577,6 +581,7 @@ impl Vault {
                     secrets_included: include_secrets
                         && only.is_none()
                         && cut == ExportCut::Archive,
+                    fold_only_secrets,
                     embedding_setup,
                     sources: sources.into_iter().collect(),
                 },
