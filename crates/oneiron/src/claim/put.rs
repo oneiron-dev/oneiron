@@ -105,6 +105,11 @@ impl Vault {
         {
             return Err(Error::EntityNotFound);
         }
+        // A projector-only `comm.*` head lands as the projector's source
+        // event in this same `wtxn`; the projector mints the head.
+        if crate::comm::route_projector_only_comm_put_in_txn(self, wtxn, id, body)? {
+            return Ok(());
+        }
         self.put_claim_in_txn_with_reserved(wtxn, id, body, occurred, learned_at, false)
     }
 

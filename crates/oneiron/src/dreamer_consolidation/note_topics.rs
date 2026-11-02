@@ -24,6 +24,10 @@
 //! A NOTE whose review moves it to another topic, or to none, re-declares
 //! the group it left in the same write (FIX 7459), so that group's summary
 //! is composed again without it.
+//!
+//! The review's write also moves the NOTE's row in the topic index (FIX
+//! 7457), so a group is one keyed read, never a walk of every review record.
+//! Each indexed NOTE is checked against its record, which stays the truth.
 
 use std::collections::BTreeSet;
 
@@ -32,9 +36,14 @@ use crate::dreamer_runner::{DREAMER_NOTE_REVIEW_ATTEMPT_KIND, DreamerAdmittedAtt
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault, WriteActor};
 
 const TOPIC_DOMAIN: &[u8] = b"oneiron:note-topic-key:v1";
+/// One row per reviewed NOTE, keyed by the membership its review record
+/// keeps, then the NOTE (FIX 7457).
+const TOPIC_INDEX: SideTable<([u8; 32], (EntityId, EntityId), EntityId), (), Named> =
+    SideTable::new(&side_table::DREAMER_NOTE_REVIEW_TOPIC);
 
 /// One reviewed NOTE's topic membership, as its review record keeps it: a
 /// digest of the `topic_key` its classification named (the record keeps no
@@ -59,6 +68,53 @@ impl NoteTopicMembership {
             project,
         }
     }
+
+    /// `note`'s row in the topic index.
+    fn index_key(&self, note: EntityId) -> ([u8; 32], (EntityId, EntityId), EntityId) {
+        (self.topic, (self.facet, self.project), note)
+    }
+
+    /// The index key bytes every NOTE of this group shares.
+    fn index_prefix(&self) -> Vec<u8> {
+        let mut prefix = self.topic.to_vec();
+        prefix.extend_from_slice(self.facet.as_bytes());
+        prefix.extend_from_slice(self.project.as_bytes());
+        prefix
+    }
+}
+
+/// Moves `note`'s topic index row in `txn`, the write that keeps its review
+/// record (FIX 7457): off the topic it `left`, onto the topic it `kept`.
+pub(super) fn index_note_topic_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+    left: Option<&NoteTopicMembership>,
+    kept: Option<&NoteTopicMembership>,
+) -> Result<()> {
+    if let Some(left) = left {
+        TOPIC_INDEX.delete(&vault.store, txn, &left.index_key(note))?;
+    }
+    if let Some(kept) = kept {
+        TOPIC_INDEX.put(&vault.store, txn, &kept.index_key(note), &())?;
+    }
+    Ok(())
+}
+
+/// Every reviewed NOTE whose review record keeps `topic`, in id order: the
+/// topic index's rows for it, each checked against its record (FIX 7457).
+fn topic_members_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    topic: &NoteTopicMembership,
+) -> Result<Vec<EntityId>> {
+    let mut members = Vec::new();
+    for (_, _, note) in TOPIC_INDEX.scan_keys(&vault.store, txn, &topic.index_prefix())? {
+        if super::note_review::topic_of_in_txn(vault, txn, &note).as_ref() == Some(topic) {
+            members.push(note);
+        }
+    }
+    Ok(members)
 }
 
 /// Who declares a topic group's summary, and under which attempt and run.
@@ -87,7 +143,7 @@ impl NoteTopicGroup {
         topic: &NoteTopicMembership,
         requester: WriteActor,
     ) -> Result<Option<Self>> {
-        let members = super::note_review::topic_members_in_txn(vault, txn, topic)?;
+        let members = topic_members_in_txn(vault, txn, topic)?;
         let notes = vault.note_summary_sources_in_txn(txn, requester, &members)?;
         Ok((!notes.is_empty()).then_some(Self { notes }))
     }
@@ -182,6 +238,16 @@ pub(super) fn note_topic_summary_outgrown(
     };
     let run_id = attempt.status.attempt.run_id.as_deref();
     let queued = vault.store.authorization_now().and_then(|_| {
+        // Read first (FIX 9172): a group that did not outgrow its
+        // declaration, the common case, opens no write. The write checks
+        // again, so a group that changed in between is read as it is then.
+        let outgrown = {
+            let txn = vault.store.env.read_txn()?;
+            outgrown_in_txn(vault, &txn, parent, requester, declared)?.is_some()
+        };
+        if !outgrown {
+            return Ok(None);
+        }
         let now = vault.store.clock.now_recorded_at();
         vault.with_write_txn_grouped(|txn| {
             let Some(group) = outgrown_in_txn(vault, txn, parent, requester, declared)? else {

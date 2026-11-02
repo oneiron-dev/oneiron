@@ -30,8 +30,8 @@ const MAX_JOINT_OPTIONS: usize = TOP_LOGPROBS / 2;
 /// One call's joint labels: for each of its options in order, the label for
 /// (option, paired no), then (option, paired yes), as the house read orders
 /// its rows.
-pub(super) struct JointRead<'a> {
-    paired: &'a DecisionQuestion,
+pub(super) struct JointRead {
+    paired: DecisionQuestion,
     options: Vec<String>,
 }
 
@@ -40,12 +40,12 @@ impl BigModel {
     /// most [`MAX_JOINT_OPTIONS`], with the host's paired question bound and
     /// every offer of the route reporting token log-probabilities. `None`
     /// keeps the written reply.
-    pub(super) fn joint_read<'a>(
-        &'a self,
+    pub(super) fn joint_read(
+        &self,
         call: &DecisionCall<'_>,
         route: &ResolvedDecisionRoute,
-    ) -> Option<JointRead<'a>> {
-        let paired = self.paired.as_ref()?;
+    ) -> Option<JointRead> {
+        let paired = self.current_paired()?;
         let options = match &call.question.contract {
             AnswerContract::Noul => vec!["yes".to_owned(), "no".to_owned()],
             AnswerContract::Choice { options } if options.len() <= MAX_JOINT_OPTIONS => {
@@ -61,7 +61,7 @@ impl BigModel {
     }
 }
 
-impl JointRead<'_> {
+impl JointRead {
     fn letters(&self) -> impl Iterator<Item = char> + '_ {
         LABEL_LETTERS.chars().take(self.options.len() * 2)
     }

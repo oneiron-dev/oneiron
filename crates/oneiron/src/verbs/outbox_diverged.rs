@@ -3,8 +3,10 @@
 //! `POST /v1/owner/outbox/diverged`, which the facade verbs
 //! `vault.outbox.diverged.list` and `vault.outbox.diverged.answer` answer as
 //! well (FIX 11739). Each copy the carrier keeps of a member it never agreed
-//! on carries a card with his two answers, remove or keep; each file the
-//! guest holds back as damaged at its source is listed beside them. The
+//! on carries a card with his two answers, remove or keep; each copy he kept,
+//! moved aside under its own name, carries a card with his removal
+//! (FIX 11985); each file the guest holds back as damaged at its source is
+//! listed beside them. The
 //! answer goes to the carrier's companion, which carries it out at its next
 //! turn: nothing removes a copy without it.
 
@@ -57,6 +59,22 @@ pub enum OutboxMemberStatus {
         recorded: String,
         read: String,
     },
+    /// A diverged copy the owner kept, which `held_by` moved aside to its
+    /// side name `aside` (relative to the kind's root) at `kept_at_ms`
+    /// (FIX 11985). `removing` once he had it removed, until the host
+    /// answers; `failed` why the last removal did not go through. Its card
+    /// offers the removal, which names `held`.
+    KeptAside {
+        kind: VmOutboxKind,
+        member: String,
+        held_by: VmOutboxSide,
+        held: String,
+        length: u64,
+        aside: String,
+        kept_at_ms: u64,
+        removing: bool,
+        failed: Option<String>,
+    },
 }
 
 /// A generic owner card: a headline, a body in plain words, and the answers
@@ -78,6 +96,8 @@ pub enum OutboxCardKind {
     OutboxDiverged,
     /// A file held back as damaged at its source.
     OutboxSourceDamaged,
+    /// A copy the owner kept, moved aside under its own name.
+    OutboxKeptAside,
 }
 
 /// One answer a card offers: its label, the `answer` it gives and the owner
@@ -94,10 +114,11 @@ pub struct OutboxCardAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum OutboxDivergedAnswer {
-    /// The copy moves aside under its own name, where the carrier leaves
-    /// it, so the member's next version lands.
+    /// The copy moves aside under its own name, listed as kept aside until
+    /// it is removed, so the member's next version lands.
     Keep,
-    /// The copy is removed at the carrier's next turn.
+    /// The copy is removed at the carrier's next turn; a kept-aside copy's
+    /// side copy is deleted on the end that holds it.
     Remove,
 }
 
