@@ -266,7 +266,7 @@ impl crate::Vault {
             judged,
             Judged::AttestedProof { .. } | Judged::HostProof { .. }
         ) {
-            crate::authority::slip_replay::spend_guard(self)?
+            Some(crate::authority::slip_replay::spend_guard(self)?)
         } else {
             None
         };

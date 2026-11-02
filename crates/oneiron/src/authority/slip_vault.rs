@@ -484,7 +484,8 @@ impl Vault {
         };
         let spent =
             super::slip_replay::SpentKey::of(&verified.claims().binding_key, nonce, timestamp);
-        door.spend(spent, now, expires_at, clock).then_some(verified)
+        door.spend(spent, now, expires_at, clock)
+            .then_some(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.
     pub fn verify_logged_capability_slip_request(
