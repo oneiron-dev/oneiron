@@ -683,6 +683,16 @@ impl Scan {
         Self { left: bound }
     }
 
+    /// `bound` plus `credit` already-read bytes the resume re-reads: the
+    /// first `credit` bytes are not charged twice. Reads stay sequential
+    /// from the resume point, so `bound + credit` caps NEW bytes at `bound`
+    /// (FIX 1189).
+    fn with_credit(bound: u64, credit: u64) -> Self {
+        Self {
+            left: bound.saturating_add(credit),
+        }
+    }
+
     /// Up to `len` bytes from `offset`, as many as the bound still allows:
     /// none once it is spent.
     fn read(&mut self, body: &dyn ResultBody, offset: u64, len: usize) -> Result<Vec<u8>> {

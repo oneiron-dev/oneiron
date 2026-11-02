@@ -291,5 +291,9 @@ name = "sync_memory"
 harness = false
 required-features = ["sync"]
 
+[[bench]]
+name = "result_search_overlap"
+harness = false
+
 [lints]
 workspace = true
