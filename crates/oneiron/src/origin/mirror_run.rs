@@ -95,6 +95,9 @@ impl Vault {
         };
         let now = self.now_recorded_at();
         for (repo_id, target) in targets {
+            // The pass is the manifest refresh door (FIX 6870, ruling 8):
+            // every published-ref move wakes it, due mirror or not.
+            self.refresh_repo_manifests_for_origin(&target.repo);
             let due = match target.sync_strategy {
                 OriginMirrorSyncStrategy::Schedule => {
                     pass == MirrorPass::Tick

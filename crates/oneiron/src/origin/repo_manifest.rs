@@ -77,7 +77,11 @@ impl RepoPortableId {
     /// The id `text` spells; `None` for anything but its one spelling.
     #[must_use]
     pub fn from_hex(text: &str) -> Option<Self> {
-        if text.len() != 64 || !text.bytes().all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f')) {
+        if text.len() != 64
+            || !text
+                .bytes()
+                .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        {
             return None;
         }
         let mut bytes = [0; 32];
@@ -141,7 +145,10 @@ mod lfs_oids {
 
     use crate::origin::lfs::LfsOid;
 
-    pub(super) fn serialize<S: Serializer>(oids: &[LfsOid], serializer: S) -> Result<S::Ok, S::Error> {
+    pub(super) fn serialize<S: Serializer>(
+        oids: &[LfsOid],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
         serializer.collect_seq(oids.iter().map(|oid| oid.to_hex()))
     }
 
@@ -172,9 +179,13 @@ impl RepoManifest {
         let well_formed = manifest.version == REPO_MANIFEST_VERSION
             && refs.windows(2).all(|pair| pair[0].0 < pair[1].0)
             && refs.iter().all(|(name, oid)| {
-                GitRefName::parse_full(name.as_str()).is_ok() && GitOid::parse_hex(oid.as_str()).is_ok()
+                GitRefName::parse_full(name.as_str()).is_ok()
+                    && GitOid::parse_hex(oid.as_str()).is_ok()
             })
-            && manifest.lfs_pointers.windows(2).all(|pair| pair[0] < pair[1]);
+            && manifest
+                .lfs_pointers
+                .windows(2)
+                .all(|pair| pair[0] < pair[1]);
         (well_formed && manifest.encode().ok()?.as_slice() == bytes).then_some(manifest)
     }
 
@@ -328,7 +339,11 @@ impl Vault {
     ) -> Result<RepoManifestMerge> {
         {
             let txn = self.store.env.read_txn()?;
-            if MANIFESTS.get(&self.store, &txn, &carried.portable.0)?.as_ref() == Some(carried) {
+            if MANIFESTS
+                .get(&self.store, &txn, &carried.portable.0)?
+                .as_ref()
+                == Some(carried)
+            {
                 return Ok(RepoManifestMerge::Held);
             }
         }
