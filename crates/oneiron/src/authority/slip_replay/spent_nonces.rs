@@ -24,7 +24,9 @@
 //! stays spent here.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, OnceLock, PoisonError, Weak};
 use std::time::Instant;
 
 use heed::{RoTxn, RwTxn};
@@ -82,22 +84,41 @@ impl SpentKey {
     }
 }
 
-/// This handle's in-memory nonce spends (FIX 12023 W0). In memory only: a
-/// close or a crash drops them, and a slip minted before the next open takes
-/// the writer there.
+/// One environment's in-memory nonce spends (FIX 12023 W0), shared by every
+/// handle this process holds on it ([`Self::shared_for`]): a replaced handle
+/// spends into the same set as its replacement, so one nonce is spent once.
+/// In memory only: a close or a crash drops them, and a slip minted before
+/// the next open takes the writer there.
 #[derive(Default)]
 pub(crate) struct SpentNonces {
-    /// The authority second this handle opened at; unset, no admission
-    /// spends here.
+    /// The authority second this process first opened the environment at;
+    /// unset, no admission spends here. A later handle of the same
+    /// environment is not a new open and never moves it.
     opened_at: OnceLock<u64>,
-    /// The handle this process serves at this vault's root, once found: an
-    /// in-memory spend's rows are written on it.
-    served: OnceLock<Weak<Vault>>,
+    /// The handle this process serves at this vault's root, last found: an
+    /// in-memory spend's rows are written on it. Re-found when it dies, so
+    /// a replacement handle is spent through (FIX 12023 W0, P2).
+    served: Mutex<Option<Weak<Vault>>>,
     nonces: Mutex<Nonces>,
     /// Wakes a swap that waits for the spends admitted here to be queued
     /// ([`Self::close_for_swap`]); waited on with the set's lock.
     queued: Condvar,
 }
+
+/// Canonical root -> the environment's spent set, weakly: the entry leaves
+/// when the last handle drops, and a later open mints a fresh set.
+struct Registry {
+    // Published before the LazyLock or the Mutex is touched: either can be
+    // inherited locked by a forked child whose other threads no longer exist
+    // (oneiron-remote's embedded registry, FIX 12023 W0, P2).
+    pid: AtomicU32,
+    entries: LazyLock<Mutex<HashMap<PathBuf, Weak<SpentNonces>>>>,
+}
+
+static REGISTRY: Registry = Registry {
+    pid: AtomicU32::new(0),
+    entries: LazyLock::new(|| Mutex::new(HashMap::new())),
+};
 
 #[derive(Default)]
 struct Nonces {
@@ -177,6 +198,34 @@ impl SpentNonces {
         self.nonces.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The set of the environment at canonical `root`, shared by every
+    /// handle this process opens on it (FIX 12023 W0, P2). A forked child
+    /// mints a fresh set instead of spending through the inherited one: its
+    /// entries and journal descriptor belong to threads that do not exist
+    /// here, and the inherited lock is never touched.
+    pub(crate) fn shared_for(root: &Path) -> Arc<SpentNonces> {
+        let pid = std::process::id();
+        match REGISTRY
+            .pid
+            .compare_exchange(0, pid, Ordering::AcqRel, Ordering::Acquire)
+        {
+            Ok(_) => {}
+            Err(owner) if owner == pid => {}
+            Err(_) => return Arc::new(SpentNonces::default()),
+        }
+        let mut entries = REGISTRY
+            .entries
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        entries.retain(|_, set| set.strong_count() > 0);
+        if let Some(set) = entries.get(root).and_then(Weak::upgrade) {
+            return set;
+        }
+        let set = Arc::new(SpentNonces::default());
+        entries.insert(root.to_path_buf(), Arc::downgrade(&set));
+        set
+    }
+
     /// Notes the authority second `vault` opened at, on the clock a slip's
     /// mint takes its time from ([`Vault::capability_slip_now`]). A reading
     /// that fails leaves it unset, and every admission on this handle takes
@@ -194,24 +243,32 @@ impl SpentNonces {
     }
 
     /// The door an admission on `vault` spends through in memory, while it
-    /// may: this process holds the vault's writer lease, the handle opened at
-    /// a second it read, no write on it is sealed, and it is the handle this
-    /// process serves, which a spend's rows are written on. `None`: the
+    /// may: this environment opened at a second it read, and a handle this
+    /// process serves at its root holds the writer lease and is not sealed,
+    /// which a spend's rows are written on. Any served handle of the
+    /// environment serves, this `vault` or a replacement (FIX 12023 W0, P2),
+    /// since the set is the environment's, not a handle's. `None`: the
     /// writer's path.
     pub(in crate::authority) fn door(&self, vault: &Vault) -> Option<SpendDoor> {
         let opened_at = *self.opened_at.get()?;
-        if !holds_writer_lease(vault) || vault.store.writes_sealed() {
+        let served = self.served_of(vault)?;
+        if !holds_writer_lease(&served) || served.store.writes_sealed() {
             return None;
         }
-        let served = match self.served.get() {
-            Some(served) => served.upgrade()?,
-            None => {
-                let served = vault.served_handle()?;
-                let _ = self.served.set(Arc::downgrade(&served));
-                served
-            }
-        };
         Some(SpendDoor { served, opened_at })
+    }
+
+    /// A live handle this process serves at `vault`'s root, the last found
+    /// while it lives, else found now. `None`: none is served, and the
+    /// writer's path judges every admission (FIX 12023 W0, P2).
+    fn served_of(&self, vault: &Vault) -> Option<Arc<Vault>> {
+        let mut cached = self.served.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(served) = cached.as_ref().and_then(Weak::upgrade) {
+            return Some(served);
+        }
+        let served = crate::store::served_vault_at(vault.store.canonical_root())?;
+        *cached = Some(Arc::downgrade(&served));
+        Some(served)
     }
 
     /// Spends `key` here for an admission at authority second `now` whose
@@ -263,12 +320,16 @@ impl SpentNonces {
     /// may not have landed. Else it stays staged here, with the id that
     /// writer commits as, so no admission spends it while that writer may
     /// still commit; the spends of every earlier writer, all decided by now,
-    /// leave. A handle that does not hold its writer lease spends nothing
-    /// here and stages nothing: its writer holds the lease for the spend
-    /// instead ([`writer_spend_lease`]), so no process spends in memory
-    /// beside it.
+    /// leave. Where no admission can spend in memory in this process (no
+    /// served handle of the environment holds its writer lease) nothing is
+    /// staged: the writer's door holds the lease for the spend instead
+    /// ([`writer_spend_lease`]), so no process spends in memory beside it.
     pub(super) fn stage(&self, vault: &Vault, key: SpentKey) -> bool {
-        if !holds_writer_lease(vault) {
+        if !holds_writer_lease(vault)
+            && !self
+                .served_of(vault)
+                .is_some_and(|served| holds_writer_lease(&served))
+        {
             return true;
         }
         let commits_as = vault.store.env.info().last_txn_id + 1;

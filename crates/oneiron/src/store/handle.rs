@@ -372,6 +372,10 @@ pub struct StoreOwner {
     // has closed the LMDB environment — a reopen racing this drop can never
     // observe the path as free while the old environment is still live.
     pub(in crate::store) _registered_path: RegisteredPath,
+    /// This open took the vault's writer lease ([`Store::open_with_writer_lease`]),
+    /// read while the handle assembles, before its lease is set on it: a
+    /// lease holder's open alone replays the slip-spend journal (FIX 12023 W0).
+    pub(in crate::store) opened_with_writer_lease: bool,
 }
 
 /// LMDB environment and database handles for a vault.

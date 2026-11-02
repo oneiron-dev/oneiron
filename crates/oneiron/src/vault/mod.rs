@@ -103,8 +103,9 @@ pub struct Vault {
         std::sync::Mutex<Vec<crate::share_travel::ExportTravel>>,
     /// The holder-proof nonces an admission spent in memory before its
     /// reply, whose rows land through the detached door (FIX 12023 W0). In
-    /// memory only.
-    pub(crate) spent_nonces: crate::authority::SpentNonces,
+    /// memory only, and one set per environment in this process, shared by
+    /// its handles.
+    pub(crate) spent_nonces: std::sync::Arc<crate::authority::SpentNonces>,
     /// One housekeeping pass at a time on this handle.
     pub(crate) housekeeping: std::sync::Mutex<crate::housekeeping::HousekeepingHandle>,
     pub(crate) entity_docs: std::sync::Mutex<crate::entity_doc::EntityDocRegistry>,
