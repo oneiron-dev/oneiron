@@ -41,6 +41,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_CONSOLIDATION_STRENGTH_POLICY, LIVE),
     (&t::CRITIC_ARTIFACT, CONTENT),
     (&t::DREAMER_CURSOR, CONTENT),
+    (&t::DREAMER_FOLLOWER_CHUNK, CONTENT),
     (&t::DREAMER_FOLLOWER_FRAME, CONTENT),
     (&t::DREAMER_FOLLOWER_RESULT, CONTENT),
     (&t::DREAMER_FOLLOWER_STATE, CONTENT),
@@ -60,6 +61,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_IDENTITY_CURSOR, CONTENT),
     (&t::DREAMER_IDENTITY_HINT, CONTENT),
     (&t::DREAMER_IDENTITY_RESOLUTION, CONTENT),
+    (&t::DREAMER_LINEAGE_ORIGIN, CONTENT),
     (&t::DREAMER_MAINTENANCE_APPLIED, CONTENT),
     (&t::DREAMER_NEIGHBOURHOOD, CONTENT),
     (&t::PREFILTER_CONFIG, LIVE),
@@ -95,6 +97,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_NIGHTLY_MERGED, CONTENT),
     (&t::DREAMER_NOTE_REVIEW_CURSOR, CONTENT),
     (&t::DREAMER_NOTE_REVIEW_SEEN, CONTENT),
+    (&t::DREAMER_NOTE_REVIEW_TOPIC, CONTENT),
     (&t::DREAMER_SIEVE_AUDIT, CONTENT),
     (&t::DREAMER_SIEVE_CONSUMED, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_POLICY, LIVE),
@@ -107,6 +110,10 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::DREAMER_STEWARDSHIP_DRAFTED, CONTENT),
     (&t::DREAMER_TOURNAMENT_EVIDENCE, CONTENT),
     (&t::DREAMER_TURN_REDIRTY, CONTENT),
+    // FIX 5735: each index stands as the rows it names do.
+    (&t::DREAMER_TURN_PROGRAM_ACTOR_ADMISSION, LIVE),
+    (&t::DREAMER_TURN_PROGRAM_ACTOR_ATTEMPT, CONTENT),
+    (&t::DREAMER_TURN_PROGRAM_ACTOR_WAKE, CONTENT),
     // DOOR-141: a consumed wake stays consumed, as a spent one-shot does, so
     // no restore re-admits a program its turn already woke.
     (&t::DREAMER_TURN_PROGRAM_ADMISSION, LIVE),
@@ -121,6 +128,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // FIX 7188: an owner Stop's owed abandon works on the outbound ledger,
     // which stands as the live vault holds it; so does what it still owes.
     (&t::DREAMER_TURN_PROGRAM_STOP_OWED, LIVE),
+    // FIX 5838: the turn index stands as the admissions it names do.
+    (&t::DREAMER_TURN_PROGRAM_TURN_ADMISSION, LIVE),
     (&t::DREAMER_TURN_PROGRAM_WAKE, CONTENT),
     (&t::DREAMER_WAKE_RECIPE_INPUT, CONTENT),
     (&t::DREAMER_WAKE_STATE, CONTENT),

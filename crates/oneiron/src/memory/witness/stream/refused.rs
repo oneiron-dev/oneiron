@@ -51,10 +51,7 @@ impl StreamRecoveryRefusal {
 impl MessageStreamRuntime {
     /// Keeps `refused`, this open's refusals, in place of an earlier open's.
     pub(super) fn keep_refused(&self, refused: &[StreamRecoveryRefusal]) {
-        *self
-            .refused
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = refused.to_vec();
+        *self.refused.lock().unwrap_or_else(PoisonError::into_inner) = refused.to_vec();
     }
 }
 

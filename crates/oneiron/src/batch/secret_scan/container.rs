@@ -42,7 +42,9 @@ pub(crate) use self::projection_edit::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff,
 };
 
-use super::{release_hit, scan_payload, secret_scan_error, write_payload_hit};
+use super::{
+    Door, detect, framed_payload, release_hit, scan_payload, secret_scan_error, write_payload_hit,
+};
 use crate::error::{Error, Result};
 use crate::secret_custody::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
 
@@ -403,6 +405,20 @@ fn members_hit(bytes: &[u8], rules: fn(&[u8]) -> Option<&'static str>) -> Option
 /// reader shows.
 pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
     members_hit(bytes, release_hit)
+}
+
+/// [`super::scan_file_content`] over text, which is valid UTF-8. Text with
+/// no container's leading bytes is no container to the walk ([`classify`]),
+/// so it has no member to read, and text with no framed carrier's magic has
+/// no body to decode: such text is read by the release text rules alone, as
+/// the whole scan reads it, with no decode tried and no walk entered
+/// (speed). Any other text takes the whole scan.
+pub(crate) fn scan_text_content(text: &str) -> Option<&'static str> {
+    let bytes = text.as_bytes();
+    if kind(bytes).is_none() && framed_payload(bytes).is_none() {
+        return detect(text, Door::Release);
+    }
+    super::scan_file_content("", bytes)
 }
 
 /// The write door's rules over each member under `bytes` and the bytes no
