@@ -406,6 +406,8 @@ vaultFederationConnectRescopeAccept(input: unknown): unknown
 vaultFederationConnectDisconnect(input: unknown): unknown
 vaultFederationConnectExport(input: unknown): unknown
 vaultFederationConnectRejoin(input: unknown): unknown
+vaultFederationConnectWorldPrivacyExport(input: unknown): unknown
+vaultFederationConnectWorldPrivacyReceive(input: unknown): unknown
 vaultTrustedContactsName(input: unknown): unknown
 vaultTrustedContactsList(input: unknown): unknown
 vaultTrustedContactsConsent(input: unknown): unknown
