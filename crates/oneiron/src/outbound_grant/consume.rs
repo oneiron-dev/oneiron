@@ -224,6 +224,11 @@ pub(crate) struct ChannelIdentityGrantReservation {
 }
 
 impl ChannelIdentityGrantReservation {
+    /// The standing consent Grant whose live bound proved this reservation.
+    pub(crate) fn consent_grant_ref(&self) -> &str {
+        &self.consent_grant_ref
+    }
+
     /// Spends the slot and writes the grant's use receipt, in the caller's
     /// write txn. An exact replay writes nothing, so it is never charged
     /// twice.
