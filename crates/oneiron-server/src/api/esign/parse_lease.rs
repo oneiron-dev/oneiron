@@ -3,8 +3,9 @@
 //! 12230). The lease that admitted the PDF's own bytes (FIX 7649) grows as
 //! the parse proceeds: every table, copy, decode and parsed object the
 //! inspection is about to allocate is admitted through [`MemoryLease::grow`],
-//! on the same line and until the same deadline the input waited to, and
-//! refused only as that lease is, at the machine's floor or that deadline.
+//! on the same line and until the deadline its door gives it (the input's
+//! own; the anonymous door's runs from when its body is read, FIX 12304),
+//! and refused only as that lease is, at the machine's floor or that deadline.
 //! What a finished stage of the parse gives back stays in the lease for the
 //! next one, so the lease holds the parse's peak. It is held until the
 //! inspection returns.
@@ -37,19 +38,32 @@ pub(super) fn inspected(
     })
 }
 
-/// `pdf`, already in memory, inspected as the editor's geometry door
-/// inspects its own (FIX 12230): its bytes leased from this machine's
-/// memory, waiting at most [`MEMORY_WAIT`], then the lease grown for its
-/// parse ([`inspected`]). Blocks its thread while it waits.
-pub(super) fn inspected_in_memory(
+/// A PDF the vault holds, inspected as the editor's geometry door inspects
+/// its own, its bytes leased before they are read (FIX 12304): `bytes`, its
+/// length as the vault measured it unread, leased from this machine's
+/// memory, waiting at most [`MEMORY_WAIT`]; then `read` reads it within what
+/// the lease holds. A PDF that came to need more since it was measured (the
+/// sealed output in place of the original) grows the lease to its length on
+/// the same deadline and is read then. The lease is then grown for its parse
+/// ([`inspected`]). Blocks its thread while it waits.
+pub(super) fn inspected_from_vault(
     memory: &MachineMemory,
-    pdf: &[u8],
+    bytes: u64,
     stream_decode_bytes: u64,
+    read: impl Fn(u64) -> oneiron::Result<Result<Vec<u8>, u64>>,
 ) -> Result<Vec<PageGeometry>, Response> {
     let deadline = Instant::now() + MEMORY_WAIT;
-    let bytes = u64::try_from(pdf.len()).unwrap_or(u64::MAX);
-    let lease = memory.lease(bytes, deadline).map_err(memory_refused)?;
-    inspected(lease, deadline, pdf, stream_decode_bytes)
+    let mut lease = memory.lease(bytes, deadline).map_err(memory_refused)?;
+    let pdf = loop {
+        match read(lease.bytes()) {
+            Ok(Ok(pdf)) => break pdf,
+            Ok(Err(needed)) => lease
+                .grow(needed.saturating_sub(lease.bytes()), deadline, &|| false)
+                .map_err(memory_refused)?,
+            Err(_) => return Err(super::refused()),
+        }
+    };
+    inspected(lease, deadline, &pdf, stream_decode_bytes)
 }
 
 /// One inspection's lease, and why it stopped growing, if it did.
