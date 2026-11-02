@@ -17,10 +17,6 @@ impl Vault {
     ///
     /// # Errors
     /// As [`apply_ops_with_gate_mode`], or a storage error of the step.
-    #[allow(
-        dead_code,
-        reason = "FIX 10886: the docs import door calls it once its L10 hunk lands"
-    )]
     pub(crate) fn apply_ops_with_derived_copies(
         &self,
         wtxn: &mut RwTxn<'_>,

@@ -1,9 +1,6 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
 use super::{DocsExport, DocsPage, DocsSegment, docs_extraction_id, docs_semantic_segments};
-use crate::batch::{
-    ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
-    apply_ops_with_gate_mode,
-};
+use crate::batch::{ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::{
     ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, ComposedEffect, EffectFacts,
     GrantBound,
@@ -411,10 +408,7 @@ impl Vault {
             }
         }
         self.validate_docs_put_kinds(&txn, &ops)?;
-        apply_ops_with_gate_mode(
-            &self.store,
-            &self.config,
-            &self.analyzer,
+        self.apply_ops_with_derived_copies(
             &mut txn,
             ops,
             self.text_index_trusted
