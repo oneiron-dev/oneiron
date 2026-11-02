@@ -36,7 +36,8 @@ use crate::federation::{RepoAccessIntent, RepoAccessRefusal, RepoTarget};
 use crate::git_wire::GitOid;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::merge_queue::{
-    MergeBatch, MergeFile, MergeProposal, MergeQueue, RepoQueueOrder, RepoQueuePredecessor,
+    MergeBatch, MergeFile, MergeFileExpected, MergeProposal, MergeQueue, RepoQueueOrder,
+    RepoQueuePredecessor,
 };
 use crate::repo_mutation::mount::RepoMountRef;
 use crate::repo_mutation::proposal::{
@@ -526,7 +527,9 @@ impl Memory<'_> {
             .vault
             .mount_repo_ref(&pointer, RepoMountRef::Fork(row.pre_action_fork_hash))?;
         let (path, content) = row.ordinary_file()?;
-        let expected = base.read_file(path)?.map(<[u8]>::to_vec);
+        let expected = base
+            .read_file(path)?
+            .map(|bytes| MergeFileExpected::Bytes(bytes.to_vec()));
         Ok(MergeProposal {
             id: row.id.to_hex(),
             base_green: base_green.to_owned(),

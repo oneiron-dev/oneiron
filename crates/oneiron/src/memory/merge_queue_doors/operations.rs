@@ -3,7 +3,7 @@
 //! `memory::merge_queue_doors::types` defines the records these take and return.
 
 use super::*;
-use crate::merge_queue::{MergeFile, MergeProposal};
+use crate::merge_queue::{MergeFile, MergeFileExpected, MergeProposal};
 use crate::repo_mutation::mount::RepoMountRef;
 
 impl Memory<'_> {
@@ -170,7 +170,9 @@ impl Memory<'_> {
             .vault
             .mount_repo_ref(&pointer, RepoMountRef::Fork(row.pre_action_fork_hash))?;
         let (path, content) = row.ordinary_file()?;
-        let expected = base.read_file(path)?.map(<[u8]>::to_vec);
+        let expected = base
+            .read_file(path)?
+            .map(|bytes| MergeFileExpected::Bytes(bytes.to_vec()));
         Ok(MergeProposal {
             id: row.id.to_hex(),
             base_green: base_green.to_owned(),

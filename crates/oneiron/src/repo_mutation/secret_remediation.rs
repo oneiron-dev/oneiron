@@ -243,7 +243,18 @@ impl Vault {
             };
             return Ok(report(plan, status, None));
         }
-        let proven: BTreeSet<String> = plan.files.keys().cloned().collect();
+        // Each staged path with the BLAKE3 of the bytes HEAD holds there:
+        // the queue checks a withheld base by it (FIX 10974).
+        let proven: super::bundle::ProvenFiles = plan
+            .files
+            .keys()
+            .map(|path| {
+                let base = files
+                    .get(path)
+                    .map(|file| *blake3::hash(&file.content).as_bytes());
+                (path.clone(), base)
+            })
+            .collect();
         let bundle = plan
             .files
             .iter()
@@ -356,36 +367,4 @@ fn commit_files(
             Ok((path, CommitFile { content }))
         })
         .collect()
-}
-
-/// The exact bytes of each of `paths` in the commit `repo` is pinned at,
-/// read from its canonical object store: a remediated file its bundle's
-/// base withholds, which the queue checks against the tested tree by these
-/// bytes (FIX 7608 slice 6).
-///
-/// # Errors
-/// A repository or commit that cannot be read, or a path the commit does
-/// not hold as a regular file.
-pub(in crate::repo_mutation) fn pinned_commit_files(
-    vault: &Vault,
-    repo: &RepoRef,
-    paths: &BTreeSet<String>,
-) -> Result<BTreeMap<String, Vec<u8>>> {
-    let commit = GitOid::parse_hex(
-        repo.commit_hash()
-            .ok_or(invalid("a pinned repository names its commit"))?,
-    )?;
-    let root = resolve_mutable_repo_root(repo)?;
-    let canonical = canonical_repo_ref_for_root(repo, &root)?;
-    let _guard = lock_repository(&git_common_dir(&root)?)?;
-    let wire = GitWire::new(vault)?;
-    let git = wire.open_repo(canonical, &root)?;
-    let files = commit_files(&wire, &git, &commit, Some(paths))?;
-    if paths.iter().any(|path| !files.contains_key(path)) {
-        return Err(invalid("a remediated file is not in its pinned commit"));
-    }
-    Ok(files
-        .into_iter()
-        .map(|(path, file)| (path, file.content))
-        .collect())
 }

@@ -41,8 +41,8 @@ use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
 mod derived;
 mod invalidate;
 pub(crate) use derived::{
-    RepoDerivedIndexSources, repo_derived_dependents_in, repo_derived_index_sources_in,
-    repo_source_identity_in,
+    RepoDerivedIndexSources, bind_envelope_sources_in_txn, repo_derived_dependents_in,
+    repo_derived_index_sources_in, repo_source_identity_in,
 };
 pub(crate) use invalidate::refresh_repo_index_projection_in_txn;
 

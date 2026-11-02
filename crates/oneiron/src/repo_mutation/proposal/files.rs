@@ -16,6 +16,12 @@ pub struct RepoProposedFile {
     pub content: Option<Vec<u8>>,
     pub source_operation: Option<EntityId>,
     pub metadata_edit: Option<crate::code_document::CodeFileMetadataEdit>,
+    /// A secret remediation's file its base withholds: the BLAKE3 of the
+    /// bytes the remediation read at the pinned commit, which the merge
+    /// queue checks the tested tree against, so no old byte is stored
+    /// (FIX 10974).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub withheld_base_blake3: Option<[u8; 32]>,
 }
 
 impl RepoProposedFile {
@@ -27,6 +33,7 @@ impl RepoProposedFile {
             content: Some(content),
             source_operation: None,
             metadata_edit: None,
+            withheld_base_blake3: None,
         }
     }
 }

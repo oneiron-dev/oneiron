@@ -12,8 +12,9 @@ use std::collections::BTreeSet;
 
 use super::check_store::QueueCheckConfiguration;
 use super::{
-    BatchState, CheckPhase, MergeBatch, MergeProposal, MergeQueue, QueueBatchDrive, QueueDriveHold,
-    QueueDriveHoldReason, QueueDriveOutcome, QueueDriverTarget, QueueStageOverlap,
+    BatchState, CheckPhase, MergeBatch, MergeFileExpected, MergeProposal, MergeQueue,
+    QueueBatchDrive, QueueDriveHold, QueueDriveHoldReason, QueueDriveOutcome, QueueDriverTarget,
+    QueueStageOverlap,
 };
 use crate::EntityId;
 use crate::codebase::RepoRef;
@@ -342,11 +343,12 @@ fn shared_paths(ours: &MergeProposal, theirs: &MergeProposal) -> Vec<String> {
     shared.into_iter().map(str::to_owned).collect()
 }
 
-/// The base bytes `proposal` expected at `path`.
-fn expected<'p>(proposal: &'p MergeProposal, path: &str) -> Option<&'p Option<Vec<u8>>> {
+/// The base `proposal` expected at `path`, as its BLAKE3, so exact bytes
+/// and a withheld base's hash compare alike (FIX 10974).
+fn expected(proposal: &MergeProposal, path: &str) -> Option<Option<[u8; 32]>> {
     proposal
         .files
         .iter()
         .find(|file| file.path == path)
-        .map(|file| &file.expected)
+        .map(|file| file.expected.as_ref().map(MergeFileExpected::blake3))
 }
