@@ -124,9 +124,15 @@ fn parse_path(path: &str) -> std::result::Result<Vec<Step>, String> {
 }
 
 /// The fields of one line of a delimited table (RFC 4180): a quoted field
-/// keeps its delimiters, and `""` in it is one quote. A quoted field that
-/// runs past its line is not joined to the next.
+/// keeps its delimiters, and `""` in it is one quote. Whether the line ends
+/// inside an open quoted field is reported too, so the table reader can join
+/// the physical lines of one logical row.
 pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
+    split_fields_open(line, delimiter).0
+}
+
+/// [`split_fields`] with whether the line ends inside an open quoted field.
+fn split_fields_open(line: &str, delimiter: u8) -> (Vec<String>, bool) {
     let delimiter = char::from(delimiter);
     let mut fields = Vec::new();
     let mut field = String::new();
@@ -155,7 +161,7 @@ pub(super) fn split_fields(line: &str, delimiter: u8) -> Vec<String> {
         }
     }
     fields.push(field);
-    fields
+    (fields, quoted)
 }
 
 /// A `where` comparison.
@@ -937,7 +943,8 @@ fn line_text(bytes: &[u8]) -> &[u8] {
 }
 
 /// Picks rows out of a line table: JSON lines (`delimiter` `None`) or a
-/// CSV/TSV table whose first line names its columns. A row of JSON lines
+/// CSV/TSV table whose first row names its columns. A quoted CSV/TSV field
+/// may span physical lines, joined into one logical row. A row of JSON lines
 /// that does not parse is passed over and counted.
 fn table_rows(
     body: &dyn ResultBody,
@@ -961,10 +968,8 @@ fn table_rows(
     let mut body_start = 0;
     if let Some(delimiter) = delimiter {
         let mut lines = LineReader::new(body, 0);
-        match lines.next(&mut scan)? {
-            Line::Row(bytes) => {
-                header = split_fields(&String::from_utf8_lossy(line_text(&bytes)), delimiter);
-            }
+        let bytes = match lines.next(&mut scan)? {
+            Line::Row(bytes) => bytes,
             Line::End => return picked.finish(reference, true, None),
             Line::Limit => {
                 let mut reply =
@@ -974,14 +979,39 @@ fn table_rows(
                 }
                 return Ok(reply);
             }
+        };
+        // A quoted header field may span physical lines: join them into one
+        // logical row through the same scan. A limit inside the join stops at
+        // the header start, never mid-row.
+        let mut header_bytes = bytes.clone();
+        while split_fields_open(&String::from_utf8_lossy(&header_bytes), delimiter).1 {
+            match lines.next(&mut scan)? {
+                Line::Row(more) => {
+                    header_bytes.push(b'\n');
+                    header_bytes.extend_from_slice(&more);
+                }
+                Line::End => break,
+                Line::Limit => {
+                    let mut reply =
+                        picked.finish(reference, false, Some(json!({"offset": 0, "row": 0})))?;
+                    if let Reply::Output(reply) = &mut reply {
+                        reply["limit"] = scan_limit();
+                    }
+                    return Ok(reply);
+                }
+            }
         }
+        header = split_fields(
+            &String::from_utf8_lossy(line_text(&header_bytes)),
+            delimiter,
+        );
         body_start = lines.at;
     }
     let mut row = cursor.row.unwrap_or(0);
     let mut lines = LineReader::new(body, cursor.offset.unwrap_or(body_start).max(body_start));
     let mut skipped = 0_u64;
     let mut limited = false;
-    let (done, next) = loop {
+    let (done, next) = 'rows: loop {
         let start = lines.at;
         let bytes = match lines.next(&mut scan)? {
             Line::Row(bytes) => bytes,
@@ -991,7 +1021,31 @@ fn table_rows(
                 break (false, Some(json!({"offset": start, "row": row})));
             }
         };
-        let text = line_text(&bytes);
+        // A quoted CSV/TSV field may span physical lines: join them into one
+        // logical row through the same scan. Blank physical lines and CRLFs
+        // inside the quotes are content; only a logical row outside quotes is
+        // skipped, and only its final row terminator loses its CR.
+        // A limit inside the join stops at the row start, never mid-row.
+        // JSON lines stay per line.
+        let mut joined: Option<Vec<u8>> = None;
+        if let Some(d) = delimiter {
+            let mut logical = bytes.clone();
+            while split_fields_open(&String::from_utf8_lossy(&logical), d).1 {
+                match lines.next(&mut scan)? {
+                    Line::Row(more) => {
+                        logical.push(b'\n');
+                        logical.extend_from_slice(&more);
+                    }
+                    Line::End => break,
+                    Line::Limit => {
+                        limited = true;
+                        break 'rows (false, Some(json!({"offset": start, "row": row})));
+                    }
+                }
+            }
+            joined = Some(logical);
+        }
+        let text = line_text(joined.as_deref().unwrap_or(&bytes));
         if text.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
