@@ -18,9 +18,8 @@ use super::publication_codec::{
     keep_owner_oid_scan_prefix, origin_keep_ref_name, visible_ref_key,
 };
 use super::publication_types::{
-    ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS, OriginCensusDisposition, OriginKeepRefKind,
-    OriginPublicationAnswer, OriginPublicationReceipt, OriginPublicationRecord,
-    OriginPublicationRequest, OriginPublicationStatus,
+    OriginCensusDisposition, OriginKeepRefKind, OriginPublicationAnswer, OriginPublicationReceipt,
+    OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
 };
 // ---------------------------------------------------------------------------
 // Journal access
@@ -36,6 +35,47 @@ impl Vault {
     /// repository has ONE repo id across both origin planes.
     pub(super) fn origin_repo_id_for(&self, repo: &GitWireRepo) -> Result<EntityId> {
         crate::origin::lfs::lfs_repo_id(&repo.identity().as_hex())
+    }
+
+    /// Names `record` in its ref's visible slot again while it is still
+    /// `Published`: a re-drive that moved the ref back to its value
+    /// advertises it again (FIX 10002). The caller holds the coordinator.
+    pub(super) fn restore_origin_visible_slot(
+        &self,
+        record: &OriginPublicationRecord,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|wtxn| {
+            let current = PUBLICATIONS
+                .get(&self.store, wtxn, &record.publication_id)?
+                .ok_or(Error::CorruptedIndex("origin publication disappeared"))?
+                .into_record()?;
+            if current.status != OriginPublicationStatus::Published {
+                return Err(Error::ConcurrentWrite("origin publication changed"));
+            }
+            VISIBLE_REF.put(
+                &self.store,
+                wtxn,
+                &visible_ref_key(&record.repo_id, &record.ref_name),
+                &record.publication_id,
+            )?;
+            Ok(())
+        })?;
+        self.note_origin_ref_moved(record.ref_name.as_str());
+        Ok(())
+    }
+
+    /// Starts the count of one publication's obligation walk against its
+    /// scan row (rule 5, FIX 10001): every required Git and LFS object is
+    /// pinned and proved one at a time, however many. The caller holds no
+    /// read transaction.
+    pub(super) fn start_obligation_count(&self, repo_id: &EntityId) -> Result<ScanCount> {
+        let rtxn = self.store.env.read_txn()?;
+        ScanCount::start(
+            &self.store,
+            &rtxn,
+            EngineScan::OriginPublicationObligations,
+            repo_id.as_bytes(),
+        )
     }
 
     pub(super) fn validate_origin_repo(&self, repo_id: EntityId, repo: &GitWireRepo) -> Result<()> {
@@ -406,13 +446,6 @@ pub(super) fn validate_origin_publication_request(
     {
         return Err(Error::InvariantViolation(
             "origin publication must not publish into the keep-ref namespace",
-        ));
-    }
-    if request.required_objects.len() > ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS
-        || request.required_lfs_oids.len() > ORIGIN_PUBLICATION_MAX_REQUIRED_OBJECTS
-    {
-        return Err(Error::InvariantViolation(
-            "origin publication requires an unbounded object set",
         ));
     }
     if request.occurred.end < request.occurred.start {

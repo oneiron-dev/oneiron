@@ -27,7 +27,8 @@ impl ReceivePackIntent {
 }
 
 /// Erasing `actor` from the receive-pack intent journal (FIX 3877): an
-/// intent it pushed names [`ERASED_CALL_IDENTITY`] as its pusher, and one
+/// intent it pushed names [`ERASED_CALL_IDENTITY`] as its pusher, in its
+/// push stamp too (FIX 8806), and one
 /// admitted under it as the host names the erased writer there. Each keeps
 /// its repository, epoch, refs, pointers and progress, and neither resumes.
 /// One-way, in the erase's own transaction. An id whose entity is no actor
@@ -56,7 +57,13 @@ pub(crate) fn erase_receive_pack_intent_actor_in_txn(
             .origin_authority
             .as_mut()
             .is_some_and(|stamp| stamp.erase_writer(actor));
-        if pushed || hosted {
+        // The push stamp names the same pusher; it goes with the rest
+        // (FIX 8806).
+        let stamped = intent
+            .push
+            .as_mut()
+            .is_some_and(|stamp| stamp.erase_principal(actor));
+        if pushed || hosted || stamped {
             rows.push((key, intent));
         }
     }

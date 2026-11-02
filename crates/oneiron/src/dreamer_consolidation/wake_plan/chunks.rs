@@ -7,9 +7,11 @@
 //! A sibling owes exactly its turns. Each passed the retry's own admission at
 //! the wake's snapshot (readable by the Dreamer, an admissible role, the
 //! part's world and facet); the sibling carries no branch scope of its own,
-//! sits under the retry's own parent, and reads its turns again through the
-//! same scoped read at its own wake. A source that fails there refuses or
-//! defers that chunk alone, never the retry.
+//! sits under the retry's own parent, takes the selection scope its source
+//! pinned (FIX 7731), as a retry successor does, so it resolves the same
+//! effective scope, and reads its turns again through the same scoped read
+//! at its own wake. A source that fails there refuses or defers that chunk
+//! alone, never the retry.
 //!
 //! A multi-part branch's part that cannot be read whole at the snapshot, or
 //! that the wake's host scope does not name (FIX 7728), is owed the same way
@@ -66,7 +68,7 @@ impl WakePreparationChunks {
                 let key = pin.key(&chunk, lineage);
                 (chunk, key)
             })
-            .filter(|(_, key)| !pin.completed(key))
+            .filter(|(_, key)| !pin.completed(key, lineage.origin))
             .collect();
         if chunks.len() < offered {
             tracing::debug!(
@@ -89,7 +91,9 @@ impl WakePreparationChunks {
 
     /// Queues every chunk in the caller's commit; returns how many were new.
     /// Each chunk's sibling, new or standing, carries the sieve receipts the
-    /// source carried for its TURNs from this commit on (FIX 7498).
+    /// source carried for its TURNs from this commit on (FIX 7498), and a
+    /// new one the selection scope the source pinned (FIX 7731); a standing
+    /// one keeps its own.
     fn enqueue_in_txn(
         &self,
         vault: &Vault,
@@ -132,6 +136,9 @@ impl WakePreparationChunks {
                 );
             }
             if matches!(outcome, EnqueueDreamerAttemptOutcome::Enqueued(_)) {
+                crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
+                    vault, txn, source, sibling,
+                )?;
                 queued += 1;
             }
         }

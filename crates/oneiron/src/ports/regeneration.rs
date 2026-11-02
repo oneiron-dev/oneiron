@@ -111,6 +111,26 @@ pub(super) fn complete(
         .delete(txn, &super::integrity::stale_key(dependent))?;
     Ok(true)
 }
+/// Takes every dependency row naming `dependent` as derived, forward and
+/// reverse, as [`complete`] takes them before re-recording: a deleted row
+/// keeps no registration behind it. Reads only `dependent`'s own reverse
+/// rows, never all sources.
+pub(crate) fn remove_dependency_rows_for_dependent_in_txn(
+    store: &impl ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    dependent: &EntityId,
+) -> Result<()> {
+    for (key, source) in reverse_rows(store, txn, dependent)? {
+        store.vault_meta().delete(txn, &key)?;
+        let forward = [
+            super::integrity::source_prefix(source).as_slice(),
+            dependent.as_bytes(),
+        ]
+        .concat();
+        store.vault_meta().delete(txn, &forward)?;
+    }
+    Ok(())
+}
 /// The sources `dependent` is registered as derived from.
 pub(crate) fn dependency_sources_in(
     store: &impl ManifestDbs,

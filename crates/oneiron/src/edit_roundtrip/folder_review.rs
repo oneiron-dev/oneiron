@@ -102,10 +102,14 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "answer_cell_formula".into(),
+                    judged_live: None,
                 });
                 continue;
             }
-            let judged_live = self.office_body_pin(&item.artifact)?;
+            // A file with a live body is read there at its head, pinned with
+            // it; the answer stays pinned to the stored version (FIX 11981).
+            let live = self.live_head_text(&item.artifact, request.sight)?;
+            let judged_live = live.as_ref().map(|(pin, _)| pin.clone());
             let (Some(head), Some(body)) = (
                 self.blob_artifact_head(&item.artifact)?,
                 self.get_blob_artifact(&item.artifact)?,
@@ -113,6 +117,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -122,6 +127,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "missing_file".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -131,18 +137,24 @@ impl Vault {
                 id: item.artifact,
                 body_hash: *blake3::hash(&file).as_bytes(),
             };
-            let seen = self.sighted_asset_bytes(file, request.sight)?;
-            let (text, images) = file_content(
-                &seen,
-                &body.media_type,
-                &pin,
-                package_limits,
-                archive_limits,
-            )?;
+            let (text, images) = match live {
+                Some((_, text)) => (
+                    Some(text).filter(|text| !text.trim().is_empty()),
+                    Vec::new(),
+                ),
+                None => file_content(
+                    &self.sighted_asset_bytes(file, request.sight)?,
+                    &body.media_type,
+                    &pin,
+                    package_limits,
+                    archive_limits,
+                )?,
+            };
             if text.is_none() && (images.is_empty() || !ask.decider.reads_images()) {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: None,
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             }
@@ -158,6 +170,7 @@ impl Vault {
                 refused.push(UnitRefusal {
                     unit,
                     reason: "evidence_budget".into(),
+                    judged_live: judged_live.clone(),
                 });
                 continue;
             };
@@ -168,6 +181,7 @@ impl Vault {
                 abstained.push(UnitAbstention {
                     unit,
                     decision: Some(decision.clone()),
+                    judged_live: judged_live.clone(),
                 });
             }
             answers.push(SheetCellAnswer {
