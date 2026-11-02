@@ -222,8 +222,7 @@ impl Vault {
         until: Option<(&[u8], u64)>,
     ) -> Result<Option<LiveSheet>> {
         let frontier = until.map(|(frontier, _)| frontier);
-        let Some((was, now)) =
-            self.live_span(artifact, OfficeBodyKind::Xlsx, then, frontier)?
+        let Some((was, now)) = self.live_span(artifact, OfficeBodyKind::Xlsx, then, frontier)?
         else {
             return Ok(None);
         };
