@@ -391,6 +391,7 @@ impl Vault {
         {
             return Ok(verified);
         }
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
@@ -681,6 +682,7 @@ impl Vault {
         signature: &[u8],
         request_nonce: &[u8],
     ) -> Result<VerifiedSlip> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let request_now = super::slip_replay::admission_now_in_txn(self, &mut txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

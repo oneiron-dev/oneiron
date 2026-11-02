@@ -47,6 +47,7 @@ impl Vault {
         repair: SupportRepair,
         budget: HousekeepingBudget,
     ) -> Result<HousekeepingReport> {
+        let _spend_guard = super::slip_replay::spend_guard(self)?;
         let mut txn = self.store.env.write_txn()?;
         let verified =
             self.admit_capability_slip_request_in_txn(&mut txn, slip, timestamp, signature, nonce)?;
