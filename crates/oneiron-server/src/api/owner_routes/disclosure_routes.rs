@@ -15,11 +15,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use oneiron::consent::{
     CONTACT_CLEARANCE_REVOKE_COMMAND, ContactClearanceAct, ContactDisclosureOutcome,
     DisclosureConfirmationReceipt, DisclosureOfferMode, contact_clearance_ref,
@@ -29,25 +28,116 @@ use oneiron::disclosure::AttendeeIdentityChoice;
 use oneiron::federation::Scope;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::api::params::hex_bytes;
-use crate::api::{json_payload, query_params};
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/disclosure/offer", get(offer))
-        .route("/disclosure/confirm", post(confirm))
-        .route("/disclosure/narrow", post(narrow))
-        .route("/disclosure/revoke", post(revoke))
-        .route("/disclosure/preclear", post(preclear))
-        .route("/disclosure/mode", get(mode).put(set_mode))
-        .route("/disclosure/attendee", post(attendee))
-        .route("/disclosure/entry", get(entry))
-        .route("/disclosure/entry/confirm", post(confirm_entry))
-        .route("/disclosure/entry/decline", post(decline_entry))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/disclosure/offer",
+                summary: "One frozen contact-disclosure offer, the private ask the owner answers.",
+                row: None,
+            },
+            get(offer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/confirm",
+                summary: "The owner's answer to one frozen offer, against the exact delta it was shown.",
+                row: None,
+            },
+            post(confirm),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/narrow",
+                summary: "Narrows a contact's standing clearance to a Scope inside the current one.",
+                row: None,
+            },
+            post(narrow),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/revoke",
+                summary: "Consent.revoke_contact_disclosure, the one-tap revoke of a contact's standing clearance.",
+                row: None,
+            },
+            post(revoke),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/preclear",
+                summary: "The owner clears a named trusted set for one Scope in advance, each contact with its own receipt.",
+                row: None,
+            },
+            post(preclear),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/disclosure/mode",
+                summary: "The disclosure-mode knob, auto when never set.",
+                row: None,
+            },
+            get(mode),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/disclosure/mode",
+                summary: "Turns the knob.",
+                row: None,
+            },
+            put(set_mode),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/attendee",
+                summary: "The owner's answer to one unknown-attendee ask, once.",
+                row: None,
+            },
+            post(attendee),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/disclosure/entry",
+                summary: "One attendee's first entry into a chat or room, the P5 question the owner answers once.",
+                row: None,
+            },
+            get(entry),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/entry/confirm",
+                summary: "The owner's yes to one entry's P5 question: the entry's contact is cleared standing under the frozen offer, the entry sees the history chosen, and the entry is decided once.",
+                row: None,
+            },
+            post(confirm_entry),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/disclosure/entry/decline",
+                summary: "The owner's no to one entry's P5 question: the offer settles denied, nothing widens, and the entry is decided once.",
+                row: None,
+            },
+            post(decline_entry),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,10 +416,10 @@ async fn offer(
 async fn confirm(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConfirmOffer>, JsonRejection>,
+    payload: OwnerJsonBody<ConfirmOffer>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let delta = delta_bytes(&request.expected_delta)?;
         Ok(server
@@ -351,10 +441,10 @@ async fn confirm(
 async fn narrow(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<NarrowClearance>, JsonRejection>,
+    payload: OwnerJsonBody<NarrowClearance>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let contact = entity_id("contact", &request.contact)?;
         Ok(server
@@ -372,10 +462,10 @@ async fn narrow(
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevokeClearance>, JsonRejection>,
+    payload: OwnerJsonBody<RevokeClearance>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let contact = entity_id("contact", &request.contact)?;
         Ok(server
@@ -392,10 +482,10 @@ async fn revoke(
 async fn preclear(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PreclearSet>, JsonRejection>,
+    payload: OwnerJsonBody<PreclearSet>,
 ) -> OwnerReply<Vec<ClearanceReceipt>> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipts = blocking(move || -> OwnerResult<Vec<ClearanceReceipt>> {
         let contacts = request
             .contacts
@@ -431,10 +521,10 @@ async fn mode(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn set_mode(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ModeSetting>, JsonRejection>,
+    payload: OwnerJsonBody<ModeSetting>,
 ) -> OwnerReply<ModeSetting> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let mode = blocking(move || -> OwnerResult<ModeSetting> {
         let mode = DisclosureOfferMode::parse(&request.mode).ok_or_else(|| {
             OwnerError::Invalid("mode is always_ask, auto or always_yes".to_owned())
@@ -454,10 +544,10 @@ async fn set_mode(
 async fn attendee(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AttendeeAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<AttendeeAnswer>,
 ) -> OwnerReply<AttendeeResolved> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let resolved = blocking(move || -> OwnerResult<AttendeeResolved> {
         let ask_ref = entity_id("ask_ref", &request.ask_ref)?;
         let choice = match request.choice.as_str() {
@@ -539,10 +629,10 @@ async fn entry(
 async fn confirm_entry(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConfirmEntry>, JsonRejection>,
+    payload: OwnerJsonBody<ConfirmEntry>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
         let delta = delta_bytes(&request.expected_delta)?;
@@ -567,10 +657,10 @@ async fn confirm_entry(
 async fn decline_entry(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DeclineEntry>, JsonRejection>,
+    payload: OwnerJsonBody<DeclineEntry>,
 ) -> OwnerReply<ClearanceReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<ClearanceReceipt> {
         let entry_ref = entity_id("entry_ref", &request.entry_ref)?;
         let delta = delta_bytes(&request.expected_delta)?;

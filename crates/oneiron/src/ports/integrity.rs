@@ -315,6 +315,21 @@ pub(crate) fn withdraw_received_epoch_generation_in_txn(
     withdraw_words_in_txn(store, txn, id, &worlds)?;
     Ok(true)
 }
+/// Marks `id` withdrawn here as the machine that cut it off at a carried
+/// Shell cutoff marked it (FIX 931): stale, and out of every projection of
+/// its words. No world is recorded and no epoch walked: a Shell is no epoch
+/// summary. A row already marked is left as it is.
+#[cfg(feature = "sync")]
+pub(crate) fn mark_received_withdrawn_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    if marked_stale_in(store, txn, id)? {
+        return Ok(());
+    }
+    mark_one_stale_in_txn(store, txn, id)
+}
 /// Where the words of `source` sit, read while its row, stamp and edges still
 /// stand, whatever its body holds. A source no one can place is unknown, and
 /// the write goes on.
@@ -368,6 +383,9 @@ fn withdraw_in_txn(
 ) -> Result<()> {
     mark_one_stale_in_txn(store, txn, id)?;
     record_withdrawn_in_txn(store, txn, id, worlds)?;
+    // A reply TURN that copied a scope summary's words, now stale, takes the
+    // withdrawn record's Shell (FIX 931, 11804).
+    crate::scope_summary::scrub_withdrawn_copy_in_txn(store, txn, id)?;
     // An epoch summary copies the words of what it was written from, so it
     // is withdrawn with any of them, through nested epochs (agent-runtime-v1
     // §d7), for the same worlds.
@@ -488,6 +506,7 @@ pub(crate) fn invalidate_source_in_txn(
     document: &EntityId,
     door: DependentWalkDoor,
 ) -> Result<()> {
+    crate::feedback::intake::forget_report_cluster_member_in_txn(store, txn, document, door)?;
     crate::claim::invalidate_weave_digest_source_in_txn(store, txn, document)?;
     super::dependent_walk::begin_in_txn(store, txn, document, door)
 }

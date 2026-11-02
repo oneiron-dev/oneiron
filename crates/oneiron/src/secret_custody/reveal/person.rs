@@ -1,8 +1,9 @@
 //! PERSON handles use the reveal consent machine, not custody or a T1 lease.
+//! A delivered PERSON reveal keeps its own lease on its row (FIX 11683).
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::{HandleReveal, RevealAsker, RevealRow, covering_grant, disclosure_bound};
+use super::{HandleReveal, RevealAsker, RevealRow};
 use crate::Vault;
 use crate::claim::{ClaimBody, ScopedReadActorKey, claim_surfaceable};
 use crate::disclosure::{DisclosureBand, DisclosureDataClass};
@@ -115,11 +116,13 @@ impl Vault {
         let body = self
             .get_claim_in_txn(&txn, &target.claim)?
             .ok_or(Error::EntityNotFound)?;
-        let bound = disclosure_bound(&asker.connection(), "names", asker.project.as_ref())?;
         let grants = crate::consent::load_active_standing_grants(&self.store, &txn)?;
-        let reveal = covering_grant(&bound, asker.project, &grants)?
-            .map_or(HandleReveal::Asks, |grant_ref| HandleReveal::Hydrates {
-                grant_ref,
+        // A grant of any reach covers it (FIX 2354).
+        let reveal = asker
+            .reach()
+            .covering_grant(&asker.connection(), "names", &grants)?
+            .map_or(HandleReveal::Asks, |(_, grant_ref)| {
+                HandleReveal::Hydrates { grant_ref }
             });
         let learned_at = self
             .store

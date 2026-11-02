@@ -88,6 +88,18 @@ pub enum RunEvent {
         editor: DeclarationEditor,
         from: u32,
     },
+    /// A call was admitted past its resident's soft share of the
+    /// allocation (FIX 7767): `used_units` were used or held before it, and
+    /// `overdraft_units` of its reservation lie past `share_units`. One row
+    /// per overdrawing call; nothing was refused.
+    ResidentOverdraft {
+        lease: String,
+        resident: EntityId,
+        allocation: AllocationRef,
+        share_units: u64,
+        used_units: u64,
+        overdraft_units: u64,
+    },
     /// A planned child's call was answered by `ran`, the host's own model,
     /// because the host could not route `planned`, the model its plan picked
     /// (FIX 2310). Nothing substitutes silently.

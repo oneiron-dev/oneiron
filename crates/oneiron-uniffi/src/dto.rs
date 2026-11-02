@@ -100,7 +100,7 @@ pub struct WitnessMessage {
 }
 
 /// One turn to witness.
-#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+#[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct WitnessTurn {
     /// Conversation ref (create-or-get, or an existing short ref).
     pub conversation_ref: String,
@@ -115,6 +115,10 @@ pub struct WitnessTurn {
     /// Unix seconds; omitted is stamped with the current time at the call
     /// boundary.
     pub occurred_at: Option<i64>,
+    /// The records this reply names as cited or created (OF-063), as the
+    /// generated facade record, judged by the engine under the writer's own
+    /// read. Omitted means it asserts nothing.
+    pub assertions: Option<crate::WitnessAssertions>,
 }
 
 /// The quoted span of one MESSAGE: the message and its scalar range.
@@ -137,6 +141,31 @@ pub struct WitnessReceipt {
     pub message_short_ids: Vec<String>,
     /// Write marker for the witnessed turn.
     pub receipt_ref: String,
+    /// What the wake this turn owes its actor's armed programs came to
+    /// (FIX 9970); absent when the turn owes none.
+    #[uniffi(default = None)]
+    pub wake_outcome: Option<TurnProgramWakeOutcome>,
+}
+
+/// What a landed turn's program wake came to (FIX 9970).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum TurnProgramWakeOutcome {
+    /// The actor has no program armed: no wake is owed.
+    NotArmed,
+    /// The wakes this landing recorded; zero means none matched or each was
+    /// already recorded, not a failure.
+    Evaluated { newly_recorded: u32 },
+    /// No wake was recorded, and no program wakes for this turn.
+    Unpersisted { reason: UnpersistedWakeReason },
+}
+
+/// Why a turn's program wake was not recorded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum UnpersistedWakeReason {
+    /// The turn's caller seals no authority a program could run under.
+    NoAuthority,
+    /// Reading the armed programs or writing the wake failed in storage.
+    StorageFailure,
 }
 
 // ── claims ──────────────────────────────────────────────────────────────
@@ -158,7 +187,9 @@ pub struct ClaimInput {
     pub source: String,
     /// Optional world ref.
     pub world_ref: Option<String>,
-    pub relationship_ref: Option<String>,
+    /// Optional RELATIONSHIP refs: absent for all, `[]` for the explicit
+    /// empty set.
+    pub relationship_ref: Option<Vec<String>>,
     /// Optional scope map.
     pub scope: Option<WireJson>,
     /// Validity window start (Unix seconds).
@@ -171,6 +202,13 @@ pub struct ClaimInput {
     pub learned_at: Option<i64>,
     /// Optional salience in `[0, 1]`.
     pub salience: Option<f32>,
+    /// The band a calibrated producer gave `confidence`
+    /// (`low|medium|high|certain`), with `confidence_basis`; both omitted
+    /// mean the house band of the number.
+    pub confidence_band: Option<String>,
+    /// Where `confidence_band` came from
+    /// (`calibrated_model|deterministic_fallback`).
+    pub confidence_basis: Option<String>,
 }
 
 /// Receipt for one committed claim.
@@ -229,7 +267,12 @@ pub struct RecordRefusal {
     pub suggestions: Vec<String>,
     /// The refused element's or slot's JSON pointer (`/claims/2`).
     pub field: String,
+    /// The legal-hold notice behind this refusal, when its producer supplied one.
+    pub legal_hold: Option<crate::facade_types_generated::LegalHoldNotice>,
 }
+
+// The canonical notice contains only Eq fields; generated records derive PartialEq.
+impl Eq for crate::facade_types_generated::LegalHoldNotice {}
 
 /// Selector for `vault.forget`: a claim ref, or a subject/predicate pair.
 #[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
@@ -489,8 +532,10 @@ pub struct NeighborHit {
 /// One read scope on a receipt: the requested, ceiling, or applied tuple.
 #[derive(Clone, Debug, PartialEq, uniffi::Record)]
 pub struct ReadScope {
-    /// Admitted entity type bytes; absent means every registered type.
-    pub entity_types: Option<Vec<u8>>,
+    /// Admitted entity types as registry kinds (`CLAIM`, `MESSAGE`, ...),
+    /// as every wire spells them (FIX 10762); absent means every registered
+    /// type.
+    pub entity_types: Option<Vec<String>>,
     /// Highest admitted sensitivity band.
     pub max_sensitivity_band: u8,
     /// Whether stale claims are admitted.
@@ -731,8 +776,11 @@ pub struct MemoryItem {
     pub value_text: String,
     /// Calibrated-absolute confidence in `[0, 1]`.
     pub confidence: f32,
-    /// Hedge vocabulary bucket derived from confidence.
+    /// Hedge vocabulary bucket: a claim's stored confidence band, by name.
     pub hedge_bucket: String,
+    /// Where a claim's band came from (`calibrated_model` or
+    /// `deterministic_fallback`); omitted for an item that is not a claim.
+    pub confidence_basis: Option<String>,
     /// Provenance.
     pub provenance: MemoryProvenance,
     pub stale: Option<MemoryStaleStamp>,
@@ -1027,4 +1075,19 @@ pub struct OutboundIntentReceipt {
     pub approval_digest: Option<String>,
     /// True when the idempotency key coalesced.
     pub deduped: bool,
+}
+
+// ── export ──────────────────────────────────────────────────────────────
+
+/// One whole-vault export written to the caller's file (FIX 11177): its
+/// format, length and BLAKE3, as its receipt records them. The archive is
+/// the caller's file.
+#[derive(Clone, Debug, PartialEq, Eq, uniffi::Record)]
+pub struct ExportReceipt {
+    /// The archive manifest's `format`: `archive` or `okf`.
+    pub format: String,
+    /// The archive's length in bytes.
+    pub bytes: u64,
+    /// BLAKE3 of the archive, lowercase hex.
+    pub digest: String,
 }

@@ -89,6 +89,31 @@ pub(crate) fn instances_in_txn(
         .collect())
 }
 
+/// Every incarnation under `subtype` whose owner starts with `owner_prefix`,
+/// in item order: a whole owner, or an attachment occurrence's holding
+/// record; none while the switch is off. KS7-4's erase settles them all.
+pub(crate) fn owner_instances_in_txn(
+    dbs: &impl SideTableDbs,
+    txn: &RoTxn<'_>,
+    subtype: Subtype,
+    owner_prefix: &[u8],
+) -> Result<Vec<PayloadInstance>> {
+    if !CHECKPOINT_PAYLOADS_ENABLED {
+        return Ok(Vec::new());
+    }
+    if owner_prefix.len() > OWNER_LEN {
+        return Err(corrupt());
+    }
+    let mut prefix = Vec::with_capacity(1 + owner_prefix.len());
+    prefix.push(subtype.tag());
+    prefix.extend_from_slice(owner_prefix);
+    Ok(INSTANCES
+        .scan_from(dbs, txn, &prefix)?
+        .into_iter()
+        .map(|(item, row)| PayloadInstance::of(item, row))
+        .collect())
+}
+
 /// The one active incarnation among `instances`, if any; two are damage.
 fn only_active(instances: Vec<PayloadInstance>) -> Result<Option<PayloadInstance>> {
     let mut active = instances

@@ -45,7 +45,8 @@ side_tables! {
     /// Universal report arrivals; review lives on the ISSUE entity. Key: u64be + id16.
     FEEDBACK_REPORT_ARRIVAL: VaultMeta b"feedback:report-arrival:v1:" Named;
     /// T2 report membership and vectors, keyed by the first ISSUE id.
-    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named;
+    FEEDBACK_REPORT_CLUSTER: VaultMeta b"feedback:report-cluster:v1:" Named
+        => crate::feedback::intake::forget_report_cluster_source_in_txn;
     /// One issue's publisher delivery lane (OF-420, FIX 739): the frozen ED-08 signature and its
     /// wire bytes and digest, the frozen destination and logical send, the hold, and the last
     /// send's receipt and outcome. Key: id16 (the ISSUE) + bytes32 (blake3 of the lane key).
@@ -176,7 +177,8 @@ side_tables! {
     /// Durable journal record of one prepared/applied/failed git ref, stage, or worktree effect. Key:
     /// hex64(repo identity) ":" hex64(record key).
     /// Owner-confirmed voice disclosure grant offer. Key: hex64 nonce.
-    GENUI_VOICE_GRANT_OFFER: VaultMeta b"genui.voice_grant_offer.v1:" LegacyJson;
+    GENUI_VOICE_GRANT_OFFER: VaultMeta b"genui.voice_grant_offer.v1:" LegacyJson
+        => crate::genui::erase_voice_offer_actor_in_txn;
     GIT_WIRE_RECORD: VaultMeta b"git_wire:record:v2:" Named;
     /// Node-local Gmail page cursor keyed by lower-case hex identity id. Key: hex32.
     GMAIL_MAILBOX_CURSOR: VaultMeta b"gmail:mailbox_cursor:v1:" LegacyJson;
@@ -260,8 +262,9 @@ side_tables! {
     /// chain and the ask handle, Open until a retry resumes it once. Key: id16 (invocation).
     HOOKS_VERB_ASK: VaultMeta b"hooks:verb_ask:v1:" Named;
     /// The instrument a credential caller's request was admitted on, pinned beside its stopped
-    /// call for the drain to verify again: a slip, its holder's challenge and signature, never a
-    /// secret. Pruned with the call. Key: id16 (invocation).
+    /// call for the drain to verify again: a slip, its holder's challenge and signature, or a
+    /// managed vault's attested owner's person, never a secret and no credential minted for him.
+    /// Pruned with the call. Key: id16 (invocation).
     HOOKS_VERB_ASK_WITNESS: VaultMeta b"hooks:verb_ask_witness:v1:" Named;
     /// A verb hook run's saved copy: the exact input its body saw, its read pins and the outcome it
     /// returned. Key: hash32 (run key).
@@ -298,9 +301,23 @@ side_tables! {
     /// Canonical caller-supplied text fields backing one document's bm25 index, used to rebuild
     /// postings. Key: id16.
     INDEX_SOURCE_TEXT: VaultMeta b"index_source:text:v1:" Named;
+    /// One inference snapshot this vault keeps sealed on disk: its manifest, its dependency
+    /// set, its byte lengths and hash, its class, reuse and pins. Ids, digests, enums and pins
+    /// only: never prompt text, tokens, tensors, credentials or keys. Key: id16 (the catalog id,
+    /// drawn at random).
+    INFERENCE_SNAPSHOT_CATALOG: VaultMeta b"inference_snapshot:catalog:v1:" Named Engine
+        => crate::inference_snapshot::erase_actor_in_txn;
     /// Blob birth fingerprint tree used for perceptual/exact duplicate detection on ingest. Key:
     /// id16.
     INGEST_FINGERPRINT: VaultMeta b"ingest-fingerprint:v1:" LegacyJson;
+    /// Attempts paused for an annotation hold, empty markers. Key: id16.
+    ATTEMPT_ANNOTATION_HOLD: VaultMeta b"job:annotation_hold:v1:" Raw;
+    /// Attempt kind to attempt ids, empty markers. Key: u64be len + kind + id16.
+    ATTEMPT_KIND_INDEX: VaultMeta b"job:kind_index:v1:" Raw;
+    /// A row's run-tree parent to the row, empty markers. Key: parent id16 + child id16.
+    ATTEMPT_PARENT_CHILD_INDEX: VaultMeta b"job:parent_child:v1:" Raw;
+    /// Retried attempt to its retries, empty markers. Key: parent id16 + child id16.
+    ATTEMPT_RETRY_CHILD_INDEX: VaultMeta b"job:retry_child:v1:" Raw;
     /// Run id to queued attempt ids. Key: u64be len + string + id16.
     ATTEMPT_RUN_INDEX: VaultMeta b"job:run_index:v1:" Raw;
     /// The next tagging marker's sequence number, a part of its derived id, so no marker id is
@@ -312,18 +329,28 @@ side_tables! {
     /// Empty-marker age index over the tagging traces. Key: u64be recorded-at + turn id16 + u64be
     /// sequence.
     TAGGING_TRACE_AGE: VaultMeta b"job:tagging_trace_age:v1:" Raw;
+    /// Attempt task ref to attempt ids, empty markers. Key: u64be len + task ref + id16.
+    ATTEMPT_TASK_INDEX: VaultMeta b"job:task_index:v1:" Raw;
     /// The vault's typed key custody binding (`store::key_custody`): version 1, namespace
     /// (16), vault id (32), then the native absolute root path the custody sits beside; never
     /// key material. Pinned by the first publication with what it protects. Key: ().
     KEY_CUSTODY_BINDING: VaultMeta b"key_custody:binding:v1" Raw;
+    /// One erasable custody key's ref-keyed metadata (FIX 8875): its purpose, its parent (the
+    /// actor a home handoff key seals for, or a grant) and its incarnation; never the key.
+    /// Key: bytes32 (the key's random ref).
+    KEY_CUSTODY_ERASABLE_REF: VaultMeta b"key_custody:erasable_ref:v1:" Named Engine
+        => crate::store::home_handoff_custody::scrub_actor_in_txn;
     /// A committed intent to retire one custody subject's entries through a generation:
     /// u64be generation, then cause (0 retention, 1 erase). Key: vault id (32) + kind tag (1) +
     /// item.
     KEY_CUSTODY_RETIRE_PENDING: VaultMeta b"key_custody:retire_pending:v1:" Raw;
     /// Vault-scoped structural-kind registration. Key: u8.
     STRUCTURAL_KIND_REGISTRY: VaultMeta b"kind_reg:" Raw;
-    /// A `learning.*` cell's key, estimate form and what counted. Key: cell digest (32 bytes).
-    LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named;
+    /// A `learning.*` cell's key, estimate form and what counted; a project's erase takes every
+    /// cell scoped to it, with its index, evidence and prior, and re-keys its heads (FIX 6038).
+    /// Key: cell digest (32 bytes).
+    LEARNING_CELL: VaultMeta b"learning:cell:v1:" Named
+        => crate::learning::erase_learning_scope_in_txn;
     /// Subject index over `learning.*` cells (value: the member). Key: subject id16 + cell digest.
     LEARNING_CELL_SUBJECT: VaultMeta b"learning:cell_subject:v1:" Named;
     /// Owner seed or pin over one spawn choice (model, width, pattern or budget) at a goal, a
@@ -349,8 +376,8 @@ side_tables! {
     /// Key: string (setting key "\0" mode).
     LEARNING_SETTING: VaultMeta b"learning:setting:v1:" Raw
         => crate::learning_setting::erase_setting_actor_in_txn;
-    /// The vault-scope `learning.setting` fit, cached beside its claim for hot readers. Key: string
-    /// (setting key).
+    /// A `learning.setting` fit, cached beside its claim for hot readers. Key: string (setting key,
+    /// then its project, subject and type node as they apply); a project's erase deletes its keys.
     LEARNING_SETTING_FIT: VaultMeta b"learning:setting_fit:v1:" Named;
     /// The customer holds an owner's lift-and-erase confirm lifted from one record, until its
     /// deletion receipt completes (OF-470 C4). Key: id16 (record).
@@ -454,14 +481,22 @@ side_tables! {
     LLM_MODEL_DESCRIPTION: VaultMeta b"llm:model_description:v1:" LegacyJson Authored;
     /// Held-out model trial, billed evidence and switch offer. Key: question id16 + trial id16.
     LLM_MODEL_TRIAL: VaultMeta b"llm:model_trial:v1:" Named;
+    /// The loaded native Oneironer bundle's receipt at its bind: stack and
+    /// checkpoint, label count and per-artifact hashes. Key: string (slot).
+    LLM_ONEIRONER_BUNDLE_RECEIPT: VaultMeta b"llm:oneironer_bundle_receipt:v1:" Named;
+    /// A non-holder's inert inference-defaults replacement (FIX 8211). Key: id16(proposal).
+    LLM_PURPOSE_DEFAULT_PROPOSAL: VaultMeta b"llm:purpose_default_proposal:v1:" Named;
     /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
     LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson;
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored
         => crate::llm::registry::erase_registry_source_in_txn;
-    /// Per-vault narrow-only resident route overrides, cleared when the manifest is replaced. Key:
-    /// ().
+    /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
+    /// pack refreshes until the owner clears it. Key: string(model id).
+    LLM_REGISTRY_STALE_MARK: VaultMeta b"llm:registry_stale:v1:" Named Engine;
+    /// Per-vault narrow-only resident route overrides: those the new manifest
+    /// still admits stay, the others clear in the manifest txn. Key: ().
     LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson;
     /// One routed seat selected and pinned by caller-chosen bounded seat id.
     LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson Authored;

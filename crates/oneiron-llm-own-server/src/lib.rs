@@ -297,9 +297,12 @@ impl CheckedStream<'_> {
     /// whose message disagrees with it does not replace it, refuse it or
     /// send it again (FIX 8617): the shown output is the answer, with the
     /// provider's usage as reported, and it ends
-    /// [`oneiron::FinishReason::Incomplete`]. A terminal-only answer, with
-    /// nothing shown first, is held to its own checks alone, as is a
-    /// cancelled one.
+    /// [`oneiron::FinishReason::Incomplete`]. A cancelled terminal is held
+    /// to what was shown too (FIX 9324): one that disagrees ends with the
+    /// shown output (its text as shown, only the tool calls that ended), the
+    /// usage as reported, still [`oneiron::FinishReason::Cancelled`], so a
+    /// stop stays a stop and nothing shown is taken back. A terminal-only
+    /// answer, with nothing shown first, is held to its own checks alone.
     fn terminal(
         &mut self,
         message: oneiron::LlmMessage,
@@ -308,14 +311,19 @@ impl CheckedStream<'_> {
     ) -> oneiron::LlmResult<oneiron::LlmStreamEvent> {
         let cancelled = finish_reason == oneiron::FinishReason::Cancelled;
         let open = !cancelled && self.parts.values().any(|part| *part != StreamPart::Closed);
-        if !open && !cancelled && !self.emitted.is_empty() && !self.emitted.agrees(&message) {
+        if !open && !self.emitted.is_empty() && !self.emitted.agrees(&message) {
             self.ended = true;
+            let finish_reason = if cancelled {
+                finish_reason
+            } else {
+                oneiron::FinishReason::Incomplete {
+                    reason: oneiron::IncompleteReason::TerminalDisagreement,
+                }
+            };
             return Ok(oneiron::LlmStreamEvent::Done {
                 message: self.emitted.message(),
                 usage,
-                finish_reason: oneiron::FinishReason::Incomplete {
-                    reason: oneiron::IncompleteReason::TerminalDisagreement,
-                },
+                finish_reason,
                 reply_assertions: Default::default(),
             });
         }

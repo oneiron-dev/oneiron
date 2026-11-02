@@ -8,16 +8,18 @@
 //! is called. Its stream's text comes back to the host as [`VoiceBrainOut`],
 //! and the host speaks it past the session's safeguards. A cancel drops the
 //! turn's stream, and its run settles what it spent; what it had already
-//! said stays in the history, marked interrupted. Each safeguard notice said
-//! to the person enters the history too, and the next turn hears it. A turn
-//! assembled for a new audience revision, as after an attendee entered the
-//! call's room, starts from that audience's own history (OF-365 P5), and so
-//! does one after another call went live in the room or ended. A call heard
-//! in a room reads it again each turn, with every speaker a call live there
-//! must place; a room a missing entry holds starts no turn (FIX 3342). What
-//! a turn's memories read found, heard and withheld goes to the owner's
-//! client with the turn's first event, its narrowing receipts whole; a turn
-//! cancelled or ended before any event sends it then.
+//! said stays in the history, marked interrupted. A turn whose stream ends
+//! without a stop keeps every word it said, marked incomplete (FIX 7808).
+//! Each safeguard notice said to the person enters the history too, and the
+//! next turn hears it. A turn assembled for a new audience revision, as after
+//! an attendee entered the call's room, starts from that audience's own
+//! history (OF-365 P5), and so does one after another call went live in the
+//! room or ended. A call heard in a room reads it again each turn, with
+//! every speaker a call live there must place; a room a missing entry holds
+//! starts no turn (FIX 3342). What a turn's memories read found, heard and
+//! withheld goes to the owner's client with the turn's first event, its
+//! narrowing receipts whole; a turn cancelled or ended before any event
+//! sends it then.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
@@ -37,7 +39,7 @@ use oneiron::{
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::speech::{TurnSources, add_rows, notice_rows};
+use super::speech::{TurnSources, notice_rows};
 use super::{HostError, VoiceBrainOut};
 use crate::ai_host::{AiHandle, CHAT_ROLE};
 use crate::api::RoomAudience;
@@ -50,6 +52,9 @@ use crate::models::Seat;
 /// How an interrupted answer's history entry ends: the person cut in after
 /// the brain had said this much.
 const INTERRUPTED_MARK: &str = " [interrupted: the person cut in here]";
+/// How an answer that ended without a stop ends its history entry: every
+/// word it said was spoken, and the answer is not whole (FIX 7808).
+const INCOMPLETE_MARK: &str = " [incomplete: the answer ended before it finished]";
 /// What the call's earlier turns become for a turn assembled for a new
 /// audience (CALLS.md: FIX 1389 history).
 const PRIOR_TURNS_ON_NEW_AUDIENCE: PriorTurns = PriorTurns::Dropped;
@@ -107,14 +112,15 @@ pub struct ChatBrain {
     retiring: Vec<JoinHandle<()>>,
     /// Each tool context, beside the rows the connector call listed.
     foreign: Vec<(oneiron::task_verb::sdk::ConnectorToolResult, Vec<EntityId>)>,
-    /// Every row this call's turns were made from so far: a safeguard
-    /// notice is not told which turn's sentence it judged.
-    said_ever: Option<Vec<EntityId>>,
+    /// The rows each of this call's turns was made from, by generation: a
+    /// safeguard notice is made from the turn whose sentence it judged.
+    said_by: BTreeMap<GenerationEpoch, Vec<EntityId>>,
 }
 
-/// One history message, beside the rows it was made from (FIX 4778);
-/// `None` when they are unknown.
-type HistoryEntry = (LlmMessage, Option<Vec<EntityId>>);
+/// One history message, beside the rows it was made from (FIX 4778): the
+/// person's words none, an answer its own turn's, a notice the turn's it
+/// judged and the policy row it names, so each is known (FIX 6080, 5484).
+type HistoryEntry = (LlmMessage, Vec<EntityId>);
 
 /// The turn answering now.
 struct Running {
@@ -128,7 +134,7 @@ struct Running {
     /// The rows it was made from until an event carries them.
     sources: Arc<Mutex<Option<TurnSources>>>,
     /// The rows what it says is made from, for its history entry.
-    said_from: Option<Vec<EntityId>>,
+    said_from: Vec<EntityId>,
 }
 
 /// The turn's retrieved memories, as the brain hears them.
@@ -153,7 +159,7 @@ type OpenedTurn = (
     LlmStream<'static>,
     bool,
     Option<TurnMemories>,
-    Option<Vec<EntityId>>,
+    Vec<EntityId>,
 );
 
 impl ChatBrain {
@@ -173,7 +179,7 @@ impl ChatBrain {
             turn: None,
             retiring: Vec::new(),
             foreign: Vec::new(),
-            said_ever: Some(Vec::new()),
+            said_by: BTreeMap::new(),
         })
     }
 
@@ -230,7 +236,7 @@ impl ChatBrain {
             .iter()
             .map(|text| text_message(LlmMessageRole::System, text.clone()))
             .collect();
-        let mut said_from = Some(vec![*agent]);
+        let mut said_from = vec![*agent];
         {
             let history = self
                 .history
@@ -239,24 +245,37 @@ impl ChatBrain {
             let skip = history.len().saturating_sub(settings.history_turns);
             for (message, rows) in history.iter().skip(skip) {
                 messages.push(message.clone());
-                add_rows(&mut said_from, rows.as_deref());
+                said_from.extend_from_slice(rows);
             }
         }
+        // The turn's context: its memories' board, then each tool context.
+        let mut context = Vec::new();
         if let Some(memories) = &memories {
-            messages.push(text_message(LlmMessageRole::User, memories.board.clone()));
-            add_rows(&mut said_from, Some(&memories.ids));
+            context.push(memories.board.clone());
+            said_from.extend_from_slice(&memories.ids);
         }
-        for (context, rows) in &self.foreign {
+        for (foreign, rows) in &self.foreign {
             // The connector's own source and foreign marker stay with every
             // field. They are task data, never a System instruction.
-            let data = serde_json::to_string(context).map_err(refused)?;
-            messages.push(text_message(LlmMessageRole::User, data));
-            add_rows(&mut said_from, Some(rows));
+            context.push(serde_json::to_string(foreign).map_err(refused)?);
+            said_from.extend_from_slice(rows);
         }
         messages.push(text_message(
             LlmMessageRole::User,
             request.transcript.clone(),
         ));
+        // FIX 9443: the layout read once for this fresh turn. The stable one
+        // makes the context one turn-context message before the transcript;
+        // today's keeps each block its own user message there, as before.
+        let layout = ai.prompt_layout();
+        if layout == oneiron::prompt::PromptLayout::EarlySystem {
+            let at = messages.len() - 1;
+            for (offset, text) in context.into_iter().enumerate() {
+                messages.insert(at + offset, text_message(LlmMessageRole::User, text));
+            }
+        } else {
+            oneiron::prompt::place_context_for_layout(&mut messages, layout, context.as_slice());
+        }
         let admitted = ai
             .admit_role(vault, CHAT_ROLE, chat_request(&self.seat, messages))
             .map_err(refused)?;
@@ -275,8 +294,8 @@ impl ChatBrain {
         )?;
         let run = ai.model_runtime().funded_run(line, meter, funding.clone());
         // Its permits and metered settlement carry the rows the input was
-        // read from (FIX 6935); unknown stays unknown.
-        let read = oneiron::skill_optimize::union_source_rows([said_from.as_deref()]);
+        // read from (FIX 6935).
+        let read = oneiron::skill_optimize::union_source_rows([Some(said_from.as_slice())]);
         let run = run.sourced(read);
         let stream = admitted
             .ladder
@@ -506,9 +525,9 @@ impl Brain for ChatBrain {
             .map_err(|_| refused("history poisoned"))?
             .push((
                 text_message(LlmMessageRole::User, request.transcript.clone()),
-                Some(Vec::new()),
+                Vec::new(),
             ));
-        add_rows(&mut self.said_ever, said_from.as_deref());
+        self.said_by.insert(generation, said_from.clone());
         let sources = Arc::new(Mutex::new(Some(TurnSources {
             said: said_from.clone(),
             found: request
@@ -564,11 +583,15 @@ impl Brain for ChatBrain {
 
     /// The notice enters the call's history as System context, so the next
     /// turn hears it; a turn already answering is not interrupted.
-    /// It is heard as made from every turn so far, whose sentence it may
-    /// have judged, and the policy row it names.
-    fn notice(&mut self, notice: &GateSystemNoticeRecord) -> oneiron::Result<()> {
-        let mut rows = self.said_ever.clone();
-        add_rows(&mut rows, Some(&notice_rows(notice)));
+    /// It is heard as made from the rows of `generation`, the turn whose
+    /// sentence it judged, and the policy row it names (FIX 5484).
+    fn notice(
+        &mut self,
+        generation: GenerationEpoch,
+        notice: &GateSystemNoticeRecord,
+    ) -> oneiron::Result<()> {
+        let mut rows = self.said_by.get(&generation).cloned().unwrap_or_default();
+        rows.extend(notice_rows(notice));
         self.history
             .lock()
             .map_err(|_| refused("history poisoned"))?
@@ -605,7 +628,7 @@ struct Turn {
     /// same way (FIX 4778).
     sources: Arc<Mutex<Option<TurnSources>>>,
     /// The rows what it says is made from, for its history entry.
-    said_from: Option<Vec<EntityId>>,
+    said_from: Vec<EntityId>,
     out: mpsc::Sender<VoiceBrainOut>,
     history: Arc<Mutex<Vec<HistoryEntry>>>,
     /// What the turn has handed the speech host, shared with its cancel.
@@ -641,19 +664,35 @@ impl Turn {
                     }
                     return;
                 }
-                Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Done,
+                // Only a stop is a whole answer (FIX 7808). Every other
+                // terminal ended it mid-answer: what it said is spoken to its
+                // end, and the turn is marked one that never finished.
+                Some(Ok(LlmStreamEvent::Done {
+                    finish_reason: FinishReason::Stop,
+                    ..
+                })) => break BrainEvent::Done,
+                Some(Ok(LlmStreamEvent::Done { .. })) => break BrainEvent::Incomplete,
                 Some(Ok(_)) => {}
                 Some(Err(error)) => break BrainEvent::Error(error.to_string()),
                 None => break BrainEvent::Error("stream ended without a terminal".into()),
             }
         };
         let said = self.said.lock().ok().and_then(|mut said| said.take());
-        if matches!(event, BrainEvent::Done)
-            && let Some(said) = said
+        // Only a stop completes an answer (FIX 7808). One that ended without
+        // it keeps every word it said, marked the answer it never finished;
+        // a broken stream and a cancel keep their own handling.
+        let entry = match &event {
+            BrainEvent::Done => said,
+            BrainEvent::Incomplete => said
+                .filter(|said| !said.is_empty())
+                .map(|said| format!("{said}{INCOMPLETE_MARK}")),
+            _ => None,
+        };
+        if let Some(entry) = entry
             && let Ok(mut history) = self.history.lock()
         {
             history.push((
-                text_message(LlmMessageRole::Assistant, said),
+                text_message(LlmMessageRole::Assistant, entry),
                 self.said_from.clone(),
             ));
         }

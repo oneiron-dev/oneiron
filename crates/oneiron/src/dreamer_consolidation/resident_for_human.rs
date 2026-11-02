@@ -27,7 +27,7 @@ use crate::dreamer_wake::{
     DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
 };
 use crate::error::{Error, Result};
-use crate::human_task::OpenHumanAskKind;
+use crate::human_task::{OpenAskFollowup, OpenHumanAskKind};
 use crate::llm::{
     CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext, DurableStepError,
     LlmMessage, LlmMessageRole, LlmRequest, ModelTierRef, ResponseFormat, StepOutcome,
@@ -214,11 +214,12 @@ fn unread(code: String) -> (String, FreeTimeForHumanContext) {
 /// The asks still open with its human (FIX 5908), read on `resident`'s own
 /// surface and never as its human, in at most `room` tokens: each ask's
 /// family, TASK and follow-up state, quoted as data, under a heading that
-/// names the only families read. Asks that do not fit, and rows that did not
-/// read, are counted in a closing line, never left to read as none open. A
-/// read that fails says so in one line and costs the rest nothing. Empty
-/// when nothing of it fits, or when no ask is open and every row read. With
-/// it, whether it lists any ask.
+/// names the families read and those not read, and says which of the open
+/// asks this replica follows up where any is untracked here (FIX 7208).
+/// Asks that do not fit, and rows that did not read, are counted in a
+/// closing line, never left to read as none open. A read that fails says so
+/// in one line and costs the rest nothing. Empty when nothing of it fits, or
+/// when no ask is open and every row read. With it, whether it lists any ask.
 fn open_asks(vault: &Vault, resident: EntityId, human: EntityId, room: u64) -> (String, bool) {
     let tokens = |text: &str| crate::count_context_pack_tokens(text) as u64;
     let read = match crate::human_task::open_asks_for(&resident_reads(vault, resident), human) {
@@ -243,12 +244,39 @@ fn open_asks(vault: &Vault, resident: EntityId, human: EntityId, room: u64) -> (
         .map(OpenHumanAskKind::as_str)
         .collect::<Vec<_>>()
         .join(", ");
+    let unread_families = read
+        .not_read
+        .iter()
+        .map(|family| family.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    let untracked = read
+        .asks
+        .iter()
+        .filter(|ask| ask.state == OpenAskFollowup::Untracked)
+        .count();
     let head = if read.complete {
         format!("{OPEN_ASKS_TITLE}Every family of ask is read here.\n")
     } else {
-        format!(
-            "{OPEN_ASKS_TITLE}Only these families are read here, as this device follows them up: {families}. Asks of any other kind are not.\n"
-        )
+        let mut head = format!("{OPEN_ASKS_TITLE}Only these families are read here: {families}. ");
+        if unread_families.is_empty() {
+            head.push_str("Asks of any other kind are not.");
+        } else {
+            head.push_str(&format!("{unread_families} are not read here."));
+        }
+        if !read.asks.is_empty() {
+            if untracked == 0 {
+                head.push_str(" This device follows each of them up.");
+            } else {
+                head.push_str(&format!(
+                    " This device follows up {} of the {} open; the rest are untracked on this replica.",
+                    read.asks.len() - untracked,
+                    read.asks.len()
+                ));
+            }
+        }
+        head.push('\n');
+        head
     };
     let lines: Vec<String> = read
         .asks
@@ -331,14 +359,20 @@ pub async fn run_free_time_for_human(
     let FreeTimeItemRun::Run(binding) =
         crate::dreamer_runner::free_time_item_to_run(ctx.vault, attempt_id, resident_id)?
     else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     if !ctx
         .vault
         .get_agent_definition(&resident_id)?
         .is_some_and(|definition| definition.enabled)
     {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let window = model
         .window_tokens
@@ -384,6 +418,7 @@ pub async fn run_free_time_for_human(
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
+    let keyless = model.inference.selected_keyless();
     let request = LlmRequest {
         model: model.model.clone(),
         envelope: CallEnvelope {
@@ -400,6 +435,7 @@ pub async fn run_free_time_for_human(
             ),
             response_format: ResponseFormat::Text,
             locality,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -500,5 +536,6 @@ pub async fn run_free_time_for_human(
     )?;
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }

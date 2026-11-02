@@ -7,7 +7,7 @@ use crate::llm::decision::types::invalid;
 use crate::llm::decision::{
     DecisionAnswer, DecisionQuestion, HumanAskReason, PersonChangedAnswer, ProviderPin,
 };
-use crate::{EntityId, Result};
+use crate::{EntityId, Result as VaultResult};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -30,7 +30,7 @@ pub struct HumanDecisionRequest {
 impl HumanDecisionRequest {
     /// The record of the person's answer changing the model's. None when there was no model
     /// answer to change or the person gave the same one.
-    pub fn changed_by(&self, person: DecisionAnswer) -> Result<Option<PersonChangedAnswer>> {
+    pub fn changed_by(&self, person: DecisionAnswer) -> VaultResult<Option<PersonChangedAnswer>> {
         if person == DecisionAnswer::Abstain || !self.question.contract.accepts(&person) {
             return Err(invalid("invalid person answer"));
         }
@@ -62,13 +62,40 @@ impl HumanDecisionRequest {
 }
 
 pub trait HumanDecisionQueue: Send + Sync {
-    fn queue(&self, request: HumanDecisionRequest) -> Result<()>;
+    fn queue(&self, request: HumanDecisionRequest) -> VaultResult<()>;
+
+    /// [`Self::queue`] with the state the ladder's reads weighed (FIX 2424): the
+    /// caller-scoped pack snapshot, built from the request's own evidence, so a holder
+    /// answers over the same candidate values the model read. The arrival number when the
+    /// queue numbers its asks. A queue that keeps no state queues the request as it is.
+    fn queue_with_state(
+        &self,
+        request: HumanDecisionRequest,
+        _state: &serde_json::Value,
+    ) -> VaultResult<Option<u64>> {
+        self.queue(request).map(|()| None)
+    }
+
+    /// [`Self::queue_with_state`] for an ask about one consent effect (FIX 2975): the
+    /// queue keeps `consent` on the ask, with the owner's nearest reason on record
+    /// pre-filled. A queue that keeps no consent queues the request as it is.
+    fn queue_with_consent(
+        &self,
+        request: HumanDecisionRequest,
+        state: Option<&serde_json::Value>,
+        _consent: &super::AskConsent,
+    ) -> VaultResult<Option<u64>> {
+        match state {
+            Some(state) => self.queue_with_state(request, state),
+            None => self.queue(request).map(|()| None),
+        }
+    }
 }
 
 /// A role an ask can go to (Q3 by role). A role names authority, not a person: the host
 /// resolves who holds it when the ask is queued, and the answer door rechecks it. The
 /// model asks for escalation; it never names the role or the actor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "role", rename_all = "snake_case")]
 pub enum AskRole {
     /// The actor responsible for what the question is over (a schedule's, a question's or
@@ -76,13 +103,16 @@ pub enum AskRole {
     /// project, the chain then walks that project's boards.
     Responsible {
         #[serde(with = "crate::llm::decision::codec::answer_actor")]
+        #[schemars(with = "String")]
         actor: crate::llm::decision::AnswerActor,
         #[serde(default, with = "crate::llm::decision::codec::optional_entity")]
+        #[schemars(with = "Option<String>")]
         project: Option<EntityId>,
     },
     /// A project's effective board; the chain then walks its parents' boards.
     Board {
         #[serde(with = "crate::llm::decision::codec::entity")]
+        #[schemars(with = "String")]
         project: EntityId,
     },
     /// The vault's live owners, where every chain ends.
@@ -102,7 +132,19 @@ impl AskRole {
 }
 
 /// How far up a chain a role sits: an ask climbs from its role toward the owners.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum RoleRank {
     Responsible,
@@ -112,7 +154,9 @@ pub enum RoleRank {
 
 /// What an answer to an ask authorises. An e-signature or a person-authorised payment
 /// resolves only to a natural person, whoever else holds the role.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AskAct {
     #[default]
@@ -131,7 +175,7 @@ impl AskAct {
 
 /// Who a call's ask goes to: bound by the caller from trusted context, never from
 /// model-authored state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AskTo {
     /// The role asked first.
@@ -153,7 +197,7 @@ impl AskTo {
     }
 
     /// A role at or under its ceiling.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> VaultResult<()> {
         if self.role.rank() > self.ceiling {
             return Err(invalid("an ask's role is above its ceiling"));
         }
@@ -162,7 +206,7 @@ impl AskTo {
 }
 
 /// Whether a role holder is a natural person or a bound agent.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HolderKind {
     Person,
@@ -170,16 +214,17 @@ pub enum HolderKind {
 }
 
 /// A live actor holding a role.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RoleHolder {
     #[serde(with = "crate::llm::decision::codec::entity")]
+    #[schemars(with = "String")]
     pub actor: EntityId,
     pub kind: HolderKind,
 }
 
 /// A role on an ask's chain and the live actors who held it, as resolved.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedRole {
     pub role: AskRole,
@@ -192,5 +237,5 @@ pub trait AskRoleResolver: Send + Sync {
     /// The first role on `to`'s chain after `after` (from `to.role` when none), up to
     /// `to.ceiling`, with a live holder who may answer for `to.act`. None when no role up
     /// to the ceiling has one: the ask stays unresolved, never with wider authority.
-    fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> Result<Option<ResolvedRole>>;
+    fn next_role(&self, to: &AskTo, after: Option<&AskRole>) -> VaultResult<Option<ResolvedRole>>;
 }

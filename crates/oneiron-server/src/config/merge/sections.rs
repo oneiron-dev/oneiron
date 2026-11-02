@@ -288,6 +288,9 @@ impl PartialServeConfig {
         if let Some(value) = self.recall {
             resolved.recall.apply_override(value);
         }
+        if let Some(value) = self.policy {
+            resolved.policy.apply_override(value);
+        }
         if let Some(value) = self.skills {
             resolved.skills.apply_override(value);
         }
@@ -314,6 +317,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.line {
             resolved.line = value;
+        }
+        if let Some(value) = self.channel_endpoints {
+            resolved.channel_endpoints = value;
         }
         if let Some(value) = self.linear {
             resolved.linear = Some(value);
@@ -351,6 +357,9 @@ impl PartialServeConfig {
         }
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);
+        }
+        if let Some(value) = self.cloud_registration_pins {
+            resolved.cloud_registration_pins = Some(value);
         }
         if let Some(value) = self.publisher_training_outbox_dir {
             resolved.publisher_training_outbox_dir = Some(value);

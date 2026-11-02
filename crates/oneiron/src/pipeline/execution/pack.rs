@@ -61,6 +61,7 @@ impl PipelineBuilder<'_> {
                 signals: Vec::new(),
                 temporal_hints: Vec::new(),
                 temporal_report: None,
+                critical: Default::default(),
             });
         }
         self.claim_aging_profiles =
@@ -255,6 +256,7 @@ impl PipelineBuilder<'_> {
                 signals: telemetry_signals,
                 temporal_hints,
                 temporal_report: attempt.temporal_report,
+                critical: Default::default(),
             });
         }
         let mut temporal_report = attempt.temporal_report;
@@ -280,6 +282,7 @@ impl PipelineBuilder<'_> {
         let mut rerank_merged_components = attempt.rerank_merged_components;
         let mut retrieval_trace = attempt.retrieval_trace;
         let mut replay_inputs = attempt.replay_inputs;
+        let mut critical = attempt.critical;
 
         self.flush_ppr_cache_writes(&deferred_ppr_cache_writes)?;
 
@@ -315,9 +318,9 @@ impl PipelineBuilder<'_> {
             };
             let verdict = expander.assess_evidence(&request(&scores, &claim_bodies))?;
             let mut second_insufficient = false;
+            let mut retried = false;
             if matches!(verdict, EvidenceVerdict::Insufficient { .. })
                 && options.retry_once
-                && policy_trace.is_none()
                 && !self.deadline_reached()
             {
                 // Replace every retrieval artifact with the widened fresh transaction.
@@ -336,6 +339,7 @@ impl PipelineBuilder<'_> {
                         skip_ret01_abstain: true,
                     },
                 )?;
+                retried = true;
                 self.flush_ppr_cache_writes(&retry.deferred_ppr_cache_writes)?;
                 // A retry cache hit must not erase an earlier miss in this run.
                 merge_retrieval_diagnostics(&mut diagnostics, retry.diagnostics);
@@ -359,6 +363,7 @@ impl PipelineBuilder<'_> {
                 rerank_merged_components = retry.rerank_merged_components;
                 retrieval_trace = retry.retrieval_trace;
                 replay_inputs = retry.replay_inputs;
+                critical = retry.critical;
                 ppr_expand_executed = retry.ppr_expand_executed;
                 claim_bodies.clear();
                 claims_suppressed = 0;
@@ -377,7 +382,7 @@ impl PipelineBuilder<'_> {
             }
             let abstain = second_insufficient
                 || (matches!(verdict, EvidenceVerdict::Insufficient { .. })
-                    && (!options.retry_once || policy_trace.is_some()))
+                    && (!options.retry_once || (policy_trace.is_some() && !retried)))
                 || (self.context_pack_budget.is_some()
                     && self.post_assessment_evidence_abstains(
                         &scores,
@@ -575,6 +580,7 @@ impl PipelineBuilder<'_> {
             signals: telemetry_signals,
             temporal_hints,
             temporal_report,
+            critical,
         })
     }
 

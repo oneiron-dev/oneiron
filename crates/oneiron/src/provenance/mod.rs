@@ -140,6 +140,15 @@
 //! the same way — never a defaulted class. See
 //! `resolve_persisted_actor_class`.
 
+mod actor_stamp;
+// Opaque actor stamp tokens: a commit names one in its writer's place (FIX
+// 10930).
+pub use actor_stamp::ActorStamp;
+pub(crate) use actor_stamp::{
+    actor_stamp, actor_stamp_in_txn, actor_stamp_tokens_remain_in_txn,
+    erase_actor_stamp_cache_in_txn, erase_actor_stamp_tokens_in_txn,
+    release_held_actor_stamps_in_txn, resolve_actor_stamp, resolve_actor_stamp_in_txn,
+};
 mod actor_substrate;
 mod archive;
 pub mod birth;
@@ -164,13 +173,8 @@ pub mod text_commit;
 mod writes;
 pub(crate) use writes::EdgeProvenanceWrite;
 
-#[cfg(test)]
-pub(crate) use self::actor_substrate::encode_actor_class_evidence;
-pub(crate) use self::actor_substrate::{
-    EVIDENCE_KEY_ACTOR_CLASS, decode_actor_class_evidence, decode_model_entity_body,
-    resolve_persisted_actor_class,
-};
 pub use self::actor_substrate::{MODEL_SUBSTRATE_FIELD_MAX_BYTES, validate_actor_class};
+pub(crate) use self::actor_substrate::{decode_model_entity_body, resolve_persisted_actor_class};
 use self::actor_substrate::{encode_model_entity_body, validate_model_substrate_field};
 pub use self::codec::{
     EdgeProvenanceClaimBody, decode_edge_provenance_body, derive_confirmation_status,
@@ -221,17 +225,22 @@ pub(crate) fn erase_row_provenance_in_txn(
     erase: bool,
 ) -> Result<()> {
     erase_row_provenance_without_attempt_payloads_in_txn(store, txn, row, erase)?;
-    // An erased dispatch target's instructions and briefing leave the attempt
-    // payloads that carry them, on every platform (FIX 7076), and each
-    // planned intent it asked or whose plan seats it keeps only its erased
-    // form (Engine 10-22).
+    // Each planned intent an erased row asked or whose plan seats it keeps
+    // only its erased form (Engine 10-22), first, so the attempt payload pass
+    // finds the intents its asker's erase took (FIX 9181). An erased dispatch
+    // target's instructions and briefing then leave the attempt payloads that
+    // carry them, on every platform (FIX 7076), as do an erased asker's ask
+    // and briefing.
     if erase {
-        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
+        // The asks of the spawns it seated leave the code-run replay rows and
+        // the step starts that carry them first, while those calls still name
+        // it (FIX 9180).
+        let erased = std::collections::BTreeSet::from([*row]);
+        crate::code_run::erase_spawn_targets_in_txn(store, txn, &erased)?;
         crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
-            store,
-            txn,
-            &std::collections::BTreeSet::from([*row]),
+            store, txn, &erased,
         )?;
+        crate::attempt_queue::erase_attempt_payload_actor_in_txn(store, txn, row)?;
     }
     Ok(())
 }

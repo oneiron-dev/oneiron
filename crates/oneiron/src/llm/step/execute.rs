@@ -273,7 +273,8 @@ async fn durable_step(
     let admission = match guard.admit_for_request(&request) {
         Ok(admission) => admission,
         Err(BudgetDenied::Exhausted) => {
-            return budget_trap(ctx, step_hash).inspect(|_| step_budget_hit(ctx, guard, &request));
+            return budget_trap(ctx, step_hash, BUDGET_PARK_REASON)
+                .inspect(|_| step_budget_hit(ctx, guard, &request));
         }
         Err(denied) => {
             let source = LlmError::from(denied);
@@ -284,15 +285,21 @@ async fn durable_step(
     // of a failure; a capture that fails never fails the step. It stamps the
     // owners the Started row stamps, and keeps nothing for one gone by the
     // time it writes (FIX 6659).
-    crate::self_heal::blocked_reports::capture_durable_step(
+    // Each corrective call's wire is kept the same way, under its own call
+    // index, before it is sent (FIX 6145).
+    let (vault, attempt, actor, subject, now_ms) = (
         ctx.vault,
         ctx.attempt_id,
-        step_hash,
         ctx.envelope_actor.entity_ref(),
         ctx.subject,
-        &request,
         ctx.now_ms,
     );
+    let capture = move |wire: &LlmRequest, call: u32| {
+        crate::self_heal::blocked_reports::capture_durable_step(
+            vault, attempt, step_hash, actor, subject, wire, call, now_ms,
+        );
+    };
+    capture(&request, 0);
     // The admitted call binds to its wake in one short write before it is
     // sent (DOOR-144), best-effort: unobserved, it runs exactly as before.
     // Declared before the settlement guard, it closes after the lease does.
@@ -318,6 +325,7 @@ async fn durable_step(
                 &admission.lease,
                 guard,
                 calls,
+                &capture,
                 check,
                 max_retries,
             ),
@@ -373,17 +381,33 @@ async fn durable_step(
         // rung) found the budget spent before any response was answered: the
         // same trap as this step's own admission, never a model failure. Once
         // a response was answered, a spent budget fails the step as a spent
-        // correction admission does.
-        Err(DurableStepError::Llm(LlmError::BudgetDenied(BudgetDenied::Exhausted)))
-            if !answered =>
-        {
+        // correction admission does. A host check holding new host-paid work
+        // parks the step the same way, and is no budget hit (FIX 9924).
+        Err(DurableStepError::Llm(LlmError::BudgetDenied(
+            denied @ (BudgetDenied::Exhausted | BudgetDenied::HostCheck),
+        ))) if !answered => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
-            return budget_trap(ctx, step_hash).inspect(|_| step_budget_hit(ctx, guard, &request));
+            let reason = match denied {
+                BudgetDenied::HostCheck => HOST_CHECK_PARK_REASON,
+                _ => BUDGET_PARK_REASON,
+            };
+            return budget_trap(ctx, step_hash, reason).inspect(|_| {
+                if denied == BudgetDenied::Exhausted {
+                    step_budget_hit(ctx, guard, &request);
+                }
+            });
         }
         Err(error) => {
             settle_failed_usage(guard, &admission.lease, &failed_usage);
             // FIX 2146: a fresh call that failed counts once.
             ctx.vault.count_failed_step(ctx, step_hash, Some(&error));
+            // A provider limit's stated reset stays on the call's end row: the
+            // Retry park the refusal makes comes due then (FIX 11226).
+            if let DurableStepError::Llm(source) = &error
+                && let Some(reset) = super::retry::stated_reset_at(source)
+            {
+                observed.refused_until(reset);
+            }
             return Err(match error {
                 DurableStepError::Llm(LlmError::Fatal(source))
                     if matches!(request.envelope.class, CallClass::BestEffort) =>
@@ -573,13 +597,21 @@ fn failure_policy(
     Ok(Some(resolve_failure_policy(vault, class)?))
 }
 
-/// A spent budget parks the step's attempt behind a budget trap. The trap
-/// and its park land in one transaction: an open trap over an unparked
-/// attempt reads as plain leased work, which boot recovery requeues and a
-/// fresh budget runs without the signal.
+/// The park reason of a step whose budget is spent.
+const BUDGET_PARK_REASON: &str = "durable step budget exhausted";
+/// The park reason of a step a host check holds: the account owner's
+/// question, never a spent budget (FIX 11227).
+const HOST_CHECK_PARK_REASON: &str = "durable step held by a host check";
+
+/// A spent budget, or a host check, parks the step's attempt behind a budget
+/// trap that records `reason`. The trap and its park land in one
+/// transaction: an open trap over an unparked attempt reads as plain leased
+/// work, which boot recovery requeues and a fresh budget runs without the
+/// signal.
 fn budget_trap(
     ctx: &DurableStepContext<'_>,
     step_hash: [u8; 32],
+    reason: &str,
 ) -> DurableStepResult<StepOutcome> {
     let failure_policy =
         resolve_failure_policy(ctx.vault, super::super::DreamerFailureClass::Budget)?;
@@ -591,16 +623,17 @@ fn budget_trap(
             ctx,
             DreamerTrapKind::Budget,
             step_hash,
-            "durable step budget exhausted",
+            reason,
             TrapBindingScope::Attempt,
         )?;
         store.park_attempt_in_txn(
             wtxn,
             crate::dreamer_runner::ParkDreamerAttempt {
                 attempt_id: ctx.attempt_id,
-                reason: "durable step budget exhausted".to_owned(),
+                reason: reason.to_owned(),
                 cause: crate::dreamer_runner::DreamerParkCause::Signal,
                 park_owner: trap_park_owner(&trap.trap_claim_id),
+                carried_spend: None,
                 now: ctx.now_s(),
             },
         )?;

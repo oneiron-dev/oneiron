@@ -37,10 +37,17 @@ mod home_node;
 mod manual;
 mod outbound_leg;
 mod program;
+mod reconcile;
 mod runner;
+mod step_connector;
 mod storage;
+mod target;
 
 pub(crate) use self::manual::manual_enrollment_candidate_in_txn;
+pub(crate) use self::reconcile::{
+    IntakeSource, Reconciled, effective_member_in_txn, keep_isolation_stamps, reconcile,
+};
+pub(crate) use self::runner::reentry_dedupe_key;
 
 pub use self::audience::{AudienceWakeReport, audience_programs, enroll_audience_wake};
 pub use self::detection::{
@@ -53,7 +60,9 @@ pub use self::home_node::{
     elect_campaign_home_node_designation, local_campaign_home_node_candidate,
     require_campaign_home_node,
 };
-pub use self::outbound_leg::enrollment_outbound_approval_digest;
+pub use self::outbound_leg::{
+    EnrollmentLegDrive, drive_enrollment_outbound_leg, enrollment_outbound_approval_digest,
+};
 pub use self::program::{
     AuthoredCampaignProgram, CAMPAIGN_PROGRAM_STEP_CHANNEL_MAX_BYTES, CampaignProgramDefinition,
     CampaignProgramDraft, CampaignProgramStepDraft, archive_campaign_program,
@@ -61,9 +70,10 @@ pub use self::program::{
 };
 pub use self::program::{
     CampaignProgram, CampaignProgramOutbound, CampaignProgramStep, campaign_program,
-    campaign_program_step, put_campaign_program, put_campaign_program_step,
+    campaign_program_step,
 };
 pub use self::program::{CampaignProgramAudience, campaign_programs_for_query};
+pub(crate) use self::program::{put_campaign_program, put_campaign_program_step};
 pub use self::runner::{
     CampaignEnrollmentAttemptPayload, CampaignEnrollmentClaim, CampaignEnrollmentRunner,
     EnrollmentExecution, decode_enrollment_attempt_payload, derive_enrollment_outbound_request,
@@ -73,12 +83,10 @@ pub use self::storage::{
     CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
 };
 
-// No `pub(crate) use` for the outward leg: `EnrollmentOutboundLeg` and
-// `run_enrollment_outbound_leg` are ONE-1778 staging — `pub(crate)` items with
-// the `#[cfg_attr(not(test), allow(dead_code))]` carve-out, used by nothing
-// outside this module yet — so a crate-visible re-export would be an unused
-// import in every build. The `#[cfg(test)]` seam below keeps them reachable to
-// `tests.rs`; the host driver re-adds the re-export when it lands.
+// The outward leg reaches the host through `drive_enrollment_outbound_leg`
+// (FIX 2636); `EnrollmentOutboundLeg` and `run_enrollment_outbound_leg` stay
+// module-private, and the `#[cfg(test)]` seam below keeps them reachable to
+// `tests.rs`.
 
 #[cfg(test)]
 mod tests;

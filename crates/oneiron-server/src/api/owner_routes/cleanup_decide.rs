@@ -7,7 +7,6 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use oneiron::EdgeActorClass;
 use oneiron::vault_cleanup::{
@@ -15,7 +14,7 @@ use oneiron::vault_cleanup::{
 };
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, cleanup};
 use crate::server::SyncServer;
@@ -26,10 +25,10 @@ use crate::server::SyncServer;
 pub(super) async fn review_proposal(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CleanupReviewRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CleanupReviewRequest>,
 ) -> OwnerReply<CleanupReviewView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let review = blocking(move || -> OwnerResult<CleanupReviewView> {
         let vault = server.vault();
@@ -47,10 +46,10 @@ pub(super) async fn review_proposal(
 pub(super) async fn decide_proposal(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CleanupDecideRequest>, JsonRejection>,
+    payload: OwnerJsonBody<CleanupDecideRequest>,
 ) -> OwnerReply<CleanupDecideView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let decided = blocking(move || cleanup::decide(server.vault(), &owner, &request)).await?;
     Ok(Json(decided))
 }

@@ -12,12 +12,11 @@ use crate::claim::ScopedRead;
 use crate::edge::EdgeKind;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
-use crate::registry::ENTITY_TYPE_TURN;
+use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
-use rmpv::Value;
 use std::collections::HashSet;
 
 mod thread_reads;
@@ -25,12 +24,15 @@ mod thread_reads;
 /// Renderer-neutral reply strip over an exact content revision.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyStrip {
-    /// Target of the historical reply pointer.
+    /// Target of the historical reply pointer: a TURN, or one MESSAGE of a
+    /// TURN (FIX 9771).
     pub record: EntityId,
     /// BLAKE3 content hash captured at the merge move.
     pub revision: String,
-    /// Target's txt field, only when it is still live at the pinned revision
-    /// and not `withheld`.
+    /// The typed target, with the TURN a MESSAGE target is placed against.
+    pub target: super::DagReplyTarget,
+    /// Target's text, a TURN's txt field or a MESSAGE's content, only when
+    /// it is still live at the pinned revision and not `withheld`.
     pub text: Option<String>,
     /// Target is missing, deleted or no longer at the pinned revision;
     /// `None` for a `withheld` target, which reports no stale bit, so its
@@ -89,99 +91,118 @@ impl Vault {
         record: &EntityId,
     ) -> Result<Option<ReplyStrip>> {
         let txn = self.store.env.read_txn()?;
-        let bytes = require_type(&self.store, &txn, record, ENTITY_TYPE_TURN)?;
+        // A MESSAGE the append door added keeps its pointer too (FIX 9771).
+        let (kind, bytes) = match live_entity_row_in_txn(&self.store, &txn, record)? {
+            LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_MESSAGE,
+                body,
+            } => (ENTITY_TYPE_MESSAGE, body),
+            _ => (
+                ENTITY_TYPE_TURN,
+                require_type(&self.store, &txn, record, ENTITY_TYPE_TURN)?,
+            ),
+        };
         let owner = self.turn_doors_owner_in(read, &txn)?;
         if !turn_doors_admit_in(read, &txn, record, owner)? {
             return Err(Error::EntityNotFound);
         }
-        let mut input = bytes.as_slice();
-        let value =
-            rmpv::decode::read_value(&mut input).map_err(|_| invalid("invalid record body"))?;
-        let Value::Map(fields) = value else {
-            return Err(invalid("invalid record body"));
-        };
-        if !input.is_empty() {
-            return Err(invalid("trailing record bytes"));
-        }
-        let pointers: Vec<_> = fields
-            .iter()
-            .filter(|(key, _)| key.as_str() == Some("reply_to"))
-            .collect();
-        if pointers.is_empty() {
+        let Some(target) = super::quote::stored_target(kind, &bytes)? else {
             return Ok(None);
-        }
-        if pointers.len() != 1 {
-            return Err(invalid("duplicate reply pointer"));
-        }
-        let Value::Map(pointer) = &pointers[0].1 else {
-            return Err(invalid("invalid reply pointer"));
         };
-        let get = |name| -> Result<&Value> {
-            let mut values = pointer.iter().filter(|(key, _)| key.as_str() == Some(name));
-            let (_, value) = values
-                .next()
-                .ok_or_else(|| invalid("incomplete reply pointer"))?;
-            if values.next().is_some() {
-                return Err(invalid("duplicate reply pointer field"));
-            }
-            Ok(value)
+        let (answered, placement) = (target.record(), target.placement());
+        let gone = |id: &EntityId| -> Result<bool> {
+            Ok(matches!(
+                live_entity_row_in_txn(&self.store, &txn, id)?,
+                LiveEntityRow::DeletedShell
+            ) || self.local_hard_delete_marker_exists_in_txn(&txn, id)?)
         };
-        let target = EntityId::from_hex(
-            get("record")?
-                .as_str()
-                .ok_or_else(|| invalid("invalid reply target"))?,
-        )?;
-        let revision = get("revision")?
-            .as_str()
-            .ok_or_else(|| invalid("invalid reply revision"))?
-            .to_owned();
-        if revision.len() != 64 || !revision.bytes().all(|b| b.is_ascii_hexdigit()) {
-            return Err(invalid("invalid reply hash"));
-        }
-        let target_row = live_entity_row_in_txn(&self.store, &txn, &target)?;
-        let redacted = matches!(target_row, LiveEntityRow::DeletedShell)
-            || self.local_hard_delete_marker_exists_in_txn(&txn, &target)?;
+        let redacted = gone(&answered)?;
+        // A TURN's `RepliesTo` names the TURN it is placed against; a
+        // door-added MESSAGE's names the exact record it answers.
+        let edge_target = if kind == ENTITY_TYPE_MESSAGE {
+            answered
+        } else {
+            placement
+        };
         let edges = edge_ids(&self.store, &txn, record, EdgeKind::RepliesTo, false, 2)?;
         // HardErase tears incident edges. The pinned pointer survives in the
         // immutable reply body, but must never hydrate erased content. A live
         // target still requires the exact structural edge.
-        if edges != [target] && !(redacted && edges.is_empty()) {
+        if edges != [edge_target] && !((redacted || gone(&edge_target)?) && edges.is_empty()) {
             return Err(Error::CorruptedIndex("reply pointer index"));
         }
+        let source_room = if kind == ENTITY_TYPE_MESSAGE {
+            crate::conversation::room_message_owner_in(&self.store, &txn, *record)?
+                .ok_or_else(|| invalid("reply is outside conversation"))?
+        } else {
+            conversation_of(&self.store, &txn, record)?
+        };
+        let target_row = live_entity_row_in_txn(&self.store, &txn, &answered)?;
         let mut withheld = false;
+        let live_kind = match (&target, &target_row) {
+            (super::DagReplyTarget::Turn { .. }, LiveEntityRow::Live { entity_type, .. })
+                if *entity_type == ENTITY_TYPE_TURN =>
+            {
+                true
+            }
+            (super::DagReplyTarget::Message { .. }, LiveEntityRow::Live { entity_type, .. })
+                if *entity_type == ENTITY_TYPE_MESSAGE =>
+            {
+                true
+            }
+            _ => false,
+        };
         let (text, stale) = match target_row {
-            LiveEntityRow::Live {
-                entity_type: ENTITY_TYPE_TURN,
-                body,
-            } => {
-                if conversation_of(&self.store, &txn, &target)?
-                    != conversation_of(&self.store, &txn, record)?
-                {
+            LiveEntityRow::Live { body, .. } if live_kind => {
+                if conversation_of(&self.store, &txn, &placement)? != source_room {
                     return Err(invalid("reply target is outside conversation"));
                 }
-                if !turn_doors_admit_in(read, &txn, &target, owner)? {
+                if !turn_doors_admit_in(read, &txn, &placement, owner)?
+                    || !turn_doors_admit_in(read, &txn, &answered, owner)?
+                {
                     withheld = true;
                     (None, None)
-                } else if blake3::hash(&body).to_hex().as_str() != revision {
-                    (None, Some(true))
                 } else {
-                    let value = rmpv::decode::read_value(&mut body.as_slice())
-                        .map_err(|_| invalid("invalid reply target body"))?;
-                    let text = value
-                        .as_map()
-                        .and_then(|fields| {
-                            fields.iter().find(|(key, _)| key.as_str() == Some("txt"))
-                        })
-                        .and_then(|(_, value)| value.as_str())
-                        .map(str::to_owned);
-                    (text, Some(false))
+                    match &target {
+                        super::DagReplyTarget::Turn { revision, .. } => {
+                            if blake3::hash(&body).to_hex().as_str() != revision {
+                                (None, Some(true))
+                            } else {
+                                let value = rmpv::decode::read_value(&mut body.as_slice())
+                                    .map_err(|_| invalid("invalid reply target body"))?;
+                                let text = value
+                                    .as_map()
+                                    .and_then(|fields| {
+                                        fields.iter().find(|(key, _)| key.as_str() == Some("txt"))
+                                    })
+                                    .and_then(|(_, value)| value.as_str())
+                                    .map(str::to_owned);
+                                (text, Some(false))
+                            }
+                        }
+                        super::DagReplyTarget::Message { revision, .. } => {
+                            let body = crate::entity_doc::resolve_record_body(
+                                &self.store,
+                                &txn,
+                                &answered,
+                                &body,
+                            )?;
+                            let text = super::quote::message_text(&body)?;
+                            if blake3::hash(text.as_bytes()).to_hex().as_str() != revision {
+                                (None, Some(true))
+                            } else {
+                                (Some(text), Some(false))
+                            }
+                        }
+                    }
                 }
             }
             _ => (None, Some(true)),
         };
         Ok(Some(ReplyStrip {
-            record: target,
-            revision,
+            record: answered,
+            revision: target.revision().to_owned(),
+            target,
             text,
             stale,
             redacted,

@@ -19,12 +19,43 @@ const LEFT_SLIP_ROUTES: &[(&str, &str)] = &[
         "/v1/shared/removal-export/{receipt_id}",
         "The one archive the removal receipt receipt_id delivered to the removed person, while within its term; not found after it.",
     ),
+    (
+        "/v1/shared/removal-delivery",
+        "Every archive owed to the removed person at its current delivery version, still within its term; with none owed the session holds for a wake, then answers none.",
+    ),
+    (
+        "/v1/shared/removal-delivery/ack",
+        "The removed person's ack of one archive's delivery version; answers whether it stores the current one.",
+    ),
 ];
 
 /// A left-slip route's optional JSON body and its answer's schema:
-/// `/v1/shared/left-notices` names both (FIX 3372); the export routes take
-/// no body and answer a plain object.
+/// `/v1/shared/left-notices` names both (FIX 3372); the delivery ack names
+/// its `{receipt_id, version}` body and `{state}` answer; the export and
+/// delivery routes take no body and answer a plain object.
 fn left_slip_shapes(path: &str) -> (Option<Value>, Value) {
+    if path == "/v1/shared/removal-delivery/ack" {
+        let body = json!({
+            "required": true,
+            "content": {"application/json": {"schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["receipt_id", "version"],
+                "properties": {
+                    "receipt_id": {"type": "string", "description": "The removal receipt's id, 32 hex."},
+                    "version": {"type": "integer", "description": "The delivery version the holder now stores."}
+                }
+            }}}
+        });
+        let answer = json!({
+            "type": "object",
+            "required": ["state"],
+            "properties": {
+                "state": {"type": "string", "enum": ["acked", "pending"], "description": "Whether the holder stores the archive's current version."}
+            }
+        });
+        return (Some(body), answer);
+    }
     if path != "/v1/shared/left-notices" {
         return (None, json!({"type": "object"}));
     }

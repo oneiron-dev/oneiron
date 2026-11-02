@@ -16,7 +16,8 @@ use super::*;
 use crate::consent::AuthenticatedOwner;
 
 pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
-/// How many worlds one member of a parent cycle may have (`joint.rs`).
+/// How many worlds one member of a parent cycle has before the solver raises
+/// its scan check (`joint`).
 pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,8 +25,8 @@ pub const DEFAULT_PROJECT_CYCLE_WORLDS_MAX: u64 = 64;
 pub struct ProjectHistoryPolicy {
     pub max_revisions: u64,
     /// Past this many distinct views of one cycle member (or this many per
-    /// undecided revision of assignments), the cycle serves no authority
-    /// until the owner seals.
+    /// undecided revision of assignments), the cycle's decision raises its
+    /// scan check and reads on: every world is still decided and served.
     #[serde(default = "default_cycle_worlds_max")]
     pub cycle_worlds_max: u64,
 }
@@ -44,8 +45,11 @@ impl Default for ProjectHistoryPolicy {
 }
 
 /// The owner's question about a parent cycle past its world bound (OF-520):
-/// node-local, raised by the batch-end refresh and cleared when the cycle
-/// serves again.
+/// node-local, kept by the batch-end refresh for a component whose decision
+/// came back as [`super::fold::reason::CYCLE_BOUND`]. The joint solver now
+/// decides every component in full and counts its worlds and work as
+/// EngineScan observations, so no decision carries that reason and the
+/// refresh raises none; a row is only ever removed (FIX 11050).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectCycleQuestion {
     /// The cycle's projects, in id order; each keys a copy of the row.
@@ -175,7 +179,8 @@ pub(super) const PROJECT_FROZEN_WAIT_PROJECT: SideTable<
     Raw,
 > = SideTable::new(&side_table::PROJECT_FROZEN_WAIT_PROJECT);
 /// LOCAL: the open OF-520 question of a parent cycle past its bound, under
-/// each of its members (the owner door lists it once).
+/// each of its members (the owner door lists it once). The current solver
+/// raises none ([`ProjectCycleQuestion`]).
 pub(super) const PROJECT_CYCLE_QUESTION: SideTable<EntityId, ProjectCycleQuestion, Named> =
     SideTable::new(&side_table::PROJECT_CYCLE_QUESTION);
 /// The vault's history policy, set only through the owner door.
@@ -272,7 +277,9 @@ pub(super) fn frozen_frontier(
 }
 
 impl Vault {
-    /// The open questions about parent cycles past their world bound.
+    /// The open questions about parent cycles past their world bound: none
+    /// while the joint solver decides every component in full
+    /// ([`ProjectCycleQuestion`]).
     pub fn project_cycle_questions(&self) -> Result<Vec<ProjectCycleQuestion>> {
         let txn = self.store.env.read_txn()?;
         let mut questions: std::collections::BTreeMap<Vec<EntityId>, ProjectCycleQuestion> =

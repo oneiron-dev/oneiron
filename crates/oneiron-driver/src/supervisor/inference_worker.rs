@@ -31,10 +31,14 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
-use oneiron::llm::{WorkerDescriptor, WorkerFailure, WorkerReadiness, WorkerStatus};
+use oneiron::llm::{
+    InferenceCallReceipt, ResourceClass, WorkerDescriptor, WorkerFailure, WorkerFailureDetail,
+    WorkerKind, WorkerReadiness, WorkerStatus,
+};
 use tokio::sync::watch;
 
 use super::inference::{WorkerProbe, WorkerSpec};
+use super::inference_admission::{DeviceAdmission, LoadGrant};
 use super::inference_device::{DeclaredEnvelope, DeviceLedger, ResidentReport, ResidentSource};
 
 mod drive;
@@ -114,7 +118,8 @@ pub struct WorkerActivity {
 }
 
 impl WorkerActivity {
-    fn is_idle(&self) -> bool {
+    #[must_use]
+    pub fn is_idle(&self) -> bool {
         self.queued == 0 && self.active == 0
     }
 }
@@ -150,6 +155,14 @@ pub trait RunningWorker: Send + Sync {
     /// Sends the terminate signal to its own process group, waits `grace`,
     /// then kills and reaps that group alone. Called only after the drain.
     fn terminate(&self, grace: Duration) -> LauncherFuture<'_, WorkerExit>;
+
+    /// Kills its own process group now and waits for the reaper: no drain,
+    /// no grace, nothing asked of the worker. Called only for an abort
+    /// ([`InferenceWorker::abort_incarnation`]). A launcher that names no
+    /// way of its own terminates with no grace.
+    fn abort(&self) -> LauncherFuture<'_, WorkerExit> {
+        self.terminate(Duration::ZERO)
+    }
 }
 
 /// The supervisor's timing for one worker.
@@ -234,6 +247,18 @@ struct State {
     activity: Option<WorkerActivity>,
     /// An external worker's last probe.
     probed: WorkerReadiness,
+    /// The epoch the current incarnation qualified with, once it has.
+    epoch: Option<String>,
+    /// The incarnation an abort was asked for; it ends with no drain.
+    abort: Option<u64>,
+    /// Pressure decisions that ask for a restartable idle unload, and the
+    /// waiters that still need its outcome.
+    unload_requested: bool,
+    unload_waiters: usize,
+    /// The last physical call receipt and its qualifying epoch, retained after exit.
+    last_receipt: Option<(String, InferenceCallReceipt)>,
+    /// The latest sanitized lifecycle failure, including prequalification failures.
+    failure_detail: Option<WorkerFailureDetail>,
 }
 
 struct Inner {
@@ -242,6 +267,7 @@ struct Inner {
     probe: Arc<dyn WorkerProbe>,
     policy: WorkerPolicy,
     device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
+    admission: Mutex<Option<Arc<DeviceAdmission>>>,
     state: Mutex<State>,
     changed: watch::Sender<u64>,
 }
@@ -250,6 +276,15 @@ struct Inner {
 #[derive(Clone)]
 pub struct InferenceWorker {
     inner: Arc<Inner>,
+}
+
+/// The result of a pressure-requested, restartable idle unload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnloadOutcome {
+    Unloaded,
+    DeferredDemand,
+    ExternalKept,
+    NotRunning,
 }
 
 /// A held claim on one ready incarnation, from [`InferenceWorker::acquire`]
@@ -273,6 +308,22 @@ impl WorkerLease {
     pub fn revoked(&self) -> bool {
         self.incarnation
             .is_some_and(|incarnation| self.inner.lock().incarnation != incarnation)
+    }
+
+    /// Waits until the incarnation this lease was granted on has ended, for
+    /// a lease held while that incarnation still charges a call it could not
+    /// release; at once for an external worker's lease.
+    pub async fn revocation(&self) {
+        if self.incarnation.is_none() {
+            return;
+        }
+        loop {
+            let mut changes = self.inner.changed.subscribe();
+            if self.revoked() {
+                return;
+            }
+            let _ = changes.changed().await;
+        }
     }
 }
 
@@ -303,7 +354,27 @@ impl Drop for Demand {
         if self.armed {
             let mut state = self.inner.lock();
             state.waiting = state.waiting.saturating_sub(1);
+            drop(state);
+            self.inner.notify();
         }
+    }
+}
+
+/// One pressure waiter's claim on the unload request. Only the last waiter
+/// to finish or drop clears it, so a concurrent waiter is never stranded.
+struct UnloadWait {
+    inner: Arc<Inner>,
+}
+
+impl Drop for UnloadWait {
+    fn drop(&mut self) {
+        let mut state = self.inner.lock();
+        state.unload_waiters = state.unload_waiters.saturating_sub(1);
+        if state.unload_waiters == 0 {
+            state.unload_requested = false;
+        }
+        drop(state);
+        self.inner.notify();
     }
 }
 
@@ -319,6 +390,18 @@ impl InferenceWorker {
         device: Option<(Arc<DeviceLedger>, DeclaredEnvelope)>,
     ) -> Self {
         Self::new(spec, Some(launcher), probe, policy, device)
+    }
+
+    /// Binds this managed worker to its device's admission queue. Existing
+    /// constructors leave it `None`, which preserves their current path.
+    pub fn with_admission(&self, admission: Arc<DeviceAdmission>) {
+        if self.inner.launcher.is_some() {
+            *self
+                .inner
+                .admission
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner) = Some(admission);
+        }
     }
 
     /// An external worker's supervisor: it probes, and does nothing else.
@@ -344,6 +427,12 @@ impl InferenceWorker {
             used_at: None,
             activity: None,
             probed: WorkerReadiness::Unchecked,
+            epoch: None,
+            abort: None,
+            unload_requested: false,
+            unload_waiters: 0,
+            last_receipt: None,
+            failure_detail: None,
         };
         Self {
             inner: Arc::new(Inner {
@@ -352,6 +441,7 @@ impl InferenceWorker {
                 probe,
                 policy,
                 device,
+                admission: Mutex::new(None),
                 state: Mutex::new(state),
                 changed: watch::Sender::new(0),
             }),
@@ -361,6 +451,12 @@ impl InferenceWorker {
     #[must_use]
     pub fn spec(&self) -> &WorkerSpec {
         &self.inner.spec
+    }
+
+    /// The device-budget class this worker's kind serves.
+    #[must_use]
+    pub fn resource_class(&self) -> ResourceClass {
+        self.inner.resource_class()
     }
 
     /// Starts a stopped managed worker now, as an always-on worker starts at
@@ -434,26 +530,38 @@ impl InferenceWorker {
                         state.waiting = state.waiting.saturating_sub(1);
                     }
                     if !lease {
+                        drop(state);
+                        inner.notify();
                         return Ok(None);
                     }
                     state.leases += 1;
                     state.used_at = Some(Instant::now());
-                    return Ok(Some(WorkerLease {
+                    let lease = WorkerLease {
                         inner: Arc::clone(inner),
                         incarnation: Some(state.incarnation),
                         observed: Some(observed),
-                    }));
+                    };
+                    drop(state);
+                    inner.notify();
+                    return Ok(Some(lease));
                 }
+                let mut state_changed = false;
                 if demand.is_none() {
                     state.waiting += 1;
                     demand = Some(Demand {
                         inner: Arc::clone(inner),
                         armed: true,
                     });
+                    state_changed = true;
                 }
                 if !state.driving {
                     state.driving = true;
                     tokio::spawn(drive(Arc::clone(inner)));
+                    state_changed = true;
+                }
+                if state_changed {
+                    drop(state);
+                    inner.notify();
                 }
             }
             let _ = changes.changed().await;
@@ -479,6 +587,12 @@ impl InferenceWorker {
                 Phase::Failed { readiness, .. } => readiness.clone(),
             }
         };
+        let queue = self.inner.admission().and_then(|admission| {
+            admission
+                .snapshot()
+                .workers
+                .remove(&self.inner.spec.worker_id)
+        });
         WorkerStatus {
             worker_id: self.inner.spec.worker_id.clone(),
             model: self.inner.spec.model.clone(),
@@ -487,7 +601,14 @@ impl InferenceWorker {
             readiness,
             resident_mib: state.activity.and_then(|activity| activity.resident_mib),
             queue_depth: state.activity.map(|activity| activity.queued),
-            last_receipt: None,
+            last_receipt: state
+                .last_receipt
+                .as_ref()
+                .map(|(_, receipt)| receipt.clone()),
+            failure_detail: state.failure_detail.clone(),
+            host_queued: queue.as_ref().map(|queue| queue.queued),
+            host_active: queue.as_ref().map(|queue| queue.active),
+            paused: queue.as_ref().map(|queue| queue.paused),
         }
     }
 
@@ -495,6 +616,112 @@ impl InferenceWorker {
     /// read itself; the supervisor's own polls land here too.
     pub fn report(&self, activity: WorkerActivity) {
         self.inner.note_activity(Some(activity));
+    }
+
+    /// Retains one sanitized physical receipt and its epoch after the worker
+    /// exits. No status read probes the worker to obtain it.
+    pub fn record_receipt(&self, epoch: &str, receipt: InferenceCallReceipt) {
+        self.inner.lock().last_receipt = Some((epoch.to_owned(), receipt));
+        self.inner.notify();
+    }
+
+    /// Asks a ready managed worker to stop through the existing restartable
+    /// idle path. Demand or queued/active/paused admission work defers it;
+    /// an external worker is never touched. Each waiter holds one claim on
+    /// the request; only the last completion or drop clears it.
+    pub async fn unload_if_idle(&self) -> UnloadOutcome {
+        if self.inner.launcher.is_none() {
+            return UnloadOutcome::ExternalKept;
+        }
+        {
+            let mut state = self.inner.lock();
+            if !state.driving || !matches!(state.phase, Phase::Ready(_)) {
+                return UnloadOutcome::NotRunning;
+            }
+            if state.leases > 0 || state.waiting > 0 || !self.inner.admission_idle() {
+                return UnloadOutcome::DeferredDemand;
+            }
+            state.unload_waiters += 1;
+            state.unload_requested = true;
+        }
+        let _wait = UnloadWait {
+            inner: Arc::clone(&self.inner),
+        };
+        self.inner.notify();
+        let admission = self.inner.admission();
+        loop {
+            let mut changes = self.inner.changed.subscribe();
+            if let Some(admission) = &admission {
+                let changed = admission.changed();
+                tokio::pin!(changed);
+                changed.as_mut().enable();
+                if let Some(outcome) = self.unload_outcome() {
+                    return outcome;
+                }
+                tokio::select! {
+                    _ = changes.changed() => {},
+                    () = changed => {},
+                }
+            } else {
+                if let Some(outcome) = self.unload_outcome() {
+                    return outcome;
+                }
+                let _ = changes.changed().await;
+            }
+        }
+    }
+
+    fn unload_outcome(&self) -> Option<UnloadOutcome> {
+        let state = self.inner.lock();
+        if state.unload_waiters > 0 && !state.unload_requested {
+            return Some(UnloadOutcome::Unloaded);
+        }
+        if state.leases > 0 || state.waiting > 0 || !self.inner.admission_idle() {
+            return Some(UnloadOutcome::DeferredDemand);
+        }
+        if matches!(state.phase, Phase::IdleStopped | Phase::Stopped) || !state.driving {
+            return Some(UnloadOutcome::Unloaded);
+        }
+        None
+    }
+
+    /// Subscribes to worker demand and lifecycle changes. Subscribe before
+    /// the caller's state check so a change during that check is not lost.
+    pub fn subscribe_changed(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.changed.subscribe()
+    }
+
+    /// Aborts the incarnation that qualified with `epoch`, if it is still
+    /// the one running: admission closes, its process group is killed and
+    /// reaped with no drain, its leases are revoked, and the supervisor
+    /// launches the next one at once. Returns once that incarnation has
+    /// ended: `true`, or `false` at once when `epoch` names no running
+    /// incarnation (it already ended, or never qualified) or the worker is
+    /// external. A call through a revoked lease fails as a cut, under its
+    /// caller's own retry authority.
+    pub async fn abort_incarnation(&self, epoch: &str) -> bool {
+        let target = {
+            let mut state = self.inner.lock();
+            if self.inner.launcher.is_none()
+                || !state.driving
+                || state.epoch.as_deref() != Some(epoch)
+            {
+                return false;
+            }
+            state.abort = Some(state.incarnation);
+            state.incarnation
+        };
+        self.inner.notify();
+        loop {
+            let mut changes = self.inner.changed.subscribe();
+            {
+                let state = self.inner.lock();
+                if state.incarnation != target || !state.driving {
+                    return true;
+                }
+            }
+            let _ = changes.changed().await;
+        }
     }
 
     /// Retires the worker: no lease is granted again, a running managed
@@ -528,6 +755,28 @@ impl Inner {
             readiness,
             reason: Some(reason.to_owned()),
         }
+    }
+
+    fn admission(&self) -> Option<Arc<DeviceAdmission>> {
+        self.admission
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    fn resource_class(&self) -> ResourceClass {
+        match self.spec.kind {
+            WorkerKind::Embedder => ResourceClass::Embedder,
+            WorkerKind::Oneironer => ResourceClass::Encoder,
+            WorkerKind::VoxCpm2 => ResourceClass::Tts,
+            WorkerKind::Asr => ResourceClass::Asr,
+            WorkerKind::LlamaCpp | WorkerKind::Exl3 | WorkerKind::Unknown => ResourceClass::Chat,
+        }
+    }
+
+    fn admission_idle(&self) -> bool {
+        self.admission()
+            .is_none_or(|admission| admission.worker_idle(&self.spec.worker_id))
     }
 
     fn note_activity(&self, activity: Option<WorkerActivity>) {

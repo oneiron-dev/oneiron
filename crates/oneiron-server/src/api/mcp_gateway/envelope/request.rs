@@ -39,8 +39,28 @@ pub(crate) async fn handle_mcp_request(
                 resolve_handshake_caller(mode, &request_id, headers, connection, locality, server)
                     .await?
                     .toward(peer);
+            // The generated-UI profile the client declares (FIX 7969),
+            // answered back as negotiated (`null`: none this build reads).
+            // This endpoint keeps no session: each call names its profile
+            // again in `_meta.clientCapabilities`.
+            let declared = super::super::client_surface::declared_surface(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("capabilities")),
+            );
             // It states the credential's scope, so it is released as every
             // result is (DEC-0005).
+            // The vault this origin answers for (FIX 11695): its authority
+            // id, so a hosted login confirms the vault it was told before it
+            // records the credential. Null until the vault is rooted, or when
+            // the fold does not compute; the handshake never fails for it.
+            let vault_id = server
+                .vault()
+                .authority_vault_id()
+                .ok()
+                .flatten()
+                .map(|id| crate::owner::vault_key::hex(&id));
             let result = json!({
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "serverInfo": {
@@ -49,12 +69,17 @@ pub(crate) async fn handle_mcp_request(
                 },
                 "capabilities": {
                     "tools": { "listChanged": false },
+                    "experimental": {
+                        (super::super::client_surface::MCP_GENERATED_UI_CAPABILITY):
+                            super::super::client_surface::initialize_capability(declared.as_ref()),
+                    },
                 },
                 "surfaceMode": mode.as_str(),
                 "executeCodeAdmitted": matches!(mode, McpSurfaceMode::Primary)
                     && super::admission::mcp_execute_code_admitted(server, &actor),
                 "instructions": "Oneiron MCP exposes foreign-client tools over the same read and write Gate as the REST core surface. Use tools/list for the tools THIS endpoint registered and tools/call to call one. A call runs as this credential's actor; it need not name one, and an actor block that names anyone else is refused.",
                 "actor": mcp_actor_result(&actor),
+                "vault_id": vault_id,
             });
             super::device_release::mcp_release_result(server, &actor, &[], false, result)
         }
@@ -88,6 +113,23 @@ pub(crate) async fn handle_mcp_request(
             }))
         }
         "tools/call" => {
+            // The owner's clock repair whose caller its own writer judges,
+            // before any caller here reads the clock (FIX 11190, FIX 11202).
+            if let Some(caller) = super::clock_repair_call::deferred_caller(
+                server,
+                headers,
+                connection,
+                request.params.as_ref(),
+            ) {
+                return super::clock_repair_call::repair_call(
+                    server,
+                    mode,
+                    request.params,
+                    raw_arguments,
+                    caller,
+                )
+                .await;
+            }
             // A stale owner sign-in's booking tool call is his (FIX 5327).
             let actor = super::booking_call::resolve_tool_caller(
                 mode,
@@ -142,13 +184,15 @@ pub(crate) async fn handle_mcp_request(
                     let actor = McpCallContext {
                         invocation: params.invocation()?,
                         hook_ask: params.hook_ask()?,
+                        client_surface: params.client_surface(),
                         ..actor.clone()
                     };
                     let args =
                         mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
                     ensure_mcp_actor_matches(&args, &actor)?;
                     mcp_admit_scoped_call(server, &args, &actor)?;
-                    execute_mcp_tool(server, args, &actor, headers, connection).await
+                    // The tool fan-out, on the heap (FIX 12072).
+                    Box::pin(execute_mcp_tool(server, args, &actor, headers, connection)).await
                 })
                 .await;
             // ONE-1704 M4: ONE chokepoint. Everything inside that block happened

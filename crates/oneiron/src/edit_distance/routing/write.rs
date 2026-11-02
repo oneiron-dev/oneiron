@@ -1,31 +1,47 @@
 //! Judged-amendment fold writes.
 
 use super::keys::{
-    AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredModelVersion, aggregate_key, invalid,
+    AGGREGATE, MEMBER, ROW_VERSION, StoredAggregate, StoredExecutor, StoredHead, aggregate_key,
+    invalid,
 };
+use super::outcomes::{run_outcome_in_txn, task_of_run_in_txn};
 use super::scope::RoutingScopeKey;
-use super::version::serving_model_version;
 use crate::Vault;
-use crate::edit_distance::attribution::{AmendmentClass, AmendmentJudgment, amendment_judgments};
+use crate::edit_distance::attribution::{
+    AmendmentClass, AmendmentJudgment, amendment_judgment_in_txn, amendment_judgments,
+};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 // ---------------------------------------------------------------------------
 // The write door
 // ---------------------------------------------------------------------------
 
-/// Folds the amendment judged against `delta_receipt` into its scope.
+/// Folds the amendment judged against `delta_receipt` into its head.
 ///
-/// **Receipt-bound.** The one argument is the receipt; the scope, the edit mass
-/// and the outcome are all read back out of ED-03's judgment for it. There is
-/// no path here for a caller to supply the numbers it would like folded, and
-/// the ledger stays rebuildable from receipts alone (CID-7).
+/// **Receipt-bound.** The one argument is the receipt; the executor, the task
+/// type, the scope, the edit mass and the labels are all read back out of
+/// ED-03's judgment for it. There is no path here for a caller to supply the
+/// numbers it would like folded, and the ledger stays rebuildable from
+/// receipts alone (CID-7).
 ///
-/// **First fold wins.** A run happened under exactly one generation, so a
-/// receipt already bound to one is never re-folded — a second call after a
-/// model swap would otherwise count the same amendment twice, once against a
-/// generation that did not produce it. Re-judging a receipt is reflected by
-/// [`rebuild_routing_projection`](crate::edit_distance::routing::rebuild_routing_projection), which re-reads the ledger against the
-/// bindings already recorded.
+/// **The receipt names its executor.** The head is the executor the judgment
+/// was stamped with when the drafting run began, never the model serving at
+/// fold time (FIX 9812): a receipt first folded after a swap still lands on
+/// the model that drafted it. A receipt with no stamp folds, truthfully, under
+/// the unknown-executor key.
+///
+/// **Paired with how the work ended.** The fold counts the anchored outcome of
+/// the TASK the run worked, joined through the run's own receipts, beside the
+/// edit mass (FIX 7828). A TASK not settled yet adds no count; the
+/// settle-time refold counts it in the settling write (FIX 11618), and a
+/// rebuild reads it too.
+///
+/// **One fold per receipt.** A receipt already folded is never re-folded, so
+/// two calls never count the same amendment twice. Re-judging a receipt is
+/// reflected by
+/// [`rebuild_routing_projection`](crate::edit_distance::routing::rebuild_routing_projection),
+/// which re-reads every folded receipt's judgment.
 ///
 /// # Errors
 ///
@@ -36,13 +52,12 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         return Err(invalid("routing projection cites an unjudged receipt"));
     };
     let member_key = delta_receipt.to_owned();
-    let model_version = serving_model_version(vault)?;
-    let fold = fold_of(&judgment)?;
-    let scope = RoutingScopeKey::new(model_version.clone(), judgment.scope);
-    let scope_row_key = aggregate_key(&scope)?;
-    let member = StoredModelVersion {
+    let scope_row_key = aggregate_key(&head_of(&judgment))?;
+    let mut member = StoredExecutor {
         v: ROW_VERSION,
-        model_version,
+        executor: judgment.executor_key().to_owned(),
+        outcome: None,
+        head: None,
     };
 
     vault.with_write_txn_grouped(|wtxn| {
@@ -54,10 +69,13 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
         if MEMBER.contains(&vault.store, &*wtxn, &member_key)? {
             return Ok(());
         }
-        // A judgment that is unclear throughout HOLDS: it binds its generation,
-        // so a later re-judgment folds against the model that produced it, but
+        let outcome = run_outcome_in_txn(vault, &*wtxn, &judgment)?;
+        // A judgment that is unclear throughout HOLDS: it marks the receipt
+        // folded, so a later re-judgment reaches its head on rebuild, but
         // weighs nothing until then.
-        if let Some(fold) = fold {
+        if let Some(fold) = fold_of(&judgment, outcome)? {
+            member.outcome.clone_from(&fold.outcome);
+            member.head = Some(StoredHead::from(&scope_row_key));
             let mut aggregate = AGGREGATE
                 .get(&vault.store, &*wtxn, &scope_row_key)?
                 .unwrap_or_default();
@@ -69,34 +87,28 @@ pub fn record_judged_amendment(vault: &Vault, delta_receipt: &str) -> Result<()>
     })
 }
 
-/// The generation `delta_receipt`'s amendment was folded under, on the
-/// caller's snapshot — or `None` when nothing folded it.
-///
-/// This is the binding [`record_judged_amendment`] wrote, read back: history,
-/// not [`serving_model_version`], which answers for the model serving NOW and
-/// would re-attribute an old amendment to a generation that never produced it.
-/// A consumer tagging amendments with the model behind them reads THIS.
-///
-/// # Errors
-///
-/// [`Error::CorruptedIndex`] on an undecodable row; storage errors.
-pub(in crate::edit_distance) fn folded_model_version_in_txn(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    delta_receipt: &str,
-) -> Result<Option<String>> {
-    Ok(MEMBER
-        .get(&vault.store, rtxn, &delta_receipt.to_owned())?
-        .map(|row| row.model_version))
+/// The head `judgment` folds into: the executor, task type and measurement
+/// version its own row carries.
+pub(super) fn head_of(judgment: &AmendmentJudgment) -> RoutingScopeKey {
+    let head = RoutingScopeKey::new(judgment.executor_key(), judgment.scope.clone())
+        .measured_under(judgment.engine_ver.clone());
+    match &judgment.type_ref {
+        Some(type_ref) => head.typed(type_ref.clone()),
+        None => head,
+    }
 }
 
 /// One judgment's contribution: its edit mass, how much of it the judge could
-/// attribute, and how much of that was sound.
-#[derive(Debug, Clone, Copy)]
+/// attribute, how much of that was sound, whether it ran on the judge's own
+/// model, when it was judged, and the anchored outcome of its run's TASK.
+#[derive(Debug, Clone)]
 pub(super) struct Fold {
     d_norm: f64,
     judged: f64,
     sound: f64,
+    on_judge_model: bool,
+    at: u64,
+    pub(super) outcome: Option<String>,
 }
 
 /// What one judgment contributes, or `None` when it holds.
@@ -109,8 +121,13 @@ pub(super) struct Fold {
 /// draft stood. A split folds its shares as they are: the sound share counts
 /// for the scope, the rest of the attributed share against it, and an
 /// `unclear` share for neither. A judgment that is unclear throughout holds
-/// and folds nothing.
-pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
+/// and folds nothing. The sound share is a label that explains the cost; it is
+/// never an outcome. `outcome` is the run's anchored task outcome, when one is
+/// joined.
+pub(super) fn fold_of(
+    judgment: &AmendmentJudgment,
+    outcome: Option<String>,
+) -> Result<Option<Fold>> {
     let d_norm = f64::from(judgment.d_norm);
     if !d_norm.is_finite() || d_norm < 0.0 {
         return Err(invalid(
@@ -129,6 +146,9 @@ pub(super) fn fold_of(judgment: &AmendmentJudgment) -> Result<Option<Fold>> {
         d_norm,
         judged,
         sound: sound.clamp(0.0, judged),
+        on_judge_model: judgment.on_judge_model(),
+        at: judgment.at,
+        outcome,
     }))
 }
 
@@ -144,6 +164,13 @@ pub(super) fn apply_fold(aggregate: &mut StoredAggregate, fold: Fold) -> Result<
     // above is the bound on both.
     aggregate.judged = Some(judged + fold.judged);
     aggregate.sound += fold.sound;
+    if fold.on_judge_model {
+        aggregate.on_judge_model += 1;
+    }
+    aggregate.last_at = aggregate.last_at.max(fold.at);
+    if let Some(outcome) = fold.outcome {
+        *aggregate.outcomes.entry(outcome).or_insert(0) += 1;
+    }
     Ok(())
 }
 
@@ -151,4 +178,122 @@ fn judgment_for(vault: &Vault, receipt_id: &str) -> Result<Option<AmendmentJudgm
     Ok(amendment_judgments(vault)?
         .into_iter()
         .find(|judgment| judgment.receipt_id == receipt_id))
+}
+
+/// Counts `task`'s anchored outcome on every already-folded receipt whose
+/// run worked that TASK, in a savepoint of the settling write (FIX 11618):
+/// a fold that landed before the settle counted no outcome, and without
+/// this the counts would wait for the next rebuild. Each member row keeps
+/// the outcome its fold counted and the head it counted on, so the refold
+/// moves that outcome's count from the folded head to the head the judgment
+/// names now instead of recounting — a re-settled or re-anchored TASK
+/// converges, a receipt re-judged onto another executor or scope carries its
+/// count across heads (FIX 11707), and a receipt whose judgment holds counts
+/// nothing either way. Outcome and head are stamped together wherever a
+/// fold counted, so a row that has counted nothing yet has neither
+/// (FIX 11916). A refold that fails lands nothing and never fails the
+/// settlement it rides.
+pub(crate) fn refold_task_outcomes_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    task: EntityId,
+) {
+    let landed = vault
+        .store
+        .env
+        .nested_write_txn(txn)
+        .map_err(Error::from)
+        .and_then(|mut savepoint| {
+            refold_task_in_txn(vault, &mut savepoint, task)?;
+            Ok(savepoint.commit()?)
+        });
+    if let Err(error) = landed {
+        tracing::warn!(
+            kind = ?error.kind(),
+            task = %task.to_hex(),
+            "a settle-time routing refold did not land; the settlement stands"
+        );
+    }
+}
+
+/// [`refold_task_outcomes_in_txn`]'s write, in the caller's savepoint.
+fn refold_task_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, task: EntityId) -> Result<()> {
+    for receipt_id in MEMBER.scan_keys(&vault.store, &*txn, &[])? {
+        let Some(judgment) = amendment_judgment_in_txn(vault, &*txn, &receipt_id)? else {
+            continue;
+        };
+        if task_of_run_in_txn(vault, &*txn, &judgment)? != Some(task) {
+            continue;
+        }
+        let Some(mut member) = MEMBER.get(&vault.store, &*txn, &receipt_id)? else {
+            continue;
+        };
+        let outcome = run_outcome_in_txn(vault, &*txn, &judgment)?;
+        let counted = if fold_of(&judgment, None)?.is_some() {
+            outcome
+        } else {
+            None
+        };
+        // Nothing counted yet and still nothing stands counted: with no head
+        // to compare, the now-named head is not even derived. Outcome and
+        // head are stamped together wherever a fold counted, so outcome
+        // `Some` implies head `Some` — `counted == outcome` on a `None`-head
+        // row means both are `None`, never two equal `Some`s (FIX 11916).
+        if counted == member.outcome && member.head.is_none() {
+            continue;
+        }
+        let key = aggregate_key(&head_of(&judgment))?;
+        let now = StoredHead::from(&key);
+        // Same outcome on the same head: nothing moved, as before (ruling 4).
+        // Same outcome on another head: the count moves heads below (ruling 1).
+        if counted == member.outcome && member.head.as_ref() == Some(&now) {
+            continue;
+        }
+        // No aggregate is ever created here: a now-named head with no row
+        // skips the receipt entirely, as before (ruling 3).
+        let Some(mut aggregate) = AGGREGATE.get(&vault.store, &*txn, &key)? else {
+            continue;
+        };
+        // One decrement path off the stored head only (FIX 11916): a `None`
+        // head has no decrement — its outcome is `None` by the invariant.
+        if let Some(old_head) = member.head.as_ref()
+            && let Some(old) = member.outcome.as_ref()
+        {
+            if old_head == &now {
+                // The same head the fold counted on: the already-loaded
+                // aggregate takes the decrement, no second get/put.
+                if let Some(count) = aggregate.outcomes.get_mut(old) {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        aggregate.outcomes.remove(old);
+                    }
+                }
+            } else {
+                // Re-judged onto another head: the old head's token moves to
+                // the new head. An old head with no row is a no-op decrement
+                // (ruling 3); the new-head increment below still lands.
+                let old_key = old_head.key();
+                if let Some(mut old_aggregate) = AGGREGATE.get(&vault.store, &*txn, &old_key)?
+                    && let Some(count) = old_aggregate.outcomes.get_mut(old)
+                {
+                    *count = count.saturating_sub(1);
+                    if *count == 0 {
+                        old_aggregate.outcomes.remove(old);
+                    }
+                    AGGREGATE.put(&vault.store, txn, &old_key, &old_aggregate)?;
+                }
+            }
+        }
+        if let Some(new) = &counted {
+            *aggregate.outcomes.entry(new.clone()).or_insert(0) += 1;
+        }
+        AGGREGATE.put(&vault.store, txn, &key, &aggregate)?;
+        member.outcome = counted;
+        // A row counting for the first time stamps the now-named head; a
+        // moved count re-anchors. A same-head row writes back the head it
+        // already named.
+        member.head = Some(now);
+        MEMBER.put(&vault.store, txn, &receipt_id, &member)?;
+    }
+    Ok(())
 }

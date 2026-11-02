@@ -17,26 +17,37 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) mod cache_warmth;
+mod call_deadline;
+mod decision_posture;
 mod live_fork;
 mod shadow_capture;
 mod step_attempt;
+mod step_quota;
+// FIX 1743: a stream's probation slot, and its end to its offer's health.
+mod stream_health;
 mod worker_lease;
 
 use futures_util::StreamExt;
+use oneiron::authority::WorldModelRoutes;
 use oneiron::llm::SpentKind;
 use oneiron::llm::media::{AiOperation, MediaFuture, MediaRequest};
-use oneiron::llm::run_admission::{CallOutcome, RunAdmission, RunCall, RunDenied, RunPermit};
+use oneiron::llm::run_admission::{
+    CallOutcome, KeyCustody, Payer, RunAdmission, RunCall, RunDenied, RunPermit, offer_id,
+    offer_place,
+};
 use oneiron::{
     ContentPart, FatalLlmError, LlmBackend, LlmCapability, LlmError, LlmMessage, LlmMessageRole,
     LlmRequest, LlmResponse, LlmResult, LlmStream, LlmStreamEvent, LlmUsage, ModelId,
-    RetryableLlmError,
+    ModelLocality, RetryableLlmError,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use tokio::sync::mpsc::Sender;
 
+pub use call_deadline::CallDeadline;
+
 use super::cooldown::{
-    Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Refusal, Rest, leaves_device,
+    Asked, FallbackRung, OfferCooldowns, ProbeBlocked, ProbePermit, Rest, leaves_device,
 };
 use super::driven::Driven;
 use super::forward::{Ended, forward};
@@ -70,6 +81,20 @@ pub(super) struct LadderRung {
 }
 
 impl LadderRung {
+    /// The full `model@place` route id of this rung (FIX 11768 seam for
+    /// L05): its model and the place [`offer_place`] names for its
+    /// binding's locality and its route's origin, minted through
+    /// [`offer_id`] — the one producer, the same resolution the ladder's
+    /// doors judge.
+    #[must_use]
+    pub(super) fn offer_id(&self) -> String {
+        let place = offer_place(
+            self.offer.binding.locality,
+            self.offer.binding.route.origin(),
+        );
+        offer_id(&self.model, &place)
+    }
+
     /// The call as this rung sends it: its model at its route, its
     /// instruction first.
     fn bind(&self, mut request: LlmRequest) -> LlmRequest {
@@ -215,10 +240,6 @@ fn serves_media(rung: &LadderRung, request: &MediaRequest) -> bool {
 pub struct OfferLadder {
     name: ModelId,
     rungs: Vec<LadderRung>,
-    /// An answer carries the ladder's served receipt around the provider's
-    /// usage as it came: a seat's, a rung of one's, or a configured model's
-    /// called by its own id (FIX 2619), so every run names its provider.
-    receipt: bool,
     /// The one model a caller or a manifest named: its one rung is that
     /// pick, never a fallback.
     picked: bool,
@@ -236,7 +257,6 @@ impl OfferLadder {
         Self {
             name,
             rungs,
-            receipt: true,
             picked: false,
             rests,
             scope: SeatScope::default(),
@@ -249,7 +269,6 @@ impl OfferLadder {
         Self {
             name: rung.model.clone(),
             rungs: vec![rung],
-            receipt: true,
             picked: true,
             rests,
             scope: SeatScope::default(),
@@ -262,7 +281,6 @@ impl OfferLadder {
         Self {
             name: rung.model.clone(),
             rungs: vec![rung],
-            receipt: true,
             picked: true,
             rests,
             scope: SeatScope::default(),
@@ -276,6 +294,78 @@ impl OfferLadder {
     pub(super) fn scoped(mut self, scope: SeatScope) -> Self {
         self.scope = scope;
         self
+    }
+
+    /// This ladder with its rungs in the order `routes` names them (FIX
+    /// 11768 seam for L05): [`WorldModelRoutes::order`] over each rung's
+    /// [`LadderRung::offer_id`], the same route id the ladder's doors
+    /// judge. Name, pick, rests, scope and prefix pass through untouched;
+    /// an order that names no rung yields a ladder with no rungs, which
+    /// reaches the existing no-rung error downstream. Under inherit the
+    /// rungs keep their own order, so a vault with no per-world routes
+    /// behaves as before; routes that name no rung add nothing, and
+    /// duplicates repeat, exactly as `order` reads them.
+    #[must_use]
+    pub(crate) fn for_world_routes(&self, routes: &WorldModelRoutes) -> Self {
+        let keys: Vec<(String, usize)> = self
+            .rungs
+            .iter()
+            .enumerate()
+            .map(|(index, rung)| (rung.offer_id(), index))
+            .collect();
+        let ordered = routes.order(&keys, |key| key.0.as_str());
+        let rungs = ordered
+            .iter()
+            .map(|key| self.rungs[key.1].clone())
+            .collect();
+        Self {
+            name: self.name.clone(),
+            rungs,
+            picked: self.picked,
+            rests: Arc::clone(&self.rests),
+            scope: self.scope,
+            prefix: self.prefix.clone(),
+        }
+    }
+
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order.
+    pub(super) fn rung_models(&self) -> impl Iterator<Item = (&ModelId, Option<&str>)> {
+        self.rungs
+            .iter()
+            .map(|rung| (&rung.model, rung.prompt.as_deref()))
+    }
+
+    /// The rung models and prompts of each live fallback the owner named for
+    /// this seat's offers, limited to targets that are not resting and keep
+    /// the seat's wire and on-device rule (FIX 10916).
+    pub(super) fn fallback_rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        let mut models = Vec::new();
+        for rung in &self.rungs {
+            let Some(target) = self
+                .rests
+                .fallback_for(&rung.offer.binding, &rung.wire_model)
+            else {
+                continue;
+            };
+            if target.rests_now() || target.scope.wire != self.scope.wire {
+                continue;
+            }
+            if self.scope.stays_on_device
+                && target
+                    .rungs
+                    .iter()
+                    .any(|rung| leaves_device(&rung.offer.binding))
+            {
+                continue;
+            }
+            models.extend(
+                target
+                    .rung_models()
+                    .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned))),
+            );
+        }
+        models
     }
 
     /// The offers of the rungs that could serve `request` (FIX 3194): each
@@ -387,6 +477,10 @@ impl OfferLadder {
         include_prompt: bool,
     ) -> LlmResult<(LlmRequest, ServedOffer)> {
         self.admits(&request)?;
+        let routes = self.rests.world_routes(&request);
+        if !self.route_admitted(&routes, 0) {
+            return Err(RetryableLlmError::WorldRouteNotAdmitted.into());
+        }
         if let Some(reason) = self.kept_on_device(0, &request) {
             return Err(RetryableLlmError::KeptOnDevice {
                 retry_after: None,
@@ -408,6 +502,22 @@ impl OfferLadder {
     #[must_use]
     pub fn rungs(&self) -> usize {
         self.rungs.len()
+    }
+
+    /// Whether every rung a call on this ladder may reach is free keyless
+    /// own-server work (FIX 10592): each rung's bound offer is `Payer::Local`
+    /// on `OwnServer` with `KeyCustody::Keyless`. Any keyed, third-party or
+    /// otherwise paid rung that may bill keeps the door paid, as does an
+    /// empty ladder; a keyed owner endpoint stays paid. Read from the
+    /// host-bound ladder, never from a caller's request.
+    #[must_use]
+    pub(crate) fn all_keyless_own_server(&self) -> bool {
+        !self.rungs.is_empty()
+            && self.rungs.iter().all(|rung| {
+                rung.offer.binding.payer == Payer::Local
+                    && rung.offer.binding.locality == ModelLocality::OwnServer
+                    && rung.offer.binding.custody == KeyCustody::Keyless
+            })
     }
 
     /// A capability holds only if every rung has it: a fallback rung must
@@ -461,10 +571,8 @@ impl OfferLadder {
     /// receipt. Stamped after its permit settled: the permit already charged
     /// each failed rung on its own.
     fn answered(&self, index: usize, walk: &Walk, mut usage: LlmUsage) -> LlmUsage {
-        if self.receipt {
-            let raw = std::mem::take(&mut usage.raw_provider);
-            usage.raw_provider = self.served(index, walk).stamp(raw);
-        }
+        let raw = std::mem::take(&mut usage.raw_provider);
+        usage.raw_provider = self.served(index, walk).stamp(raw);
         usage
     }
 
@@ -492,6 +600,21 @@ impl OfferLadder {
         passed_over
     }
 
+    /// Whether the rung at `index` may take a call under `routes` (FIX
+    /// 11768): the world's order names its full `model@place` route id, the
+    /// one [`offer_id`] mints for its model and the place [`offer_place`]
+    /// names for its binding's locality and its route's origin. Position 0
+    /// and a picked rung are gated like any other: the order names routes,
+    /// never positions.
+    fn route_admitted(&self, routes: &WorldModelRoutes, index: usize) -> bool {
+        let rung = &self.rungs[index];
+        let place = offer_place(
+            rung.offer.binding.locality,
+            rung.offer.binding.route.origin(),
+        );
+        routes.admits(&offer_id(&rung.model, &place))
+    }
+
     /// Why a fallback to the rung at `index` would take `request` off the
     /// device while its world stays on it, judged for where that rung's
     /// offer sends it (FIX 4938); `None` when it would not. A seat's
@@ -507,14 +630,19 @@ impl OfferLadder {
     }
 
     /// Whether the call passes the rung at `index` without sending it: it
-    /// does not hold the call's voice (FIX 1746), a fallback to it would
-    /// take the work off the device and the call's world stays on it, its
-    /// offer rests from an earlier refusal, or its offer is on probation
-    /// with its one probation request out. The voice and the device come
-    /// first, so a rung the call may not use is never one it waits for.
+    /// does not hold the call's voice (FIX 1746), its world's order does not
+    /// name its route (FIX 11768), a fallback to it would take the work off
+    /// the device and the call's world stays on it, its offer rests from an
+    /// earlier refusal, or its offer is on probation with its one probation
+    /// request out. The voice, the order and the device come first, so a rung
+    /// the call may not use is never one it waits for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
         if self.voice_not_held(call, index) {
             walk.note(index, Passed::VoiceNotHeld);
+            return true;
+        }
+        if !self.route_admitted(call.routes, index) {
+            self.refuse_route(call, index, walk);
             return true;
         }
         if let Some(reason) = self.kept_on_device(index, call.request) {
@@ -578,20 +706,12 @@ impl OfferLadder {
             .collect()
     }
 
-    /// Waits for `back`, asking `may_send` meanwhile. Returns what is left
-    /// of the call's wait `budget`, in seconds, after the wait. Each wait
-    /// spends at least a second, so a chain ends.
-    async fn wait_back(
-        &self,
-        back: Back,
-        budget: u64,
-        may_send: &(dyn Fn() -> bool + Sync),
-    ) -> u64 {
-        let waited = self
-            .rests
+    /// Waits for `back`, asking `may_send` meanwhile, no later than the
+    /// call's deadline (FIX 8213).
+    async fn wait_back(&self, back: Back, may_send: &(dyn Fn() -> bool + Sync)) {
+        self.rests
             .wait(back.wait, back.at, back.seen, may_send)
             .await;
-        budget.saturating_sub(waited.as_secs().max(1))
     }
 
     /// Whether every rung of this ladder rests now.
@@ -649,11 +769,12 @@ impl OfferLadder {
 
     /// The call-local ladder that a call takes to the owner's fallback
     /// `target` once every rung here has parked (OF-305). It holds the
-    /// target's rungs, under this ladder's receipt and scope, and carries
-    /// what the call met here. The receipt of its answer names the fallback's
-    /// provider and model as the rung after this seat's configured ones. It
-    /// counts the rungs that failed here too, and lists the rungs passed over
-    /// here first. The shared target ladder is never changed.
+    /// target's rungs, under this ladder's scope, and carries what the call
+    /// met here. Every ladder stamps its receipt: the receipt of its answer
+    /// names the fallback's provider and model as the rung after this seat's
+    /// configured ones. It counts the rungs that failed here too, and lists
+    /// the rungs passed over here first. The shared target ladder is never
+    /// changed.
     fn fallback_call(&self, target: &OfferLadder, walk: &Walk) -> Arc<OfferLadder> {
         let rungs = target
             .rungs
@@ -668,7 +789,6 @@ impl OfferLadder {
         Arc::new(OfferLadder {
             name: target.name.clone(),
             rungs,
-            receipt: self.receipt,
             picked: false,
             rests: Arc::clone(&target.rests),
             scope: self.scope,
@@ -683,7 +803,9 @@ impl OfferLadder {
     /// each one parked on a spent window or spent credit (OF-305: asked only
     /// when no rung is left to serve the call). The models it lists for
     /// `use_fallback` are only those that can take this call from this seat.
-    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>) {
+    /// The call's `principal`, when its run names one, is who each question
+    /// is asked for (FIX 562).
+    fn ask_parked(&self, walk: &Walk, needs: Needs<'_>, principal: Option<oneiron::EntityId>) {
         let Some(parked) = walk.parked(self.rungs.len()) else {
             return;
         };
@@ -700,7 +822,7 @@ impl OfferLadder {
                 wire_model: &rung.wire_model,
             };
             self.rests
-                .ask(&rung.offer.binding, rest, asked, &own, &fits);
+                .ask(&rung.offer.binding, rest, asked, &own, &fits, principal);
         }
     }
 
@@ -708,7 +830,8 @@ impl OfferLadder {
     /// for the first parked offer that has one (`use_fallback`). It applies
     /// while that model's offer is in rotation, while it can take this call
     /// from this seat ([`Self::can_serve`]), and while the call's world may
-    /// go where it runs.
+    /// go where it runs. Routes gate when the fallback call walks its own
+    /// rungs under its own routes (FIX 11768): no pre-check here.
     fn fallback(&self, call: Call<'_>, walk: &Walk) -> Option<Arc<OfferLadder>> {
         walk.parked(self.rungs.len())?
             .into_iter()
@@ -781,6 +904,29 @@ impl OfferLadder {
         );
     }
 
+    /// Refuses the rung at `index` for the world's own order (FIX 11768):
+    /// the order does not name the rung's route. A refused call is never
+    /// silent: the first time this call is refused from that rung, the run's
+    /// receipts get a `Denied` row for it.
+    fn refuse_route(&self, call: Call<'_>, index: usize, walk: &mut Walk) {
+        let first = !walk.unadmitted_from(index);
+        walk.note(index, Passed::WorldRouteNotAdmitted);
+        if !first {
+            return;
+        }
+        let rung = &self.rungs[index];
+        call.run.refuse(
+            Some(call.selector.unwrap_or(self.name.as_str())),
+            rung.model.as_str(),
+            RunDenied::WorldRouteNotAdmitted,
+        );
+        tracing::info!(
+            rung = rung.position,
+            reason = "world_route_not_admitted",
+            "the world's order names no such route; passed over"
+        );
+    }
+
     /// Whether the call's voice keeps it from the rung at `index` (FIX 1746).
     /// A banked voice goes only to a rung whose target held a live binding
     /// of it when the call was admitted. A stock or raw voice is one
@@ -810,26 +956,11 @@ impl OfferLadder {
     /// limit for its wait or a backoff, a spent window until its reset,
     /// spent credit until the owner clears it (OF-305).
     fn rest_if_limited(&self, index: usize, error: &LlmError) -> Option<Option<Rest>> {
-        let refusal = match error {
-            LlmError::Retryable(RetryableLlmError::RateLimited {
-                retry_after,
-                resets_at,
-            }) => Refusal {
-                retry_after: *retry_after,
-                resets_at,
-                spent: None,
-            },
-            LlmError::Retryable(RetryableLlmError::QuotaSpent {
-                kind,
-                retry_after,
-                resets_at,
-            }) => Refusal {
-                retry_after: *retry_after,
-                resets_at,
-                spent: Some(*kind),
-            },
-            _ => return None,
+        let LlmError::Retryable(limited) = error else {
+            return None;
         };
+        // The providers' one limit vocabulary, read as every offer rest reads it.
+        let refusal = super::soniox::limit_refusal_of(limited)?;
         let rung = &self.rungs[index];
         let rest = self
             .rests
@@ -894,21 +1025,28 @@ impl OfferLadder {
     /// probation request was out ends the wait early when that request ends
     /// (OF-305). If only such a rung is left, the call waits for that end,
     /// for the rest of its budget.
-    fn waits_for(&self, call: Call<'_>, walk: &mut Walk, budget_secs: u64) -> Option<Back> {
+    fn waits_for(&self, call: Call<'_>, walk: &mut Walk) -> Option<Back> {
         if !walk.limited() {
             return None;
         }
+        // What is left of the call's deadline bounds the wait (FIX 8213).
+        let budget_secs = call.deadline.wait_secs();
         for index in 0..self.rungs.len() {
-            if !self.voice_not_held(call, index)
-                && let Some(reason) = self.kept_on_device(index, call.request)
-            {
+            if self.voice_not_held(call, index) {
+                continue;
+            }
+            if !self.route_admitted(call.routes, index) {
+                self.refuse_route(call, index, walk);
+            } else if let Some(reason) = self.kept_on_device(index, call.request) {
                 self.hold(call, index, walk, reason);
             }
         }
         let now = self.rests.now()?;
         let probing = walk.probing();
         let seen = probing.map(|(_, seen)| seen);
+        // Spent credit comes back only by the owner's word: no wait.
         if let Some((index, at)) = walk.back()
+            && at != u64::MAX
             && at.saturating_sub(now) <= budget_secs
         {
             return Some(Back {
@@ -927,17 +1065,25 @@ impl OfferLadder {
         })
     }
 
-    /// The call's end with no answer. A call kept from a rung that would
-    /// take its work off the device is kept on it, with the earliest time a
-    /// resting offer it may use is back, if one rests. Otherwise a last
-    /// failure that was a limit refusal, or a call that reached no rung
-    /// because each one it could use rests, refuses with that time, so a
-    /// caller can say when. Any other last failure is returned as it came,
-    /// as is an outage: every rung resting rests for its health, so the call
-    /// ends with its provider's own failure, never a rate refusal.
-    /// Every rung parked, the owner is asked about the spent ones.
+    /// The call's end with no answer. A call every met rung of which its
+    /// world's order refused ends with that refusal (FIX 11768). A call kept
+    /// from a rung that would take its work off the device is kept on it,
+    /// with the earliest time a resting offer it may use is back, if one
+    /// rests. Otherwise a last failure that was a limit refusal, or a call
+    /// that reached no rung because each one it could use rests, refuses with
+    /// that time, so a caller can say when. Any other last failure is
+    /// returned as it came, as is an outage: every rung resting rests for
+    /// its health, so the call ends with its provider's own failure, never a
+    /// rate refusal. Every rung parked, the owner is asked about the spent
+    /// ones.
     fn unanswered(&self, call: Call<'_>, walk: Walk) -> LlmError {
-        self.ask_parked(&walk, call.needs);
+        self.ask_parked(&walk, call.needs, call.run.principal());
+        // The world's own order refused every rung the call met: that
+        // refusal is the end, with no rest to name, since an unadmitted rung
+        // never rests.
+        if walk.route_refused_only() {
+            return RetryableLlmError::WorldRouteNotAdmitted.into();
+        }
         if walk.outage() && !walk.kept() {
             return walk
                 .last
@@ -1009,8 +1155,7 @@ impl OfferLadder {
         selector: Option<&str>,
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> LlmResult<LlmResponse> {
-        let budget = Duration::from_secs(self.rests.max_wait_secs());
-        self.generate_within(run, request, selector, may_send, budget)
+        self.generate_by(run, request, selector, may_send, self.host_wait())
             .await
     }
 
@@ -1026,9 +1171,9 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
     ) -> LlmResult<LlmResponse> {
-        self.generate_from(run, request, selector, may_send, wait_budget, true, None)
+        let deadline = CallDeadline::waits_within(wait_budget);
+        self.generate_by(run, request, selector, may_send, deadline)
             .await
-            .map(|(response, _)| response)
     }
 
     /// [`Self::generate_exact_within`] waiting as [`Self::generate_while`]
@@ -1057,12 +1202,9 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
     ) -> LlmResult<LlmResponse> {
-        if !self.picked || self.rungs.len() != 1 {
-            return Err(FatalLlmError::InvalidRequest.into());
-        }
-        self.generate_from(run, request, selector, may_send, wait_budget, false, None)
+        let deadline = CallDeadline::waits_within(wait_budget);
+        self.generate_exact_by(run, request, selector, may_send, deadline)
             .await
-            .map(|(response, _)| response)
     }
 
     /// [`Self::generate`], with the model of the rung that answered, the
@@ -1074,8 +1216,7 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
     ) -> LlmResult<(LlmResponse, ModelId)> {
-        let budget = Duration::from_secs(self.rests.max_wait_secs());
-        self.generate_from(run, request, selector, &|| true, budget, true, None)
+        self.generate_served_by(run, request, selector, &|| true, self.host_wait())
             .await
     }
 
@@ -1090,7 +1231,8 @@ impl OfferLadder {
         may_send: &(dyn Fn() -> bool + Sync),
         wait_budget: Duration,
     ) -> LlmResult<(LlmResponse, ModelId)> {
-        self.generate_from(run, request, selector, may_send, wait_budget, true, None)
+        let deadline = CallDeadline::waits_within(wait_budget);
+        self.generate_served_by(run, request, selector, may_send, deadline)
             .await
     }
 
@@ -1107,9 +1249,9 @@ impl OfferLadder {
         selector: Option<&str>,
         sources: &dyn SourceAdmission,
     ) -> LlmResult<LlmResponse> {
-        let budget = Duration::from_secs(self.rests.max_wait_secs());
         let sources = Some(sources);
-        self.generate_from(run, request, selector, &|| true, budget, true, sources)
+        let deadline = self.host_wait();
+        self.generate_from(run, request, selector, &|| true, deadline, true, sources)
             .await
             .map(|(response, _)| response)
     }
@@ -1130,7 +1272,7 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&'a str>,
         may_send: &'a (dyn Fn() -> bool + Sync),
-        wait_budget: Duration,
+        deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&'a dyn SourceAdmission>,
     ) -> ServedFuture<'a> {
@@ -1140,7 +1282,7 @@ impl OfferLadder {
                 request,
                 selector,
                 may_send,
-                wait_budget,
+                deadline,
                 may_fall_back,
                 sources,
             )
@@ -1158,13 +1300,14 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
         may_send: &(dyn Fn() -> bool + Sync),
-        wait_budget: Duration,
+        deadline: CallDeadline,
         may_fall_back: bool,
         sources: Option<&dyn SourceAdmission>,
     ) -> LlmResult<(LlmResponse, ModelId)> {
         self.admits(&request)?;
         // The run is live until this call ends: the host stays awake for it.
         let _awake = oneiron_vault_contract::host_adapters::run_awake();
+        let routes = self.rests.world_routes(&request);
         let call = Call {
             run,
             request: &request,
@@ -1173,9 +1316,10 @@ impl OfferLadder {
                 request: &request,
                 stream: false,
             },
+            routes: &routes,
+            deadline,
         };
         let mut walk = Walk::default();
-        let mut budget = wait_budget.as_secs();
         // The chain, each rung at most once a pass; then, while only rests
         // stopped it, the owner's fallback, or a wait for its first offer
         // back and the chain again, until the waits would pass the call's
@@ -1192,28 +1336,25 @@ impl OfferLadder {
                             fell_request,
                             Some(selector.unwrap_or(self.name.as_str())),
                             may_send,
-                            Duration::from_secs(budget),
+                            deadline,
                             false,
                             sources,
                         )
                         .await;
                     if fell.is_err() {
-                        self.ask_parked(&walk, call.needs);
+                        self.ask_parked(&walk, call.needs, call.run.principal());
                     }
                     return fell;
                 }
-                let Some(back) = self
-                    .waits_for(call, &mut walk, budget)
-                    .filter(|_| may_send())
-                else {
+                let Some(back) = self.waits_for(call, &mut walk).filter(|_| may_send()) else {
                     break;
                 };
-                budget = self.wait_back(back, budget, may_send).await;
+                self.wait_back(back, may_send).await;
             }
             let mut sent = vec![false; self.rungs.len()];
             loop {
-                if !may_send() {
-                    return Err(self.unanswered(call, walk));
+                if !may_send() || deadline.expired() {
+                    return Err(self.ended(call, walk));
                 }
                 let Some(index) = self.next_rung(call, &sent, &mut walk) else {
                     break;
@@ -1224,11 +1365,11 @@ impl OfferLadder {
                         return Ok((response, self.rungs[index].model.clone()));
                     }
                     Sent::Failed | Sent::Held => {}
-                    Sent::Stopped => return Err(self.unanswered(call, walk)),
+                    Sent::Stopped => return Err(self.ended(call, walk)),
                 }
             }
         }
-        Err(self.unanswered(call, walk))
+        Err(self.ended(call, walk))
     }
 
     /// Sends the call to the rung at `index`, with what `sources` admits for
@@ -1270,6 +1411,12 @@ impl OfferLadder {
             settle_failed(permit);
             return Ok(Sent::Stopped);
         }
+        // The world's order is judged again beside it (FIX 11768).
+        if !self.route_admitted(call.routes, index) {
+            settle_failed(permit);
+            self.refuse_route(call, index, walk);
+            return Ok(Sent::Held);
+        }
         // Admission can wait on the run's receipts, and the world settings
         // can change meanwhile: the world is judged again right before the
         // rung is sent.
@@ -1292,7 +1439,22 @@ impl OfferLadder {
             .run
             .gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = cache_warmth::Sending::of(rung, &bound);
-        match gate.generate(bound, permit.lease()).await {
+        // The caller's deadline ends the send too (FIX 7792): the rung is
+        // settled, its reservation spent once it went out. Its reply is read
+        // on the vault's chat-reply line (FIX 10626).
+        let sent = gate.generate(bound, permit.lease());
+        let Some(answered) = call
+            .deadline
+            .bound(super::http::holding_chat_replies(
+                self.rests.reply_budgets(),
+                sent,
+            ))
+            .await
+        else {
+            settle_failed(permit);
+            return Err(CallDeadline::expiry());
+        };
+        match answered {
             Ok(mut response) => {
                 warmth.answered(&self.rests);
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
@@ -1328,33 +1490,27 @@ impl OfferLadder {
         selector: Option<&str>,
         voices: Option<&RungVoices>,
     ) -> LlmResult<MediaAnswer> {
-        self.media_from(
-            run,
-            request,
-            selector,
-            self.rests.max_wait_secs(),
-            true,
-            voices,
-        )
-        .await
+        self.media_by(run, request, selector, voices, self.host_wait())
+            .await
     }
 
-    /// [`Self::media`], waiting for offers back for at most `budget_secs` in
-    /// all. When `may_fall_back`, a call whose every rung has parked goes to
-    /// the owner's fallback; a fallback's own call falls back no further.
-    /// Boxed, since a fallback's call is this one again.
+    /// [`Self::media`], on `deadline` across every rung, wait and fallback
+    /// (FIX 8134). When `may_fall_back`, a call whose every rung has parked
+    /// goes to the owner's fallback; a fallback's own call falls back no
+    /// further. Boxed, since a fallback's call is this one again.
     fn media_from<'a>(
         &'a self,
         run: &'a RunAdmission,
         request: MediaRequest,
         selector: Option<&'a str>,
-        budget_secs: u64,
+        deadline: CallDeadline,
         may_fall_back: bool,
         voices: Option<&'a RungVoices>,
     ) -> MediaFuture<'a, MediaAnswer> {
         Box::pin(async move {
             let admission = request.admission_request();
             self.admits(&admission)?;
+            let routes = self.rests.world_routes(&admission);
             let call = Call {
                 run,
                 request: &admission,
@@ -1363,9 +1519,10 @@ impl OfferLadder {
                     Some(voices) => Needs::Voiced(voices),
                     None => Needs::Media(&request),
                 },
+                routes: &routes,
+                deadline,
             };
             let mut walk = Walk::default();
-            let mut budget = budget_secs;
             for pass in 0.. {
                 if pass > 0 {
                     if may_fall_back && let Some(target) = self.fallback(call, &walk) {
@@ -1377,30 +1534,33 @@ impl OfferLadder {
                                 run,
                                 fell_request,
                                 Some(selector.unwrap_or(self.name.as_str())),
-                                budget,
+                                deadline,
                                 false,
                                 voices,
                             )
                             .await;
                         if fell.is_err() {
-                            self.ask_parked(&walk, call.needs);
+                            self.ask_parked(&walk, call.needs, call.run.principal());
                         }
                         return fell;
                     }
-                    let Some(back) = self.waits_for(call, &mut walk, budget) else {
+                    let Some(back) = self.waits_for(call, &mut walk) else {
                         break;
                     };
-                    budget = self.wait_back(back, budget, &|| true).await;
+                    self.wait_back(back, &|| true).await;
                 }
                 let mut sent = vec![false; self.rungs.len()];
                 while let Some(index) = self.next_rung(call, &sent, &mut walk) {
+                    if deadline.expired() {
+                        return Err(self.ended(call, walk));
+                    }
                     sent[index] = true;
                     if let Some(answer) = self.send_media(call, index, &request, &mut walk).await? {
                         return Ok(answer);
                     }
                 }
             }
-            Err(self.unanswered(call, walk))
+            Err(self.ended(call, walk))
         })
     }
 
@@ -1445,6 +1605,12 @@ impl OfferLadder {
         let permit = call
             .run
             .admit_media(selector, &bound, &rung.offer.binding)?;
+        // The world's order is judged again beside it (FIX 11768).
+        if !self.route_admitted(call.routes, index) {
+            settle_failed(permit);
+            self.refuse_route(call, index, walk);
+            return Ok(None);
+        }
         if let Some(reason) = self.kept_on_device(index, call.request) {
             settle_failed(permit);
             self.hold(call, index, walk, reason);
@@ -1459,17 +1625,28 @@ impl OfferLadder {
             .media_gate(Arc::clone(&media.backend), &rung.offer.binding);
         let operation = request.operation;
         if operation.is_job() {
-            let submitted = gate.submit(bound, permit.lease()).await;
+            let requested_video_ms = super::media::requested_video_ms(&bound);
+            // The caller's deadline ends the send too (FIX 8134).
+            let Some(submitted) = call
+                .deadline
+                .bound(gate.submit(bound, permit.lease()))
+                .await
+            else {
+                settle_failed(permit);
+                return Err(CallDeadline::expiry());
+            };
             return match submitted {
                 Ok(provider_job) => Ok(Some(MediaAnswer::Job(HeldJob {
                     gate,
                     permit: Some(permit),
                     probe,
-                    receipt: self.receipt.then(|| self.served(index, walk)),
+                    receipt: Some(self.served(index, walk)),
                     provider_job,
                     model: rung.model.clone(),
                     operation,
                     caps: media.caps.clone(),
+                    paid: false,
+                    requested_video_ms,
                 }))),
                 Err(error) => {
                     let sent = settle_failed(permit);
@@ -1478,7 +1655,14 @@ impl OfferLadder {
                 }
             };
         }
-        let answered = gate.run(bound, permit.lease()).await;
+        let Some(answered) = call
+            .deadline
+            .bound(gate.run_progress(bound, permit.lease()))
+            .await
+        else {
+            settle_failed(permit);
+            return Err(CallDeadline::expiry());
+        };
         match answered {
             Ok(mut response) => {
                 self.rests.succeeded(&rung.offer.binding, &rung.wire_model);
@@ -1486,15 +1670,25 @@ impl OfferLadder {
                     response.usage.token_units(operation, &media.caps),
                     response.usage.inference_calls(),
                 )?;
-                if self.receipt {
-                    let raw = std::mem::take(&mut response.usage.raw_provider);
-                    response.usage.raw_provider = self.served(index, walk).stamp(raw);
-                }
+                let raw = std::mem::take(&mut response.usage.raw_provider);
+                response.usage.raw_provider = self.served(index, walk).stamp(raw);
                 Ok(Some(MediaAnswer::Done(response)))
             }
-            Err(error) => {
+            // FIX 9517: what answered before the stop is settled once, on
+            // its usage and receipts, never lost behind the error.
+            Err(stopped) if !stopped.progress.is_empty() => {
+                let sent = permit.dispatched();
+                if let Err(denied) =
+                    permit.settle_interrupted_media(&stopped.progress, operation, &media.caps)
+                {
+                    tracing::error!(%denied, "an interrupted media call's settlement was refused");
+                }
+                self.failed(index, stopped.error, sent, walk)?;
+                Ok(None)
+            }
+            Err(stopped) => {
                 let sent = settle_failed(permit);
-                self.failed(index, error, sent, walk)?;
+                self.failed(index, stopped.error, sent, walk)?;
                 Ok(None)
             }
         }
@@ -1513,11 +1707,11 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
     ) -> LlmResult<LlmStream<'static>> {
-        self.stream_from(run, request, selector, true, self.rests.max_wait_secs())
+        self.stream_by(run, request, selector, self.host_wait())
     }
 
-    /// [`Self::stream`], waiting for offers back for at most `budget_secs`
-    /// in all. When `may_fall_back`, a stream whose every rung has parked,
+    /// [`Self::stream`], on `deadline` across its waits and fallback (FIX
+    /// 8213). When `may_fall_back`, a stream whose every rung has parked,
     /// as it opens or after any pass, goes to the owner's fallback for a
     /// parked offer; a fallback's own stream falls back no further.
     fn stream_from(
@@ -1526,9 +1720,10 @@ impl OfferLadder {
         request: LlmRequest,
         selector: Option<&str>,
         may_fall_back: bool,
-        budget_secs: u64,
+        deadline: CallDeadline,
     ) -> LlmResult<LlmStream<'static>> {
         self.admits(&request)?;
+        let routes = self.rests.world_routes(&request);
         let call = Call {
             run,
             request: &request,
@@ -1537,30 +1732,32 @@ impl OfferLadder {
                 request: &request,
                 stream: true,
             },
+            routes: &routes,
+            deadline,
         };
         let mut walk = Walk::default();
-        let (start, wait) =
-            match (0..self.rungs.len()).find(|index| !self.passes_over(call, *index, &mut walk)) {
-                Some(start) => (start, None),
-                None => {
-                    if may_fall_back && let Some(target) = self.fallback(call, &walk) {
-                        let fallback = self.fallback_call(&target, &walk);
-                        let mut fell_request = request.clone();
-                        fell_request.model = fallback.model().clone();
-                        let selector = Some(selector.unwrap_or(self.name.as_str()));
-                        let fell =
-                            fallback.stream_from(run, fell_request, selector, false, budget_secs);
-                        if fell.is_err() {
-                            self.ask_parked(&walk, call.needs);
-                        }
-                        return fell;
+        let (start, wait) = match (0..self.rungs.len())
+            .find(|index| !self.passes_over(call, *index, &mut walk))
+        {
+            Some(start) => (start, None),
+            None => {
+                if may_fall_back && let Some(target) = self.fallback(call, &walk) {
+                    let fallback = self.fallback_call(&target, &walk);
+                    let mut fell_request = request.clone();
+                    fell_request.model = fallback.model().clone();
+                    let selector = Some(selector.unwrap_or(self.name.as_str()));
+                    let fell = fallback.stream_from(run, fell_request, selector, false, deadline);
+                    if fell.is_err() {
+                        self.ask_parked(&walk, call.needs, call.run.principal());
                     }
-                    match self.waits_for(call, &mut walk, budget_secs) {
-                        Some(back) => (back.index, Some(back)),
-                        None => return Err(self.unanswered(call, walk)),
-                    }
+                    return fell;
                 }
-            };
+                match self.waits_for(call, &mut walk) {
+                    Some(back) => (back.index, Some(back)),
+                    None => return Err(self.ended(call, walk)),
+                }
+            }
+        };
         let first = self.admit(run, &self.rungs[start], &request, selector, true)?;
         let (ladder, run) = (Arc::clone(self), run.clone());
         let selector = selector.map(str::to_owned);
@@ -1572,11 +1769,12 @@ impl OfferLadder {
                 start,
                 first,
                 wait,
+                routes,
                 walk,
             };
             let sends = Sends {
                 may_fall_back,
-                budget_secs,
+                deadline,
                 events: &events,
             };
             ladder
@@ -1597,11 +1795,12 @@ impl OfferLadder {
             start,
             first,
             wait,
+            routes,
             mut walk,
         } = opening;
         let Sends {
             may_fall_back,
-            budget_secs,
+            deadline,
             events,
         } = sends;
         let call = Call {
@@ -1612,15 +1811,19 @@ impl OfferLadder {
                 request,
                 stream: true,
             },
+            routes: &routes,
+            deadline,
         };
         let mut held = Some((start, first));
         let mut wait = wait;
         // A stream that opened with every usable offer resting admitted the
         // first one back. When that admission saw the world kept on the
-        // device, the rung is settled unsent and every rung is judged again,
-        // so the one wait goes to an offer the call may use now, or none.
+        // device, or its order refusing the rung, the rung is settled unsent
+        // and every rung is judged again, so the one wait goes to an offer
+        // the call may use now, or none.
         if let Some(back) = wait
-            && self.kept_on_device(back.index, request).is_some()
+            && (!self.route_admitted(call.routes, back.index)
+                || self.kept_on_device(back.index, request).is_some())
         {
             if let Some((_, (_, permit))) = held.take() {
                 settle_failed(permit);
@@ -1632,12 +1835,11 @@ impl OfferLadder {
             wait = None;
             if !usable {
                 if may_fall_back && let Some(target) = self.fallback(call, &walk) {
-                    self.stream_fallback(&target, call, walk, budget_secs, events)
-                        .await;
+                    self.stream_fallback(&target, call, walk, events).await;
                     return;
                 }
-                let Some(back) = self.waits_for(call, &mut walk, budget_secs) else {
-                    let _ = events.send(Err(self.unanswered(call, walk))).await;
+                let Some(back) = self.waits_for(call, &mut walk) else {
+                    let _ = events.send(Err(self.ended(call, walk))).await;
                     return;
                 };
                 wait = Some(back);
@@ -1645,30 +1847,28 @@ impl OfferLadder {
         }
         // The chain; then, while only rests stopped it, the owner's fallback
         // or a wait for its first offer back and the chain again, until the
-        // waits would pass the call's wait budget in all (OF-305). A stream
+        // waits would pass the call's deadline (OF-305, FIX 8213). A stream
         // that opened with every usable offer resting starts with that wait.
-        let mut budget = budget_secs;
         let mut back = wait;
         loop {
             if let Some(next) = back {
                 // Dropping the stream drops this wait: nothing else stops it.
-                budget = self.wait_back(next, budget, &|| true).await;
+                self.wait_back(next, &|| true).await;
             }
-            if let Flow::Ended = self
-                .stream_pass(run, request, selector, &mut held, &mut walk, events)
-                .await
-            {
+            if deadline.expired() {
+                break;
+            }
+            if let Flow::Ended = self.stream_pass(call, &mut held, &mut walk, events).await {
                 return;
             }
             if may_fall_back && let Some(target) = self.fallback(call, &walk) {
                 if let Some((_, (_, permit))) = held.take() {
                     settle_failed(permit);
                 }
-                self.stream_fallback(&target, call, walk, budget, events)
-                    .await;
+                self.stream_fallback(&target, call, walk, events).await;
                 return;
             }
-            back = self.waits_for(call, &mut walk, budget);
+            back = self.waits_for(call, &mut walk);
             if back.is_none() {
                 break;
             }
@@ -1676,13 +1876,13 @@ impl OfferLadder {
         if let Some((_, (_, permit))) = held {
             settle_failed(permit);
         }
-        let _ = events.send(Err(self.unanswered(call, walk))).await;
+        let _ = events.send(Err(self.ended(call, walk))).await;
     }
 
     /// Hands a stream whose every rung has parked to the owner's fallback
     /// `target` (OF-305). Its call-local ladder streams the same request,
-    /// under the caller's selector, into `events`, within what is left of
-    /// the wait budget `budget_secs`, and falls back no further. Nothing has
+    /// under the caller's selector, into `events`, on the call's one
+    /// deadline, and falls back no further. Nothing has
     /// spoken yet, so its events are the answer. If the fallback refuses to
     /// open, the owner is asked about the offers parked here, and the
     /// refusal ends the stream.
@@ -1691,14 +1891,13 @@ impl OfferLadder {
         target: &OfferLadder,
         call: Call<'_>,
         walk: Walk,
-        budget_secs: u64,
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) {
         let fallback = self.fallback_call(target, &walk);
         let mut request = call.request.clone();
         request.model = fallback.model().clone();
         let selector = Some(call.selector.unwrap_or(self.name.as_str()));
-        match fallback.stream_from(call.run, request, selector, false, budget_secs) {
+        match fallback.stream_from(call.run, request, selector, false, call.deadline) {
             Ok(mut stream) => {
                 while let Some(event) = stream.next().await {
                     if events.send(event).await.is_err() {
@@ -1707,7 +1906,7 @@ impl OfferLadder {
                 }
             }
             Err(error) => {
-                self.ask_parked(&walk, call.needs);
+                self.ask_parked(&walk, call.needs, call.run.principal());
                 let _ = events.send(Err(error)).await;
             }
         }
@@ -1720,22 +1919,17 @@ impl OfferLadder {
     /// another.
     async fn stream_pass(
         &self,
-        run: &RunAdmission,
-        request: &LlmRequest,
-        selector: Option<&str>,
+        call: Call<'_>,
         held: &mut Option<(usize, (LlmRequest, RunPermit))>,
         walk: &mut Walk,
         events: &Sender<LlmResult<LlmStreamEvent>>,
     ) -> Flow {
-        let call = Call {
+        let Call {
             run,
             request,
             selector,
-            needs: Needs::Chat {
-                request,
-                stream: true,
-            },
-        };
+            ..
+        } = call;
         let mut sent = vec![false; self.rungs.len()];
         while let Some(index) = self.next_rung(call, &sent, walk) {
             sent[index] = true;
@@ -1754,6 +1948,12 @@ impl OfferLadder {
                     }
                 }
             };
+            // The world's order is judged again beside it (FIX 11768).
+            if !self.route_admitted(call.routes, index) {
+                settle_failed(next.1);
+                self.refuse_route(call, index, walk);
+                continue;
+            }
             // The world is judged again right before the rung is sent: its
             // admission, or the wait a held first rung sat through, may have
             // outlasted the world settings it was judged by.
@@ -1804,7 +2004,10 @@ impl OfferLadder {
         let gate = run.gate(Arc::clone(&rung.offer.backend), &rung.offer.binding);
         let warmth = cache_warmth::Sending::of(rung, &call);
         let ended = match gate.stream(call, permit.lease()) {
-            Ok(stream) => forward(stream, events).await,
+            Ok(stream) => {
+                let budgets = self.rests.reply_budgets();
+                super::http::holding_chat_replies(budgets, forward(stream, events)).await
+            }
             Err(error) => Ended::Failed {
                 error,
                 spoken: false,
@@ -1864,30 +2067,35 @@ impl OfferLadder {
 }
 
 /// One call on its way down the ladder: its run, its request, what the
-/// caller named it by, and what it asks of an owner's fallback.
+/// caller named it by, what it asks of an owner's fallback, the routes its
+/// world's order names for it (FIX 11768), and its one deadline (FIX 7792).
 #[derive(Clone, Copy)]
 struct Call<'a> {
     run: &'a RunAdmission,
     request: &'a LlmRequest,
     selector: Option<&'a str>,
     needs: Needs<'a>,
+    routes: &'a WorldModelRoutes,
+    deadline: CallDeadline,
 }
 
 /// How a stream sends once it has opened: whether it may still go to the
-/// owner's fallback, its wait budget, and where its events go.
+/// owner's fallback, its deadline, and where its events go.
 struct Sends<'a> {
     may_fall_back: bool,
-    budget_secs: u64,
+    deadline: CallDeadline,
     events: &'a Sender<LlmResult<LlmStreamEvent>>,
 }
 
 /// Where a stream opens: the first rung the call can use and its permit,
-/// the wait for it when every usable offer rested, and what the call met on
+/// the wait for it when every usable offer rested, the routes its world's
+/// order names for the whole stream (FIX 11768), and what the call met on
 /// the rungs before it.
 struct Opening {
     start: usize,
     first: (LlmRequest, RunPermit),
     wait: Option<Back>,
+    routes: WorldModelRoutes,
     walk: Walk,
 }
 
@@ -1907,8 +2115,9 @@ enum Sent {
     Answer(LlmResponse),
     /// It failed and the call goes on.
     Failed,
-    /// It was kept from the work, unsent, and the call goes on. Either the
-    /// world stays on the device, or its offer's health holds it.
+    /// It was kept from the work, unsent, and the call goes on: the world
+    /// stays on the device, its order refuses the route, or its offer's
+    /// health holds it.
     Held,
     /// `may_send` said no once it was admitted: the call stops.
     Stopped,
@@ -1925,7 +2134,9 @@ impl OfferLadder {
     /// partials) on the first rung that serves it: one permit for the whole
     /// stream, reserving `bound_ms` of audio at the rung's rate, started at
     /// its media gate before any audio leaves. An open stream never moves to
-    /// another rung; a voice route pins its one rung.
+    /// another rung; a voice route pins its one rung. It holds its offer's
+    /// probation slot to its end, which reports to its offer's health (FIX
+    /// 1743).
     pub(super) fn open_media_stream(
         &self,
         run: &RunAdmission,
@@ -1934,11 +2145,14 @@ impl OfferLadder {
     ) -> LlmResult<oneiron::llm::run_admission::MediaStreamLease> {
         let admission = request.admission_request();
         self.admits(&admission)?;
+        let routes = self.rests.world_routes(&admission);
         let call = Call {
             run,
             request: &admission,
             selector: None,
             needs: Needs::Media(&request),
+            routes: &routes,
+            deadline: CallDeadline::Open,
         };
         let mut walk = Walk::default();
         for (index, rung) in self.rungs.iter().enumerate() {
@@ -1951,6 +2165,10 @@ impl OfferLadder {
             if !media.takes(&bound) || self.passes_over(call, index, &mut walk) {
                 continue;
             }
+            // A stream takes its offer's probation slot as a request does.
+            let Some(probe) = self.probe_unless_managed(index, &mut walk) else {
+                continue;
+            };
             let reserve = oneiron::llm::run_admission::MediaStreamLease::reserve_units(
                 bound.operation,
                 &media.caps,
@@ -1963,7 +2181,8 @@ impl OfferLadder {
                 reserve,
             )?;
             let gate = run.media_gate(Arc::clone(&media.backend), &rung.offer.binding);
-            return gate.open_stream(&bound, permit, media.caps.clone(), bound_ms);
+            let lease = gate.open_stream(&bound, permit, media.caps.clone(), bound_ms)?;
+            return Ok(stream_health::reported(lease, probe));
         }
         Err(self.unanswered(call, walk))
     }

@@ -109,6 +109,8 @@ impl ScopedRead<'_> {
                 let mut handles = Vec::new();
                 let mut suppressed = 0;
                 let mut seen = HashSet::new();
+                // One relationship authority for every peer (FIX 11648).
+                let retrievable = self.recall_candidates_in(txn, &policy, &filter);
                 for edge in edges {
                     let edge = edge?;
                     let peer = edge.target;
@@ -137,7 +139,7 @@ impl ScopedRead<'_> {
                         continue;
                     }
                     // Relevance floors and authority both apply to every grain.
-                    if !self.recall_candidate_in(txn, &policy, &filter, &peer)? {
+                    if !retrievable(&peer)? {
                         continue;
                     }
                     handles.push(RetrievalHandle {
@@ -170,8 +172,10 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, Some(requested))?;
         let store = self.store_read();
         let mut frontier = HashSet::new();
+        // One relationship authority for every anchor and peer (FIX 11648).
+        let retrievable = self.recall_candidates_in(&txn, &policy, &filter);
         for anchor in observed {
-            if !self.recall_candidate_in(&txn, &policy, &filter, anchor)? {
+            if !retrievable(anchor)? {
                 continue;
             }
             for direction in [EdgeDirection::Out, EdgeDirection::In] {
@@ -198,9 +202,7 @@ impl ScopedRead<'_> {
                         || Ok(super::admission::ReadAdmission::Visible(())),
                         || self.admit_entity_in(&txn, &policy, &filter, &peer),
                     )?;
-                    if admitted.visible()
-                        && self.recall_candidate_in(&txn, &policy, &filter, &peer)?
-                    {
+                    if admitted.visible() && retrievable(&peer)? {
                         frontier.insert(peer);
                     }
                 }

@@ -131,6 +131,15 @@ impl MadeDestination {
             copy.adopt_writer_lease(lease);
         }
     }
+
+    /// Arms the copy, and its page-seal mirror, to stay where they are
+    /// whatever follows (`true`), while the restore's last publication may
+    /// have happened, or disarms it once that publication is known not to
+    /// have (FIX 6782). Its lease still goes with it, after the copy's vault
+    /// has closed.
+    pub(crate) fn preserve(&mut self, preserved: bool) {
+        self.kept = preserved;
+    }
 }
 
 /// A restore's copy is no longer where the restore made it.
@@ -166,6 +175,7 @@ impl Drop for MadeDestination {
         {
             tracing::warn!("a refused restore left the page-seal mirror it wrote in place");
         }
+        crate::world_keys::discard_creation_record(&self.destination);
     }
 }
 
@@ -181,6 +191,37 @@ pub(super) fn delete_vault_meta_in_txn(
         .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
     for key in keys {
         vault_meta.delete(wtxn, key)?;
+    }
+    Ok(())
+}
+
+/// Replaces every host-order row of a vault with `rows`, in `wtxn`. Rows
+/// outside the family are refused (moved here whole from
+/// `checkpoint_custody`).
+pub(crate) fn replace_host_holds_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    rows: &[(Vec<u8>, Vec<u8>)],
+) -> Result<()> {
+    if rows
+        .iter()
+        .any(|(key, _)| !key.starts_with(super::HOST_HOLD_PREFIX))
+    {
+        return Err(Error::CorruptedIndex("host-order legal hold rows"));
+    }
+    let vault_meta = store
+        .env
+        .open_database::<heed::types::Bytes, heed::types::Bytes>(wtxn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    let stale: Vec<Vec<u8>> = vault_meta
+        .prefix_iter(wtxn, super::HOST_HOLD_PREFIX)?
+        .map(|row| row.map(|(key, _)| key.to_vec()))
+        .collect::<std::result::Result<_, _>>()?;
+    for key in stale {
+        vault_meta.delete(wtxn, &key)?;
+    }
+    for (key, value) in rows {
+        vault_meta.put(wtxn, key, value)?;
     }
     Ok(())
 }

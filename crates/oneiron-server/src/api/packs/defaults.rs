@@ -2,36 +2,81 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::skill_hub::{HubImportReceipt, default_skill_hub_id};
 use oneiron::{EntityId, TimeRange, Vault};
 use serde::Deserialize;
 
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::{ApiError, EnvelopedApiError};
 use crate::server::SyncServer;
 
 use super::super::error_map::core_engine_error;
-use super::super::owner_routes::owner;
-use super::super::{json_payload, unix_seconds_now};
+use super::super::openapi::OwnerRoute;
+use super::super::owner_routes::{OwnerTable, owner};
+use super::super::unix_seconds_now;
 
 type Reply<T> = Result<Json<T>, EnvelopedApiError>;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/packs/defaults/restore", post(restore_defaults))
-        .route("/packs/defaults/import", post(import_hub_skill))
-        .route("/packs/defaults/restore-skill", post(restore_hub_skill))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/defaults/restore",
+                summary: "Restore defaults.",
+                row: None,
+            },
+            post(restore_defaults),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/defaults/import",
+                summary: "Import hub skill.",
+                row: None,
+            },
+            post(import_hub_skill),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/packs/defaults/restore-skill",
+                summary: "Restore hub skill.",
+                row: None,
+            },
+            post(restore_hub_skill),
+        ),
+    ]
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct HubSkillRequest {
     subtree: String,
+}
+
+/// The OpenAPI schema of the hub skill writes' body (FIX 11611), shared by
+/// `POST /v1/owner/packs/defaults/import` and
+/// `POST /v1/owner/packs/defaults/restore-skill`: [`HubSkillRequest`].
+pub(crate) fn hub_skill_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HubSkillRequest>()
+}
+
+/// The OpenAPI schema of the hub skill writes' answer (FIX 11611), shared by
+/// `POST /v1/owner/packs/defaults/import` and
+/// `POST /v1/owner/packs/defaults/restore-skill`: [`HubImportReceipt`].
+pub(crate) fn hub_import_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HubImportReceipt>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/defaults/restore`'s answer (FIX 11611):
+/// one [`HubImportReceipt`] per restored default.
+pub(crate) fn hub_import_receipts_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Vec<HubImportReceipt>>()
 }
 
 async fn restore_defaults(
@@ -64,15 +109,16 @@ async fn restore_defaults(
 async fn import_hub_skill(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HubSkillRequest>, JsonRejection>,
+    payload: OwnerJsonBody<HubSkillRequest>,
 ) -> Reply<HubImportReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
         owner.revalidate(vault)?;
         let at = unix_seconds_now();
         let entity = vault.import_default_hub_skill(
+            &owner,
             &request.subtree,
             TimeRange { start: at, end: at },
             at,
@@ -86,10 +132,10 @@ async fn import_hub_skill(
 async fn restore_hub_skill(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HubSkillRequest>, JsonRejection>,
+    payload: OwnerJsonBody<HubSkillRequest>,
 ) -> Reply<HubImportReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || {
         let vault = server.vault();
         let at = unix_seconds_now();

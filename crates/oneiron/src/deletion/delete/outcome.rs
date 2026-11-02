@@ -8,14 +8,20 @@ pub struct DeleteEntityOutcome {
     pub existed: bool,
     pub receipt_id: Option<EntityId>,
     pub sweep_key: Option<Vec<u8>>,
+    /// The turn-program rows the purge removed whole because they did not decode (FIX 5736,
+    /// FIX 5775): the same `turn_program.undecodable_rows_removed:N` details the gated hard
+    /// purge names on its gate decision. Empty when none did, or when no hard purge ran.
+    pub turn_program_details: Vec<String>,
 }
 
 impl DeleteEntityOutcome {
-    pub(crate) const fn missing() -> Self {
+    /// A delete that erased nothing: no scope, no receipt, no sweep, no details.
+    pub(crate) fn missing() -> Self {
         Self {
             existed: false,
             receipt_id: None,
             sweep_key: None,
+            turn_program_details: Vec::new(),
         }
     }
 }

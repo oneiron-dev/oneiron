@@ -5,15 +5,15 @@
 //! Issue writes each stored piece's recovery code to an owner-only file, and
 //! nothing goes live until confirm reads two of them back, or one and the
 //! passphrase. A piece, a code or the passphrase never reaches the command
-//! line, a log or the JSON printed. The `this-machine` home waits for
-//! device-piece custody: no keystore slot holds a piece yet.
+//! line, a log or the JSON printed. A `this-machine` home's piece stays in
+//! this install's keystore, and a restore here counts it as one of the two
+//! (FIX 2063).
 
 use std::collections::BTreeSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use oneiron::authority::EditOrigin;
 use oneiron::error::SecretError;
 use oneiron::recovery::{KitError, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
 use oneiron::sync::WindowManager;
@@ -22,12 +22,14 @@ use oneiron::sync::client::fetch_sealed_bundle_with_kit;
 use oneiron::sync::residence::{RecoveryCheckpointTrust, sealed_generation_from_hex};
 use oneiron::world_keys::{
     KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads, SealedVaultBundle,
-    VaultKeyStatus, WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
+    WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
 };
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::vault_key::{HostUnlock, read_secret};
+use super::vault_key::{
+    HostUnlock, KeyNeed, UnlockRequest, open_with_unlock, read_secret, refuse_two_stdin_secrets,
+};
 use super::{emit, open_stopped_vault};
 use crate::cli::{
     KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitRestoreArgs, RestoreArgs,
@@ -41,8 +43,9 @@ use crate::owner::vault_key::{WrapView, hex, secret32};
 
 mod custody;
 mod issue;
+mod live;
 
-pub(super) use self::custody::kit_custody_root;
+pub(super) use self::custody::{kit_custody_root, kit_custody_seed};
 
 /// The most a piece file is: an export is 89 bytes, a code 99 characters.
 const PIECE_LIMIT: usize = 1024;
@@ -77,6 +80,11 @@ pub fn recovery_kit(command: RecoveryKitCommand) -> anyhow::Result<()> {
         RecoveryKitCommand::IssueVaultKey(args) => issue::issue_vault_key(*args),
         RecoveryKitCommand::Confirm(args) => confirm(*args),
         RecoveryKitCommand::Restore(args) => restore(*args),
+        RecoveryKitCommand::PadAccess(args) => live::pad_access(*args),
+        RecoveryKitCommand::Upkeep(args) => live::upkeep(&args),
+        RecoveryKitCommand::Roots(args) => live::roots(*args),
+        RecoveryKitCommand::Pin(args) => live::pin(*args),
+        RecoveryKitCommand::Anchor(args) => live::anchor(*args),
     }
 }
 
@@ -98,16 +106,18 @@ fn read_passphrase(secret_file: Option<&Path>) -> anyhow::Result<KitPassphrase> 
 }
 
 /// The pieces in `files`, and the passphrase: from `secret_file` when one is
-/// named, else from stdin when only one piece is given.
+/// named, else from stdin when only one piece is given, counting this
+/// machine's own when it keeps one (`kept`, FIX 2063).
 fn read_kit(
     files: &[PathBuf],
     secret_file: Option<&Path>,
+    kept: bool,
 ) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
     let pieces = files
         .iter()
         .map(|file| read_piece(file))
         .collect::<anyhow::Result<Vec<_>>>()?;
-    let passphrase = if secret_file.is_some() || pieces.len() == 1 {
+    let passphrase = if secret_file.is_some() || pieces.len() + usize::from(kept) == 1 {
         Some(read_passphrase(secret_file)?)
     } else {
         None
@@ -116,7 +126,7 @@ fn read_kit(
 }
 
 fn read_kit_args(args: &KitPieceArgs) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
-    read_kit(&args.pieces, args.secret_file.as_deref())
+    read_kit(&args.pieces, args.secret_file.as_deref(), false)
 }
 
 /// One piece from an owner-only file: a piece export, or a recovery code as
@@ -202,6 +212,13 @@ struct Confirmed {
 }
 
 fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
+    let unlock = UnlockRequest::of(&args.unlock);
+    refuse_two_stdin_secrets(
+        &unlock,
+        args.kit.secret_file.is_none() && args.kit.pieces.len() == 1,
+        "the kit passphrase",
+        "--secret-file",
+    )?;
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let carry = args
         .carry
@@ -211,26 +228,15 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
                 .map_err(|_| anyhow::anyhow!("--carry {id}: a machine is its 32-hex id"))
         })
         .collect::<anyhow::Result<BTreeSet<_>>>()?;
-    let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
     // Confirm replaces the vault key's world-kit wrap, so a vault with a key
-    // needs it held: this device's wrap opens it, or nothing is confirmed. A
-    // vault with no key gets no wrap.
-    if vault.vault_key_status()? == VaultKeyStatus::Locked {
-        vault.unlock_vault_key().map_err(|error| {
-            anyhow::anyhow!(
-                "the vault key stays locked, and confirm must replace its world-kit wrap: {error}"
-            )
-        })?;
-    }
+    // needs it held: this device's wrap opens it, or the unlock `--unlock`
+    // names (FIX 2201), or nothing is confirmed. A vault with no key gets no
+    // wrap.
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
+    let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
-    let confirmed = vault.confirm_world_kit(
-        &owner,
-        EditOrigin::ThisMachine,
-        &pieces,
-        passphrase.as_ref(),
-        &carry,
-    )?;
+    let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
     let vault_id = vault.vault_key_vault_id();
     let keys = &confirmed.activated.keys;
     emit(&Confirmed {
@@ -297,18 +303,13 @@ fn restore(args: RecoveryKitRestoreArgs) -> anyhow::Result<()> {
     if args.sealed_bundle.is_some() || args.sealed_home.is_some() {
         return restore_from_bundle(&args, confirm);
     }
-    let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let vault = open(&args.serve)?;
+    let kept = vault.keeps_kit_piece(KitSecretKind::RecoveryRoot);
+    let (pieces, passphrase) = read_kit(&args.kit.pieces, args.kit.secret_file.as_deref(), kept)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
     let restored = vault
-        .restore_world_kit(
-            &owner,
-            EditOrigin::ThisMachine,
-            &pieces,
-            passphrase.as_ref(),
-            confirm,
-        )
+        .restore_world_kit(&owner, &pieces, passphrase.as_ref(), confirm)
         .map_err(show_root)?;
     emit(&Restored::from(restored))
 }
@@ -361,6 +362,10 @@ struct BundleRestored {
     /// Sections or windows not taken: a world this machine may not read
     /// waits for its re-home.
     skipped: usize,
+    /// Worlds whose keys the kit does not open yet: each restores once a
+    /// reader of it publishes again (FIX 4496).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    awaiting_reader: Vec<String>,
 }
 
 /// `recovery-kit restore --sealed-bundle` or `--sealed-home`: the kit alone
@@ -467,6 +472,11 @@ fn restore_from_bundle(
         merged: take.merged,
         unchanged: take.unchanged,
         skipped: take.skipped,
+        awaiting_reader: restored
+            .awaiting_reader
+            .iter()
+            .map(|world| world.to_hex())
+            .collect(),
     })
 }
 
@@ -608,7 +618,7 @@ pub(super) fn kit_unlock_with(
         !files.is_empty(),
         "--unlock kit reads the kit's pieces: --piece"
     );
-    let (pieces, passphrase) = read_kit(files, secret_file)?;
+    let (pieces, passphrase) = read_kit(files, secret_file, false)?;
     if pieces
         .first()
         .is_some_and(|piece| piece.kind() == KitSecretKind::VaultKey)
@@ -631,5 +641,6 @@ pub(super) fn kit_unlock_with(
     Ok(HostUnlock::Escrow {
         label: WORLD_KIT_ESCROW.to_owned(),
         secret: seed.recovery_secret()?,
+        kit_seed: Some(seed),
     })
 }

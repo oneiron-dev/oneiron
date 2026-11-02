@@ -2,6 +2,7 @@
 //! gate decision, delivery-window door, connector execution, and receipt fields.
 
 pub(super) mod admission;
+mod degrade;
 mod effect;
 mod esign_delivery;
 mod frozen_payload;
@@ -9,6 +10,7 @@ mod govern;
 mod pipeline;
 mod policy_risk;
 mod publisher_signature;
+mod replay_presentation;
 mod request_binding;
 pub(super) mod retry_after;
 pub(super) mod seat_policy;
@@ -16,6 +18,7 @@ mod transport;
 mod vault;
 pub(super) mod verdict;
 
+pub(super) use self::degrade::ALTERNATIVE_OUTCOME_FIELD;
 pub(crate) use self::esign_delivery::{
     EsignDeliveryCall, esign_approval_digest_from_frozen_payload, esign_delivery_call_in_txn,
     esign_delivery_grant_in_txn, failure_signals_approval_digest_from_frozen_payload,
@@ -29,5 +32,6 @@ pub use self::publisher_signature::PublisherSignatureAuthorization;
 pub(crate) use self::publisher_signature::validate_publisher_signature_in_txn;
 pub(crate) use self::request_binding::FrozenDispatchIdentity;
 pub(super) use self::retry_after::PROVIDER_RETRY_AFTER_FIELD;
+pub(crate) use self::retry_after::provider_retry_after_secs;
 pub(super) use crate::channel_identity::enrich_dispatch_channel_identity;
 pub(crate) use crate::channel_identity::resolve_channel_identity_ref_for_connector;

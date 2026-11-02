@@ -1,18 +1,21 @@
 //! A turn program's code run (DOOR-141 PR2): the program's own leased try,
 //! lent to the one callable SKILL its pin names, and each verb write it
 //! makes bound to the program's step before it runs and settled into it with
-//! its receipt's answer. A run no program binds holds none of this: each
-//! path here is the one it had.
+//! its receipt's answer. A slip-woken program's every call is admitted only
+//! while its waking slip admits it, live (FIX 8717). A run no program binds
+//! holds none of this: each path here is the one it had.
 
 use crate::Vault;
 use crate::WriteActor;
 use crate::agent_def::AgentAuthorLease;
 use crate::attempt_queue::AttemptRecord;
+use crate::authority::VerifiedSlip;
 use crate::code_run::payload::decode_self_dispatch_outcome;
 use crate::code_run::replay::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::code_run::storage::{ExecutorStorage, stamp_response_owner_in_txn};
 use crate::code_run::types::{
-    SelfAgentVerbCall, SelfCall, SelfDispatchOutcome, SelfEffect, SelfFailedResult,
+    AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, SelfAgentVerbCall, SelfCall,
+    SelfDispatchOutcome, SelfEffect, SelfFailedResult,
 };
 use crate::dreamer_runner::{
     DREAMER_TURN_PROGRAM_ATTEMPT_KIND, ProgramWrite, bind_program_write_in_txn,
@@ -20,6 +23,9 @@ use crate::dreamer_runner::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::memory::{HostWriteOrigin, MEMORY_CODE_FORBIDDEN};
+use crate::runtime_hooks::InvocationId;
+use crate::task_verb::sdk::{AgentVerb, RunVerb};
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
 
@@ -29,10 +35,12 @@ const PROGRAM_CALL_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-write-call:v1"
 const SKILLS_CALL_UNPINNED: &str = "skills_call_unpinned";
 
 /// The program a dispatcher's run is: its leased try, as the host read it,
-/// and the one callable SKILL its pin names.
+/// the one callable SKILL its pin names, and the live, verified view of the
+/// slip whose turn woke it, when a slip's turn did (FIX 8717).
 pub(super) struct ProgramBinding {
     lease: AgentAuthorLease,
     skill: EntityId,
+    proof: Option<VerifiedSlip>,
 }
 
 impl<'a> HostSelfDispatcher<'a> {
@@ -40,13 +48,16 @@ impl<'a> HostSelfDispatcher<'a> {
     /// the waking actor the program attempt's stamp names, and `leased` the
     /// program's own leased try. Its pinned callable `skill` runs under that
     /// lease; no other callable, and no spawn, authoring or TASK door, opens
-    /// for it.
+    /// for it. `proof` is the waking slip's live, verified view its binding
+    /// read, when a slip's turn woke it: every call the run makes is
+    /// admitted only while that slip admits it (FIX 8717).
     pub(crate) fn for_turn_program(
         vault: &'a Vault,
         actor: WriteActor,
         run_ref: impl Into<String>,
         leased: &AttemptRecord,
         skill: EntityId,
+        proof: Option<VerifiedSlip>,
     ) -> Result<Self> {
         if leased.kind != DREAMER_TURN_PROGRAM_ATTEMPT_KIND
             || vault.program_actor_for_attempt(leased.id)? != actor
@@ -57,8 +68,67 @@ impl<'a> HostSelfDispatcher<'a> {
         }
         let lease = AgentAuthorLease::from_leased(leased)?;
         let mut dispatcher = Self::new(vault, actor, run_ref)?;
-        dispatcher.program = Some(ProgramBinding { lease, skill });
+        dispatcher.program = Some(ProgramBinding {
+            lease,
+            skill,
+            proof,
+        });
         Ok(dispatcher)
+    }
+
+    /// The waking slip's live view a program's run reads and writes under:
+    /// its rows' surfaces bind it, so their reads take its key and their
+    /// claim writes its position check (FIX 8717). `None` for a run no slip
+    /// woke.
+    pub(super) fn program_proof(&self) -> Option<&VerifiedSlip> {
+        self.program.as_ref()?.proof.as_ref()
+    }
+
+    /// The refusal a slip-woken program's call `name` gets when the slip
+    /// does not admit it now (FIX 8717): the slip is no longer live, or its
+    /// verbs do not hold the call's class, read as the credential door reads
+    /// a call's (a write needs `write` and no record or channel bound, a
+    /// read needs `read`). `None` for a call it admits, and for every run no
+    /// slip woke.
+    pub(super) fn program_authority_refusal(&self, name: &str) -> Result<Option<String>> {
+        let Some(proof) = self.program_proof() else {
+            return Ok(None);
+        };
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()));
+        };
+        let writes = AgentVerb::from_name(name)
+            .map(AgentVerb::writes)
+            .or_else(|| RunVerb::from_name(name).map(RunVerb::writes))
+            .unwrap_or(true);
+        let claims = proof.claims();
+        let admits = if writes {
+            (proof.allows_verb("write") || proof.allows_verb("core:write"))
+                && claims.records.is_empty()
+                && claims.channels.is_empty()
+        } else {
+            proof.allows_verb("read") || proof.allows_verb("core:read")
+        };
+        if admits && vault.capability_slip_is_live(proof)? {
+            return Ok(None);
+        }
+        Ok(Some(MEMORY_CODE_FORBIDDEN.to_owned()))
+    }
+
+    /// `door`'s answer to `call`, unless a slip-woken program's slip does
+    /// not admit it now: then the door's own refusal shape, kept as any
+    /// refusal of it is (FIX 8717).
+    pub(super) fn program_door_call(
+        &self,
+        door: &dyn AgentVerbDoor,
+        call: &SelfAgentVerbCall,
+        origin: &HostWriteOrigin,
+        invocation: InvocationId,
+    ) -> Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        if let Some(code) = self.program_authority_refusal(call.verb.as_str())? {
+            return Ok(Err(AgentVerbRefusal { code }));
+        }
+        door.call(call, origin, invocation)
     }
 
     /// The program's lease, lent to its pinned callable.

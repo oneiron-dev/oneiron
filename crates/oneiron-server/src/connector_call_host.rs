@@ -42,7 +42,7 @@
 //! questions and every later reply are cleared the same way (FIX 3843).
 
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, Read};
 use std::sync::{Arc, Weak, mpsc};
 use std::time::{Duration, Instant};
 
@@ -50,12 +50,13 @@ use oneiron::connector_key::{ConnectorCallRoute, SlateDisposition};
 use oneiron::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorQuestion,
     FrozenToolCallView, OutboundResultSender, OutboundTransportResult, RawOutboundResult,
-    UntrustedToolResult,
+    UntrustedToolResult, zeroize_json,
 };
 use oneiron::outbound_intent_ledger::{
     FrozenOutboundCall, OutboundFailureKind, OutboundSendFailure, OutboundSendOutcome,
+    RemoteTaskHandle,
 };
-use oneiron::secret_custody::{KeptSentValue, SentPresentation, SentValue};
+use oneiron::secret_custody::{KeptSentValue, RunSecretHolder, SentPresentation, SentValue};
 use oneiron::secret_lease::{SecretGrantRef, SecretGrantTarget};
 use oneiron::task_verb::sdk::ConnectorAnswerAction;
 use oneiron::{EntityId, Vault};
@@ -71,6 +72,7 @@ use crate::server::SyncServer;
 
 mod live_exchange;
 mod presenting;
+mod remote_task;
 mod reply_read;
 mod resume;
 mod sent;
@@ -130,6 +132,8 @@ pub struct ServedConnectorCallHost {
     credential: Option<EntityId>,
     /// The secret grant a lease-aware `self.use` call redeems at each send.
     grant: Option<SecretGrantRef>,
+    /// The use's own run, when its seat found that record (FIX 8334).
+    run: Option<RunSecretHolder>,
     /// The server's live connector questions, shared by every host it
     /// builds and read by `connector.answer`.
     elicitations: Arc<ConnectorElicitationRegistry>,
@@ -145,6 +149,8 @@ pub struct ServedConnectorCallHost {
     /// The resume state of the last send's first round, until the engine
     /// binds that round to its call's row (FIX 9157).
     resume: Option<RoundResume>,
+    /// The remote task the last send's connector accepted it as (FIX 7960).
+    remote_task: Option<RemoteTaskHandle>,
 }
 
 impl ServedConnectorCallHost {
@@ -187,12 +193,14 @@ impl ServedConnectorCallHost {
             reply: None,
             credential: None,
             grant: None,
+            run: None,
             elicitations,
             caller: None,
             awaiting: None,
             presented: None,
             presentation: None,
             resume: None,
+            remote_task: None,
         })
     }
 
@@ -229,6 +237,7 @@ impl ServedConnectorCallHost {
         let Some(presenting) = presenting else {
             return Sent::not_sent(OutboundFailureKind::Rejected, None);
         };
+        // A grant the send refuses answers as its typed refusal, not TransportNotStarted (FIX 6673).
         presenting.send(&self.vault, &exchange, presented)
     }
 
@@ -302,10 +311,15 @@ impl OutboundResultSender for ServedConnectorCallHost {
         self.reply = sent.reply;
         self.awaiting = sent.awaiting;
         self.resume = sent.resume;
+        self.remote_task = sent.remote_task;
         OutboundTransportResult {
             outcome: sent.outcome,
             raw_result: RawOutboundResult::new(sent.body, sent.error, None, None),
         }
+    }
+
+    fn remote_task(&self) -> Option<RemoteTaskHandle> {
+        self.remote_task.clone()
     }
 }
 
@@ -324,9 +338,11 @@ impl ConnectorCallHost for ServedConnectorCallHost {
         &mut self,
         credential: Option<EntityId>,
         grant: Option<SecretGrantRef>,
+        run: Option<RunSecretHolder>,
     ) -> bool {
         self.credential = credential;
         self.grant = grant;
+        self.run = run;
         true
     }
 
@@ -709,8 +725,9 @@ impl<'a> Exchange<'a> {
                         .filter(|declared| declared.intake == Intake::Stream);
                     let question = declared.and_then(|_| stream_question(&request));
                     let (Some(declared), Some(question)) = (declared, question) else {
-                        if let Some(live) = live.as_ref() {
-                            live.refuse(&request);
+                        match live.as_ref() {
+                            Some(live) => live.refuse(request),
+                            None => zeroize_json(request),
                         }
                         continue;
                     };
@@ -727,6 +744,8 @@ impl<'a> Exchange<'a> {
                         last_event_id,
                     };
                     let body = request.to_string().into_bytes();
+                    // Its question, id and body are read out (FIX 11861).
+                    zeroize_json(request);
                     let kept = value.map(SentValue::keep);
                     return hand_over(declared, round, continuation, live, body, kept);
                 }
@@ -764,6 +783,11 @@ impl<'a> Exchange<'a> {
             };
             let kept = value.map(SentValue::keep);
             return hand_over(declared, round, continuation, live, body, kept);
+        }
+        // FIX 7960: a connector that takes the call as a remote task answers
+        // with its task, not the tool's result.
+        if let Some(handle) = remote_task::remote_task_from_result(message) {
+            return Sent::deferred(handle, body);
         }
         match tool_result(message) {
             Some(reply) => Sent::acked(Some(reply), body),

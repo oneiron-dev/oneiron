@@ -1,7 +1,8 @@
 //! The host doors of the verb-table rows only a server's own state answers:
 //! the owner's `vault.packs.put`, `vault.hooks.replay` and
-//! `vault.authority.audit`, the `ai.*` model calls past text, and
-//! `ai.verdict` through the host's decision ladder. The
+//! `vault.authority.audit`, the `ai.*` model calls past text,
+//! `ai.ask_image` through the Local-vision seat, and `ai.verdict` through
+//! the host's decision ladder. The
 //! generated HTTP facade handler and the MCP dispatcher both call these, so
 //! a tool call, a code-mode call and an SDK call meet one admission.
 //!
@@ -16,19 +17,22 @@
 
 mod admission;
 mod artifacts_audit;
+mod authority_clock;
 mod diary;
 mod media;
 mod packs;
-pub(super) mod support;
+pub(in crate::api) mod support;
 mod verdict_hooks;
+mod vision;
 
 pub(super) use self::admission::*;
 pub(crate) use self::artifacts_audit::*;
+pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
-pub(crate) use self::support::*;
 pub(crate) use self::verdict_hooks::*;
+pub(crate) use self::vision::*;
 
 // The signed authority history doors, under the audit door's owner proof.
 pub(crate) use super::artifact_hosting_doors::*;
@@ -42,7 +46,9 @@ pub(crate) use super::calendar_doors::*;
 pub(crate) use super::campaign_doors::*;
 pub(crate) use super::compliance_doors::*;
 pub(crate) use super::credential_doors::*;
+// The caller's own actor and person refs (FIX 1047).
 pub(crate) use super::saved_query_doors::*;
+pub(crate) use super::self_actor_doors::*;
 pub(crate) use crate::api::anonymous_chat::ai_anonymous_chat;
 
 // The shared-vault doors live beside these; the generated callers name them here.
@@ -79,6 +85,8 @@ pub(crate) use super::model_catalog_doors::*;
 pub(crate) use super::model_manifest_doors::*;
 pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
+pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::web_connector_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.
 pub(crate) use super::run_read_doors::*;
 // A turn program's reads (DOOR-141 PR3a), on the caller's own lane.
@@ -115,10 +123,14 @@ pub(crate) use super::off_record_room_doors::*;
 // The owner's pack preview door (FIX 5493), likewise.
 pub(crate) use super::pack_preview_doors::*;
 pub(crate) use super::persona_doors::*;
+// The general access request answer (FIX 1379), likewise.
+pub(crate) use super::grants_doors::*;
 pub(crate) use super::residence_doors::*;
 pub(crate) use super::summary_doors::*;
 // The weave lens's human doors, likewise.
 pub(crate) use super::weave_doors::*;
+// The owner inbox's group doors over both kinds (FIX 3024, 3026), likewise.
+pub(crate) use super::inbox_group_doors::*;
 pub(crate) use super::web_fetch_doors::*;
 // The graph ask and standing-question doors (OF-506), likewise.
 pub(crate) use super::graph_ask_doors::*;
@@ -143,6 +155,17 @@ pub(crate) use super::setting_doors::*;
 pub(crate) use super::slim_doors::*;
 // The owner's historical secret lift sweep door (OF-067), likewise.
 pub(crate) use super::secret_lift_doors::*;
+// The owner's custody register, rotate, rewrap, view and sealed submit
+// doors (FIX 4993), likewise.
+pub(crate) use super::secret_custody_doors::*;
+// The owner's custody member drain doors (FIX 11274), likewise.
+pub(crate) use super::custody_drain_doors::*;
+// The owner's reservoir source preview door (FIX 11352), likewise.
+pub(crate) use super::reservoir_source_doors::*;
+// A kept export's read and release doors (FIX 11176), likewise.
+pub(crate) use super::export_transfer::{
+    vault_export_transfer_read, vault_export_transfer_release,
+};
 // The usage repair doors (FIX 6476), likewise.
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.
@@ -172,11 +195,15 @@ pub(crate) use super::codebase_doors::*;
 // The owner's task-type tree doors (DOOR-111) and run doors (DOOR-100),
 // likewise.
 pub(crate) use super::coordination_doors::*;
+// The owner's revoke of a stop-asking choice (FIX 11104), likewise.
+pub(crate) use super::comm_widen_doors::*;
 // The generic connector call's door (ONE-2510), likewise.
 pub(crate) use super::connector_call_doors::*;
 pub(crate) use super::connector_pack_doors::*;
 pub(crate) use super::connector_revision_doors::*;
 pub(crate) use super::connector_slate_doors::*;
+// The owner's witness-read grant revoke (FIX 10895), likewise.
+pub(crate) use super::connector_witness_read_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -201,6 +228,8 @@ pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
 pub(crate) use super::vector_doors::*;
+// The owner's list of refused stream seeds (FIX 11933), likewise.
+pub(crate) use super::stream_recovery_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.

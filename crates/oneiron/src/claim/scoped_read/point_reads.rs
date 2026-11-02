@@ -103,18 +103,25 @@ impl ScopedRead<'_> {
         txn: &heed::RoTxn<'_>,
         ids: &[EntityId],
     ) -> Result<Vec<Option<EntityParts>>> {
+        self.get_entities_parts_with_mode_in_txn(txn, ids, ReadMode::Live)
+    }
+
+    /// [`Self::get_entities_parts_in_txn`] at `mode` (FIX 7788): the same
+    /// caller-owned snapshot and admission, only the frontier moves. A row
+    /// with no bytes at that frontier reads as missing, as a withheld row
+    /// does.
+    pub(crate) fn get_entities_parts_with_mode_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        ids: &[EntityId],
+        mode: ReadMode,
+    ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let authority = HeldAuthority::for_request(None);
         ids.iter()
             .map(|id| {
-                let Some(revision) = self.entity_raw_with_mode_held_in(
-                    txn,
-                    &policy,
-                    &filter,
-                    id,
-                    ReadMode::Live,
-                    &authority,
-                )?
+                let Some(revision) =
+                    self.entity_raw_with_mode_held_in(txn, &policy, &filter, id, mode, &authority)?
                 else {
                     return Ok(None);
                 };

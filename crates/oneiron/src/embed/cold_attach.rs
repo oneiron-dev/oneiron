@@ -1,5 +1,6 @@
 //! First-provider backfill, distinct from embedding-space migration.
 use super::EMBED_PRIORITY_BACKFILL;
+use super::eligibility::is_embeddable_in_txn;
 use crate::ports::{EntityStoreRead, IndexMetaKey, RetrievalIndexInventory};
 use crate::{Error, Result};
 
@@ -81,7 +82,7 @@ fn remark_pending_in_txn(
                 Some(text) => embeddable.push((id, text.into_bytes())),
                 None => retired.push(id),
             }
-        } else if super::embeddable_payload(row.entity_type, &row.body).is_some() {
+        } else if is_embeddable_in_txn(vault, wtxn, row.entity_type, &row.body)? {
             embeddable.push((id, row.body));
         } else if row.entity_type == crate::registry::ENTITY_TYPE_CLAIM
             || row.entity_type == crate::registry::ENTITY_TYPE_SUMMARY

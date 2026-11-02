@@ -29,10 +29,11 @@ use oneiron::skill_optimize::offer_pilot::{
     training_destination as destination,
 };
 use oneiron::skill_optimize::{
-    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
-    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
+    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCheckOutcome, OfferCost,
+    OfferEvidence, OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer,
+    TrainingOfferDraft, model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role,
+    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
+    union_source_rows,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
@@ -64,8 +65,10 @@ const WINDOW_SECS: u64 = 30 * DAY_SECS;
 const MONTH_SECS: u64 = 30 * DAY_SECS;
 /// When an offer's promise is checked, after it is made.
 const CHECK_AFTER_SECS: u64 = 30 * DAY_SECS;
-/// The catalog's per-million list prices carry no currency; they are read as
-/// this one.
+/// The currency an offer quotes its money in. Only a catalog row quoted in it
+/// projects a month's bill; a row quoted in another currency, or in none its
+/// provider named, projects none and stays an option (FIX 9534). A row whose
+/// rates are all zero is free in any currency and projects zero.
 const CATALOG_CURRENCY: &str = "USD";
 /// How far a checked month may run over the promised one and still hold.
 const COST_TOLERANCE: f64 = 0.10;
@@ -77,7 +80,9 @@ const BUDGET_UNITS: u64 = 1 << 20;
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
     where it quotes none; the candidate's counts are the incumbent's scaled by how many tokens \
-    each model's tokenizer counts in one fixed passage.";
+    each model's tokenizer counts in one fixed passage. Only list prices quoted in USD are \
+    priced: a model whose price names another currency, or none, shows no figure. A free model, \
+    every rate zero, shows 0 in any currency.";
 /// The note instead when the candidate's price is an estimate: a tokenizer
 /// of the two was never measured.
 const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced at list \
@@ -380,9 +385,10 @@ impl Brief {
             .rev()
             .find(|cohort| cohort.retired_at.is_none());
         // The cohort's cases and labels, as the ledger keeps their rows
-        // (FIX 5760); a lineage read that fails leaves them unknown.
+        // (FIX 5760); a lineage read that fails stops the draft instead of
+        // erasing its rows to unknown (FIX 11913).
         if let Some(cohort) = &cohort {
-            let read = vault.eval_cohort_source_rows(&cohort.id).ok().flatten();
+            let read = vault.eval_cohort_source_rows(&cohort.id)?;
             sources.set(read.as_deref());
         }
         // Names and the rubric revision ride whole (Rule 5).
@@ -435,6 +441,8 @@ impl Brief {
                 "checks": checks.iter().map(|check| serde_json::json!({
                     "held": check.held,
                     "observed_monthly_cost": check.observed_monthly_cost,
+                    // Why a check could not judge, e.g. unverifiable_unpriced_cache (FIX 6318).
+                    "note": check.note,
                 })).collect::<Vec<_>>(),
             }));
         }

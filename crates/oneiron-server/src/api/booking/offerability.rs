@@ -1,9 +1,10 @@
 use oneiron::booking::agent_api::{BookingBookResult, BookingHoldInput, BookingOperationResponse};
 use oneiron::booking::{ConstraintObject, SessionKey, SlotOracle, SolveRequest};
+use oneiron::memory::ProducerRows;
 use oneiron::{EntityId, TimeRange};
 
 use super::helpers::slot_range;
-use super::lifecycle::booking_oracle;
+use super::lifecycle::booking_oracle_listing;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -25,6 +26,10 @@ use crate::server::SyncServer;
 /// window is the caller's own slot, so this adds no window policy, no cap, and
 /// no threshold of its own. It reads; it never writes and never decides what is
 /// writable.
+///
+/// Beside the verdict, the rows the solve read (FIX 5483): the page's live
+/// `booking.event_type` claims its calendar binding came from and every row
+/// the listing oracle listed.
 pub(super) fn unoffered_slot_answer(
     server: &SyncServer,
     page_ref: EntityId,
@@ -32,21 +37,24 @@ pub(super) fn unoffered_slot_answer(
     constraint: Option<&ConstraintObject>,
     session_key: SessionKey,
     now: u64,
-) -> Result<Option<BookingOperationResponse>, ApiError> {
+) -> Result<(Option<BookingOperationResponse>, Vec<EntityId>), ApiError> {
     let slot = slot_range(input.selected_slot)?;
-    let solved =
-        booking_oracle(server, page_ref, Some(session_key), now)?.solve(&SolveRequest {
-            event_type: input.event_type.clone(),
-            window: offerability_window(slot),
-            constraint: constraint.cloned(),
-            visitor_tz: input.visitor_tz.clone(),
-        })?;
+    let producers = ProducerRows::default();
+    let (oracle, mut rows) =
+        booking_oracle_listing(server, page_ref, Some(session_key), now, &producers)?;
+    let solved = oracle.solve(&SolveRequest {
+        event_type: input.event_type.clone(),
+        window: offerability_window(slot),
+        constraint: constraint.cloned(),
+        visitor_tz: input.visitor_tz.clone(),
+    })?;
+    rows.extend(producers.take());
     if solved
         .slots
         .iter()
         .any(|ranked| ranked.start_utc == slot.start && ranked.end_utc == slot.end)
     {
-        return Ok(None);
+        return Ok((None, rows));
     }
     // The same shape a taken slot returns from the writer, and for the same
     // reason: nothing was written, so this is a result rather than an error.
@@ -57,7 +65,7 @@ pub(super) fn unoffered_slot_answer(
     let taken = BookingBookResult::SlotTaken {
         alternatives: solved.slots,
     };
-    Ok(Some(BookingOperationResponse::Book(taken)))
+    Ok((Some(BookingOperationResponse::Book(taken)), rows))
 }
 
 /// The inclusive solve window for one half-open slot.

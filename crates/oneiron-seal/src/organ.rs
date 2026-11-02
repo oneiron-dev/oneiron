@@ -719,7 +719,7 @@ fn bad(detail: impl Into<String>) -> OrganError {
 /// The outcome as the report's one tagged entry, and the call's counts
 /// beside it as `observed`. Its encoded copy and the most the value it
 /// becomes takes ([`read_cost`]) are reserved before either is made
-/// (FIX 6195).
+/// (FIX 6195, 10576).
 fn report<T: Serialize>(
     report: &T,
     observed: &SealObservations,

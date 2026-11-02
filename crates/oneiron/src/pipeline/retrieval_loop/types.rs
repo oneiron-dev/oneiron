@@ -40,6 +40,8 @@ pub enum RetrievalLoopAction {
     Read {
         handles: Vec<EntityId>,
     },
+    /// Release the next loop-owned page of the current admitted ranking.
+    Continue,
     Stop,
     Abstain,
 }
@@ -54,6 +56,7 @@ impl RetrievalLoopAction {
             Self::DrillDown { .. } => 4,
             Self::WidenTemporal { .. } => 5,
             Self::Read { .. } => 6,
+            Self::Continue => 9,
             Self::Stop => 7,
             Self::Abstain => 8,
         }
@@ -116,4 +119,14 @@ pub struct RetrievalLoopObservation {
     pub narrowing: ScopedReadReceipt,
     /// The last action's own receipt, so repeated clamp hints remain visible.
     pub last_narrowing: ScopedReadReceipt,
+    /// The caller's full requested ranking size, before page sizing.
+    pub requested_limit: usize,
+    /// The most handles one observation releases.
+    pub effective_page_size: usize,
+    /// Whether the request was larger than one page.
+    pub limit_clamped: bool,
+    /// Loop-owned raw offset of the next page; never a bearer credential.
+    pub next_cursor: Option<u64>,
+    /// Whether the current ranking has no unreleased handles.
+    pub end: bool,
 }

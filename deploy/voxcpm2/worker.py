@@ -2,6 +2,12 @@
 
 Weights are pinned and loaded before the listener opens. No request loads a model.
 The deployment policy is the vault's resolved *ceiling*; each request can narrow it.
+
+Under the engine's supervisor (FIX 8318) it is launched with `--weights-dir`,
+the weights manifest and the launch manifest: the launch and every pinned file
+are checked before the weights load from that directory alone, and each render
+answers with the worker's verified identity and the launch manifest's digest.
+Without them it downloads its pinned revision (`VOXCPM_REV`) as before.
 """
 import argparse
 import hmac
@@ -9,6 +15,7 @@ import json
 import os
 import socket
 import struct
+import sys
 import tempfile
 import threading
 import time
@@ -21,6 +28,16 @@ try:
     from compression import zstd as _zstd
 except ImportError:
     _zstd = None
+
+try:
+    import worker_support
+except ImportError:
+    # Run from the source tree, where the shared module sits beside this
+    # directory; a supervisor's bundle holds both side by side.
+    sys.path.append(str(Path(__file__).resolve().parent.parent / "media-worker"))
+    import worker_support
+
+KIND = "vox_cpm2"
 
 MODEL_ID = "openbmb/VoxCPM2"
 FIELDS = ("max_text_bytes", "max_ref_bytes", "max_queued_renders",
@@ -101,7 +118,8 @@ def pack(meta, audio):
 
 
 class Worker:
-    def __init__(self, model, checkpoint, runtime_dir, credential, limits):
+    def __init__(self, model, checkpoint, runtime_dir, credential, limits,
+                 identity=None, wire_model=None):
         if len(credential) < 32:
             raise ValueError("worker credential too short")
         self.limits = validate_limits(limits)
@@ -113,15 +131,32 @@ class Worker:
         if not 8000 <= self.sample_rate <= 192000:
             raise ValueError("invalid VoxCPM2 sample rate")
         self.runtime_dir = Path(runtime_dir)
-        self.lock = threading.Lock()
+        # One render at a time (FIX 8318: serial first); the rest wait.
+        self.gate = worker_support.InferenceGate()
+        self.activity = worker_support.RequestActivity()
         self.admission = threading.BoundedSemaphore(self.limits["max_inflight_uploads"])
+        # A supervised launch's verified identity and wire model; None when
+        # the worker was started by hand.
+        self.identity = identity
+        self.wire_model = wire_model
 
     def target(self):
         return {"model": "VoxCPM2", "checkpoint": self.checkpoint,
                 "boot_id": self.boot_id, "sample_rate": self.sample_rate,
                 "limits": self.limits}
 
-    def render(self, meta, wav):
+    def answer_meta(self, target):
+        """A render's response header: its target and audio format, and for
+        a supervised launch the worker that answered, its wire model and the
+        launch manifest's digest."""
+        meta = {"target": target, "sample_rate": self.sample_rate, "channels": 1}
+        if self.identity is not None:
+            meta["worker"] = worker_support.worker_descriptor(KIND, self.identity, self.boot_id)
+            meta["wire_model"] = self.wire_model
+            meta["launch_manifest"] = self.identity.launch_manifest
+        return meta
+
+    def render(self, meta, wav, ticket=None):
         target = meta.get("target")
         if not isinstance(target, dict) or target.get("warm") != self.target():
             raise ValueError("stale or mismatched warm target")
@@ -131,7 +166,7 @@ class Worker:
         effective = validate_limits(target.get("limits"))
         if any(effective[k] > self.limits[k] for k in FIELDS):
             raise ValueError("request widens worker policy")
-        response_meta = {"target": target, "sample_rate": self.sample_rate, "channels": 1}
+        response_meta = self.answer_meta(target)
         text = meta.get("text")
         transcript = meta.get("transcript")
         if not isinstance(text, str) or not text.strip():
@@ -141,7 +176,7 @@ class Worker:
         if not wav.startswith(b"RIFF") or wav[8:12] != b"WAVE":
             raise ValueError("invalid WAV reference")
         # The reference is request-scoped, owner-only, and erased after inference.
-        with self.lock:
+        with self.gate.hold(ticket):
             with tempfile.TemporaryDirectory(dir=self.runtime_dir, prefix="ref-") as directory:
                 reference = Path(directory) / "reference.wav"
                 reference.write_bytes(wav)
@@ -160,6 +195,7 @@ class BoundedHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address, handler, upload_deadline_ms):
+        self.address_family = worker_support.listen_family(address[0])
         self.upload_deadline_ms = upload_deadline_ms
         self._upload_lock = threading.Lock()
         self._uploads = {}
@@ -215,7 +251,15 @@ def handler_for(worker):
 
         def do_GET(self):
             self.server.disarm_upload(self.connection)
+            if self.path == "/health":
+                # Liveness only: the listener opens after the model loads.
+                worker_support.send_bytes(self, 200, "application/json", b"")
+                return
             if not self.authorized():
+                return
+            if self.path == "/stats":
+                worker_support.send_bytes(self, 200, "application/json",
+                                          worker_support.stats_body(worker.activity))
                 return
             if self.path != "/ready":
                 self.send_error(404)
@@ -256,34 +300,40 @@ def handler_for(worker):
                 return
             # A request waits for an upload slot instead of being refused; the
             # wait is not upload time, so its body deadline starts at the slot.
+            # It counts in the worker's activity from here until its response
+            # is cleaned up, its caller gone or not.
             self.server.disarm_upload(self.connection)
-            worker.admission.acquire()
-            try:
+            with worker.activity.admit() as ticket:
+                worker.admission.acquire()
                 try:
-                    self.server.arm_upload(self.connection)
-                    meta, wav = self.read_body()
-                    self.server.disarm_upload(self.connection)
-                    data = worker.render(meta, wav)
-                except (TimeoutError, socket.timeout):
-                    self.send_error(408, "upload deadline exceeded")
-                    return
-                except UnsupportedEncoding:
-                    self.send_error(415, "unsupported content encoding")
-                    return
-                except (ValueError, TypeError, UnicodeError, KeyError):
-                    self.send_error(400, "invalid render request")
-                    return
-                except Exception:
-                    # Model/runtime errors do not echo raw prompts or ref bytes.
-                    self.send_error(503, "render failed")
-                    return
-                self.send_response(200)
-                self.send_header("Content-Type", "application/octet-stream")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-            finally:
-                worker.admission.release()
+                    self.render_answer(ticket)
+                finally:
+                    worker.admission.release()
+
+        def render_answer(self, ticket):
+            try:
+                self.server.arm_upload(self.connection)
+                meta, wav = self.read_body()
+                self.server.disarm_upload(self.connection)
+                data = worker.render(meta, wav, ticket)
+            except (TimeoutError, socket.timeout):
+                self.send_error(408, "upload deadline exceeded")
+                return
+            except UnsupportedEncoding:
+                self.send_error(415, "unsupported content encoding")
+                return
+            except (ValueError, TypeError, UnicodeError, KeyError):
+                self.send_error(400, "invalid render request")
+                return
+            except Exception:
+                # Model/runtime errors do not echo raw prompts or ref bytes.
+                self.send_error(503, "render failed")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
 
         def log_message(self, format, *args):
             # Do not log URL, auth, text, or reference bytes.
@@ -291,30 +341,57 @@ def handler_for(worker):
     return Handler
 
 
+def supervised_launch(args):
+    """A supervised launch's verified identity, checked before anything
+    loads; None for a worker started by hand, which names no weights
+    directory."""
+    managed = (args.weights_dir, args.weights_manifest, args.launch_manifest, args.model_id)
+    if not any(managed):
+        return None
+    if not all(managed):
+        raise ValueError("--weights-dir, --weights-manifest, --launch-manifest and --model-id "
+                         "go together")
+    return worker_support.verify_launch(KIND, args.model_id, args.weights_dir,
+                                        args.weights_manifest, args.launch_manifest)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8769)
     parser.add_argument("--runtime-dir", required=True)
     parser.add_argument("--policy-file", required=True)
+    parser.add_argument("--credential-env", default="VOXCPM_TOKEN",
+                        help="the environment variable holding the bearer credential")
+    parser.add_argument("--weights-dir", help="the verified checkpoint directory (supervised)")
+    parser.add_argument("--weights-manifest", help="the manifest it was verified against")
+    parser.add_argument("--launch-manifest", help="the supervisor's launch manifest")
+    parser.add_argument("--model-id", help="the wire model the supervisor calls this worker by")
     args = parser.parse_args()
-    revision = os.environ["VOXCPM_REV"]
+    identity = supervised_launch(args)
+    revision = identity.revision if identity is not None else os.environ["VOXCPM_REV"]
     if len(revision) != 40 or any(ch not in "0123456789abcdef" for ch in revision):
         raise ValueError("VOXCPM_REV must be a full immutable commit")
     runtime_dir = Path(args.runtime_dir)
     runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
     if runtime_dir.is_symlink() or runtime_dir.stat().st_mode & 0o077:
         raise ValueError("runtime directory must be private")
+    credential = os.environ[args.credential_env]
     import torch
-    from huggingface_hub import snapshot_download
     from voxcpm import VoxCPM
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA required; refusing CPU fallback")
-    snapshot = snapshot_download(repo_id=MODEL_ID, revision=revision)
-    model = VoxCPM.from_pretrained(snapshot, load_denoiser=False, device="cuda:0",
-                                   local_files_only=True)
+    worker_support.require_cuda(torch)
+    if identity is not None:
+        # The verified directory alone: nothing is fetched.
+        snapshot = args.weights_dir
+    else:
+        from huggingface_hub import snapshot_download
+        snapshot = snapshot_download(repo_id=MODEL_ID, revision=revision)
+    model = VoxCPM.from_pretrained(snapshot, load_denoiser=False,
+                                   device=worker_support.MEDIA_DEVICE, local_files_only=True)
     policy = load_policy(args.policy_file)
-    worker = Worker(model, revision, runtime_dir, os.environ["VOXCPM_TOKEN"], policy)
-    server = BoundedHTTPServer(("127.0.0.1", args.port), handler_for(worker),
+    worker = Worker(model, revision, runtime_dir, credential, policy,
+                    identity=identity, wire_model=args.model_id)
+    server = BoundedHTTPServer((args.host, args.port), handler_for(worker),
                                policy["upload_read_deadline_ms"])
     server.serve_forever()
 

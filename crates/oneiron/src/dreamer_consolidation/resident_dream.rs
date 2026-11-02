@@ -14,6 +14,7 @@
 //! dreaming is not off, unless the owner set it a free-time policy: then its
 //! dreaming is its cycle's own-time item instead (FIX 4453).
 
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::step_charge::StepChargeTally;
 use crate::actor_claims::ResidentCraftCandidate;
 use crate::agent_def::DreamingMode;
@@ -75,6 +76,45 @@ const PADS: SideTable<(EntityId, EntityId), [u8; 1], Raw> =
 /// replay writes none.
 const LANDED: SideTable<crate::attempt_queue::AttemptId, EntityId, Named> =
     SideTable::new(&side_table::DREAMER_RESIDENT_LANDED);
+/// What one dreaming read, keyed by the diary entry it landed (its first
+/// part), so the entry names its sources (FIX 7753).
+const READ: SideTable<EntityId, ResidentDreamRead, Named> =
+    SideTable::new(&side_table::DREAMER_RESIDENT_READ);
+
+/// The sources behind one diary entry (FIX 7753): every row its dreaming
+/// read, in the order the cut read them, and the attempt that wrote it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ResidentDreamRead {
+    pub(crate) attempt: crate::attempt_queue::AttemptId,
+    pub(crate) sources: Vec<DreamSource>,
+}
+
+/// One row a dreaming read (FIX 7753).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DreamSource {
+    pub(crate) kind: DreamSourceKind,
+    /// The row's id as the cut keeps it (an entity id in hex, or a receipt,
+    /// INBOX or health card id).
+    pub(crate) id: String,
+    /// When the row was written (Unix seconds, as the cut's cursor keeps
+    /// it); 0 for a pad.
+    pub(crate) at: u64,
+    /// For a pad, `blake3:<hex>` of its text as the cut found it: a sealed
+    /// pad never changes, so its id and this hash name the exact words read.
+    pub(crate) text_hash: Option<String>,
+    /// The cut stopped inside this row and read it in part.
+    pub(crate) partial: bool,
+}
+
+/// Which section of the cut a source came from (FIX 7753).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum DreamSourceKind {
+    Pad,
+    Receipt,
+    Inbox,
+    Health,
+    ForkHealth,
+}
 
 /// What a resident's dreaming has read so far. Each source keeps the time
 /// and id of the last row it read, so a cut that stops inside one second
@@ -140,6 +180,9 @@ pub struct ResidentDreamModel<'a> {
     pub instruction: &'a str,
     /// The tokens one call's input may fill on this model, when known.
     pub window_tokens: Option<u64>,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    pub sourced: Option<&'a dyn SourcedBackend>,
 }
 
 /// The payload input naming the resident a dreaming child dreams for.
@@ -235,6 +278,9 @@ pub(crate) fn resident_dream_progress_in_txn(
 struct DreamCut {
     sections: Vec<(&'static str, Vec<String>)>,
     pads: Vec<EntityId>,
+    /// Every row the cut read, in the order it read them: the diary entry's
+    /// receipt (FIX 7753).
+    read: Vec<DreamSource>,
     receipts_after: Option<(u64, String)>,
     inbox_after: Option<(u64, String)>,
     inbox_partial: Option<ResidentDreamPartial>,
@@ -256,6 +302,25 @@ fn advance(at: &mut u64, id: &mut String, read: Option<&(u64, String)>) {
 impl DreamCut {
     fn is_empty(&self) -> bool {
         self.sections.iter().all(|(_, lines)| lines.is_empty())
+    }
+
+    /// The rows this cut's text was read from (FIX 6998): its pads, the
+    /// one it reads in part too, while it reads pads alone. A receipt, an
+    /// INBOX row or a health card line names no complete row set, so a cut
+    /// that holds one has no known set.
+    fn source_rows(&self) -> Option<Vec<EntityId>> {
+        if self
+            .sections
+            .iter()
+            .any(|(title, lines)| *title != PADS_SECTION && !lines.is_empty())
+        {
+            return None;
+        }
+        let mut rows = self.pads.clone();
+        if let Some(partial) = &self.pad_partial {
+            rows.push(EntityId::from_hex(&partial.id).ok()?);
+        }
+        Some(rows)
     }
 
     fn text(&self) -> String {
@@ -339,6 +404,8 @@ fn diary_review_words<'a>(
 const WORDS_CUT_MARK: &str = "\n  > (the words run on past this dreaming's window)";
 /// What a pad's body, cut to fit, ends with.
 const PAD_CUT_MARK: &str = "\n(the pad runs on past this dreaming's window)";
+/// The title of a cut's sealed pads.
+const PADS_SECTION: &str = "Sealed scratchpads";
 
 /// Where an input an earlier dreaming read in part reads on from: `read`
 /// bytes in, at a character, when `partial` is that input; else its start.
@@ -485,7 +552,10 @@ pub async fn run_resident_dream(
     {
         let txn = ctx.vault.store.env.read_txn()?;
         if LANDED.contains(&ctx.vault.store, &txn, &attempt_id)? {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
     }
     // A free-time cycle's own-time item (FIX 4453) dreams only while its
@@ -494,16 +564,25 @@ pub async fn run_resident_dream(
     let free_time =
         match crate::dreamer_runner::free_time_item_to_run(ctx.vault, attempt_id, resident_id)? {
             crate::dreamer_runner::FreeTimeItemRun::Done => {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
             crate::dreamer_runner::FreeTimeItemRun::Unbound => None,
             crate::dreamer_runner::FreeTimeItemRun::Run(binding) => Some(binding),
         };
     let Some(definition) = ctx.vault.get_agent_definition(&resident_id)? else {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     };
     if !definition.enabled || definition.dreaming_mode() == DreamingMode::Off {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
     let progress = ctx.vault.resident_dream_progress(resident_id)?;
     let cut = cut_for(
@@ -515,9 +594,25 @@ pub async fn run_resident_dream(
             .unwrap_or(RESIDENT_DREAM_WINDOW_DEFAULT_TOKENS),
     )?;
     if cut.is_empty() {
-        return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+        return Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        });
     }
-    let (request, step_hash) = dream_request(ctx, attempt_id, resident_id, &model, &cut)?;
+    let (request, step_hash, craft) = dream_request(
+        ctx,
+        attempt_id,
+        resident_id,
+        &model,
+        &cut,
+        free_time.is_some(),
+    )?;
+    // The call sends under the rows its cut and craft were read from.
+    let rows = cut.source_rows().map(|mut rows| {
+        rows.extend(craft);
+        rows
+    });
+    let backend = CallBackend::new(model.backend, model.sourced, rows);
     let step_ctx = DurableStepContext {
         vault: ctx.vault,
         attempt_id,
@@ -530,7 +625,7 @@ pub async fn run_resident_dream(
     let mut charges = StepChargeTally::default();
     let response = match call_as_step_checked(
         &step_ctx,
-        model.backend,
+        backend.get(),
         model.guard,
         request,
         &reply::check_diary_reply,
@@ -570,39 +665,59 @@ pub async fn run_resident_dream(
             return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
         }
         Err(DurableStepError::Engine(error)) => return Err(error),
+        // A failed call's paid usage has no terminal step: the park carries
+        // it with the tally (FIX 11554). A tally park, not a handover, as at
+        // the commit below: free-time runs meter their line.
         Err(other) => {
-            return Ok(DreamerAttemptExecution::Park {
-                reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
-            });
+            if let DurableStepError::SpentLlm { usage, .. } = &other {
+                charges.record_usage(usage);
+            }
+            return Ok(charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)));
         }
     };
     if ctx.deadline.expired() {
         return Ok(charges.checkpoint());
     }
-    let (entry, craft) = match reply::diary_entry(&response) {
+    let parsed = match reply::diary_entry(&response) {
         Ok(read) => read,
         // Only a memo stored before the check can hold no entry: it goes,
-        // and the Retry asks again (FIX 7431, OF-193a).
-        Err(reason) => return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason),
+        // and the Retry asks again (FIX 7431, OF-193a). A memo that does
+        // not go keeps its park with its spend on the tally, as a commit
+        // failure does below: this fn also dreams metered free-time items,
+        // so a handover here would charge that spend twice.
+        Err(reason) => {
+            return match charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason) {
+                Ok(parked) => Ok(parked),
+                Err(error) => {
+                    tracing::warn!(?error, "a refused reply's memo did not go");
+                    Ok(charges.park_on_error(&error))
+                }
+            };
+        }
     };
     let now = ctx.now_ms / 1_000;
     // The entry, every part of it, its craft notes, its landing marker and
     // the progress it read commit in one write: a crash between them neither
     // drops the progress nor lands the entry twice.
-    commit_dream(
+    // A tally park, not a handover: this same function dreams free-time
+    // items whose run line the driver meters (FIX 4453), so handing the
+    // tally over would charge metered spend twice.
+    if let Err(error) = commit_dream(
         ctx,
         attempt_id,
         resident,
         resident_id,
         DreamWrite {
-            entry: &entry,
-            craft: &craft,
+            entry: &parsed.entry,
+            craft: &parsed.craft,
             free_time: &free_time,
+            another_round: parsed.another_round,
         },
         &cut,
         now,
-    )?;
+    ) {
+        return Ok(charges.park_on_error(&error));
+    }
     // Its own digest renders from its dreaming, read as it, once this
     // dreaming's progress is committed (OF-499). A refused render leaves the
     // row to the deadline timer and fails no dreaming.
@@ -614,5 +729,6 @@ pub async fn run_resident_dream(
     }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }

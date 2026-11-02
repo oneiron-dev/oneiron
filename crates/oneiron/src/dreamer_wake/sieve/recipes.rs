@@ -651,7 +651,10 @@ pub(super) fn history_in_txn(
         .collect())
 }
 
-pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Option<u64>> {
+pub(crate) fn rung_result_units(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<Option<(u64, Vec<[u8; 32]>)>> {
     let result = {
         let txn = vault.store.env.read_txn()?;
         AUDIT.get(&vault.store, &txn, &attempt)?
@@ -664,7 +667,11 @@ pub(crate) fn rung_result_units(vault: &Vault, attempt: AttemptId) -> Result<Opt
     for hash in result.step_hashes() {
         paid &= store.checkpoint_step_charged(attempt, hash)?;
     }
-    Ok(Some(if paid { 0 } else { result.completed_units() }))
+    Ok(Some(if paid {
+        (0, Vec::new())
+    } else {
+        (result.completed_units(), result.step_hashes().to_vec())
+    }))
 }
 
 pub(crate) fn rung_superseded(vault: &Vault, input: &RungInput) -> Result<bool> {

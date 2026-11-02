@@ -7,6 +7,7 @@
 //! cohorts to retire. The engine checks the plan against the inventory and
 //! applies it through the eval-set doors. No skill, no model, or no plan
 //! that parses changes nothing.
+use oneiron::attempt_queue::ReadSetProducer;
 use oneiron::dreamer_runner::DreamerAdmittedAttempt;
 use oneiron::skill_optimize::{
     EvalAuthoringPlan, eval_authoring_inventory_sourced, eval_authoring_skill_id, union_source_rows,
@@ -22,6 +23,8 @@ const EVAL_AUTHORING_CALL_PURPOSE: &str = "coach_eval_authoring";
 const BUDGET_UNITS: u64 = 1 << 20;
 /// The skill's file the Coach runs; the inventory goes as data.
 const SKILL_FILE: &str = "SKILL.md";
+/// The pass's key in its attempt's read set (FIX 7019, 7073).
+const EVAL_AUTHORING: ReadSetProducer = ReadSetProducer::COACH_EVAL_AUTHORING;
 
 /// Runs one eval-authoring pass.
 pub(super) fn run(
@@ -55,6 +58,21 @@ pub(super) fn run(
     // revision and the Coach's model on the attempt, and each cut and
     // retirement names them.
     let attempt = &admitted.status.attempt;
+    // The pass and the pack load door that reads the authoring skill are
+    // the producers its attempt's read set waits on: declared before the
+    // load reads anything, the set reads complete only once both reported,
+    // and stays unknown if either never does (FIX 7019, 7073).
+    let mut read_set_lost = false;
+    if let Err(error) = vault
+        .declare_attempt_read_producers(attempt.id, &[EVAL_AUTHORING, ReadSetProducer::SKILL_PACK])
+    {
+        read_set_lost = true;
+        tracing::warn!(
+            attempt = ?attempt.id,
+            %error,
+            "the eval authoring could not declare its read set; its pack receipt keeps it unknown"
+        );
+    }
     let loaded = match vault.load_attempt_skill_pack(
         attempt.id,
         &eval_authoring_skill_id()?,
@@ -82,6 +100,21 @@ pub(super) fn run(
         .map_err(|_| Error::InvalidConfig("the eval inventory could not be encoded".into()))?;
     // The call reads the inventory's rows and the skill it loaded (FIX 6997).
     let rows = union_source_rows([inventory_rows, Some(vec![skill.0])]);
+    // The pass reads what its call carries: the same rows are its read set
+    // (FIX 7019). Capture only (FIX 7021): a storage error recording them
+    // never ends the pass, and a set no complete read backs records
+    // nothing, so the attempt reads as unknown either way.
+    if !read_set_lost
+        && let Some(report) = rows.clone()
+        && let Err(error) = vault.record_attempt_sources(attempt.id, EVAL_AUTHORING, Some(report))
+    {
+        tracing::warn!(
+            attempt = ?attempt.id,
+            %error,
+            "the eval authoring could not record its read set; its pack receipt keeps it unknown"
+        );
+        let _ = vault.record_attempt_sources(attempt.id, EVAL_AUTHORING, None);
+    }
     let Some(text) = models.generate_sourced(
         models.coach(),
         vec![

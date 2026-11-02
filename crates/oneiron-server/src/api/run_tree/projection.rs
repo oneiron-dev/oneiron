@@ -1,47 +1,65 @@
-//! The engine run tree's projection onto the core run-tree DTOs, one node
-//! at a time (FIX 10067): a node is projected flat, its fields taken, and its
-//! children are written by [`super::encode`], so no projection recurses.
+//! The engine run tree's projection onto the core run-tree DTOs (FIX
+//! 11107): the flat table the SDK reads ([`oneiron::run_tree::RunTreeWire`]),
+//! every node once, in pre-order, with the roots and each node's children
+//! named by index. The table is numbered on a heap stack and each node is
+//! projected alone, so no projection recurses, however deep the tree.
 
-use std::mem;
+use oneiron::run_tree::{RunTreeWire, RunTreeWireNode};
 
 use super::{
     CoreRunTreeEvent, CoreRunTreeEventKind, CoreRunTreeFailure, CoreRunTreeNode, CoreRunTreeRepair,
     CoreRunTreeResponse, CoreRunTreeStatus, CoreRunTreeTimestamps,
 };
 
-/// The response with its repairs and no roots: [`super::encode`] writes the
-/// roots into it.
-pub(super) fn core_run_tree_shell(repairs: Vec<oneiron::RunTreeRepair>) -> CoreRunTreeResponse {
+/// `tree` as the core run-tree response: its flat table, with every node,
+/// repair and order it has.
+pub(super) fn core_run_tree(tree: oneiron::RunTree) -> CoreRunTreeResponse {
+    let RunTreeWire {
+        nodes,
+        roots,
+        repairs,
+    } = RunTreeWire::from(tree);
     CoreRunTreeResponse {
-        roots: Vec::new(),
+        nodes: nodes.into_iter().map(core_run_tree_node).collect(),
+        roots,
         repairs: repairs.into_iter().map(core_run_tree_repair).collect(),
     }
 }
 
-/// `node` alone, its fields taken, with no children: [`super::encode`]
-/// writes them into its `children`.
-pub(super) fn core_run_tree_node(node: &mut oneiron::RunTreeNode) -> CoreRunTreeNode {
+/// One node of the table, its children named by index.
+fn core_run_tree_node(node: RunTreeWireNode) -> CoreRunTreeNode {
+    let RunTreeWireNode {
+        attempt_id,
+        run_id,
+        parent_id,
+        worker_kind,
+        worker,
+        agent_id,
+        status,
+        result_ref,
+        timestamps,
+        failure,
+        events,
+        children,
+    } = node;
     CoreRunTreeNode {
-        attempt_id: mem::take(&mut node.attempt_id),
-        run_id: node.run_id.take(),
-        parent_id: node.parent_id.take(),
-        worker_kind: mem::take(&mut node.worker_kind),
-        worker: node.worker.take(),
-        agent_id: node.agent_id.take(),
-        status: core_run_tree_status(node.status),
-        result_ref: node.result_ref.take(),
+        attempt_id,
+        run_id,
+        parent_id,
+        worker_kind,
+        worker,
+        agent_id,
+        status: core_run_tree_status(status),
+        result_ref,
         timestamps: CoreRunTreeTimestamps {
-            created_at: node.timestamps.created_at,
-            updated_at: node.timestamps.updated_at,
+            created_at: timestamps.created_at,
+            updated_at: timestamps.updated_at,
         },
-        failure: node.failure.take().map(|failure| CoreRunTreeFailure {
+        failure: failure.map(|failure| CoreRunTreeFailure {
             reason: failure.reason,
         }),
-        events: mem::take(&mut node.events)
-            .into_iter()
-            .map(core_run_tree_event)
-            .collect(),
-        children: Vec::new(),
+        events: events.into_iter().map(core_run_tree_event).collect(),
+        children,
     }
 }
 

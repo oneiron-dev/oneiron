@@ -65,7 +65,7 @@ pub(crate) fn ensure_current_attribution_judge_in_txn(
 
 /// The revision that displaced `revision`, when one has: its fence's
 /// replacement. A retained cause by that judge is history, never rescored.
-pub(super) fn displacing_revision_in_txn(
+pub(crate) fn displacing_revision_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     revision: &str,

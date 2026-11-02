@@ -47,6 +47,8 @@ use crate::secret_custody::reveal::{
 use crate::secret_custody::{CustodyClass, SecretSight};
 use crate::vault::Vault;
 
+mod grants;
+
 /// Domain of a repo file read's identity digests and its fingerprint.
 const REPO_FILE_DOMAIN: &[u8] = b"oneiron.secret_reveal.repo_file.v1";
 
@@ -82,7 +84,7 @@ pub(crate) struct RepoFileKeys {
 
 /// The reach of the owner's grant on a repo file read: the scope the
 /// owner's standing answer to one repo file reveal picks (FIX 9236).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RepoFileRevealScope {
     /// This file, until revoked.

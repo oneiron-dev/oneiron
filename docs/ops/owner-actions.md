@@ -150,6 +150,18 @@ touched.
 oneiron restore FILE
 ```
 
+On a new host, where no vault is yet, a world-kit restore reads the vault's key custody from
+its residence home instead of the folder beside the backup:
+
+```sh
+oneiron restore BACKUP --unlock kit --vault-id HEX --piece piece-1.txt --piece piece-2.txt --trust signer.json --custody-home https://home.example
+```
+
+The request is signed with the kit. The home answers only to the root it pins for the vault.
+A home that holds no custody head of this backup, or refuses it, fails the restore. The restore
+never falls back to the folder. `--custody-home` needs `--unlock kit`. A restore over an
+existing vault or a rehearsal ignores it. A backup with no custody asks the home nothing.
+
 A restore brings back your **content** as it stood at the backup: notes, claims,
 conversations, tasks, files and receipts. It keeps the vault's **current authority, consent and
 policy** (ARCH-0038, RD-20). Every kind of stored row has one restore class in the engine, and
@@ -215,6 +227,29 @@ A restore refuses, and changes nothing, when:
   destroyed key back. Take a new backup after an erase.
 
 The restore runs from the CLI only, because the server cannot swap out the vault it is serving.
+
+### Open the worlds a restore left Locked
+
+```sh
+# stop `oneiron serve` first
+# with the recovery kit
+oneiron restore FILE --open-pads --unlock kit --vault-id HEX --piece piece-1.txt --piece piece-2.txt
+# with one of your machines' keys
+oneiron restore FILE --open-pads --pad-machine MACHINE_ID
+```
+
+A restore whose custody head held a world's pads in a compartment it could not open reports
+that world `Locked`: its notes and claims are back, but their bodies stay unreadable until the
+pads come back. `--open-pads` restores nothing. On the configured vault, which must exist and
+be stopped, it opens those worlds from the custody head beside `FILE` with the kit or the named
+machine's key (one this install still holds), puts their pads into the vault's own key custody,
+reads them back, and rests each owed reference with its pad. It acts on the latest restore of
+`FILE`'s checkpoint. A world clears `Locked` only when every reference it owed is at rest or
+erased; a pad the head holds retired stays erased. The report lists `opened_worlds`,
+`installed`, `rested`, `owed_refs`, `remaining` notes and any stage that faulted. What committed
+before a fault stands, and the command may run again. Later backups carry the `Locked` worlds'
+sealed pads in each new custody head, as the restore found them, until they open here or are
+erased; `--open-pads` works from any of those heads.
 
 ## Agents refused after the host clock ran ahead
 
@@ -314,7 +349,12 @@ It exits nonzero when a sweep failed or could not finish some of its records. It
 (with `--heal-invalid-vectors` to leave out stored vectors that do not validate),
 `--recompute-short-ids`, `--backfill-gate-claim-index`, `--migrate-conversation-dags`, and
 `--reindex-text`, which rebuilds the text index from the text each record was indexed with; it is
-the repair for a vault refused after an analyzer or dictionary change. A running server answers
+the repair for a vault refused after an analyzer or dictionary change.
+`--reclassify-corrupt-claim <ID>` (32 hex; repeat it for more) classifies a corrupt CLAIM by its
+audited repair, its bytes unchanged and one signed repair event kept, so its hard erase can finish.
+The report lists each named record under `repairs.corrupt_claim_repairs` with its `outcome`:
+`reclassified` (with its `repair_receipt`), `already_classified` (with the receipt it already has),
+or `not_corrupt` for a record that is no corrupt CLAIM, which is left as it is. A running server answers
 `POST /v1/owner/maintain` with the same report, without the repairs.
 
 ## A managed host's vault UID table
@@ -451,6 +491,7 @@ where it sat. Answer each key one of four ways:
 
 ```sh
 oneiron api raw GET '/v1/owner/secrets/found?pending=true'    # each record, its keys and what may still be done
+oneiron api raw GET '/v1/owner/secrets/found?pending=true&after=<next_cursor>'    # the next page, until done
 oneiron api raw POST /v1/owner/secrets/rotate --data '{"name": "masked/<hex>", "value_base64": "..."}'
 oneiron api raw POST /v1/owner/secrets/found/delete --data '{"handle": "sc12"}'
 oneiron api raw POST /v1/owner/secrets/found/grant \
@@ -488,8 +529,9 @@ such as `connector:github`.
 
 Name the secret by `handle` or `name`. `tier_ceiling` is the binding's rung, 0 (doored) by default
 and never above the class's live floor, and `scopes` defaults to `["read"]`. A binding for the same
-effector is replaced. The reply lists the record's bindings and the Gate record that keeps the
-binding. A portable secret's binding is a custody rewrap this install records and does as its
+effector is replaced. On a stopped vault, `oneiron secrets bind` does the same, and `secrets unbind`
+or `POST /v1/owner/secrets/unbind` withdraws one binding ([owner-custody.md](owner-custody.md)).
+The reply lists the record's bindings and the Gate record that keeps the binding. A portable secret's binding is a custody rewrap this install records and does as its
 holder, so its transition carries the new bindings to your other machines that hold the secret. The
 reply's `custody` says so, or why the binding stayed on this install. A machine whose own floor is
 narrower than the binding's rung keeps its old bindings and holds the new ones pending. It takes
@@ -563,7 +605,7 @@ oneiron api raw POST /v1/owner/secrets/register --data '{"name": "demo-mirror-to
   "value_base64": "<base64 of the token>"}'
 oneiron api raw POST /v1/owner/origin-mirror --data '{"repo": "demo",
   "url": "https://github.com/you/demo.git", "secret_ref": "demo-mirror-token",
-  "every_secs": 900, "sync_strategy": "schedule"}'
+  "every_secs": 900, "sync_strategy": "schedule", "visibility": "public"}'
 oneiron api raw GET '/v1/owner/origin-mirror?repo=demo'    # the target, its strategy and last push
 oneiron api raw POST /v1/owner/origin-mirror/strategy \
   --data '{"repo": "demo", "sync_strategy": "ask_me"}'      # change the strategy alone
@@ -598,6 +640,22 @@ pauses automatic work not yet sent: a push already running finishes and is settl
 nothing more goes out whole. Clearing the mirror also settles its open plan at once, as cleared:
 refs whose push may already have gone out are recorded as unknown, and a push still running
 records its result against that plan.
+
+`visibility` (`public`, `private` or `unknown`) states who can read the mirror; the target shows
+it as `audience`. Only the owner states it, and no URL decides it. Left out, a mirror whose URL is
+unchanged keeps its visibility, and a new mirror or URL is `unknown`, which counts as public. A
+public or unknown mirror never takes history that holds a key marked as a live secret (the receive
+door marks pushed keys; a key counts as live until it is marked not a secret or revoked at its
+provider, and a local rotation does not count). The check runs at each send, after its claim and
+before the token leaves custody, over the whole history each ref reaches, tags and history the
+mirror already holds included. A clean history, and every send to a `private` mirror, goes out as
+before. An exact request it holds ends `refused` with `marked_live_secret`, or
+`secret_history_unknown` when the history or the marks could not be read whole. An automatic ref
+it holds is not sent and its run fails naming `secret_hold`; the run's other refs go out, and the
+plan stays open and is checked again on each later run. The ways out: mark the key not a secret,
+revoke it at its provider, purge it from history, or state the mirror `private` if it is. Until
+the not-a-secret, revocation and purge records land, every marked key counts as live. An exact
+return to the repository's own original source goes through the export door, not a mirror.
 
 ### What every automatic push records
 
@@ -664,7 +722,9 @@ verbs are `vault.code.origin.publish.request`, `.review`, `.get`, `.approve`, `.
    and no deletion, so the mirror's own branch protection stands. Before the push it checks the
    commit is still held here, the mirror's URL, user, token record and generation are the ones the
    request was made at, and the approval's owner or Grant still stands; a change ends the request
-   `refused` with `destination_changed` or `authority_changed`.
+   `refused` with `destination_changed` or `authority_changed`. On a public or unknown mirror, a
+   history that holds a marked live key ends it `refused` with `marked_live_secret` (or
+   `secret_history_unknown`), unsent.
 5. The outcome is never guessed and never retried. `published` is the mirror's acknowledgement.
    After a failed or uncertain push the engine reads the branch again: the commit there is
    `observed_published`; anything else ends the request `refused` with `rejected` (the mirror
@@ -990,9 +1050,10 @@ relationships, and the strongest claims, each with its sources. `GET
 /v1/owner/persona?subject=<person id>` compiles it and returns its rows and a `stamp`. Claims
 about other people start struck. `POST /v1/owner/persona/export` with `{"subject": "…",
 "stamp": "…", "strike": ["<row id>"], "unstrike": ["<row id>"]}` returns the card as
-MemoryPack-lite JSON and markdown and records the export. If the card changed after your
-preview, the export is refused (409) and you preview again. A handed copy is a copy: to stop
-sharing, do not issue another.
+MemoryPack-lite JSON and markdown and records the export. Add `"travel": {"refs": "omit"}` for a
+copy without its vault refs; without `travel` the copy keeps them, as `vault.persona.export`
+does. If the card changed after your preview, the export is refused (409) and you preview again.
+A handed copy is a copy: to stop sharing, do not issue another.
 
 ## Off-record sessions
 
@@ -1113,7 +1174,9 @@ destination = "collector"     # ONEIRON_FEEDBACK_DESTINATION: cloud, collector o
 endpoint = "https://…"        # ONEIRON_FEEDBACK_ENDPOINT; HTTPS, or HTTP on loopback
 ```
 
-The destination's token, if any, comes from `ONEIRON_FEEDBACK_TOKEN`. `POST
+The destination's token, if any, comes from the vault secret `[feedback] key_secret` names
+(bind it to the effector `feedback:send` with `POST /v1/owner/secrets/bind`), on a managed host
+too; with no `key_secret`, a self-hosted server reads `ONEIRON_FEEDBACK_TOKEN`. `POST
 /v1/owner/feedback/preview` with `{"category": "bug"}` (or `papercut`, `confusion`,
 `feature-wish`) returns the bundle exactly as it would leave, its `digest`, the `approval` that
 names this bundle going to this destination on your approval, and `previewed_at`.
@@ -1345,7 +1408,9 @@ failure case's heal route (`case`), or a blocked report's when the agent's run h
 (`blocked_report`), its class, the invented example's verdict and each candidate's fixed or
 not-fixed result. It holds no text of the failure.
 
-The endpoint's token, if any, comes from `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
+The endpoint's token, if any, comes from the vault secret `[failure_signals] key_secret` names
+(effector `failure-signals:send`), on a managed host too; with no `key_secret`, a self-hosted
+server reads `ONEIRON_FAILURE_SIGNALS_TOKEN`. A hosted vault sends to
 `https://oneiron.dev/failure-signals` unless told otherwise; a self-hosted server with no endpoint
 sends nothing, and sealed records wait in the vault. Each send is one JSON batch, `POST`ed as an
 ordinary outbound effect on `failure_signals/send` with its recorded receipt. While the deployment
@@ -1453,6 +1518,37 @@ on its receipt. Either answer closes the run's other open questions.
 No trained-weight loader exists yet: a swapped role is bound, and `serving` reads `unavailable`,
 with the custody pin a loader would load.
 
+## Train a head for one detector question
+
+You can train a head for one exact detector question on your own labelled targets, with no
+Coach offer. First upload your rows as one artifact (`POST /v1/core/artifacts`). Each line is one
+JSON object: `{"row", "question_id", "question_version", "corpus_revision", "feature_schema",
+"label_schema", "source", "consent": {"basis", "receipt"}, "label": {"answer": "no" | "yes",
+"unit": "target", "adjudication"}, "input": {"target", "context": [...]}}`. The pins must match
+the plan's question, and `source` is a record that you already assigned to one of the seat's eval
+families (`vault.evals.families.assign`).
+
+`POST /v1/owner/coach/training-runs/prepare` with `{"draft", "corpus": {"rows": <artifact pin>},
+"connector"}` prepares the run. Rows of a training family become the training file, and rows
+of a sealed family in the draft's cohort become the held-out file. Rows of any other family are
+left out and counted under `family_outside_split`. The run pins a split receipt and a consent
+receipt, and the trainer echoes both. Nothing runs yet. `POST
+/v1/owner/coach/training-runs/authorize` with `{"run", "spec"}` is your yes on the spec you saw,
+and the host's Coach queues the run. The same door authorizes any prepared run, including an
+offer's run. A returned head binds no role and is not served yet.
+
+The draft's `plan.starting_checkpoint` must be a checkpoint that is already in custody. To keep
+one of any size, send `PUT /v1/owner/coach/training-checkpoints`. The body is the checkpoint's
+files as raw bytes, one after another (`Content-Type: application/octet-stream`). The
+`x-oneiron-checkpoint` header gives their manifest as JSON: `{"model": "provider/name@revision",
+"files": [{"name", "kind", "source": {"repository", "revision"}, "blake3", "bytes"}]}`, with the
+files in body order. Each `blake3` is 64 hex, and `kind` is `weights` (a `.safetensors` shard),
+`tokenizer`, `config`, `template` or `adapter_config`. The server spools the body to the
+vault's disk as it arrives. Its length is never refused, but the server stops at the disk's
+free-space reserve (`limits.disk_reserve_bytes`). The server keeps every file or none. It
+refuses a body that ends early or runs past its files, and a file whose hash differs from its
+`blake3`. The answer is the pinned checkpoint, which you put in the draft as it is.
+
 ## Answer the decision ladder's asks
 
 When a typed decision climbs past every model rung (the dial reaches the
@@ -1559,7 +1655,8 @@ A passkey's PRF input is `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input
 credential name)`: the vault and the name fix it, so the same authenticator gives the same output
 on any host. A running server takes the same steps at `/v1/owner/vault-key` (`GET` for the wraps,
 `GET /prf-input?credential=NAME`, `POST /passkeys`, `POST /password`, `POST /device`,
-`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`).
+`POST /remove`, `POST /retire-escrow`, `POST /unlock`, `GET /signer`). Each command here that opens
+the key also takes `--unlock` with its `--unlock-*` inputs ([owner-custody.md](owner-custody.md)).
 
 An escrow wrap seals to a hybrid key grown from a 32-byte seed; the recovery box keeps the seed.
 `--box-dir DIR` keeps it at `DIR/<vault id>/<label>.seed`, owner-only (removable media, your own
@@ -1579,7 +1676,9 @@ oneiron restore BACKUP --unlock escrow --label usb --box-dir /Volumes/KEY/oneiro
 Every unlock but this device's needs `--trust`: a host holding no signer seed has no other ground
 to trust a backup on, and a backup's own head is never trusted. Where no vault is at the
 configured path, the restore makes it there, unlocks its key the same way and wraps it to this
-install's keystore. Where one is, it restores over it as above, or rehearses with `--rehearse`.
+install's keystore. With the keystore off, `--wrap-to` adds a wrap this host can open later
+([owner-custody.md](owner-custody.md)). Where one is, it restores over it as above, or rehearses
+with `--rehearse`.
 
 A managed vault's escrow capsules live in the registry, one report per recipient (`managed` or
 `break-glass`). One of them opens a backup even when the backup is older than its wrap:
@@ -1623,8 +1722,9 @@ in `.<vault dir>.page-seal`, owner-only and never in a backup, so the pages unlo
 opens. With no keystore, serve unlocks them with the password the service manager's credential store
 holds as `vault_password`. `oneiron vault-key status` shows `"pages": "sealed"` and the warning. On
 another device, unlock the pages first: `printf %s "$PASSWORD" | oneiron vault-key add-device
---unlock password` (or `passkey`, `escrow`, or `kit` with the world kit's pieces); `oneiron
-vault-key prf-input NAME` gives a passkey's input before the vault opens. A credential whose wrap
+--unlock password` (or `passkey`, `escrow` with `--label` or a registry's `--capsule`, or `kit`
+with the world kit's pieces); `oneiron vault-key prf-input NAME` gives a passkey's input before the
+vault opens. A credential whose wrap
 was removed or replaced opens nothing, even if an interrupted change left it in the mirror; the next open with a current one repairs the mirror. Where the mirror is but
 the vault's data is not, init, serve and restore refuse: move the mirror away to create a new vault,
 since it may be the only copy of that vault's wraps. Body files, `.lines`, LFS staging and lock
@@ -1695,8 +1795,45 @@ private world's state. `covered` means only that the world's current key has a w
 root. `checkpoint_pin` is the 64-hex pin digest of the checkpoint image this install adopted, or
 null when it adopted none; it is neither the root nor a bundle generation. A running server shows
 the same at `GET /v1/owner/recovery-kit`. The commands above run on
-a stopped vault. On a running server, a root change goes through your request and its target
-install:
+a stopped vault. On a running server, make a change to this install's own root here, and a
+change to another install's root through your request and that target install.
+
+On the install you are signed in on, while its server runs:
+
+- `GET /v1/owner/roots` shows the root this install pins, one page of the foreign roots it sees
+  (each with how many machines it admits), the root a pin awaits and whether it has arrived, and
+  this install's `machine`. Pass `limit` for a larger page (100 by default) and `after` set to
+  the page's `next` to read the next page.
+- `POST /v1/owner/roots/pin` with `root` (64 hex) pins that root here and re-wraps the keys this
+  machine may still read. A root this install does not store yet is awaited, and `GET
+  /v1/owner/roots` says when it has arrived; pin again then.
+- `POST /v1/owner/roots/issue`, `/roots/confirm`, `/roots/restore` and `/roots/anchor` are the
+  kit ceremonies, made here as the stopped-vault commands make them. Each is a kit call (see
+  below): it names its `target`. `issue` takes `homes` and the passphrase where a home is
+  `passphrase`, and answers the pieces to you alone. `confirm` takes two pieces (or one and the
+  passphrase) and `carry`. `restore` takes the pieces. `anchor` takes the pieces, the machine's
+  `enrolment` and the `code` that machine shows. `restore` and `anchor` take `fingerprint` or
+  `confirm_root` for a kit opened with one piece. A kit this install cannot verify is refused as
+  `kit_unverified`, and a go-ahead for another root as `kit_confirmation_stale`. Each refusal
+  names the root the pieces rebuild. Each door answers as a request's run answers.
+- The CLI asks the running server the same, with the credential `oneiron api` reads
+  (`--url`, `ONEIRON_SECRET`, `ONEIRON_BINDING_KEY`):
+
+```sh
+oneiron recovery-kit roots
+oneiron recovery-kit pin --root <hex>
+oneiron recovery-kit anchor --piece piece-1.txt --piece piece-2.txt --enrolment machine.json --code <code>
+oneiron recovery-kit pad-access --piece piece-1.txt --piece piece-2.txt
+oneiron recovery-kit upkeep
+```
+
+A machine's request code is the 26 characters `oneiron device enrol` prints as `request_code`,
+beside the `enrolment` request it sent: save that object as the file `--enrolment` reads. The code
+is Crockford base32, the alphabet of recovery codes. Typing it back ignores case, dashes and
+spaces, and reads O as 0 and I or L as 1. The anchoring checks that it is the code of that
+request, so a host that relays the request cannot swap it.
+
+Another install's root changes through your request and its target install:
 
 - Any install you are signed in on records the request with `POST /v1/owner/roots/requests`:
   `target`, and `change` = `pin`, `activate`, `restore` or `anchor`, with `root` and `machine` as
@@ -1717,16 +1854,19 @@ install:
   route's `*_text` lines, and an embedded handle records it as its own owner on this install.
 
 Kit material travels only in the body of the named target's own call:
-`POST /v1/owner/roots/requests/run` and `POST /v1/owner/recovery-kit/pad-access`. That means the
-pieces as recovery codes, the passphrase, a confirm's `carry` machines, and an anchoring's
-enrolment request and code.
+`POST /v1/owner/roots/requests/run`, the four kit doors above and
+`POST /v1/owner/recovery-kit/pad-access`. That means the pieces as recovery codes, the
+passphrase, a confirm's `carry` machines, and an anchoring's enrolment request and code. The CLI
+reads pieces from their files and the passphrase from `--secret-file` or stdin, never from an
+argument, and sends kit material only to an `https://` server or to `http://` on this machine.
 
 - Each call names its `target`. The target must be the install that answers, proved by its
   machine proof: it verifies under the key that machine stands on in the vault.
 - The target must also be a machine the worlds' privacy lets hold their keys, as the
   verified-destination judge reads each world's recipient choice. For one-machine and
-  my-machines worlds that means one of your own machines (marked mine), and the host too on a
-  hosted vault. Any other proven machine qualifies only where no world keeps its keys off it.
+  my-machines worlds that means one of your own machines (marked mine). Any other proven machine
+  qualifies only where no world keeps its keys off it. A hosted or managed install takes no kit
+  material at all (`kit_requires_owner_device`): the work runs on your own device.
 - A target that is another install, or is unproved, or is disallowed, gets a named refusal
   (`kit_target_elsewhere`, `kit_target_unproved`, `kit_target_not_allowed`) before any kit is
   read.
@@ -1734,6 +1874,26 @@ enrolment request and code.
   `confirm_kit` reads two back and closes the request.
 - Kit material is never stored, logged or put in a receipt, and no install relays it for
   another.
+
+`pad-access` grants a machine (this install unless `machine` names another) every pad object the
+home keeps, so a machine added after older sealed generations can open them. It runs through this
+install's connection to its home. On the home itself, the install that keeps the generations, it
+runs here with no connection. An install with neither answers `home_unavailable`, and nothing is
+granted. The answer lists by generation what was `offered`, what is `usable` here and what stays
+`pending` for an older machine to grant. An offered grant is not yet access.
+
+`GET /v1/owner/recovery-kit/upkeep` (or `oneiron recovery-kit upkeep`) shows what the sealed
+bundle upkeep last did on this install, each part with its time:
+
+- `relay`: the last relay that reached the home, and what it moved. A tick that did not reach the
+  home changes nothing here.
+- `pending`: `pending_pad_access` and `pending_erases`, from the last relay whose erase sweep
+  counted them.
+- `relay_failure`: the last relay that failed, and its error.
+- `grant`: the last kit grant answered here.
+
+A part with no observation yet says `unobserved`, which is not zero. The counts are what the
+upkeep saw, not promises, and the upkeep never waits for them. A server restart starts unobserved.
 
 `restore` opens the world keys wrapped to the kit's root on this machine. It never changes a
 world's settings. A kit opened with one piece and the passphrase is not verified on its own: the
@@ -1754,6 +1914,16 @@ oneiron vault-key add-device --unlock kit --vault-id <hex> --piece piece-1.txt -
 
 With `--unlock kit`, add-device refuses `--credential`, `--label`, `--box-dir` and `--box-command`;
 with any other unlock, it refuses `--piece` and `--vault-id`.
+
+### Publish the sealed bundle to a home
+
+`POST /v1/owner/bundles/publications` with `{"home": "<install id>"}` asks that the vault's
+sealed bundle be published to that linked install, which keeps it. Any install you are signed in
+on records the ask; it carries ids only. The answer is the request's receipt: "recorded, awaiting
+a holder" until the publishing install's result arrives, then enacted or refused. Read it again
+at `GET /v1/owner/owner-work/{request}`. When no install can publish, nothing is recorded and the
+receipt says why. A home that may keep no sealed copy (a phone, or one whose profile is unknown)
+is named beside the receipt; that note decides nothing.
 
 ### Restore a sealed cloud bundle with the world kit
 
@@ -1931,7 +2101,7 @@ The core conversation writes and the atomic batch are verbs too:
 - `vault.conversations.records.append` appends one TURN to a conversation's DAG, under your
   name. It takes the same fields as `POST /v1/core/conversations/{id}/records`, plus
   `conversation` and less `actor`.
-- `vault.batch` with `{"entities": [...]}` commits up to 256 puts at once. An owner-grade
+- `vault.batch` with `{"entities": [...]}` commits every put it names at once, or none. An owner-grade
   credential commits them at owner grade. Any other credential, and an embedded handle, commits
   them below it, which refuses a put that turns an agent definition back on.
 
@@ -2069,6 +2239,10 @@ Routes take targets as `{"record": "<hex>"}`, `{"gate_partition": "<hex>"}` or
 - `POST /v1/owner/legal-holds` with `{"targets": [...], "matter_ref": "..."}` places a hold, and
   `GET /v1/owner/legal-holds` lists the holds you may see.
 - `POST /v1/owner/legal-holds/widen` with `{"hold_id": "<hex>", "targets": [...]}`.
+- A hold on a claim's gate-decision partition that an erase took, or whose key is retired, is
+  refused with 409 and the state `hold_target_erased` or `hold_target_key_retired`, on these
+  routes, a courtesy delete's hold answer and the SDK verbs (`INVALID_STATE`). Nothing is held;
+  hold the records that remain instead.
 - `GET /v1/owner/legal-holds/log` reads the log, oldest first.
 - `GET /v1/owner/legal-holds/lift-and-erase` returns the confirm's title and prompt, to show
   before you `POST` it with `{"records": ["<hex>", ...]}`. Each record answers `erased` with its
@@ -2128,7 +2302,9 @@ rung, so one model at two clouds is two spaces. Where the space's model runs is 
 locality. A space whose `@where` names no provider serving its rung embeds nothing.
 
 - `GET /v1/owner/embedding-spaces` lists the declared spaces, the text index, which space each
-  slot reads, every move with its last check, and how many probes each kind holds.
+  slot reads, every move with its last check, how many probes each kind holds, each space's
+  refused documents (`refused`) and each embedder binding a move stages (`binding_moves`). Every
+  space change answers the same list.
 - `PUT /v1/owner/embedding-spaces` with `{"id", "dimensions", "accepts", "query_towers"}` (and
   optional `"evidence": {"floor", "strong"}`) declares a space. `POST .../bind` with
   `{"kind", "space"}` binds one slot; leave out `space` to return the slot to its default.
@@ -2214,7 +2390,8 @@ oneiron api raw POST /v1/owner/embedding-spaces/move/check --data '{"candidate":
 The SDK verbs `vault.embedding_spaces.list`, `.declare`, `.bind`, `.one_space`, `.retire`,
 `.move`, `.move_check`, `.move_approve`, `.move_undo`, `.move_abandon`, `.probes.list`,
 `.probes.put` and `.probes.delete` do the same under the owner's credential, with the same
-bodies and answers. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
+bodies and answers; only the route answers `running` for a check still going, and only the
+route reads and clears refused documents. An embedded vault has no `ai.embed` towers, so it refuses `.move_check`. The
 SDK client waits up to 30 minutes for a check, as for an export.
 
 ## Choose who holds a portable secret
@@ -2280,6 +2457,18 @@ manifest check". `custody.manifest` names the manifests when this install is the
 one it attached when another install is. Send `"manifest_ref"` whenever the record names a
 manifest; a stated ref keeps its check and its refusal.
 
+The SDK rows `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
+`vault.secrets.revoke`, `vault.secrets.custody.get` and `vault.secrets.custody.submit` take
+the same bodies and give the
+same answers, under the same owner credential. In Rust, `oneiron::task_verb::sdk::seal_custody_submit`
+seals the input on your side from the `custody.get` answer: pass the change, the holder and the
+recipients, and the body. A register's body is its whole record
+(`oneiron::secret_custody::encode_secret_custody_body`) and a rotate's is the new value. It returns
+the `custody.submit` input, so only ciphertext leaves your device. Register, rotate and submit keep
+no call receipt (`x-oneiron-receipt-ref: none; no-record`): their record is the custody request's
+receipt in the reply. A sealed input sent through the SDK row meets the facade's 64 MiB body
+limit; a larger one goes to `POST /v1/owner/secrets/custody`, which takes any length.
+
 A revoke erases the secret's value at rest on each install that holds it and keeps its name and
 generation. Its reply's `custody` says whether it went to your other machines or why it stayed
 here. Copies already exported, in a checkpoint or delivered elsewhere are not recalled.
@@ -2288,7 +2477,7 @@ here. Copies already exported, in a checkpoint or delivered elsewhere are not re
 
 An install with no live machine profile in the vault cannot carry your acts, so it cannot be a
 holder. If it holds a portable secret, your recovery kit can push it: the kit is your authority.
-Stop `serve`, then pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
+On a stopped vault, pipe the kit's recovery codes in, one per line (with `--with-passphrase`, the kit
 passphrase on the first line, and then one code is enough), naming each install to seal it to:
 
 ```sh
@@ -2297,7 +2486,9 @@ oneiron secrets anchor-sign --name NAME --recipient MACHINE < kit.txt
 
 It prints `{"name", "signed"}`. `signed` is false for a record that stays on its device
 (device-bound, cross-vault or "this device only"). Any install with a live profile refuses this
-and tells you to rewrap the secret as its holder instead. No route or SDK verb takes the kit.
+and tells you to rewrap the secret as its holder instead. No SDK verb takes the kit. A running
+server takes it in the body of `POST /v1/owner/secrets/anchor-sign`, for that call alone
+([owner-custody.md](owner-custody.md)).
 
 ## Calling the owner routes
 

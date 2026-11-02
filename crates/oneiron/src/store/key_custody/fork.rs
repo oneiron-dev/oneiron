@@ -18,6 +18,7 @@ use crate::recovery::checkpoint::{Rejected, RestoreAdmissionReason as R};
 
 use super::credential_faults::{forgone, fork_step};
 use super::files::{EntryState, LocalCustody, container, entry_name, make_new_dir, marker_name};
+use super::holders::HolderDebt;
 use super::identity::{CustodyBinding, CustodyId, CustodySubject, custody_corrupt};
 use super::platform;
 use super::retirement::RetirementIntent;
@@ -36,13 +37,18 @@ pub(crate) enum Requirement {
 /// intent names, with the newest one a carried-out retirement destroys.
 /// A subject required by exact id (a holder's known-value history, KS-3)
 /// copies those ids alone: no slot an aborted writer left, nor one no row
-/// commits to. A subject a restore may land without (a world key pad, KS-5)
-/// is optional: a fork that cannot read it there copies it not, warned.
+/// commits to. A subject a restore may land without (a world key pad, KS-5;
+/// the host issuer seed escrow) is optional: a fork that cannot read it
+/// there copies it not, warned with its kind.
 pub(crate) struct CustodyPlan {
     source: Option<CustodyBinding>,
     subjects: BTreeMap<CustodySubject, (u64, Option<u64>)>,
     exact: BTreeMap<CustodySubject, BTreeSet<u64>>,
     optional: BTreeSet<CustodySubject>,
+    /// Each holder debt the copy carries (FIX 12192): planned from the
+    /// debts standing at the source, never required, and copied only
+    /// while it still stands there when the fork runs.
+    holders: BTreeSet<HolderDebt>,
 }
 
 impl CustodyPlan {
@@ -65,6 +71,7 @@ impl CustodyPlan {
             subjects,
             exact: BTreeMap::new(),
             optional: BTreeSet::new(),
+            holders: BTreeSet::new(),
         }
     }
 
@@ -119,11 +126,11 @@ impl CustodyPlan {
     }
 
     /// [`Self::require`] for an id a restore may land without (KS-5, FIX
-    /// 5686 part 2): a world key pad an image row names. `None` when no
-    /// custody is there to hold it, or its entry there is missing; its
-    /// subject is planned all the same, optional, and a fork copies nothing
-    /// it lacks or cannot read. The row's restore decides what a missing one
-    /// means.
+    /// 5686 part 2): a world key pad an image row names, or the host issuer
+    /// seed escrow a side restore carries. `None` when no custody is there
+    /// to hold it, or its entry there is missing; its subject is planned all
+    /// the same, optional, and a fork copies nothing it lacks or cannot
+    /// read. The row's restore decides what a missing one means.
     pub(crate) fn require_present(&mut self, id: &CustodyId) -> Result<Option<Requirement>> {
         self.optional.insert(id.subject().clone());
         let (through, committed) = self
@@ -172,6 +179,13 @@ impl CustodyPlan {
             EntryState::Live => Some(Requirement::Live),
             EntryState::Missing => None,
         })
+    }
+
+    /// Plans `debt` for the copy to carry (FIX 12192): a fork copies it
+    /// while it still stands at the source, never required and never a
+    /// refusal when it does not.
+    pub(crate) fn plan_holder_debt(&mut self, debt: HolderDebt) {
+        self.holders.insert(debt);
     }
 
     /// Whether a fork copies `id` while it is live: every generation of a
@@ -280,9 +294,11 @@ impl LocalCustody<'_> {
     /// retirement destroys is retired there as well, and every other entry
     /// still live here is copied (of a subject required by exact id, only
     /// those ids), each re-checked here as it is copied; an optional one
-    /// this custody cannot read is not copied, warned. The copy thus
-    /// counts generations as this custody does, so its own
-    /// retirements reach every entry it holds. Everything is synced before
+    /// this custody cannot read is not copied, warned. Each holder debt
+    /// `plan` carries that still stands here is copied as well (FIX
+    /// 12192). The copy thus counts generations as this custody does, so
+    /// its own retirements reach every entry it holds. Everything is
+    /// synced before
     /// this returns; a fork that fails removes what it created. `None` when
     /// there is nothing to copy.
     pub(crate) fn fork(
@@ -295,7 +311,7 @@ impl LocalCustody<'_> {
             .into_iter()
             .filter_map(|(id, state)| (state == EntryState::Retired).then_some(id))
             .collect();
-        if retired.is_empty() && plan.subjects.is_empty() {
+        if retired.is_empty() && plan.subjects.is_empty() && plan.holders.is_empty() {
             return Ok(None);
         }
         let target = LocalCustody::at(destination);
@@ -332,8 +348,9 @@ impl LocalCustody<'_> {
                             EntryState::Live => self.read(&id).map(Some),
                             EntryState::Retired | EntryState::Missing => Ok(None),
                         };
-                        // A pad its row may land without (KS-5): a failed
-                        // read never stops the fork; its row's restore decides.
+                        // A key its restore may land without (a world key
+                        // pad, KS-5; the host issuer seed escrow): a failed
+                        // read never stops the fork; its restore decides.
                         let live = match read_live() {
                             Err(error) if crate::store::credential_kind(subject.kind()) => {
                                 fork_step(&id, Err(error))?;
@@ -341,8 +358,10 @@ impl LocalCustody<'_> {
                             }
                             Err(error) if plan.optional.contains(subject) => {
                                 tracing::warn!(
+                                    subject = ?subject.kind(),
+                                    generation,
                                     kind = ?error.kind(),
-                                    "a world key pad custody could not read was not forked"
+                                    "an optional key custody could not read was not forked"
                                 );
                                 None
                             }
@@ -352,6 +371,27 @@ impl LocalCustody<'_> {
                             fork_step(&id, target.publish(&id, &secret))?;
                         }
                     }
+                }
+            }
+            // Every holder debt the plan carries that still stands here
+            // (FIX 12192): a retired key's copy kept elsewhere still
+            // reads `custody_remote_retirement_pending(<holder>)` at the
+            // copy. The debts are re-listed here, so one cleared after
+            // the plan is not copied; a fault listing them is warned and
+            // none are copied, as for an unreadable optional subject,
+            // while a fault writing one fails the fork, as any other
+            // copied entry's does.
+            if !plan.holders.is_empty() {
+                match self.holder_debts() {
+                    Ok(standing) => {
+                        for debt in plan.holders.intersection(&standing) {
+                            target.put_holder_debt(debt)?;
+                        }
+                    }
+                    Err(error) => tracing::warn!(
+                        kind = ?error.kind(),
+                        "the holder debts did not list for this fork;                          the copy carries none of them"
+                    ),
                 }
             }
             forked.sync()?;

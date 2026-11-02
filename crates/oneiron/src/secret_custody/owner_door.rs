@@ -195,7 +195,8 @@ impl Vault {
     /// or the manifest reaches past the live floor.
     /// [`SecretError::SecretNameInUse`] for a live name.
     /// [`SecretError::InvalidSecretCustodyBody`] for an empty name or value, a
-    /// binding above the rung, or one effector bound twice. The manifest read's
+    /// binding above the rung, one effector bound twice, or a name in the
+    /// cloud registration's reserved namespace. The manifest read's
     /// own errors, from [`Vault::origin_secret_manifest`]. For a portable
     /// record, a holder or recipient that is no live linked install with an
     /// importable key, and a refusal of this install as holder.
@@ -209,6 +210,11 @@ impl Vault {
     ) -> Result<SecretRegistered> {
         if request.value.is_empty() {
             return Err(invalid("a registered secret needs a value"));
+        }
+        if super::is_cloud_registration_slot(request.name) {
+            return Err(invalid(
+                "a cloud registration slot's name is the engine's own",
+            ));
         }
         // Read before the writer is taken: the manifest comes out of git.
         let manifest = request

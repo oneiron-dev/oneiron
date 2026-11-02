@@ -99,6 +99,9 @@ pub struct GithubIssuePage {
     pub next: Option<String>,
     /// The ETag the page carried.
     pub etag: Option<String>,
+    /// Each item on the page that did not parse, by its number, id or place
+    /// on the page: skipped, so the walk goes on (FIX 7631).
+    pub skipped: Vec<String>,
 }
 
 fn not_github() -> Error {
@@ -141,7 +144,12 @@ pub(super) fn evidence_issue(
     }
     let raw = {
         let txn = vault.store.env.read_txn()?;
-        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &handoff.evidence)?
+        let raw =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, &txn, &handoff.evidence)?;
+        match raw {
+            Some(raw) => Some(vault.materialized_row_in_txn(&txn, &handoff.evidence, raw)?),
+            None => None,
+        }
     }
     .ok_or(Error::CorruptedIndex("feedback triage evidence missing"))?;
     let header = crate::batch::EntityMetadataHeader::parse(&raw)
@@ -258,6 +266,7 @@ impl Vault {
             row.moved_at = now;
             row.error = None;
             row.retry_after = None;
+            row.skipped.clone_from(&page.skipped);
             SOURCES.put(&self.store, txn, &row.source, &row)?;
             Ok(Some(row))
         })

@@ -12,6 +12,7 @@ mod codec;
 mod endpoint_args;
 mod endpoint_schema;
 mod exec_host;
+mod live_lease_backend;
 #[cfg(feature = "code-sandbox-wasmtime")]
 mod quickjs_provider;
 mod run_seats;
@@ -60,8 +61,9 @@ pub use self::exec_host::{
 };
 pub(crate) use self::exec_host::{
     EngineRunError, OffRecordRunSession, ScopeMeter, enter_engine_native_run, off_record_run_id,
-    run_seat, task_engine_run_seat, task_run_seat,
+    run_read_worlds, run_seat, task_engine_run_seat, task_run_seat,
 };
+pub(crate) use self::live_lease_backend::{LiveLeaseBackend, LiveLeaseRunner};
 pub use self::paging::{
     MCP_PAGE_CURSOR_INVALID_CODE, McpPageBudget, McpPageCursorError, McpPageResume, McpPageSource,
     McpResultEnd, McpRetrievalHealth, clamp_foreign_cache_ttl_ms, mcp_canonical_json,
@@ -77,13 +79,13 @@ pub use self::results::{
 };
 pub use self::surface::{
     MCP_BOARD_BUDGET_TOK, MCP_CODE_HOST_UNBOUND_CODE, MCP_CODE_RUN_SCHEMA_VERSION,
-    MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_MAX_LIVE_PAGE_CONTINUATIONS,
-    MCP_PAGE_ITEM_CAP, MCP_READ_RESULT_TOOL, MCP_RESULT_CACHE_SCOPE,
-    MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS, MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL,
-    MCP_STREAM_CONNECTION_PREFIX, MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool,
-    McpEndpointToolSchema, McpGeneratedVerbTool, McpRegisteredSurface, McpSurfaceConstructionError,
-    McpSurfaceMode, McpVerbFamily, exported_verb_rows, generated_verb_tools, project_verb_rows,
-    registered_surface, try_registered_surface,
+    MCP_EXECUTE_CODE_TOOL, MCP_INVOKE_ACTION_TOOL, MCP_PAGE_ITEM_CAP, MCP_READ_RESULT_TOOL,
+    MCP_RESULT_CACHE_SCOPE, MCP_RESULT_META_SCHEMA_VERSION, MCP_RESULT_TTL_MS,
+    MCP_SETUP_INSTRUCTIONS, MCP_SETUP_TOOL, MCP_STREAM_CONNECTION_PREFIX,
+    MCP_VERB_GRAMMAR_SCHEMA_VERSION, McpEndpointTool, McpEndpointToolSchema, McpGeneratedVerbTool,
+    McpRegisteredSurface, McpSurfaceConstructionError, McpSurfaceMode, McpVerbFamily,
+    exported_verb_rows, generated_verb_tools, project_verb_rows, registered_surface,
+    try_registered_surface,
 };
 pub use self::tool_catalog::{
     MCP_BOOK_OPERATIONS, MCP_SERVER_NAME, MCP_TOOL_ARGS_SCHEMA_VERSION, McpToolValidationError,

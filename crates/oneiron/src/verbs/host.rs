@@ -1,7 +1,7 @@
 //! The inputs and answers of the verb-table rows a host door answers: the
 //! owner's `vault.packs.put`, `vault.packs.remove`,
 //! `vault.connectors.subscriptions.*` and `vault.hooks.replay`, the `ai.*` model calls
-//! past text and `ai.verdict`. A server answers each with its own state (the
+//! past text, `ai.ask_image` and `ai.verdict`. A server answers each with its own state (the
 //! owner's proof, its model seats, its decision ladder, its hook sandbox); an
 //! embedded handle answers a pack put as the vault's embedded owner and
 //! refuses the rest, which have nothing to run on there.
@@ -11,15 +11,20 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use serde::{Deserialize, Serialize};
 
-use crate::connector_key::{PackConnectionVerifier, ProviderConnectionChecks};
 use crate::consent::AuthenticatedOwner;
-use crate::lens::GeneratedUiStateSnapshot;
 use crate::llm::media::{AiOperation, MediaJobState, MediaPart, MediaResponse, MediaUsage};
-use crate::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL};
 use crate::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, Memory, MemoryError, MemoryResult};
 use crate::skill_hub::HubFile;
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
-use crate::skill_hub::pack_catalog::{PackSetupAnswer, PackSetupCardAction, PackSetupView};
+
+mod ask_image;
+mod hooks_replay;
+mod local_pack_agent;
+mod pack_setup;
+pub use self::ask_image::*;
+pub use self::hooks_replay::*;
+pub use self::local_pack_agent::*;
+pub use self::pack_setup::*;
 
 /// One file of a pack folder, its content an explicit choice: text, stored as
 /// its UTF-8 bytes, or any bytes (an image, a font, a Wasm module) as
@@ -155,11 +160,15 @@ pub fn put_pack_as_owner(
     Ok(vault.put_pack(owner, input.into_files()?)?.into())
 }
 
-/// `vault.packs.put` on an embedded handle: the vault's embedded owner's put.
+/// `vault.packs.put` on an embedded handle: the vault's embedded owner's put,
+/// or, on an agent's handle, the agent's own put of `local`.
 pub fn put_pack_embedded(
     memory: &Memory<'_>,
     input: PackPutRequest,
 ) -> MemoryResult<PackPutReceipt> {
+    if memory.actor_class() == crate::EdgeActorClass::Agent {
+        return put_local_pack_as_agent(memory, input);
+    }
     Ok(memory
         .put_pack_as_embedded_owner(input.into_files()?)?
         .into())
@@ -458,6 +467,13 @@ pub struct AiCallRequest {
     /// other call that names one is refused.
     #[serde(default)]
     pub voice: Option<AiVoice>,
+    /// The caller's own idempotency key for the call (FIX 2962): a repeat
+    /// of the same call under the same key answers the first's answer, or
+    /// a video's first ticket, and is not paid for or rendered again. A
+    /// call in a banked voice is never replayed. With none, every call
+    /// goes out.
+    #[serde(default)]
+    pub idempotency_key: Option<String>,
 }
 
 /// The voice an `ai.speech` call names (OF-410): a provider's stock voice
@@ -711,432 +727,4 @@ impl From<crate::llm::decision::TypedDecision> for AiVerdict {
             evidence_cut_at_bytes: None,
         }
     }
-}
-
-/// `vault.hooks.replay`'s page size when the request names none.
-pub const HOOKS_REPLAY_LIMIT_DEFAULT: usize = 64;
-/// The most entries one `vault.hooks.replay` returns: the engine's own cap.
-pub const HOOKS_REPLAY_LIMIT_MAX: usize = 256;
-
-/// `vault.hooks.replay`'s input: the hook to replay, where a fact hook
-/// starts and how many entries to return. A verb hook replays its newest
-/// saved runs.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HooksReplayRequest {
-    /// The hook binding's 32-hex id.
-    pub binding: String,
-    /// The fact position a fact hook replays after (`claim_changelog:<hex32>`
-    /// or `settlement:<hex16>`); every source from its start when absent. A
-    /// verb hook takes none.
-    #[serde(default)]
-    pub since: Option<String>,
-    /// Entries to return, 1 to [`HOOKS_REPLAY_LIMIT_MAX`];
-    /// [`HOOKS_REPLAY_LIMIT_DEFAULT`] when absent.
-    #[serde(default)]
-    pub limit: Option<usize>,
-}
-
-impl HooksReplayRequest {
-    /// The page size this request names, refused outside its bounds.
-    pub fn limit(&self) -> MemoryResult<usize> {
-        let limit = self.limit.unwrap_or(HOOKS_REPLAY_LIMIT_DEFAULT);
-        if limit == 0 || limit > HOOKS_REPLAY_LIMIT_MAX {
-            return Err(MemoryError::bad_request_with(
-                format!("limit must be between 1 and {HOOKS_REPLAY_LIMIT_MAX}"),
-                &["Request a smaller page and continue from the last entry's position."],
-            ));
-        }
-        Ok(limit)
-    }
-}
-
-/// One past fact or saved verb run a hook takes, and what its body returns
-/// for it now. Nothing landed.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HookReplayRow {
-    pub case: crate::runtime_hooks::HookReplayCase,
-    pub result: HookReplayOutcome,
-}
-
-/// What a replayed entry gave: the body's outcome, or the history it lacks.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum HookReplayOutcome {
-    /// The body ran on this entry. Nothing landed.
-    Ran {
-        outcome_json: Option<String>,
-        /// The outcome kind, or `refused` / `failed`.
-        outcome: String,
-        reason: Option<String>,
-        /// The outcome the live run recorded, when one ran.
-        recorded: Option<String>,
-        /// The outcome JSON the live run recorded, when it kept one.
-        recorded_outcome_json: Option<String>,
-        /// How this outcome stands to the recorded one, as JSON.
-        compare: crate::runtime_hooks::HookReplayCompare,
-        /// The input came from the run's saved row: its memo, or its saved
-        /// verb run.
-        from_memo: bool,
-        /// No run pinned this entry's reads; they read current rows.
-        reads_live: bool,
-    },
-    /// The entry's inputs are gone: replay will not read newer state instead.
-    MissingHistory { reason: String },
-}
-
-impl From<crate::runtime_hooks::HookReplayEntry> for HookReplayRow {
-    fn from(entry: crate::runtime_hooks::HookReplayEntry) -> Self {
-        use crate::runtime_hooks::HookReplayResult;
-        Self {
-            case: entry.case,
-            result: match entry.result {
-                HookReplayResult::Ran {
-                    outcome_json,
-                    outcome,
-                    reason,
-                    recorded,
-                    recorded_outcome_json,
-                    compare,
-                    from_memo,
-                    reads_live,
-                } => HookReplayOutcome::Ran {
-                    outcome_json,
-                    outcome,
-                    reason,
-                    recorded,
-                    recorded_outcome_json,
-                    compare,
-                    from_memo,
-                    reads_live,
-                },
-                HookReplayResult::MissingHistory { reason } => {
-                    HookReplayOutcome::MissingHistory { reason }
-                }
-            },
-        }
-    }
-}
-
-/// `vault.hooks.replay` under the owner's proof a host minted from the
-/// request, on `runtime`, the host's own hook sandbox: a dry run of the
-/// binding's body over past facts or saved verb runs, landing nothing.
-/// `verdict`, the host's decision ladder, answers a generative fact hook's
-/// `ai.verdict` on a fact no run pinned; a pinned run hears its own again.
-pub fn replay_hooks_as_owner(
-    vault: &crate::Vault,
-    owner: &crate::consent::AuthenticatedOwner,
-    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
-    verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
-    input: &HooksReplayRequest,
-) -> MemoryResult<Vec<HookReplayRow>> {
-    replay_hooks_as_owner_listing(vault, owner, runtime, verdict, input).map(|(rows, _)| rows)
-}
-
-/// [`replay_hooks_as_owner`], beside the rows its entries stand on
-/// ([`crate::Vault::hooks_replay_listing`]); `None` once an entry asked a
-/// verdict.
-pub fn replay_hooks_as_owner_listing(
-    vault: &crate::Vault,
-    _owner: &crate::consent::AuthenticatedOwner,
-    runtime: &dyn crate::runtime_hooks::HookBodyRuntime,
-    verdict: Option<std::sync::Arc<dyn crate::runtime_hooks::HookVerdict>>,
-    input: &HooksReplayRequest,
-) -> MemoryResult<(Vec<HookReplayRow>, Option<Vec<crate::EntityId>>)> {
-    let limit = input.limit()?;
-    let binding = crate::EntityId::from_hex(input.binding.trim())
-        .map_err(|_| MemoryError::bad_request("binding is a hook binding's 32-hex id"))?;
-    let since = input
-        .since
-        .as_ref()
-        .map(|position| crate::runtime_hooks::FactPositionHex(position.trim().to_owned()));
-    let (entries, listed) = vault
-        .hooks_replay_listing(runtime, verdict, binding, since, limit)
-        .map_err(|error| match error {
-            crate::Error::EntityNotFound => {
-                MemoryError::not_found(format!("no hook binding {}", input.binding.trim()))
-            }
-            crate::Error::InvalidConfig(message) => MemoryError::bad_request(message),
-            other => other.into(),
-        })?;
-    Ok((
-        entries.into_iter().map(HookReplayRow::from).collect(),
-        listed,
-    ))
-}
-
-/// Where a credential value goes during a pack's setup: the owner secrets
-/// door. No `vault.packs.setup.*` verb and no card ever carries a value.
-pub const PACK_SETUP_SECRETS_DOOR: &str = "/v1/owner/secrets/register";
-
-/// `vault.packs.setup.prepare` and `vault.packs.setup.get`'s input: one
-/// pack's guided setup (OF-378), by name.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackSetupRequest {
-    pub pack: String,
-    /// One exact source by content hash; else the Active source, or the
-    /// pack's one Candidate.
-    #[serde(default)]
-    pub source: Option<String>,
-}
-
-/// `vault.packs.setup.verify`'s input: the connection to check.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackSetupVerifyRequest {
-    pub pack: String,
-    #[serde(default)]
-    pub source: Option<String>,
-    pub connection: String,
-}
-
-/// `vault.packs.setup.answer`'s input: one typed answer, or one action from
-/// the setup's cards with the card's `$state`; exactly one of them.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackSetupAnswerRequest {
-    pub pack: String,
-    #[serde(default)]
-    pub source: Option<String>,
-    /// `secret_stored` (pins the custody record the owner stored at the
-    /// secrets door) or `bind_key`. An `allow` is the owner's own decision
-    /// and this verb refuses it.
-    #[serde(default)]
-    #[schemars(with = "Option<serde_json::Map<String, serde_json::Value>>")]
-    pub answer: Option<PackSetupAnswer>,
-    #[serde(default)]
-    pub card_action: Option<PackSetupCardActionInput>,
-}
-
-/// One action from a setup card: its action id and the card's `$state`.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PackSetupCardActionInput {
-    pub action_id: String,
-    #[serde(default)]
-    #[schemars(with = "serde_json::Map<String, serde_json::Value>")]
-    pub state: GeneratedUiStateSnapshot,
-}
-
-/// What each `vault.packs.setup.*` verb answers, as the owner door
-/// `/v1/owner/packs/setup` serves it: the setup, its GenUI cards and its
-/// plain text.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PackSetupReceipt {
-    pub setup: PackSetupView,
-    /// The setup's GenUI cards, as their wire JSON.
-    pub cards: Vec<serde_json::Value>,
-    pub text: String,
-    /// Set when a card asked to store a credential: the owner stores the
-    /// value at `door`, then a `secret_stored` answer pins its record.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub store_secret: Option<PackSetupStoreSecret>,
-}
-
-/// The owner secrets door to open for one declared credential name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PackSetupStoreSecret {
-    pub door: String,
-    pub connection: String,
-    pub name: String,
-    /// The binding the stored credential needs, with the read scope.
-    pub effector: String,
-}
-
-impl PackSetupReceipt {
-    fn new(setup: PackSetupView) -> MemoryResult<Self> {
-        let cards = setup
-            .cards()?
-            .iter()
-            .map(serde_json::to_value)
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| {
-                MemoryError::new(
-                    MEMORY_CODE_INTERNAL,
-                    "the pack setup's cards did not encode",
-                    &["Report this SDK host-door failure."],
-                )
-            })?;
-        Ok(Self {
-            cards,
-            text: setup.text(),
-            setup,
-            store_secret: None,
-        })
-    }
-}
-
-/// `vault.packs.setup.prepare` under the owner's proof: opens, or resumes,
-/// the setup through [`crate::Vault::prepare_pack_setup`]. Opening grants
-/// nothing.
-pub fn prepare_pack_setup_as_owner(
-    vault: &crate::Vault,
-    owner: &AuthenticatedOwner,
-    input: &PackSetupRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    PackSetupReceipt::new(vault.prepare_pack_setup(owner, &input.pack, input.source.as_deref())?)
-}
-
-/// `vault.packs.setup.get` under the owner's proof: the setup as it stands.
-pub fn pack_setup_as_owner(
-    vault: &crate::Vault,
-    owner: &AuthenticatedOwner,
-    input: &PackSetupRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    PackSetupReceipt::new(vault.pack_setup(owner, &input.pack, input.source.as_deref())?)
-}
-
-/// `vault.packs.setup.verify` under the owner's proof: the host's fixed
-/// check for the connection's declared check name.
-pub fn verify_pack_setup_as_owner(
-    vault: &crate::Vault,
-    owner: &AuthenticatedOwner,
-    input: &PackSetupVerifyRequest,
-    checks: &dyn PackConnectionVerifier,
-) -> MemoryResult<PackSetupReceipt> {
-    verify_pack_connection_as_owner(
-        vault,
-        owner,
-        &input.pack,
-        input.source.as_deref(),
-        &input.connection,
-        checks,
-    )
-}
-
-/// `vault.packs.setup.answer` under the owner's proof. A verb is an agent's
-/// door, so it never answers `allow`: allowing a connection's permissions
-/// mints standing consent grants, and that review is the owner's own, on the
-/// setup's review card or at `POST /v1/owner/packs/setup/answer`. A card's
-/// store action answers with the owner secrets door to open; a value never
-/// passes here.
-pub fn answer_pack_setup_as_owner(
-    vault: &crate::Vault,
-    owner: &AuthenticatedOwner,
-    input: &PackSetupAnswerRequest,
-    checks: &dyn PackConnectionVerifier,
-) -> MemoryResult<PackSetupReceipt> {
-    let source = input.source.as_deref();
-    let answer = match (&input.answer, &input.card_action) {
-        (Some(answer), None) => answer.clone(),
-        (None, Some(card)) => {
-            let view = vault.pack_setup(owner, &input.pack, source)?;
-            match view.card_action(&card.action_id, &card.state)? {
-                PackSetupCardAction::Answer(answer) => answer,
-                PackSetupCardAction::Verify { connection } => {
-                    return verify_pack_connection_as_owner(
-                        vault,
-                        owner,
-                        &input.pack,
-                        source,
-                        &connection,
-                        checks,
-                    );
-                }
-                PackSetupCardAction::StoreSecret {
-                    connection,
-                    secret,
-                    effector,
-                } => {
-                    let mut receipt = PackSetupReceipt::new(view)?;
-                    receipt.store_secret = Some(PackSetupStoreSecret {
-                        door: PACK_SETUP_SECRETS_DOOR.to_owned(),
-                        connection,
-                        name: secret,
-                        effector,
-                    });
-                    return Ok(receipt);
-                }
-            }
-        }
-        _ => {
-            return Err(MemoryError::bad_request(
-                "send exactly one of answer or card_action",
-            ));
-        }
-    };
-    if let PackSetupAnswer::Allow { connection, .. } = &answer {
-        return Err(MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("allowing the permissions of {connection} is the owner's own decision"),
-            &[
-                "Show the owner the setup's review card; the owner allows there or at POST /v1/owner/packs/setup/answer.",
-            ],
-        ));
-    }
-    PackSetupReceipt::new(vault.answer_pack_setup(owner, &input.pack, source, &answer)?)
-}
-
-fn verify_pack_connection_as_owner(
-    vault: &crate::Vault,
-    owner: &AuthenticatedOwner,
-    pack: &str,
-    source: Option<&str>,
-    connection: &str,
-    checks: &dyn PackConnectionVerifier,
-) -> MemoryResult<PackSetupReceipt> {
-    PackSetupReceipt::new(vault.verify_pack_connection(owner, pack, source, connection, checks)?)
-}
-
-/// `vault.packs.setup.prepare` on an embedded handle, as the vault's
-/// embedded owner.
-pub fn prepare_pack_setup_embedded(
-    memory: &Memory<'_>,
-    input: PackSetupRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = memory.embedded_owner("vault.packs.setup.prepare")?;
-    prepare_pack_setup_as_owner(memory.vault(), &owner, &input)
-}
-
-/// `vault.packs.setup.get` on an embedded handle, as the vault's embedded
-/// owner.
-pub fn pack_setup_embedded(
-    memory: &Memory<'_>,
-    input: PackSetupRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = memory.embedded_owner("vault.packs.setup.get")?;
-    pack_setup_as_owner(memory.vault(), &owner, &input)
-}
-
-/// `vault.packs.setup.answer` on an embedded handle, as the vault's
-/// embedded owner; `allow` is refused here too.
-pub fn answer_pack_setup_embedded(
-    memory: &Memory<'_>,
-    input: PackSetupAnswerRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = memory.embedded_owner("vault.packs.setup.answer")?;
-    let vault = memory.vault();
-    off_async_runtime("vault.packs.setup.answer", || {
-        answer_pack_setup_as_owner(vault, &owner, &input, &ProviderConnectionChecks::new()?)
-    })
-}
-
-/// `vault.packs.setup.verify` on an embedded handle, as the vault's
-/// embedded owner.
-pub fn verify_pack_setup_embedded(
-    memory: &Memory<'_>,
-    input: PackSetupVerifyRequest,
-) -> MemoryResult<PackSetupReceipt> {
-    let owner = memory.embedded_owner("vault.packs.setup.verify")?;
-    let vault = memory.vault();
-    off_async_runtime("vault.packs.setup.verify", || {
-        verify_pack_setup_as_owner(vault, &owner, &input, &ProviderConnectionChecks::new()?)
-    })
-}
-
-/// A provider check is a blocking HTTPS call, which must not run on an
-/// async runtime's thread: an embedded caller may be on one, so the call
-/// runs on a thread of its own.
-fn off_async_runtime<T: Send>(
-    verb: &str,
-    call: impl FnOnce() -> MemoryResult<T> + Send,
-) -> MemoryResult<T> {
-    std::thread::scope(|scope| scope.spawn(call).join()).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_INTERNAL,
-            format!("{verb} did not finish"),
-            &["Report this SDK host-door failure."],
-        )
-    })?
 }

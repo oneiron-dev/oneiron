@@ -1,10 +1,13 @@
 //! What a checked stream has already shown its caller (FIX 8617): each
 //! part in the order it started, its text as it arrived, a tool call's and
 //! an image's whole content once it ended. A terminal message is held to
-//! it: text and reasoning as one run each (backends cut chunks where they
-//! like), reasoning signatures, every tool call's identity and input, and
-//! every image, in order. A terminal that disagrees does not replace what
-//! was shown; the shown output is the answer, typed incomplete.
+//! it in order (FIX 9324): adjacent text is one run, and adjacent reasoning
+//! one run with its signatures, since backends cut chunks where they like,
+//! but no run reaches across a tool call or an image, so where text stands
+//! between them is held too; every tool call's identity and input, and
+//! every image, stand alone in their places. A terminal that disagrees does
+//! not replace what was shown; the shown output is the answer, typed
+//! incomplete, or still cancelled when the caller stopped it.
 
 use std::collections::BTreeMap;
 
@@ -36,14 +39,25 @@ pub(crate) struct Emitted {
     parts: BTreeMap<String, Shown>,
 }
 
-/// The content a message carries, in the shape a terminal is held to.
+/// One part of a message in the shape a terminal is held to: a run of
+/// adjacent text, a run of adjacent reasoning with its signatures in order,
+/// or one tool call or image in its place.
 #[derive(PartialEq)]
-struct Summary<'a> {
-    text: String,
-    reasoning: String,
-    signatures: Vec<&'a str>,
-    tools: Vec<(&'a str, &'a str, &'a JsonValue)>,
-    images: Vec<(&'a str, &'a ImageContent)>,
+enum OrderedReplyPart<'a> {
+    Text(String),
+    Reasoning {
+        text: String,
+        signatures: Vec<&'a str>,
+    },
+    Tool {
+        call_id: &'a str,
+        name: &'a str,
+        input: &'a JsonValue,
+    },
+    Image {
+        media_type: &'a str,
+        image: &'a ImageContent,
+    },
 }
 
 impl Emitted {
@@ -111,9 +125,11 @@ impl Emitted {
         })
     }
 
-    /// Whether `message` carries what the stream showed, as a terminal must.
+    /// Whether `message` carries what the stream showed, in order, as a
+    /// terminal must.
     pub(crate) fn agrees(&self, message: &LlmMessage) -> bool {
-        summary(self.content().iter()) == summary(message.content.iter())
+        let shown = self.content();
+        ordered(shown.iter()) == ordered(message.content.iter())
     }
 
     /// What the stream showed, as the answer's message.
@@ -158,33 +174,47 @@ impl Emitted {
     }
 }
 
-/// `content` as a terminal is held to it.
-fn summary<'a>(content: impl Iterator<Item = &'a ContentPart>) -> Summary<'a> {
-    let mut summary = Summary {
-        text: String::new(),
-        reasoning: String::new(),
-        signatures: Vec::new(),
-        tools: Vec::new(),
-        images: Vec::new(),
-    };
+/// `content` as a terminal is held to it: in order, adjacent text and
+/// adjacent reasoning each one run, an empty chunk adding nothing to it.
+fn ordered<'a>(content: impl Iterator<Item = &'a ContentPart>) -> Vec<OrderedReplyPart<'a>> {
+    let mut parts: Vec<OrderedReplyPart<'a>> = Vec::new();
     for part in content {
         match part {
-            ContentPart::Text { text } => summary.text.push_str(text),
-            ContentPart::Reasoning { text, signature } => {
-                summary.reasoning.push_str(text);
-                summary.signatures.extend(signature.as_deref());
-            }
+            ContentPart::Text { text } => match parts.last_mut() {
+                Some(OrderedReplyPart::Text(run)) => run.push_str(text),
+                _ if text.is_empty() => {}
+                _ => parts.push(OrderedReplyPart::Text(text.clone())),
+            },
+            ContentPart::Reasoning { text, signature } => match parts.last_mut() {
+                Some(OrderedReplyPart::Reasoning {
+                    text: run,
+                    signatures,
+                }) => {
+                    run.push_str(text);
+                    signatures.extend(signature.as_deref());
+                }
+                _ if text.is_empty() && signature.is_none() => {}
+                _ => parts.push(OrderedReplyPart::Reasoning {
+                    text: text.clone(),
+                    signatures: signature.as_deref().into_iter().collect(),
+                }),
+            },
             ContentPart::ToolCall {
                 call_id,
                 name,
                 input,
-            } => summary.tools.push((call_id.as_str(), name.as_str(), input)),
-            ContentPart::Image { media_type, image } => {
-                summary.images.push((media_type.as_str(), image));
-            }
+            } => parts.push(OrderedReplyPart::Tool {
+                call_id: call_id.as_str(),
+                name: name.as_str(),
+                input,
+            }),
+            ContentPart::Image { media_type, image } => parts.push(OrderedReplyPart::Image {
+                media_type: media_type.as_str(),
+                image,
+            }),
             // Never part of an answer; the terminal's own check refuses them.
             ContentPart::ToolResult { .. } | ContentPart::Audio { .. } => {}
         }
     }
-    summary
+    parts
 }

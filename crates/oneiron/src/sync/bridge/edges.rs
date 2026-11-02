@@ -79,7 +79,6 @@ pub(super) fn materialize_edges_from_delta(
     // BEFORE `applied_edges.push`).
     let mut hydrated_endpoints: Vec<(EntityId, Vec<u8>)> = Vec::new();
     let result = vault.with_write_txn_grouped(|wtxn| {
-        let entities_map = doc.get_map("entities");
         let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
         let edges_map = doc.get_map("edges");
         // HOLE-1871-F2: the stale rows and stranded live candidates this delta
@@ -188,6 +187,19 @@ pub(super) fn materialize_edges_from_delta(
                         // The erased shell has no recipient carrier to prove.
                         continue;
                     }
+                    // Nor has a withdrawn Shell a body to prove its edges (FIX
+                    // 931): they wait. Its Parent goes to the coordinator.
+                    if kind != EdgeKind::Parent
+                        && crate::sync::withdrawn_cutoffs::withdrawn_shell_edge_in(
+                            &vault.store,
+                            &*wtxn,
+                            kind,
+                            &src,
+                            &tgt,
+                        )?
+                    {
+                        continue;
+                    }
                     // FIX 5972: a stored `regenerates` pair was proven when it
                     // landed, so a carried copy is no new pair, whatever has
                     // since become of its MESSAGEs. Any other waits below.
@@ -197,7 +209,7 @@ pub(super) fn materialize_edges_from_delta(
                     let src_ready = ensure_entity_materialized_from_crdt(
                         vault,
                         wtxn,
-                        &entities_map,
+                        doc,
                         &tombstones,
                         window_key,
                         &src,
@@ -206,7 +218,7 @@ pub(super) fn materialize_edges_from_delta(
                     let tgt_ready = ensure_entity_materialized_from_crdt(
                         vault,
                         wtxn,
-                        &entities_map,
+                        doc,
                         &tombstones,
                         window_key,
                         &tgt,
@@ -691,7 +703,11 @@ pub(super) fn materialize_edges_from_delta(
                 _ => None,
             })
             .collect();
+        let linked_facts = crate::task_verb::scoped_to_sources(&ops);
+        let fact_links = super::task_fact_edges::scoped_to_links(&ops);
         apply_materialized_edge_ops(vault, wtxn, ops, &metas, window_key, &tombstones)?;
+        crate::task_verb::wake_linked_facts_in_txn(vault, wtxn, linked_facts)?;
+        super::task_fact_edges::announce_linked_tasks_in_txn(vault, wtxn, fact_links)?;
         for (src, tgt) in considered_child_of {
             // The candidate has reached the winner arbiter or its terminal
             // rejection, so no earlier missing-endpoint obligation remains.

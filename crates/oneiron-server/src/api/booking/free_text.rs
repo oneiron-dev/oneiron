@@ -15,10 +15,11 @@ use oneiron::booking::constraint::{
 };
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
+use oneiron::store::GateDecisionId;
 use oneiron::{
-    BudgetExhaustionPolicy, BudgetLease, CallPurpose, EdgeActorClass, FatalLlmError, LlmBackend,
-    LlmCapability, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId, ModelTierRef,
-    TierPrecedence, WriteActor,
+    BudgetExhaustionPolicy, BudgetLease, CallPurpose, EdgeActorClass, EntityId, FatalLlmError,
+    LlmBackend, LlmCapability, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId,
+    ModelTierRef, TierPrecedence, WriteActor,
 };
 
 use super::BookingAdmissionContext;
@@ -31,10 +32,14 @@ use crate::server::SyncServer;
 
 /// Parses `free_text` into the object the oracle solves, and the visitor
 /// timezone the text names, if any. Without a configured seat free text is
-/// refused, never forwarded.
+/// refused, never forwarded. `sponsor` is the page's publication-time payer
+/// (FIX 5288), read from the publication the request already loaded; an
+/// anonymous visitor's parse pays on it while it is still live, else on the
+/// vault owner as before. An authenticated caller pays as itself either way.
 pub(super) async fn parse_free_text(
     server: &Arc<SyncServer>,
     transport: &BookingAdmissionContext,
+    sponsor: Option<EntityId>,
     free_text: String,
     visitor_tz: String,
     now: u64,
@@ -46,7 +51,9 @@ pub(super) async fn parse_free_text(
     tokio::task::spawn_blocking(move || {
         // Who pays, judged again just before the seat spends (FIX 5327).
         let principal = transport.payer_now(server.vault());
-        parse_on_seat(&server, &settings, principal, free_text, visitor_tz, now)
+        parse_on_seat(
+            &server, &settings, principal, sponsor, free_text, visitor_tz, now,
+        )
     })
     .await
     .map_err(|_| ApiError::internal_server_error("booking free-text parse stopped"))?
@@ -70,6 +77,7 @@ fn parse_on_seat(
     server: &SyncServer,
     settings: &BookingParseSettings,
     principal: Option<WriteActor>,
+    sponsor: Option<EntityId>,
     free_text: String,
     visitor_tz: String,
     now: u64,
@@ -83,6 +91,7 @@ fn parse_on_seat(
         server,
         settings,
         principal,
+        sponsor,
         now,
         |backend, lease, config| match block_on(parse_constraint_with_backend(
             backend, lease, &request, config,
@@ -103,12 +112,14 @@ fn parse_on_seat(
 
 /// Runs one admitted parse on the seat: `parse` gets the seat's backend, the
 /// carrier lease and the parse config, called from a blocking thread. The
-/// payer is `principal`, or the vault owner who publishes the page for an
-/// anonymous visitor.
+/// payer is `principal`, or, for an anonymous visitor, the page's
+/// publication-time `sponsor` while one is stored and still live, else the
+/// vault owner who publishes the page, as before.
 pub(super) fn on_parse_seat<T>(
     server: &SyncServer,
     settings: &BookingParseSettings,
     principal: Option<WriteActor>,
+    sponsor: Option<EntityId>,
     now: u64,
     parse: impl FnOnce(&dyn LlmBackend, &BudgetLease, &ConstraintParseConfig) -> Result<T, ApiError>,
 ) -> Result<T, ApiError> {
@@ -116,7 +127,7 @@ pub(super) fn on_parse_seat<T>(
     let vault = server.vault();
     let payer = match principal {
         Some(actor) => actor,
-        None => anonymous_payer(vault).map_err(|_| unserved())?,
+        None => anonymous_payer(vault, sponsor).map_err(|_| unserved())?,
     };
     let models = server.ai.models();
     let seat = models.seat(settings.role).ok_or_else(unserved)?;
@@ -168,14 +179,29 @@ pub(super) fn on_parse_seat<T>(
 }
 
 /// Who pays an anonymous visitor's parse (FIX 4372, Engine ruling A 10-19):
-/// the vault that published the page, as its embedded owner, on every
-/// substrate. It is the one hook a payer chosen at publication would
-/// replace. An authenticated caller, a managed vault's live attested owner
-/// included, pays as itself (`transport.rs`). An attested holder the vault
-/// no longer records as its live owner pays as himself while a live grant
-/// here names him, and here, as an anonymous visitor, otherwise or once
-/// that grant no longer stands (FIX 5327, `BookingAdmissionContext::payer_now`).
-fn anonymous_payer(vault: &oneiron::Vault) -> Result<WriteActor, oneiron::MemoryError> {
+/// the page's publication-time `sponsor` while one is stored and still a
+/// live person (FIX 5288), else the vault that published the page, as its
+/// embedded owner, on every substrate. The sponsor's liveness is the FIX
+/// 5327 person check, the payer half `BookingAdmissionContext::payer_now`
+/// rechecks before a spend: authenticated and revalidated as a live person,
+/// with no grant of its own to stand on. No sponsor, a sponsor no longer
+/// live, or a liveness read that faults pays exactly as before. An
+/// authenticated caller, a managed vault's live attested owner included,
+/// pays as itself (`transport.rs`). An attested holder the vault no longer
+/// records as its live owner pays as himself while a live grant here names
+/// him, and here, as an anonymous visitor, otherwise or once that grant no
+/// longer stands (FIX 5327, `BookingAdmissionContext::payer_now`).
+fn anonymous_payer(
+    vault: &oneiron::Vault,
+    sponsor: Option<EntityId>,
+) -> Result<WriteActor, oneiron::MemoryError> {
+    if let Some(sponsor) = sponsor
+        && let Ok(person) =
+            vault.authenticate_owner(sponsor, &sponsor.to_hex(), true, GateDecisionId::now())
+        && let Ok(live) = person.revalidate_person(vault)
+    {
+        return Ok(WriteActor::new(live, EdgeActorClass::Human));
+    }
     let owner = vault.ensure_embedded_owner_actor()?;
     Ok(WriteActor::new(owner, EdgeActorClass::Human))
 }

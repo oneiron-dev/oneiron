@@ -8,8 +8,8 @@ use crate::edge::{EdgeKind, encode_edge_value};
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, RecordError, RegistryError, Result};
 use crate::habit::TaskRole;
-use crate::limits::{ERR_CHILD_OF_CYCLE_CHECK, MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS};
 use crate::registry::ENTITY_TYPE_TASK;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 
@@ -676,19 +676,17 @@ pub(super) fn would_create_child_of_cycle(
     child: &EntityId,
     proposed_parent: &EntityId,
 ) -> Result<bool> {
+    let mut count = ScanCount::start(store, rtxn, EngineScan::AudienceEdgeRows, child.as_bytes())?;
     let mut frontier = VecDeque::new();
     frontier.push_back(*proposed_parent);
     let mut visited = HashSet::new();
     visited.insert(*proposed_parent);
-    let mut traversed_steps = 0usize;
 
     while let Some(node) = frontier.pop_front() {
         for parent in child_of_overlay.effective_parents(store, rtxn, &node)? {
-            if traversed_steps >= MAX_CHILD_OF_CYCLE_TRAVERSAL_STEPS {
-                return Err(Error::IndexOverflow(ERR_CHILD_OF_CYCLE_CHECK));
-            }
-            traversed_steps += 1;
+            count.row();
             if parent == *child {
+                count.defer(store);
                 return Ok(true);
             }
             if visited.insert(parent) {
@@ -697,5 +695,6 @@ pub(super) fn would_create_child_of_cycle(
         }
     }
 
+    count.defer(store);
     Ok(false)
 }

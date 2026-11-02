@@ -1,19 +1,24 @@
 //! The OpenAI-compatible transport: any `/v1/chat/completions` server.
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
 use oneiron::BudgetLease;
-use oneiron::llm::returned_model_wire_id;
+use oneiron::llm::{
+    CacheDigest, INFERENCE_CALLS_KEY, InferenceCallReceipt, InferencePublisher, ModelId,
+    returned_model_wire_id,
+};
 use oneiron_llm_openai::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
     OpenAiCompatTransportError,
 };
+use serde::Deserialize;
 use serde_json::Value as JsonValue;
 
 use super::cache_usage::carry_chat_evidence;
 use super::http::{HttpFailure, ProviderHttp, SseItem};
-use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver};
+use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use super::output_cap::OutputCap;
 use super::served::record_served_model;
 use crate::config::models::ResponseFormatWire;
@@ -25,6 +30,10 @@ pub(super) struct OpenAiHttp {
     /// Where a house llama.cpp answer's launch alias resolves to the identity
     /// of the process that answered (FIX 7895).
     pub(super) identities: Arc<LlamaIdentityResolver>,
+    /// The engine model each configured wire id is sent for, by that id: a
+    /// carried inference receipt is stamped with the call's before it is
+    /// finished.
+    pub(super) engine_models: BTreeMap<String, ModelId>,
 }
 
 impl OpenAiHttp {
@@ -62,13 +71,16 @@ impl OpenAiCompatTransport for OpenAiHttp {
     fn execute<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> OpenAiCompatFuture<'a> {
         Box::pin(async move {
             let mut body = request.body;
             self.cap.apply(&mut body);
             send_format(self.response_format, &mut body);
             let target = configured_target(&body);
+            let execution = execution_mode(&body);
+            // One physical request, observed from its send (FIX 9417).
+            let publisher = InferencePublisher::begin(lease);
             let mut reply = self
                 .http
                 .post_json(&request.path, &request.headers, &body)
@@ -79,12 +91,23 @@ impl OpenAiCompatTransport for OpenAiHttp {
                 }
                 _ => None,
             };
-            carry_reply_evidence(
+            carry_sent_reply_evidence(
                 reply.status,
                 &mut reply.body,
                 target.as_deref(),
                 answering.as_ref(),
+                execution.as_ref(),
             );
+            // The receipt the reply carries is the request's final one.
+            if let Some(mut receipt) = carried_receipts(&reply.body).pop() {
+                if let Some(model) = target
+                    .as_deref()
+                    .and_then(|wire| self.engine_models.get(wire))
+                {
+                    receipt.model = Some(model.clone());
+                }
+                publisher.finish(receipt);
+            }
             Ok(OpenAiCompatHttpResponse {
                 status: reply.status,
                 headers: reply.headers,
@@ -96,18 +119,29 @@ impl OpenAiCompatTransport for OpenAiHttp {
     fn stream<'a>(
         &'a self,
         request: OpenAiCompatHttpRequest,
-        _lease: &'a BudgetLease,
+        lease: &'a BudgetLease,
     ) -> Result<OpenAiCompatProviderStream<'a>, OpenAiCompatTransportError> {
         let mut body = request.body;
         self.cap.apply(&mut body);
         send_format(self.response_format, &mut body);
         let target = configured_target(&body);
+        let execution = execution_mode(&body);
+        // One physical request, observed from its send (FIX 9417).
+        let publisher = InferencePublisher::begin(lease);
+        let model = target
+            .as_deref()
+            .and_then(|wire| self.engine_models.get(wire))
+            .cloned();
         let events = self.http.post_sse(&request.path, &request.headers, &body);
         let frames = futures_util::stream::unfold(
             Frames {
                 transport: self,
                 target,
+                execution,
+                model,
                 answering: None,
+                publisher,
+                measured: None,
                 events: Box::pin(events),
                 served: None,
                 saw_usage: false,
@@ -118,6 +152,21 @@ impl OpenAiCompatTransport for OpenAiHttp {
         );
         Ok(Box::pin(frames))
     }
+}
+
+/// The receipts a reply's or a chunk's usage carries (FIX 9417), as
+/// [`carry_chat_evidence`] wrote them.
+fn carried_receipts(body: &JsonValue) -> Vec<InferenceCallReceipt> {
+    body.get("usage")
+        .and_then(|usage| usage.get(INFERENCE_CALLS_KEY))
+        .and_then(JsonValue::as_array)
+        .map(|records| {
+            records
+                .iter()
+                .filter_map(|record| InferenceCallReceipt::deserialize(record).ok())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// A provider set to `response_format = "none"` is sent no
@@ -176,16 +225,29 @@ pub(super) fn carry_served_model(status: u16, body: &mut JsonValue, target: Opti
 /// A whole chat reply as the adapter reads it, plain or brokered: the model
 /// it names as a label of the configured `target`, the engine's timings and
 /// the llama.cpp receipt `answering`, its own alias's identity, names (FIX
-/// 7895, 8314), all in its usage.
+/// 7895, 8314), all in its usage. A reply whose request mode is unknown here
+/// (the native EXL3 server's, which writes its own receipt) gets none.
 pub(super) fn carry_reply_evidence(
     status: u16,
     body: &mut JsonValue,
     target: Option<&str>,
     answering: Option<&AnsweringIdentity>,
 ) {
+    carry_sent_reply_evidence(status, body, target, answering, None);
+}
+
+/// [`carry_reply_evidence`] for a reply to a request whose execution mode,
+/// as the engine sent it, is `execution` (FIX 8329).
+pub(super) fn carry_sent_reply_evidence(
+    status: u16,
+    body: &mut JsonValue,
+    target: Option<&str>,
+    answering: Option<&AnsweringIdentity>,
+    execution: Option<&CacheDigest>,
+) {
     carry_served_model(status, body, target);
     carry_timings(body);
-    carry_chat_evidence(body, answering);
+    carry_chat_evidence(body, answering, execution);
 }
 
 /// Copies an engine's own timings into its usage.
@@ -222,8 +284,18 @@ struct Frames<'a, S> {
     transport: &'a OpenAiHttp,
     /// The configured wire id the call sent.
     target: Option<String>,
+    /// The execution mode of the request the call sent (FIX 8329).
+    execution: Option<CacheDigest>,
+    /// The engine model the call was admitted for, when its wire id names
+    /// one: stamped on its final receipt.
+    model: Option<ModelId>,
     /// The last top-level `model` this stream's chunks named, as it came.
     answering: Option<String>,
+    /// The request's observation (FIX 9417): each receipt a usage chunk
+    /// carries is its progress, and the last one its final receipt once the
+    /// stream finished; a cut stream keeps the last as it was.
+    publisher: InferencePublisher,
+    measured: Option<InferenceCallReceipt>,
     events: std::pin::Pin<Box<S>>,
     served: Option<JsonValue>,
     saw_usage: bool,
@@ -247,12 +319,17 @@ where
         };
         let Some(item) = item else {
             self.closed = true;
-            let mut carrier = self.carrier()?;
+            let Some(mut carrier) = self.carrier() else {
+                self.published_end();
+                return None;
+            };
             let answering = self
                 .transport
                 .answering(self.answering.as_deref(), self.target.as_deref())
                 .await;
-            carry_chat_evidence(&mut carrier, answering.as_ref());
+            carry_chat_evidence(&mut carrier, answering.as_ref(), self.execution.as_ref());
+            self.publish(&carrier);
+            self.published_end();
             return Some((Ok(OpenAiCompatStreamFrame::Chunk(carrier)), self));
         };
         let frame = self.frame(item).await;
@@ -293,10 +370,33 @@ where
                 } else {
                     None
                 };
-                carry_chat_evidence(&mut chunk, answering.as_ref());
+                carry_chat_evidence(&mut chunk, answering.as_ref(), self.execution.as_ref());
+                self.publish(&chunk);
                 record_served_model(chunk.get_mut("usage"), self.served.clone());
                 Ok(OpenAiCompatStreamFrame::Chunk(chunk))
             }
+        }
+    }
+
+    /// Records the receipt `chunk` carries, if any, as the request's
+    /// progress.
+    fn publish(&mut self, chunk: &JsonValue) {
+        if let Some(receipt) = carried_receipts(chunk).pop() {
+            self.publisher.partial(receipt.clone());
+            self.measured = Some(receipt);
+        }
+    }
+
+    /// The stream ended: a finished one's last receipt is its final one; a
+    /// stream cut before its finish keeps it as progress.
+    fn published_end(&mut self) {
+        if self.finished
+            && let Some(mut receipt) = self.measured.take()
+        {
+            if let Some(model) = &self.model {
+                receipt.model = Some(model.clone());
+            }
+            self.publisher.finish(receipt);
         }
     }
 

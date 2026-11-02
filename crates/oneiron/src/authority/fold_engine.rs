@@ -414,6 +414,7 @@ pub(super) fn fold_authority_log_once(
             valid_entries: BTreeSet::new(),
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
+            host_custody: BTreeSet::new(),
             closed_handoffs: BTreeSet::new(),
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),
@@ -438,6 +439,9 @@ pub(super) fn fold_authority_log_once(
                 super::conversation_training::FoldedConversationTraining::default(),
             conversation_training_vault:
                 super::conversation_training_vault::FoldedConversationTrainingVault::default(),
+            policy_settings: super::policy_setting_choice::FoldedPolicySettings::default(),
+            agent_carried_acts: BTreeMap::new(),
+            agent_world_undo: Default::default(),
             home_candidacy: BTreeMap::new(),
             owner_work: super::owner_work::FoldedOwnerWork::default(),
             install: InstallBound::default(),

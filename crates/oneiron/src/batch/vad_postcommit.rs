@@ -36,6 +36,9 @@ pub(crate) struct PostcommitWork {
     /// TASKs this transaction settled, whose peer-result waiters wake only
     /// after it commits (FIX 1140).
     pub(crate) settled_tasks: BTreeSet<EntityId>,
+    /// Whether this transaction put or marked a notification, whose live
+    /// queries wake only after it commits (FIX 3084).
+    pub(crate) notifications_changed: bool,
 }
 
 thread_local! {
@@ -47,7 +50,7 @@ fn transaction_key(vault: &Vault, txn: &RwTxn<'_>) -> TransactionKey {
     store_transaction_key(&vault.store, txn)
 }
 
-fn store_transaction_key(store: &Store, txn: &RwTxn<'_>) -> TransactionKey {
+fn store_transaction_key<S>(store: &S, txn: &RwTxn<'_>) -> TransactionKey {
     // Identity only: neither address is dereferenced or retained past the scope.
     (
         std::ptr::from_ref(store) as usize,
@@ -104,6 +107,17 @@ pub(crate) fn queue_proactivity_change(vault: &Vault, txn: &RwTxn<'_>) {
     });
 }
 
+/// Mark a notification put or inbox mark for the owner's post-commit wake of
+/// the live queries that follow notifications (FIX 3084). A rolled-back scope
+/// drops the marker, so no subscriber re-reads for a write that did not land.
+pub(crate) fn queue_notification_change(vault: &Vault, txn: &RwTxn<'_>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending.borrow_mut().get_mut(&transaction_key(vault, txn)) {
+            queued.notifications_changed = true;
+        }
+    });
+}
+
 /// Mark TASK writes for the owner's post-commit announcement. A rolled-back
 /// scope drops them, so a subscriber never hears of a write that did not land.
 pub(crate) fn queue_task_updates(
@@ -145,6 +159,21 @@ pub(crate) fn queue_committed_rows(vault: &Vault, txn: &RwTxn<'_>, rows: BTreeSe
     });
 }
 
+/// Mark written rows for the owner's post-commit live-window mirror, from a
+/// helper holding only the store. The scope is keyed by the store's address,
+/// so only the vault's own store finds it. A rolled-back scope drops them, so
+/// no live window mirrors a write that did not land.
+pub(crate) fn queue_committed_rows_in_txn<S>(store: &S, txn: &RwTxn<'_>, rows: BTreeSet<EntityId>) {
+    PENDING_VAD.with(|pending| {
+        if let Some(queued) = pending
+            .borrow_mut()
+            .get_mut(&store_transaction_key(store, txn))
+        {
+            queued.rows.extend(rows);
+        }
+    });
+}
+
 /// Mark a filed room join for the owner's post-commit live-window push. A
 /// rolled-back scope drops it, so no live window carries a join that did not
 /// land.
@@ -169,8 +198,9 @@ pub(crate) fn queue_pad_tombstone_window(store: &Store, txn: &RwTxn<'_>, window:
     });
 }
 
-/// The rows `ops` write: each put, and the source of each edge they write,
-/// whose window carries the edge.
+/// The rows `ops` write: each put, and the source of each edge they write or
+/// remove, whose window carries the edge: an edge-only batch wakes the live
+/// mirror too (FIX 9599).
 pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
     ops.iter()
         .filter_map(|op| match op {
@@ -179,7 +209,22 @@ pub(super) fn ops_written_rows(ops: &[BatchOp]) -> BTreeSet<EntityId> {
             | BatchOp::PublicEdgeWithCreatedAt { src, .. }
             | BatchOp::EdgeWithCreatedAt { src, .. }
             | BatchOp::SetEdgeWeight { src, .. }
-            | BatchOp::SetEdgeVad { src, .. } => Some(*src),
+            | BatchOp::SetEdgeVad { src, .. }
+            | BatchOp::DeleteEdge { src, .. } => Some(*src),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The edges `ops` remove, each as `(src, kind, tgt)`: the window that holds
+/// one loses its copy only by an exact removal (FIX 9599).
+#[cfg(feature = "sync")]
+pub(super) fn ops_removed_edges(
+    ops: &[BatchOp],
+) -> Vec<(EntityId, crate::edge::EdgeKind, EntityId)> {
+    ops.iter()
+        .filter_map(|op| match op {
+            BatchOp::DeleteEdge { src, kind, tgt } => Some((*src, *kind, *tgt)),
             _ => None,
         })
         .collect()

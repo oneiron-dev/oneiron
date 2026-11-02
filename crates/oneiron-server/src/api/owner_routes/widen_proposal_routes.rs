@@ -7,8 +7,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -18,17 +17,55 @@ use oneiron::agent_dispatch::widen_doors::{
 
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/widen-proposals", get(list))
-        .route("/widen-proposals/approve", post(approve))
-        .route("/widen-proposals/decline", post(decline))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/widen-proposals",
+                summary: "The proposals, newest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/widen-proposals/approve",
+                summary: "Widens the parent's slice and enqueues the child.",
+                row: None,
+            },
+            post(approve),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/widen-proposals/decline",
+                summary: "Refuses the proposal for good.",
+                row: None,
+            },
+            post(decline),
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/widen-proposals/approve`'s body
+/// (FIX 11611), shared with `/widen-proposals/decline`: [`WidenProposalAnswer`].
+pub(crate) fn widen_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WidenProposalAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/widen-proposals/approve`'s answer
+/// (FIX 11611), shared with `/widen-proposals/decline`: [`WidenProposalView`].
+pub(crate) fn widen_proposal_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WidenProposalView>()
 }
 
 /// `GET /v1/owner/widen-proposals[?state=pending|approved|declined]`: the
@@ -63,10 +100,10 @@ async fn list(
 async fn approve(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WidenProposalAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<WidenProposalAnswer>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let answer = json_payload(payload)?;
+    let answer = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(
@@ -89,10 +126,10 @@ async fn approve(
 async fn decline(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WidenProposalAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<WidenProposalAnswer>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let answer = json_payload(payload)?;
+    let answer = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(

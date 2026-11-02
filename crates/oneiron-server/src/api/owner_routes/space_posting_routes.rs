@@ -6,22 +6,41 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::channel_identity_autonomy::GroupPostingPreset;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/space-posting", get(read).post(set))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/space-posting",
+                summary: "One space's dial.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/space-posting",
+                summary: "Sets one space's dial, and with grant the exact owner-space consent it needs.",
+                row: None,
+            },
+            post(set),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -33,7 +52,7 @@ struct SpaceQuery {
     space: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetSpacePosting {
     identity: String,
@@ -45,7 +64,7 @@ struct SetSpacePosting {
     grant: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SpacePosting {
     identity: String,
     space: String,
@@ -57,6 +76,18 @@ struct SpacePosting {
     /// The setting's receipt, when this call wrote one.
     #[serde(skip_serializing_if = "Option::is_none")]
     setting_ref: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/space-posting`'s body (FIX 11611):
+/// [`SetSpacePosting`].
+pub(crate) fn set_space_posting_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetSpacePosting>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/space-posting`'s answer (FIX 11611):
+/// [`SpacePosting`].
+pub(crate) fn space_posting_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SpacePosting>()
 }
 
 fn plan(
@@ -100,10 +131,10 @@ async fn read(
 async fn set(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetSpacePosting>, JsonRejection>,
+    payload: OwnerJsonBody<SetSpacePosting>,
 ) -> OwnerReply<SpacePosting> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<SpacePosting> {
         let identity = entity_id("identity", &request.identity)?;
         let now = std::time::SystemTime::now()

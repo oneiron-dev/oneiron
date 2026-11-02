@@ -8,7 +8,7 @@ use xxhash_rust::xxh32::xxh32;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::keyspace::OverlayKeyspace;
+use super::keyspace::{OverlayKeyspace, OverlayMutation};
 use super::overlay::SessionOverlay;
 use super::snapshot::SnapshotLookup;
 
@@ -21,6 +21,12 @@ use super::snapshot::SnapshotLookup;
 /// durable one.
 pub(super) const SESSION_SHORT_ID_SIGIL: &str = "s";
 
+/// The overlay-only `VaultMeta` row holding the last ordinal this room
+/// minted an alias at (FIX 10102): it only grows, so an alias promotion
+/// retired is never minted again for another entity. Never a base counter:
+/// promotion leaves it, and the room's close drops it with its overlay.
+pub(super) const SESSION_SHORT_ID_ORDINAL_KEY: &[u8] = b"session_short_id:v0:ordinal";
+
 impl SessionOverlay {
     /// Allocates this entity's session-local short id and content-hash byte
     /// (ARCH-0052 §7).
@@ -28,9 +34,10 @@ impl SessionOverlay {
     /// In-room short ids are TEMPORARY PRESENTATION ALIASES. Canonical ids are
     /// allocated at promote (ONE-1730), so this counter draws from a
     /// session-scoped namespace held entirely in the overlay `ShortIds` /
-    /// `ShortIdsReverse` keyspaces: the base `sid_counter:<type_byte>` rows and
-    /// the base short-id tables are never read and never written, and every
-    /// alias minted here evaporates at close.
+    /// `ShortIdsReverse` keyspaces and the room's ordinal row: the base
+    /// `sid_counter:<type_byte>` rows and the base short-id tables are never
+    /// read and never written, and every alias minted here evaporates at
+    /// close.
     ///
     /// The alias is deliberately NOT format-compatible with a base short id.
     /// A base alias is `<two lowercase letters><decimal digits>`, and both
@@ -52,6 +59,9 @@ impl SessionOverlay {
     /// alias with a refreshed content hash, mirroring the base
     /// `plan_short_id_update` update arm: an alias is stable for the entity's
     /// lifetime in the room even as its body changes.
+    ///
+    /// The ordinal, the stale forward row's removal and both alias rows stage
+    /// as one preflighted group: a refused group stages none of them.
     pub(crate) fn alloc_session_short_id(
         self: &Arc<Self>,
         id: &EntityId,
@@ -74,6 +84,7 @@ impl SessionOverlay {
                 crate::session_overlay::hygiene_tests::ShortIdScratch::Alias,
                 short_id.as_bytes(),
             );
+            let mut group = Vec::new();
             if old_content_hash != content_hash {
                 let stale_key = Zeroizing::new(encode_session_short_id_forward_key(
                     &short_id,
@@ -84,18 +95,32 @@ impl SessionOverlay {
                     crate::session_overlay::hygiene_tests::ShortIdScratch::StaleForwardKey,
                     &stale_key,
                 );
-                self.delete_with_base_backing(OverlayKeyspace::ShortIds, &stale_key, false)?;
+                group.push(OverlayMutation::Delete {
+                    keyspace: OverlayKeyspace::ShortIds,
+                    key: stale_key.to_vec(),
+                    base_backed: false,
+                });
             }
-            self.put_session_short_id_rows(id, &short_id, content_hash)?;
+            group.extend(session_short_id_rows(id, &short_id, content_hash));
+            self.stage_mutation_group(group)?;
             return Ok((std::mem::take(&mut *short_id), content_hash));
         }
 
-        // The room counter is the live alias count, read from the same
-        // snapshot the allocation stages into: reverse rows are one-per-entity
-        // and never deleted mid-room, so the next ordinal cannot collide with
-        // an alias already minted in this segment.
-        let next = snapshot
-            .live_row_count(OverlayKeyspace::ShortIdsReverse, |_| true)
+        // The room's ordinal row only grows, read from the same snapshot the
+        // allocation stages into: an alias promotion retired is never minted
+        // again, so no entity's hydration mapping is overwritten.
+        let last = match snapshot
+            .lookup_single(OverlayKeyspace::VaultMeta, SESSION_SHORT_ID_ORDINAL_KEY)
+        {
+            SnapshotLookup::Present(value) => u64::from_be_bytes(
+                value
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| Error::CorruptedIndex("session short id ordinal"))?,
+            ),
+            SnapshotLookup::Passthrough | SnapshotLookup::Tombstone => 0,
+        };
+        let next = last
             .checked_add(1)
             .ok_or(Error::ArithmeticOverflow("session short id counter"))?;
         let mut short_id = Zeroizing::new(format!("{SESSION_SHORT_ID_SIGIL}{next}"));
@@ -104,33 +129,39 @@ impl SessionOverlay {
             crate::session_overlay::hygiene_tests::ShortIdScratch::Alias,
             short_id.as_bytes(),
         );
-        self.put_session_short_id_rows(id, &short_id, content_hash)?;
+        let mut group = session_short_id_rows(id, &short_id, content_hash);
+        group.push(OverlayMutation::Put {
+            keyspace: OverlayKeyspace::VaultMeta,
+            key: SESSION_SHORT_ID_ORDINAL_KEY.to_vec(),
+            value: next.to_be_bytes().to_vec(),
+        });
+        self.stage_mutation_group(group)?;
         Ok((std::mem::take(&mut *short_id), content_hash))
     }
+}
 
-    /// Stages both session short-id rows, mirroring the base pair: forward
-    /// `(short_id ‖ content_hash)` -> entity id, reverse entity id -> the same
-    /// bytes as the forward key.
-    fn put_session_short_id_rows(
-        self: &Arc<Self>,
-        id: &EntityId,
-        short_id: &str,
-        content_hash: u8,
-    ) -> Result<()> {
-        let forward_key =
-            Zeroizing::new(encode_session_short_id_forward_key(short_id, content_hash));
-        #[cfg(test)]
-        crate::session_overlay::hygiene_tests::register_short_id_buffer(
-            crate::session_overlay::hygiene_tests::ShortIdScratch::NewForwardKey,
-            &forward_key,
-        );
-        self.put(OverlayKeyspace::ShortIds, &forward_key, id.as_bytes())?;
-        self.put(
-            OverlayKeyspace::ShortIdsReverse,
-            id.as_bytes(),
-            &forward_key,
-        )
-    }
+/// Both session short-id rows, mirroring the base pair: forward
+/// `(short_id ‖ content_hash)` -> entity id, reverse entity id -> the same
+/// bytes as the forward key.
+fn session_short_id_rows(id: &EntityId, short_id: &str, content_hash: u8) -> Vec<OverlayMutation> {
+    let forward_key = Zeroizing::new(encode_session_short_id_forward_key(short_id, content_hash));
+    #[cfg(test)]
+    crate::session_overlay::hygiene_tests::register_short_id_buffer(
+        crate::session_overlay::hygiene_tests::ShortIdScratch::NewForwardKey,
+        &forward_key,
+    );
+    vec![
+        OverlayMutation::Put {
+            keyspace: OverlayKeyspace::ShortIds,
+            key: forward_key.to_vec(),
+            value: id.as_bytes().to_vec(),
+        },
+        OverlayMutation::Put {
+            keyspace: OverlayKeyspace::ShortIdsReverse,
+            key: id.as_bytes().to_vec(),
+            value: forward_key.to_vec(),
+        },
+    ]
 }
 
 /// Content-hash byte for a session short id — the base scheme

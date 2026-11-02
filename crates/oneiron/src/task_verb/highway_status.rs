@@ -18,6 +18,7 @@ use super::consts::{
     TASK_BRIEF_PROPOSAL_PREDICATE, TASK_CREATE_PROPOSAL_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND,
     TASK_REALIZE_ATTEMPT_KIND, TASK_SETTLE_ID_DOMAIN,
 };
+use super::consult_assignee_wait::{CONSULT_ASSIGNEE_FACT_WAIT, waits_for_assignee_fact_in};
 use super::create_validation::task_route_dedupe_key;
 use super::highway::{attempt_hex, lease_owner_for, not_found, phase_of};
 use super::highway_accept::{Lane, lane_of};
@@ -85,12 +86,17 @@ impl Memory<'_> {
 
     /// A proposal's status: the TASK it landed as, once it landed;
     /// otherwise pending in the tray, or rejected. Readable by its proposer
-    /// and the vault owner.
+    /// and the vault owner, through the read this caller's credential and
+    /// destination admit (FIX 10184): one they withhold, before its state is
+    /// read or again before it is answered, is not found.
     fn proposal_status(
         &self,
         handle: TaskHandle,
         proposal_ref: EntityId,
     ) -> MemoryResult<StatusRead> {
+        if self.proposal_withheld(proposal_ref)? {
+            return Err(not_found());
+        }
         let (landed, pending, rejected) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let Some(claim) = self.vault().get_claim_in_txn(&txn, &proposal_ref)? else {
@@ -120,6 +126,9 @@ impl Memory<'_> {
                 || claim.lifecycle == ClaimLifecycleStatus::Retracted;
             (landed, pending, rejected)
         };
+        if self.proposal_withheld(proposal_ref)? {
+            return Err(not_found());
+        }
         if let Some(task_ref) = landed {
             return Ok(match self.task_status(handle, task_ref, None)? {
                 StatusRead::View(view, mut related) => {
@@ -151,10 +160,20 @@ impl Memory<'_> {
                 asks: Vec::new(),
                 last_receipt: None,
                 workflow: None,
+                waiting: None,
                 observed: [0; 32],
             },
             Vec::new(),
         ))
+    }
+
+    /// Whether this caller's read credential or destination withholds
+    /// `proposal_ref`: the point read a bound credential makes, then the
+    /// scoped entity read every caller makes. Each opens its own snapshot,
+    /// so neither runs inside another read.
+    fn proposal_withheld(&self, proposal_ref: EntityId) -> MemoryResult<bool> {
+        Ok(self.credential_withholds(proposal_ref)?
+            || self.get_entity(&proposal_ref.to_hex())?.value.is_none())
     }
 
     /// A TASK's status, and its live try's. Readable by its owner and by the
@@ -169,7 +188,7 @@ impl Memory<'_> {
         if self.credential_withholds(task_ref)? {
             return Err(not_found());
         }
-        let (body, generation, last_receipt) = {
+        let (body, generation, last_receipt, waiting) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             let Some(body) = task_verb_body_in(self.vault(), &txn, task_ref)? else {
                 return Err(not_found());
@@ -186,7 +205,9 @@ impl Memory<'_> {
             // index, in the read that admitted the reader.
             let last_receipt =
                 super::lifecycle_receipt::newest_for_task_in(self.vault(), &txn, task_ref)?;
-            (body, generation, last_receipt)
+            let waiting = waits_for_assignee_fact_in(self.vault(), &txn, task_ref, &body)?
+                .then(|| CONSULT_ASSIGNEE_FACT_WAIT.to_owned());
+            (body, generation, last_receipt, waiting)
         };
         let queue = AttemptQueue::new(self.vault());
         let live: Option<AttemptRecord> = match attempt {
@@ -264,6 +285,7 @@ impl Memory<'_> {
                 asks,
                 last_receipt,
                 workflow,
+                waiting,
                 observed: [0; 32],
             },
             Vec::new(),
@@ -291,6 +313,7 @@ impl Memory<'_> {
                 asks: vec![(group, status)],
                 last_receipt: None,
                 workflow: None,
+                waiting: None,
                 observed: [0; 32],
             },
             Vec::new(),

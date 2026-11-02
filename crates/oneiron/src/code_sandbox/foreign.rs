@@ -9,6 +9,7 @@ use super::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
     MicroVmBackend, MicroVmSandboxAdapter, select_backend_for_tier,
 };
+use super::source::PreparedSource;
 use super::{
     ProposalSpoolFloor, SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable,
     SandboxProposalDelta,
@@ -32,10 +33,12 @@ pub struct ForeignCodeOutcome {
 /// The workspace is a caller-scoped snapshot supplied by the admitting door.
 /// No host credential or network authority is lent to a foreign program.
 /// Its proposed files spool on `spool`, the host's measured disk floor
-/// (FIX 7650). A TypeScript `source` runs as the JavaScript Oxc prints for
-/// it; JavaScript runs as written (FIX 8276).
+/// (FIX 7650). A TypeScript program runs as the JavaScript Oxc printed for
+/// it; JavaScript runs as written (FIX 8276). `prepared` is the admitting
+/// door's one preparation of it, whose original that door keeps and checks
+/// (FIX 10389): nothing here prepares or checks it again.
 pub fn execute_foreign_code(
-    source: &str,
+    prepared: &PreparedSource<'_>,
     mounts: SandboxMountTable,
     artifact: ForeignCodeArtifact<'_>,
     budget: ExecutionBudget,
@@ -48,9 +51,8 @@ pub fn execute_foreign_code(
     }
     let backend = select_backend_for_tier(SandboxGuestTier::Foreign)?
         .ok_or_else(|| invalid("foreign execution requires isolation"))?;
-    // Prepared once, here: the shared launch below runs what it is given,
-    // as the runtime's own isolated lane hands it an already prepared one.
-    let prepared = super::source::prepare_source(source);
+    // The shared launch below runs what it is given, as the runtime's own
+    // isolated lane hands it an already prepared one.
     execute_foreign_code_on(
         prepared.executed(),
         SandboxGuestTier::Foreign,

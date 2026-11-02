@@ -1,4 +1,5 @@
 //! Owner-only OpenAI proxy admission and selective remember-grant withdrawal.
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, naming, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -25,7 +26,7 @@ pub(crate) async fn vault_connectors_proxy_admit(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = clock_ingress::run_blocking(move || {
         let actor = id("actor", &input.actor)?;
         let registration =
             server
@@ -56,7 +57,7 @@ pub(crate) async fn vault_connectors_proxy_revoke_write(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = clock_ingress::run_blocking(move || {
         let actor = id("actor", &input.actor)?;
         let key = id("key", &input.key)?;
         let registration = server.vault().revoke_proxy_connector_write(

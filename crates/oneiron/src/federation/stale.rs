@@ -288,6 +288,11 @@ impl<'v> StaleSweepWatch<'v> {
     /// tries again.
     pub(crate) fn finish(self) -> Result<()> {
         let noted = SWEEP_DUE.with(|due| due.replace(false));
+        // Evidence a local append kept waiting on history is put again once
+        // any door stores an authority row (FIX 2989 rest, an L02 seam): a
+        // no-op unless the commit stored one, and never the sweep's failure.
+        self.vault
+            .retry_pending_authority_history_after_authority_ingest(noted);
         // A turn program held for a lapsed authority resumes on the ingest
         // that restores it (FIX 5875, an L07 seam): a no-op unless the
         // commit stored an authority row, and never the sweep's failure.

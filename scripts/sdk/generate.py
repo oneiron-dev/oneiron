@@ -6,6 +6,7 @@ import json
 import keyword
 import re
 import subprocess
+import sys
 from facade_types import Inventory
 from catalog_fragment import catalog_fragment
 from uniffi_types import UniffiTypes
@@ -142,6 +143,15 @@ for row in ROWS:
     # unowned, as every HTTP call and direct tool call does.
     if row.get('host_door_lens_owner') and not row.get('host_door'):
         raise ValueError(f'{row["name"]}: only a host door takes a lens owner')
+    # `host_door_client_surface` hands a lens door the generated-UI surface
+    # profile the caller's transport declared (FIX 7969): an MCP call's
+    # `_meta.clientCapabilities` (`McpCallContext::client_surface`), read per
+    # call as the MCP leg keeps no session. The facade keeps no transport
+    # session and hands `None`; a per-call profile there rides the door's
+    # own input. A door handed `None` lowers as its input says, else for the
+    # whole atom kit.
+    if row.get('host_door_client_surface') and not row.get('host_door'):
+        raise ValueError(f'{row["name"]}: only a host door takes a client surface')
     # `host_door_surface` hands an owner-setting door where the owner's say-so
     # reached this install, for his act's audit record (FIX 4625): the facade
     # call's request-derived surface (`FacadeCall::surface`, a linked machine
@@ -172,10 +182,12 @@ for row in ROWS:
         raise ValueError(f'{row["name"]}: an attachment names a facade JSON response file')
     # DOOR-127: `no_record` marks a facade row no transport keeps a call
     # receipt of (`NO_RECORD_ROWS`): an off-record session's own rows, as
-    # ARCH-0052 keeps no wire receipt that a session ran. Every reply states
-    # `none; no-record`, as the owner's off-record routes do. Only a host door
-    # judged by the owner's proof carries it, so no other caller's call goes
-    # unrecorded.
+    # ARCH-0052 keeps no wire receipt that a session ran, and the owner's
+    # custody rows that carry a secret's value or its sealed input (FIX
+    # 4993), whose record is the custody request's own receipt, as on the
+    # owner's routes. Every reply states `none; no-record`, as the owner's
+    # off-record routes do. Only a host door judged by the owner's proof
+    # carries it, so no other caller's call goes unrecorded.
     if row.get('no_record') and (row.get('context', 'memory') != 'memory' or not row.get('host_door')):
         raise ValueError(f'{row["name"]}: only a host-door facade row keeps no call receipt')
     # FIX 6498: `require_granted_scope` marks a write whose engine door judges
@@ -196,8 +208,13 @@ for row in ROWS:
 # input, `*` taking every item of an array. The row's generated engine fn checks
 # that each ref there resolves under the writer's own scoped read before the
 # engine call (`record_refs_check`), so every door that reaches the row meets
-# the check once. Only a plain memory row's doors all reach that fn.
+# the check once. Only a plain memory row's doors all reach that fn. A row's
+# `refs_check` swaps in its own checker for those refs (FIX 7566): a Rust path
+# to a fn, read only beside nonempty `refs`.
 for row in ROWS:
+    if 'refs_check' in row and ('refs' not in row or not isinstance(row['refs_check'], str)
+            or not re.fullmatch(r'(crate|super|self)(::[A-Za-z_][A-Za-z0-9_]*)+', row['refs_check'])):
+        raise ValueError(f'{row["name"]}: refs_check is a Rust fn path (crate::...), and only beside refs')
     if 'refs' not in row: continue
     if row.get('context', 'memory') != 'memory' or row.get('host_door') or row.get('server_door') or row.get('admission', {}).get('owner_grade'):
         raise ValueError(f'{row["name"]}: only a plain memory row checks its record refs in its engine fn')
@@ -297,6 +314,11 @@ CALL_HOME_DOORS = {'vault.search.bm25': ('super::search_home_doors::vault_search
 # FIX 10425: the facade host-door rows whose answer counts its hooks' verdict
 # decisions among its own (`model_free`), as their code-mode door does.
 HOOK_DECISION_ROWS = {'self.browser.batch', 'self.browser.library.run'}
+# FIX 10389: a host door that runs its caller's program answers a failure
+# that keeps the program's type feedback beside its typed refusal (its door
+# returns `SourceListed`); each surface converts it with today's status,
+# code and retry, and releases the feedback apart.
+SOURCE_FEEDBACK_DOORS = {'execute_code'}
 
 # Boundary codecs are selected by argument/result type, never by verb name.
 ARGUMENTS = {
@@ -316,6 +338,9 @@ ARGUMENTS = {
         'napi_convert': 'let {name} = {name}.map(|value| oneiron_remote::check_unix_seconds("as_of", value)).transpose().map_err(facade_error)?;', 'field': '{name}'},
     'deadline_ms': {'rust': 'Option<u64>', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int | None', 'stub': 'int | None', 'native_py': 'Option<u64>',
         'napi_convert': 'let {name} = {name}.map(oneiron_remote::check_deadline_ms_number).transpose().map_err(facade_error)?;', 'field': '{name}'},
+    # FIX 9962: a recall's rendering budget, a whole token count (0: uncut).
+    'token_budget': {'rust': 'Option<u64>', 'napi': 'Option<f64>', 'native_ts': 'number | undefined', 'py': 'int | None', 'stub': 'int | None', 'native_py': 'Option<u64>',
+        'napi_convert': 'let {name} = {name}.map(oneiron_remote::check_token_budget_number).transpose().map_err(facade_error)?;', 'field': '{name}'},
     # OF-370: a recall's media query, lowered from each boundary's own record
     # (napi object, UniFFI record, Python JSON) onto the engine's wire type.
     'media': {'rust': 'Option<oneiron::code_run::vault_read::ContextPackMediaQuery>', 'napi': 'Option<NapiRecallMedia>', 'native_ts': 'RecallMedia | undefined', 'py': 'dict[str, Any] | None', 'stub': 'RecallMedia | None', 'native_py': 'Option<&str>', 'json': True,
@@ -328,7 +353,7 @@ ARGUMENTS = {
     # OF-237: the receipt kinds a read lists, as `ReceiptKind` names them; none
     # is the gate decision ledger.
     'kinds': {'rust': '&[String]', 'napi': 'Option<Vec<String>>', 'native_ts': 'string[] | undefined', 'py': 'list[str] | None', 'stub': 'list[str] | None', 'native_py': 'Option<Vec<String>>',
-        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': '{name}.to_vec()'},
+        'napi_convert': 'let {name} = {name}.unwrap_or_default();', 'py_convert': 'let {name} = {name}.unwrap_or_default();', 'borrow': '&', 'field': 'Some({name}.to_vec())'},
     'json': {'napi': 'String', 'native_ts': 'string', 'py': 'dict[str, Any]', 'native_py': '&str', 'json': True},
 }
 RESULTS = {
@@ -440,7 +465,7 @@ def native_boundary(row, language):
     else:
         name = names[args[0]['name']]
         if language == 'napi':
-            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None }}))?;'
+            setup = f'let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!("invalid keyed request: {{error}}"), suggestions: vec!["Use the documented keyed DTO.".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new(), legal_hold: None }}))?;'
         else:
             setup = f'let input: serde_json::Value = decode({name}, "{row["name"]}")?;'
         call = f'self.inner.agent_verb("{row["name"]}", input)'
@@ -775,12 +800,15 @@ def takes_task_work_turn(row):
         raise ValueError(f'{row["name"]}: a task-work producer row is a plain memory row')
     return True
 
+# FIX 12072: every future an arm awaits is boxed, so the dispatcher's own
+# future stays small; unboxed, it is as large as its largest arm's, and it is
+# built inline on the worker stack in every caller's.
 def mcp_input_dispatch(row):
     'One row of the input dispatcher every MCP door shares.'
     name, method = row['name'], row['name'].replace('.', '_')
     decode = f'let input: {rust_type(row["input"])} = serde_json::from_value(input).map_err(|_| invalid())?;\n'
     if row.get('context') == 'board':
-        return f'{json.dumps(name)} => {{\n{decode}execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input)).await }},\n'
+        return f'{json.dumps(name)} => {{\n{decode}Box::pin(execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::task_verb::sdk::{method}(context, input))).await }},\n'
     body = ''
     if name == 'describe':
         # One target per describe (FIX 3256), on the args the pre hooks left,
@@ -789,7 +817,7 @@ def mcp_input_dispatch(row):
         # describe(self) renders the authenticated run brief, the same door REST takes.
         body += ('if input.get("self").and_then(Value::as_bool) == Some(true) {\n'
                  '    let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
-                 '    let (value, listed) = crate::api::context_board::describe_self_for_auth(server, auth, &input).await.map_err(|_| invalid())?;\n'
+                 '    let (value, listed) = Box::pin(crate::api::context_board::describe_self_for_auth(server, auth, &input)).await.map_err(|_| invalid())?;\n'
                  '    // Derived from the rows its card lists, the roster it read among them.\n'
                  '    served.extend(listed);\n'
                  '    let output: oneiron::task_verb::TaskDescription = serde_json::from_value(value).map_err(|_| invalid())?;\n'
@@ -807,6 +835,12 @@ def mcp_input_dispatch(row):
                  '// The person path lists through its surface; the host paths beside their archive. A slip keeps its own path; a host action with no slip (the dev mode) takes the host-action export.\n'
                  '// Each arm records the owner act with where he spoke from: an MCP row carries no request headers (FIX 4625, 4626).\n'
                  'let surface = crate::api::facade::owner_binding::act_surface(auth);\n'
+                 '// A transfer is kept on the server, as on REST, and read through vault.export.transfer.read (FIX 11176).\n'
+                 'if input.delivery.unwrap_or_default() == oneiron::memory::ExportDelivery::Transfer {\n'
+                 '    let (transfer, listed) = crate::api::facade::mcp_export_transfer(server, auth, surface, &actor.destination(), &input, action).map_err(mcp_facade_error)?;\n'
+                 '    served.extend(listed);\n'
+                 '    return mcp_agent_verb_output(transfer, crate::mcp::McpPageSource::complete(1));\n'
+                 '}\n'
                  'let output = match (auth.verified_slip(), action) {\n'
                  '    (Some(proof), _) if proof.claims().holder_ref == "host" => server.vault.export_with_verified_host_owner_listing(&input, proof, surface, actor.destination()).map(|(output, listed)| { served.extend(listed); output }),\n'
                  '    (Some(proof), _) => memory.export_with_verified_owner(&input, proof, surface),\n'
@@ -823,19 +857,24 @@ def mcp_input_dispatch(row):
         # credential the REST facade passes it.
         session_arg = 'actor.off_record_session.as_deref().map(oneiron::EntityId::from_hex).transpose().map_err(|_| invalid())?, ' if row.get('host_door_session') else ''
         lens_arg = 'owner, ' if row.get('host_door_lens_owner') else ''
+        client_surface_arg = 'actor.client_surface.clone(), ' if row.get('host_door_client_surface') else ''
         surface_arg = 'crate::api::facade::owner_binding::act_surface(auth), ' if row.get('host_door_surface') else ''
         # A caller door keeps the invocation its call hands it in its own rows:
         # a call that keeps no record hands its hidden id (FIX 5381).
         caller_arg = f'(actor.actor_ref, actor.actor_class), oneiron::task_verb::verb_hook_boundary::door_invocation_of(&memory, {json.dumps(name)}), '
-        door = f'crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{surface_arg}input).await'
+        door = f'Box::pin(crate::api::facade::host_doors::{method}(server, auth, {session_arg}{caller_arg if row.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}input)).await'
         # The card's owner names the request as the row runs it, before it decodes.
         lens_owner = f'let owner = surface.lens_owner({json.dumps(name)}, &input);\n' if row.get('host_door_lens_owner') else ''
+        # A source door's failure keeps its program's feedback beside its
+        # refusal, released apart by the rows the call served (FIX 10389).
+        door_error = ('|failure| crate::api::mcp_gateway::type_feedback_release::source_run_error(server, actor, served.rows(), failure)'
+                      if name in SOURCE_FEEDBACK_DOORS else 'mcp_facade_error')
         body += ('let auth = actor.auth.as_ref().ok_or_else(invalid)?;\n'
                  f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + lens_owner + decode +
                  (f'let (output, listed) = {door};\n'
                   '// Derived from the rows its reads listed: unknown when its path lists none (FIX 5988).\n'
-                  'served.listed(crate::api::facade::host_doors::ListedRows::rows(listed));\n'
-                  'let output = output.map_err(mcp_facade_error)?;\n' if row.get('host_door_lists') else
+                  'served.listed(crate::api::facade::host_doors::support::ListedRows::rows(listed));\n'
+                  f'let output = output.map_err({door_error})?;\n' if row.get('host_door_lists') else
                   f'let output = {door}.map_err(mcp_facade_error)?;\n'))
     elif row.get('server_door'):
         # A server door runs the verb with the host's execution inputs, as on REST.
@@ -844,7 +883,7 @@ def mcp_input_dispatch(row):
                      if home_door else f'{row["server_door"]}_listing(actor.actor_ref, actor.actor_class, proof, actor.locality(), None, input)')
         body += (f'oneiron::task_verb::sdk::validate_input({json.dumps(name)}, &input).map_err(mcp_facade_error)?;\n' + decode +
                  'let proof = actor.auth.as_ref().and_then(crate::auth::CoreAuth::verified_slip).cloned();\n'
-                 f'let (output, listed) = server.{door_call}.await;\n'
+                 f'let (output, listed) = Box::pin(server.{door_call}).await;\n'
                  '// Derived from these rows too, though it names none of them.\n'
                  'served.extend(listed);\n'
                  'let output = output.map_err(mcp_facade_error)?;\n')
@@ -855,7 +894,7 @@ def mcp_input_dispatch(row):
             # scope and frame-epoch checks.
             body += ('if let Some(key) = input.key.clone() {\n'
                      '    let frame_epoch = input.frame_epoch;\n'
-                     '    return execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch })).await;\n'
+                     '    return Box::pin(execute_mcp_board_verb(server, actor, served, board_hooks, |context| oneiron::board_verb::dispatch_board_verb(context, oneiron::board_verb::BoardVerbCall::Expand { key, frame_epoch }))).await;\n'
                      '}\n')
             # The TASKS section reaches MCP as rows, narrowed to the credential before its render cap.
             body += ('if input.task_ref.is_none() && input.handle.is_none() && input.after.is_none() && !input.self_target && !input.vault {\n'
@@ -870,7 +909,7 @@ def mcp_input_dispatch(row):
             body += f'served.extend({row["mcp_served"]});\n'
         if takes_task_decisions(row):
             # Its hooks stay here; the typed row alone crosses to the worker.
-            body += (f'let (output, listed) = mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input)).await?;\n'
+            body += (f'let (output, listed) = Box::pin(mcp_task_row(server, tool, actor, surface, move |memory| oneiron::task_verb::sdk::{method}(memory, input))).await?;\n'
                      '// Derived from the rows its reads listed, on a refusal too.\n'
                      'served.extend(listed);\n'
                      'let output = output.map_err(mcp_facade_error)?;\n')
@@ -878,7 +917,7 @@ def mcp_input_dispatch(row):
             # Its page as the plain arm reads it, then the home's references.
             body += ('let asked = (input.query.clone(), input.limit);\n'
                      f'let output = oneiron::task_verb::sdk::{method}(&memory, input).map_err(mcp_facade_error)?;\n'
-                     f'let (output, listed) = {CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller()).await;\n'
+                     f'let (output, listed) = Box::pin({CALL_HOME_DOORS[name][1]}(server.vault(), output, &asked.0, asked.1, &actor.home_caller())).await;\n'
                      '// The home\'s references, found under the caller\'s own proof.\n'
                      'served.extend(listed);\n')
         else:
@@ -900,7 +939,14 @@ def mcp_input_dispatch(row):
                   f'usize::from(output.{page["cursor"]}.is_some()), true).rows_at({json.dumps(page["rows"])})')
         if 'resume' in page:
             assert page['resume'] in row['mcp_fields'], f'{name}: page.resume names no MCP argument'
-            source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
+            if 'within' in page:
+                # The cursor goes back inside the argument that carries the
+                # whole input, as its `within` key (FIX 9175, FIX 10186).
+                assert row['mcp_fields'][page['resume']] == '$', f'{name}: page.within needs page.resume to carry the whole input'
+                source += (f'.resumed_within({json.dumps(page["cursor"])}, {json.dumps(page["resume"])}, '
+                           f'{json.dumps(page["within"])})')
+            else:
+                source += f'.resumed_by({json.dumps(page["cursor"])}, {json.dumps(page["resume"])})'
         body += f'let source = {source};\n'
     else:
         count = 'output.len()' if row['output'].startswith('Vec<') else '1'
@@ -923,7 +969,10 @@ pub(super) async fn execute_mcp_agent_verb(
         execute_agent_verb_input(server, args.tool.name, input, actor, None, served, board_hooks).await
     }
 
-fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
+/// The typed input a `tools/call` of `tool` assembles from its arguments: the
+/// one projection the call runs on, and the one the binding door classifies
+/// a call over a damaged authority clock floor by (FIX 11201).
+pub(crate) fn mcp_agent_verb_input(tool: &str, a: &crate::mcp::McpVerbArguments) -> Result<Value, McpGatewayError> {
 '''
     result += invalid + 'match tool {\n' + ''.join(mcp_input_projection(row) for row in mcp_rows()) + '_ => Err(invalid()), } }\n'
     result += '''/// The `tools/call` arguments one verb input projects onto, so a call that
@@ -944,14 +993,21 @@ pub(crate) fn mcp_agent_verb_arguments(tool: &str, input: &Value) -> Result<crat
 pub(crate) async fn execute_agent_verb_input(
         server: &Arc<SyncServer>,
         tool: &str,
-        input: Value,
+        mut input: Value,
         actor: &McpCallContext,
         run: Option<McpCodeRun>,
         served: &mut McpServed,
         board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
     ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
         let producers = oneiron::memory::ProducerRows::default();
-        let produced = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks)).await;
+        // An owner's erase or revoke reads the restriction-only clock through
+        // its hooks and door, as the engine classifies it (FIX 11201).
+        let restrictive = crate::api::clock_ingress::restrictive_call(server, tool, Some(&input));
+        // A custody row's value leaves the args before its hooks read them,
+        // and rides to its door scoped, as an HTTP body's does (FIX 11665).
+        let secret = crate::api::facade::lift_custody_secret(tool, &mut input);
+        let listed = super::skill_execution::CALLER.scope(actor.clone(), execute_agent_verb_listing(server, tool, input, actor, run, &producers, served, board_hooks));
+        let produced = crate::api::clock_ingress::scoped(restrictive, crate::api::facade::with_custody_secret(secret, listed)).await;
         served.extend(producers.take());
         produced
     }
@@ -1039,7 +1095,25 @@ async fn execute_agent_verb_listing(
 /// One row of [`execute_agent_verb_listing`], on the args its pre chain left,
 /// on `memory`, the caller's surface `surface` built. A task row that may ask
 /// the host's decision ladder builds its own from `surface`, off the runtime.
+/// A code-mode call's engine call writes for the leased run its origin seals
+/// in every poll of the row, as a blocking hop writes for it (FIX 11698).
 async fn execute_agent_verb_row(
+        server: &Arc<SyncServer>,
+        tool: &str,
+        input: Value,
+        actor: &McpCallContext,
+        memory: oneiron::Memory<'_>,
+        surface: McpRowSurface,
+        served: &mut McpServed,
+        board_hooks: &mut Option<super::board_setup::McpBoardHooks>,
+    ) -> Result<(Value, crate::mcp::McpPageSource, McpCarrierPolicy, Option<u64>), McpGatewayError> {
+        let run_writes = surface.run.as_ref().and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
+        crate::api::facade::run_write_polls::scoped(run_writes, execute_agent_verb_row_on(server, tool, input, actor, memory, surface, served, board_hooks)).await
+    }
+
+/// [`execute_agent_verb_row`]'s row, inside the run's write envelope. Each
+/// arm's door future is on the heap, so this one stays small (FIX 12072).
+async fn execute_agent_verb_row_on(
         server: &Arc<SyncServer>,
         tool: &str,
         input: Value,
@@ -1128,7 +1202,7 @@ export type FacadeHookStop =
   | { status: "hidden"; hook: string };
 /** The server's refusal envelope, `{error, narrowing?}`, as `api/facade.rs` writes it. */
 export interface FacadeErrorEnvelope {
-  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; [field: string]: unknown };
+  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; retryAfter?: number; resetsAt?: number[]; reasonCodes?: string[]; legal_hold?: Facade.LegalHoldNotice; [field: string]: unknown };
   narrowing?: unknown;
 }
 /**
@@ -1339,10 +1413,11 @@ def facade_dispatch(facade_rows):
         # The route's answer, encoded inside its answer scope (FIX 8238); only
         # an answer, never a refusal, is named an attachment.
         routes += f'''async fn {handler}(
-            auth: CoreAuth, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
-            headers: HeaderMap, payload: Result<Json<serde_json::Value>, JsonRejection>,
+            caller: super::clock_ingress::FacadeCaller, State(server): State<Arc<SyncServer>>, uri: axum::http::Uri,
+            headers: HeaderMap, extensions: axum::http::Extensions,
+            payload: Result<Json<serde_json::Value>, JsonRejection>,
         ) -> Response {{
-            let mut answer = facade_route(auth, State(server), uri, headers, payload).await;
+            let mut answer = facade_route(caller, State(server), uri, headers, extensions, payload).await;
             if answer.extensions().get::<FacadeApiError>().is_none() {{
                 answer.headers_mut().insert(axum::http::header::CONTENT_DISPOSITION, HeaderValue::from_static({disposition}));
             }}
@@ -1385,7 +1460,7 @@ def facade_dispatch(facade_rows):
                 // presents neither: the request's own owner proof, which the
                 // export revalidates in its snapshot. Never the hosted root.
                 let owner = match (proof, &action) {{
-                    (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::owner_proof(auth, server, {json.dumps(name)})?),
+                    (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::support::owner_proof(auth, server, {json.dumps(name)})?),
                     _ => None,
                 }};
                 if proof.is_none() && action.is_none() && owner.is_none() {{
@@ -1398,38 +1473,13 @@ def facade_dispatch(facade_rows):
                 let args = hooks.args.clone();
                 let ran = async {{
                 let input: oneiron::memory::ExportOptions = facade_input(args)?;
-                // Beside the archive, the rows its snapshot read past where
+                // Beside the answer, the rows its snapshot read past where
                 // the caller's rows go (its locality, with the machine its
                 // connection proved; FIX 4937): every owner path lists them.
-                // A slip keeps its own path; a host action with no slip (the
-                // dev mode) takes the engine's host-action export; the
-                // attested owner takes the engine's request-proof export,
-                // toward its own destination. Each arm's receipt records the
-                // owner's act, with where he spoke from as this request proved
-                // it (audit only; FIX 4625, 4626).
-                let surface = call.surface();
-                let (output, rows) = match (proof, action, owner) {{
-                    (Some(proof), _, _) if proof.claims().holder_ref == "host" => {{
-                        server.vault.export_with_verified_host_owner_listing(&input, proof, surface, auth.destination())?
-                    }}
-                    (Some(proof), _, _) => {{
-                        let (actor, class) = facade_actor(server, auth)?;
-                        let producers = oneiron::memory::ProducerRows::default();
-                        let output = server.vault.memory(actor, class).for_destination(&auth.destination()).listing_producers(&producers).export_with_verified_owner(&input, proof, surface)?;
-                        (output, producers.take())
-                    }}
-                    (None, Some(action), _) => server.vault.export_with_host_action_listing(&input, &action, surface, auth.destination())?,
-                    (None, None, Some(owner)) => {{
-                        server.vault.export_with_authenticated_owner_listing(&input, &owner, surface, auth.destination())?
-                    }}
-                    (None, None, None) => {{
-                        return Err(FacadeApiError::forbidden("full-vault export requires verified owner authority", ["Present a verified owner credential."]));
-                    }}
-                }};
-                let output = serde_json::to_value(output).map_err(|_| FacadeApiError::new(
-                    StatusCode::INTERNAL_SERVER_ERROR, MEMORY_CODE_INTERNAL,
-                    "export result encoding failed", ["Report this SDK response mismatch."]
-                ))?;
+                // The answer is the archive inline, or kept on the server and
+                // named by a transfer, as the caller's `delivery` asks (FIX
+                // 3676); the leaf runs all four owner paths for both.
+                let (output, rows) = super::export_transfer::vault_export_answer(server, call, &input, proof, action, owner)?;
                 Ok::<_, FacadeApiError>((output, rows))
                 }}.await;
                 let (output, rows) = match ran {{ Ok(ran) => ran, Err(error) => {{ row_hooks_abort(server, hooks).await; return Err(error); }} }};
@@ -1448,11 +1498,12 @@ def facade_dispatch(facade_rows):
             landed = " server.ai.turn_landed_by(server.vault(), landed_by.0, landed_by.1);" if lands else ""
             session_arg = 'call.session()?, ' if r.get('host_door_session') else ''
             lens_arg = 'call.lens_owner(), ' if r.get('host_door_lens_owner') else ''
+            client_surface_arg = 'None, ' if r.get('host_door_client_surface') else ''
             surface_arg = 'call.surface(), ' if r.get('host_door_surface') else ''
             # A caller door keeps the invocation its call hands it in its own
             # rows: a call that keeps no record hands its hidden id (FIX 5381).
             caller_arg = 'caller, Some(oneiron::task_verb::verb_hook_boundary::door_invocation(&server.vault, &hooks)), '
-            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
+            door = f'super::host_doors::{method}(server, auth, {session_arg}{caller_arg if r.get("host_door_caller") else ""}{lens_arg}{client_surface_arg}{surface_arg}facade_door_input(&mut hooks)?).await'
             # A door that fails after the pre chain ran (the door itself, its
             # input's decode or its answer's encoding) keeps a session-only
             # call's pre hook records and runs no post chain (FIX 5527).
@@ -1465,12 +1516,16 @@ def facade_dispatch(facade_rows):
                          else f'let mut hooks = facade_hooks_pre(server, call, {json.dumps(name)}, value).await?;')
             post_hooks = (f'facade_hooks_post_counted(server, hooks, {json.dumps(name)}, output, decided)' if counted
                           else 'facade_hooks_post(server, hooks, output)')
+            # A source door's failure keeps its program's feedback beside
+            # its refusal, released apart by the rows it read (FIX 10389).
+            door_output = ('output.map_err(|failure| super::host_doors::support::source_run_refusal(server, auth, Some(listed.as_slice()), failure))?'
+                           if name in SOURCE_FEEDBACK_DOORS else 'output?')
             answer = (f'''let ran = async {{
                     let (output, listed) = {door};
-                    Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+                    Ok::<_, FacadeApiError>((facade_output({door_output})?, listed))
                 }}.await;
                 let (output, listed) = match ran {{ Ok(ran) => ran, {failed} }};{landed}
-                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
+                Ok(FacadeCallOutput {{ value: {post_hooks}.await?, rows: super::host_doors::support::ListedRows::rows(listed) }})''' if r.get('host_door_lists') else
                       f'''let ran = async {{ Ok::<_, FacadeApiError>(facade_output({door}?)?) }}.await;
                 let output = match ran {{ Ok(output) => output, {failed} }};{landed}
                 Ok(FacadeCallOutput::unlisted({post_hooks}.await?))''')
@@ -1603,17 +1658,19 @@ def facade_dispatch(facade_rows):
             # OF-533: after the call's own refusals, the whole invoke runs on a
             # blocking thread, its surface, rewrite admission, drain, room turn
             # and hooks with it as one row, since a model rung of the decision
-            # ladder its surface binds may block on the server's runtime.
+            # ladder its surface binds may block on the server's runtime. It
+            # goes through run_blocking, so a code run's write token rides
+            # with it (FIX 11698).
             dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
         let (server, owned) = (Arc::clone(server), call.owned());
-        tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
+        super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {{
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = {result}{landed}
         Ok(FacadeCallOutput::listed(output, &producers))
         }})
         .await
-        .map_err(|_| FacadeApiError::from(super::host_doors::internal("{name}")))?
+        .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("{name}")))?
         }}\n'''
             continue
         dispatch += head + f'''let (actor, class) = facade_actor(server, auth)?;{room_guard}{ref_guard}{turn}
@@ -1634,11 +1691,19 @@ def facade_dispatch(facade_rows):
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
 /// other name is refused as an unknown verb, with its correction when it is a
-/// canonical verb under the wrong root.
+/// canonical verb under the wrong root. An owner's erase or revoke, as the
+/// engine classifies the verb and its own input, reads the restriction-only
+/// clock through its owner proof, hooks and door (FIX 11201).
 pub(crate) async fn call_verb(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
+let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
+super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
+}}
+/// [`call_verb`]'s row for `verb`. Each row's future is on the heap, so this
+/// one stays small however large its largest row is (FIX 12072).
+async fn call_verb_row(server: &Arc<SyncServer>, call: &FacadeCall<'_>, verb: &str, input: Result<serde_json::Value, FacadeApiError>) -> Result<FacadeCallOutput, FacadeApiError> {{
 match verb {{
 '''
-    dispatch += ''.join(f'{json.dumps(r["name"])} => {r["name"].replace(".", "_")}(server, call, input).await,\n' for r in facade_rows)
+    dispatch += ''.join(f'{json.dumps(r["name"])} => Box::pin({r["name"].replace(".", "_")}(server, call, input)).await,\n' for r in facade_rows)
     for context, rows in [('Board', [r for r in ROWS if r.get('context') == 'board' and 'host' not in r]), ('Browser', [r for r in BROWSER_ROWS if 'host' not in r]), ('Run', [r for r in RUN_ROWS if 'host' not in r])]:
         if rows: dispatch += ' | '.join(json.dumps(r['name']) for r in rows) + f' => Err(context_required(verb, VerbContext::{context})),\n'
     dispatch += '_ => Err(unknown_verb(verb)),\n}\n}\n'
@@ -1932,6 +1997,11 @@ def outputs():
     # event, so it is a root here; their reply's `$state` and receipt are
     # reached already.
     INVENTORY.root_ir('crate::lens::GeneratedUiActionEvent')
+    # FIX 7968, 9891: a card's segment stream (today's full-model frames and
+    # the patch profile's ready, RFC-6902 patch and snapshot frames) and the
+    # catalog descriptor an app declares reach no verb row, so each is a root.
+    INVENTORY.root_ir('crate::lens::GeneratedUiSegment')
+    INVENTORY.root_ir('crate::lens::GeneratedUiCatalogDescriptor')
     # FIX 365: the hand-written transcript route (`GET
     # /v1/core/conversations/{conversation_id}/transcript`, no verb row)
     # answers with the engine's page, whose MESSAGE carries a typed result;
@@ -2018,6 +2088,7 @@ UNIFFI_ARGUMENTS = {
     'format': ('Option<String>', '{name}.as_deref()'),
     'as_of': ('Option<u64>', '{name}'),
     'deadline_ms': ('Option<u64>', '{name}'),
+    'token_budget': ('Option<u64>', '{name}'),
     'kinds': ('Option<Vec<String>>', '{name}.as_deref().unwrap_or_default()'),
 }
 
@@ -2030,6 +2101,11 @@ UNIFFI_LENS_ROOTS = {
     'oneiron_remote::LensFrameEventReply': 'LensFrameEventReply',
     'oneiron_remote::CloseLensFrameReply': 'CloseLensFrameReply',
 }
+
+# FIX 7968, 9891: a card's segment stream and the catalog descriptor an app
+# declares reach no row; they are generated records here too, as they are
+# roots of the TypeScript and Python types.
+UNIFFI_STREAM_ROOTS = ('crate::lens::GeneratedUiSegment', 'crate::lens::GeneratedUiCatalogDescriptor')
 
 def uniffi_record(value, records):
     'The UniFFI type an engine type crosses as, or None when it has no record.'
@@ -2132,6 +2208,9 @@ def uniffi_facade(facade_rows):
     for text, name in UNIFFI_LENS_ROOTS.items():
         if types.root(text) != name:
             raise ValueError(f'{text}: lib.rs crosses it as the generated record {name}, which it does not read as')
+    for text in UNIFFI_STREAM_ROOTS:
+        if types.root(text) is None:
+            raise ValueError(f'{text}: no generated UniFFI record reads it')
     count = lambda *sides: len(census.get(sides, []))
     lines = [
         f'UniFFI census: {len(facade_rows)} facade rows, {len(types.items)} generated types.',
@@ -2166,4 +2245,7 @@ def main():
         print('\n'.join(INVENTORY.census(FACADE_ROWS)))
         for where, text in INVENTORY.opaques: print(f'  opaque: {where} ({text})')
         for where, text, reason in INVENTORY.fallbacks: print(f'  unread: {where} ({text}): {reason}')
+        # FIX 11534: docs/agent-sdk mirrors the generated facade types, so it follows every regeneration.
+        docs=subprocess.run([sys.executable,str(ROOT/'packages/oneiron/scripts/agent-docs.py')])
+        if docs.returncode: print(f'  agent-docs.py exited {docs.returncode}: run it by hand')
 if __name__=='__main__': main()

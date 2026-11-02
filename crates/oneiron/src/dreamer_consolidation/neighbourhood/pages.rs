@@ -38,7 +38,8 @@ impl<'n> ListingPage<'n> {
 
     /// The relationships the page's heads hold within, in page order.
     pub(super) fn relationships(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.claims().filter_map(|claim| claim.rel)
+        self.claims()
+            .flat_map(|claim| claim.rel.iter().flatten().copied())
     }
 
     fn claims(&self) -> impl Iterator<Item = &'n KnownClaim> + '_ {

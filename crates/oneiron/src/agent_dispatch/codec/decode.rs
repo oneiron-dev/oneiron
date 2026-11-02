@@ -54,6 +54,7 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
     let mut objectives = None;
     let mut comm = None;
     let mut direct_spawn = None;
+    let mut requester = None;
     let mut seen = [false; AGENT_DISPATCH_INPUT_KEYS.len()];
 
     for (key, value) in entries {
@@ -314,6 +315,18 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
                     Some(receipt)
                 });
             }
+            KEY_REQUESTER => {
+                let json = value.as_str().ok_or(Error::Artifact(
+                    ArtifactError::InvalidAgentDispatchInput(
+                        "requester must be a serialized queued requester",
+                    ),
+                ))?;
+                requester = Some(serde_json::from_str(json).map_err(|_| {
+                    Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                        "requester must decode as a queued requester",
+                    ))
+                })?);
+            }
             _ => unreachable!("index resolved from AGENT_DISPATCH_INPUT_KEYS"),
         }
     }
@@ -393,5 +406,6 @@ pub fn decode_agent_dispatch_input(value: &Value) -> Result<AgentDispatchInput> 
         objectives,
         comm,
         direct_spawn,
+        requester,
     })
 }

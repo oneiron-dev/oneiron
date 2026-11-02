@@ -44,6 +44,11 @@ impl AttemptQueue<'_> {
         let outcome = self.finish_landing_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // FIX 11482: a landed row's job notice commits here, outside any
+        // owner scope, so this door sends the signal itself.
+        if matches!(outcome, FinishLandingOutcome::Landed(_)) {
+            self.store.notify_notification_updates();
+        }
         Ok(outcome)
     }
 
@@ -167,6 +172,7 @@ impl AttemptQueue<'_> {
             successor.run_id.as_deref(),
             successor.id.as_bytes(),
         )?;
+        crate::attempt_queue::index::put_created_in_txn(self.store, wtxn, &successor)?;
         // Same rule a retry uses, so a landed handoff cannot invent a second
         // scoping scheme: the successor's entry comes from the scope it copied.
         if let Some(dedupe_key) = successor.dedupe_key.as_deref() {
@@ -199,6 +205,11 @@ impl AttemptQueue<'_> {
         let outcome = self.force_cancel_in_txn(&mut wtxn, input)?;
         wtxn.commit()?;
         self.store.notify_attempt_observers();
+        // FIX 11482: a cancelled row's job notice commits here, outside
+        // any owner scope, so this door sends the signal itself.
+        if matches!(outcome, ForceCancelOutcome::Cancelled(_)) {
+            self.store.notify_notification_updates();
+        }
         // Committed: the step its lease was running stops (FIX 600).
         if let ForceCancelOutcome::Cancelled(record) = &outcome {
             crate::engine_executor::stop_attempt_step(self.vault, record.id, record.attempt_count);

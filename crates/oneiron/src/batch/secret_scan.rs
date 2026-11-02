@@ -5,16 +5,18 @@
 mod container;
 mod lift_history;
 mod mask;
+mod provider_tokens;
 mod release_read;
 mod shapes;
 mod whole_read;
 mod wordlist;
 
 use heed::{RoTxn, RwTxn};
+use zeroize::Zeroizing;
 
 pub(crate) use self::container::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff, is_container, is_sealed,
-    masked_copy, scan_members as scan_container_members,
+    masked_copy, scan_text_content, served_masked_copy,
 };
 pub use self::lift_history::{
     LiftCause, LiftCauseCount, LiftCloseReason, LiftCounts, LiftFamily, LiftTrigger,
@@ -22,15 +24,17 @@ pub use self::lift_history::{
     SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner, secret_lift_as_owner_toward,
 };
 pub(crate) use self::lift_history::{
-    enqueue_known_remark_in_txn, enqueue_lift_in_txn, run_lift_pass,
+    enqueue_known_remark_in_txn, enqueue_lift_in_txn, propose_typed_body_at_in_txn, run_lift_pass,
+    typed_body_at_proposal_due_in_txn,
 };
+pub(super) use self::mask::MaskedFiles;
 pub(crate) use self::mask::admit::{
     Lifted, Part, admit_parts_in_txn, admit_stream_text_in_txn, scan_content_in_txn,
     scan_document_in_txn,
 };
 pub(crate) use self::mask::carrier::{
-    CarrierText, LiftedKeys, carrier_texts_hit_in_txn, mark_carrier_text_in_txn,
-    mark_carrier_texts_in_txn,
+    CarrierText, LiftedKeys, carrier_text_placeable, carrier_texts_hit_in_txn,
+    mark_carrier_text_in_txn, mark_carrier_texts_in_txn, mask_unplaced_json,
 };
 pub(super) use self::mask::mask_batch_ops;
 pub(crate) use self::mask::mask_origin_in_txn;
@@ -41,19 +45,22 @@ pub(crate) use self::mask::retained_repo::{
 };
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
-    admit_typed, admitted_from, from_named_tree, named_tree,
+    admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
 };
 pub(crate) use self::mask::spool::{
     BodySpool, SPOOL_HEAD_BYTES, SpoolAdmission, admit_spool_in_txn,
 };
 pub(crate) use self::mask::stream_known::{KnownStreamFinder, StreamKnown};
+pub(crate) use self::provider_tokens::embedded_credential;
+use self::provider_tokens::{classify_token, provider_token_spans};
 pub(crate) use self::release_read::{scan_file_content_from, scan_file_content_reader};
-use self::shapes::Door;
 pub(crate) use self::whole_read::{
-    Encoding, encode_as_stored, release_body_reads_whole_as_stored, release_parts_read_whole,
-    release_reads_json_text, release_reads_whole, release_reads_whole_json,
-    sanitize_messagepack_credentials_in, write_door_refuses_raw,
+    Encoding, encode_as_stored, release_accepted_body_reads_whole_as_stored,
+    release_body_reads_whole_as_stored, release_parts_read_whole, release_reads_json_text,
+    release_reads_whole, release_reads_whole_json, sanitize_messagepack_credentials_in,
+    write_door_refuses_raw,
 };
+use self::{shapes::Door, whole_read::JoinedText};
 use super::BatchOp;
 use super::export::ExportSecretsNulledManifest;
 use crate::error::{Error, GateError, Result};
@@ -159,11 +166,12 @@ pub(super) fn scan_batch_ops(
                 if *entity_type == ENTITY_TYPE_ASSET && is_sealed(data) {
                     continue;
                 }
-                let _secrets_nulled = scan_payload(data)?;
                 // A file's members are read too: a key in a compressed
                 // member is no text in the file's stored bytes.
                 if *entity_type == ENTITY_TYPE_ASSET {
-                    scan_container_members(data)?;
+                    scan_write_tree(data)?;
+                } else {
+                    let _secrets_nulled = scan_payload(data)?;
                 }
             }
             BatchOp::ClaimCandidate {
@@ -198,17 +206,32 @@ pub(super) fn scan_batch_ops(
 /// Scans bytes with the serve/export reading of the shared detector, without
 /// exposing values. Snapshot custody, pack screening and every release door
 /// use this; none of them follows the owner's ingest switch. A container's
-/// members are read by the same rules, and a container the walk cannot read
-/// whole reads as a hit (see `container`).
+/// members and the bytes no reader shows (FIX 2470) are read by the same
+/// rules, and a container the walk cannot read whole reads as a hit (see
+/// `container`). Text that only starts like a container reads as text (FIX
+/// 2474).
 pub(crate) fn scan_file_content(_path: &str, bytes: &[u8]) -> Option<&'static str> {
     release_hit(bytes).or_else(|| container::release_members_hit(bytes))
+}
+
+/// `data` as text: borrowed when it is valid UTF-8, else its lossy copy,
+/// held in `wiped` so it is wiped on drop (FIX 6668).
+fn wiped_lossy<'a>(data: &'a [u8], wiped: &'a mut Option<Zeroizing<String>>) -> &'a str {
+    match std::str::from_utf8(data) {
+        Ok(text) => text,
+        Err(_) => wiped
+            .insert(Zeroizing::new(String::from_utf8_lossy(data).into_owned()))
+            .as_str(),
+    }
 }
 
 /// The release rules over one run of bytes: its text, and a known framed
 /// carrier's body.
 fn release_hit(bytes: &[u8]) -> Option<&'static str> {
-    let haystack = String::from_utf8_lossy(bytes);
-    detect(&haystack, Door::Release).or_else(|| {
+    // A lossy copy is wiped on drop (FIX 6668).
+    let mut wiped = None::<Zeroizing<String>>;
+    let haystack = wiped_lossy(bytes, &mut wiped);
+    detect(haystack, Door::Release).or_else(|| {
         let payload = framed_payload(bytes)?;
         let Some(mut value) = decode_members(payload) else {
             return nested_past_decoder(payload);
@@ -288,7 +311,7 @@ pub(crate) fn release_joined_strings<S: std::borrow::Borrow<str>>(items: &[S]) -
 /// item, a private key one line per item) is read whole, one item per line,
 /// before each item is read alone.
 fn joined_strings<S: std::borrow::Borrow<str>>(items: &[S], door: Door) -> bool {
-    items.len() > 1 && detect(&items.join("\n"), door).is_some()
+    items.len() > 1 && detect(&Zeroizing::new(items.join("\n")), door).is_some() // (FIX 11563)
 }
 
 /// [`release_joined_strings`] over a MessagePack array's items.
@@ -308,12 +331,12 @@ fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
     let texts: Vec<_> = items
         .iter()
         .filter_map(|item| match item {
-            rmpv::Value::String(text) => Some(String::from_utf8_lossy(text.as_bytes())),
+            rmpv::Value::String(text) => Some(JoinedText::from_bytes(text.as_bytes())),
             rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
-                Some(String::from_utf8_lossy(bytes))
+                Some(JoinedText::from_bytes(bytes))
             }
             rmpv::Value::Array(values) => byte_values(values.iter().map(rmpv::Value::as_u64))
-                .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into()),
+                .map(|bytes| JoinedText::from_computed(&Zeroizing::new(bytes))),
             _ => None,
         })
         .collect();
@@ -323,13 +346,13 @@ fn joined_messagepack(items: &[rmpv::Value], door: Door) -> bool {
 /// [`joined_messagepack`] for JSON items: a string, and an array of byte
 /// values (MessagePack binary projects to one).
 fn joined_json(items: &[serde_json::Value], door: Door) -> bool {
-    let texts: Vec<std::borrow::Cow<'_, str>> = items
+    let texts: Vec<_> = items
         .iter()
         .filter_map(|item| match item {
-            serde_json::Value::String(text) => Some(text.as_str().into()),
+            serde_json::Value::String(text) => Some(JoinedText::Borrowed(text.as_str())),
             serde_json::Value::Array(values) => {
                 byte_values(values.iter().map(serde_json::Value::as_u64))
-                    .map(|bytes| String::from_utf8_lossy(&bytes).into_owned().into())
+                    .map(|bytes| JoinedText::from_computed(&Zeroizing::new(bytes)))
             }
             _ => None,
         })
@@ -380,7 +403,9 @@ pub(crate) struct BlocklistStream(Vec<u8>);
 impl BlocklistStream {
     pub(crate) fn feed(&mut self, bytes: &[u8]) -> Result<()> {
         self.0.extend_from_slice(bytes);
-        if shapes::blocklisted(&String::from_utf8_lossy(&self.0)) {
+        // A lossy copy is wiped on drop (FIX 6668).
+        let mut wiped = None::<Zeroizing<String>>;
+        if shapes::blocklisted(wiped_lossy(&self.0, &mut wiped)) {
             return Err(secret_scan_error("gate.secret_scan.blocklist"));
         }
         // What an entry the next part ends could start in.
@@ -454,8 +479,25 @@ pub(crate) fn scan_joined_text(text: &str) -> Option<&'static str> {
 /// what that door would refuse without staging a write. It does not read the
 /// owner's switch; the caller does.
 pub(crate) fn scan_write_payload(data: &[u8]) -> Result<()> {
+    scan_write_tree(data)
+}
+
+/// The write door over one payload and over each member of a container in
+/// it, each read as the door reads a body (FIX 2312, 2477): every door that
+/// takes bytes in reads a key in a compressed member, never only the
+/// payload's own bytes. A container the walk reads no further is read as
+/// far as it reads.
+pub(crate) fn scan_write_tree(data: &[u8]) -> Result<()> {
     let _secrets_nulled = scan_payload(data)?;
-    Ok(())
+    container::scan_readable_members(data)
+}
+
+/// The write door's rules over `bytes`, each member of a container in it
+/// and the bytes no reader shows (FIX 2470, 2480): the first hit's reason,
+/// or why the walk read no further. A serving door reads a masked copy, and
+/// a container no mark covers, by the rules of the door that accepted it.
+pub(crate) fn write_tree_hit(bytes: &[u8]) -> Option<&'static str> {
+    write_payload_hit(bytes).or_else(|| container::write_members_hit(bytes))
 }
 
 /// [`scan_write_payload`] for a reader that marks a hit rather than refusing a
@@ -481,15 +523,22 @@ pub(crate) fn scan_staged_payload(store: &Store, data: &[u8]) -> Result<()> {
     if mode == SecretScanMode::Off {
         return Ok(());
     }
-    let _secrets_nulled = scan_payload(data)?;
-    Ok(())
+    scan_write_tree(data)
+}
+
+/// Whether the write door's scan finds a secret in `data`, whatever the
+/// owner's switch says (FIX 2328): the outbound intent ledger seals such a
+/// request whole instead of keeping it, or refusing it, in the clear.
+pub(crate) fn payload_carries_secret(data: &[u8]) -> bool {
+    scan_payload(data).is_err()
 }
 
 fn scan_payload(data: &[u8]) -> Result<ExportSecretsNulledManifest> {
-    let haystack = String::from_utf8_lossy(data);
-    let secrets_nulled =
-        ExportSecretsNulledManifest::from_redacted(has_redaction_marker(&haystack));
-    if let Some(reason) = detect(&haystack, Door::Write) {
+    // A lossy copy is wiped on drop (FIX 6668).
+    let mut wiped = None::<Zeroizing<String>>;
+    let haystack = wiped_lossy(data, &mut wiped);
+    let secrets_nulled = ExportSecretsNulledManifest::from_redacted(has_redaction_marker(haystack));
+    if let Some(reason) = detect(haystack, Door::Write) {
         return Err(secret_scan_error(reason));
     }
     // Every member is read, a repeated JSON key and every map key included,
@@ -754,160 +803,9 @@ fn messagepack_has_secret(value: &rmpv::Value, door: Door) -> bool {
 }
 
 fn detect_bytes(bytes: &[u8], door: Door) -> bool {
-    detect(&String::from_utf8_lossy(bytes), door).is_some()
-}
-
-/// Where [`detect`]'s provider rules read a key in `text`: each whole token
-/// one names, with its reason.
-fn provider_token_spans(text: &str) -> Vec<(std::ops::Range<usize>, &'static str)> {
-    text.split(|ch: char| !(ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')))
-        .filter_map(|token| {
-            classify_token(token).map(|reason| (shapes::span_of(text, token), reason))
-        })
-        .collect()
-}
-
-fn classify_token(token: &str) -> Option<&'static str> {
-    // A credential still counts after leading token bytes (`Xghp_…`), so every
-    // later offset is a candidate start too (F23, H49/H66). There a key body
-    // is read over its fixed length only, keeping the scan linear, a provider
-    // whose real keys are alphanumeric must match as such, and the body must
-    // hold a digit or capital, as a real key's random body does, so snake or
-    // kebab prose (`highs_and_lows_…`, `risk_live_…`, `task-proj-…`) is not
-    // read as a key.
-    // The token is ASCII by construction, so every offset is a char boundary.
-    classify_at(token, Body::Token)
-        .or_else(|| (1..token.len()).find_map(|start| classify_at(&token[start..], Body::Embedded)))
-}
-
-/// The provider rules for a key that starts inside a longer token, read at
-/// `candidate`'s start: what [`classify_token`] reads at each later offset,
-/// for a stream reader that keeps a window of a token, not all of it.
-pub(crate) fn embedded_credential(candidate: &[u8]) -> Option<&'static str> {
-    std::str::from_utf8(candidate)
-        .ok()
-        .and_then(|candidate| classify_at(candidate, Body::Embedded))
-}
-
-/// How a key body is read: from the token's start, by each provider's own
-/// length rule over token bytes; inside a token, over a fixed length.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Body {
-    Token,
-    Embedded,
-}
-
-fn classify_at(token: &str, body: Body) -> Option<&'static str> {
-    if is_aws_access_key_id(token) {
-        Some(REASON_AWS_ACCESS_KEY_ID)
-    } else if is_github_token(token, body) {
-        Some(REASON_GITHUB_TOKEN)
-    } else if is_google_api_key(token, body) {
-        Some(REASON_GOOGLE_API_KEY)
-    } else if is_openai_key(token, body) {
-        Some(REASON_OPENAI_KEY)
-    } else if is_slack_token(token, body) {
-        Some(REASON_SLACK_TOKEN)
-    } else if is_stripe_key(token, body) {
-        Some(REASON_STRIPE_KEY)
-    } else {
-        None
-    }
-}
-
-fn is_aws_access_key_id(token: &str) -> bool {
-    let candidate = token.as_bytes();
-    if candidate.len() < 20 || !(candidate.starts_with(b"AKIA") || candidate.starts_with(b"ASIA")) {
-        return false;
-    }
-    candidate[..20]
-        .iter()
-        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-}
-
-fn is_github_token(token: &str, body: Body) -> bool {
-    ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]
-        .iter()
-        .any(|prefix| key_matches(token, prefix, 36, true, true, body))
-        || key_matches(token, "github_pat_", 70, false, false, body)
-}
-
-fn is_google_api_key(token: &str, body: Body) -> bool {
-    key_matches(token, "AIza", 35, true, false, body)
-}
-
-fn is_openai_key(token: &str, body: Body) -> bool {
-    key_matches(token, "sk-proj-", 32, false, false, body)
-        || key_matches(token, "sk-", 48, true, true, body)
-}
-
-fn is_slack_token(token: &str, body: Body) -> bool {
-    ["xoxb-", "xoxp-", "xoxa-", "xoxr-", "xoxs-"]
-        .iter()
-        .any(|prefix| key_matches(token, prefix, 24, false, false, body))
-}
-
-fn is_stripe_key(token: &str, body: Body) -> bool {
-    key_matches(token, "sk_live_", 24, false, true, body)
-        || key_matches(token, "rk_live_", 24, false, true, body)
-}
-
-/// One provider rule: `prefix`, then `suffix_len` body bytes (`exact_len`:
-/// only those are read). Inside a token the body is always read over exactly
-/// `suffix_len` bytes, alphanumeric ones when the provider's keys are, and
-/// holds a digit or capital.
-fn key_matches(
-    token: &str,
-    prefix: &str,
-    suffix_len: usize,
-    exact_len: bool,
-    alphanumeric: bool,
-    body: Body,
-) -> bool {
-    match body {
-        Body::Token => suffix_matches(token, prefix, suffix_len, exact_len, is_ascii_token_body),
-        Body::Embedded => {
-            let allowed: fn(u8) -> bool = if alphanumeric {
-                |byte: u8| byte.is_ascii_alphanumeric()
-            } else {
-                is_ascii_token_body
-            };
-            suffix_matches(token, prefix, suffix_len, true, allowed)
-                && token.as_bytes()[prefix.len()..prefix.len() + suffix_len]
-                    .iter()
-                    .any(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
-        }
-    }
-}
-
-fn suffix_matches(
-    token: &str,
-    prefix: &str,
-    suffix_len: usize,
-    exact_len: bool,
-    allowed: fn(u8) -> bool,
-) -> bool {
-    let token = token.as_bytes();
-    let prefix = prefix.as_bytes();
-    if prefix.is_empty() || token.len() < prefix.len() + suffix_len {
-        return false;
-    }
-
-    if !token.starts_with(prefix) {
-        return false;
-    }
-    let suffix_start = prefix.len();
-    let min_suffix_end = suffix_start + suffix_len;
-    let suffix = if exact_len {
-        &token[suffix_start..min_suffix_end]
-    } else {
-        &token[suffix_start..]
-    };
-    suffix.iter().copied().all(allowed)
-}
-
-fn is_ascii_token_body(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-')
+    // A lossy copy is wiped on drop (FIX 6668).
+    let mut wiped = None::<Zeroizing<String>>;
+    detect(wiped_lossy(bytes, &mut wiped), door).is_some()
 }
 
 #[cfg(test)]

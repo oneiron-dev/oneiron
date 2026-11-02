@@ -24,16 +24,20 @@
 //!
 //! # What this crate never does
 //!
-//! It does not mint, split, or validate authority, and it never reads a
-//! slip's claims. A slip crosses verbatim beside a fresh holder proof signed
-//! with its connection key; the slip is parsed once, at connect, only to hash
-//! it into that proof, and every authority decision is the server's. It does not
-//! emulate a facade verb out of lower-level storage routes. It does not mint
-//! or simulate a retrieval lease: embedded, `Effort::High` returns the
+//! It does not mint, split, or validate authority, and it reads a slip's
+//! claims at one place only (FIX 647, below). A slip crosses verbatim beside
+//! a fresh holder proof signed with its connection key; the slip is parsed
+//! once, at connect, only to hash it into that proof, and every authority
+//! decision is the server's. It does not emulate a facade verb out of
+//! lower-level storage routes. It does not mint or simulate a retrieval lease: embedded, `Effort::High` returns the
 //! engine's own `LEASE_REQUIRED`; remote, the server decides how it serves
-//! high, xhigh and max. Its one authority read is the host-root open's guard
-//! (FIX 4730): it reads the posture and the given root's roster marks, then
-//! hands the secret to the engine's own profile door, and mints nothing.
+//! high, xhigh and max. Its authority reads are two. The host-root open's
+//! guard (FIX 4730) reads the posture and the given root's roster marks, then
+//! hands the secret to the engine's own profile door, and mints nothing. An
+//! embedded handle's read credential (FIX 647) signs one holder proof with
+//! the credential's own key and hands slip and proof to the engine's verify
+//! door, the one the server checks a request's proof through; of the slip
+//! that door verified it reads only whether it is one-shot.
 
 #![forbid(unsafe_code)]
 
@@ -42,6 +46,8 @@ mod agent_verbs;
 mod caps;
 mod embedded;
 mod error;
+// FIX 3676: vault.export written into the caller's sink.
+mod export_to;
 // OF-237: a served client over a server this process runs.
 mod in_process;
 mod invocation;
@@ -59,10 +65,11 @@ pub use crate::caps::{
     MAX_BATCH_ENTITIES, MAX_BLOB_BASE64_LEN, MAX_BLOB_CONTENT_BYTES, MAX_CODEBASE_FILES,
     MAX_DIMENSIONS, MAX_ENTITY_PAYLOAD_BYTES, MAX_QUERY_BYTES, MAX_REMOTE_REQUEST_BYTES,
     MAX_REMOTE_RESPONSE_BYTES, MAX_SEARCH_LIMIT, check_batch_len, check_deadline_ms_number,
-    check_dimensions, check_limit, check_payload_bytes, check_query, check_unix_seconds,
+    check_dimensions, check_limit, check_payload_bytes, check_query, check_token_budget_number,
+    check_unix_seconds,
 };
 use crate::embedded::EmbeddedClient;
-pub use crate::embedded::store_open_count;
+pub use crate::embedded::{HostOpenCheck, store_open_count, verify_read_credential};
 use crate::error::forbidden;
 pub use crate::in_process::{
     InProcessReply, InProcessRequest, InProcessStream, InProcessTransport,
@@ -85,6 +92,14 @@ pub struct OpenOptions {
     /// ExplicitHostInput): `None` is a computer, the generic default. Never
     /// read off the operating system.
     pub device_class: Option<MachineDeviceClass>,
+    /// Hold this install's host root as the vault's checkpoint signer for
+    /// the handle's life (FIX 5343): only `open_with_host_root` reads it.
+    /// `false` drops the issuer after profiling, as before; `true` holds
+    /// the loaded issuer on the vault handle, so the device sync's steady
+    /// pass attests with it the images its home writes. It joins the
+    /// same-vault test like every other option: a reopen names the same
+    /// value. Keeping the signer keeps the root secret resident.
+    pub hold_checkpoint_root_signer: bool,
 }
 
 /// What [`OneironClient::open_with_host_root`] did with the host root it
@@ -197,7 +212,9 @@ impl OneironClient {
     /// `host_root_secret` is the secret's exact bytes (a server's configured
     /// `auth_secret` as its UTF-8, or a retained binary root), borrowed for
     /// this call only. It never enters `options`, so it takes no part in the
-    /// same-vault test, and nothing keeps it or the issuer derived from it.
+    /// same-vault test, and nothing keeps it. The install's issuer is
+    /// dropped after profiling unless `options` opts into holding it as
+    /// the handle's checkpoint signer for its life (FIX 5343).
     /// Rooted-only: the vault must already be rooted, and nothing here roots
     /// it. An empty secret is `BAD_REQUEST`, and a vault open under the
     /// managed or relay posture, or a root the log marks as the provider's,
@@ -205,8 +222,8 @@ impl OneironClient {
     /// open with the engine's reason; [`Self::open`] stays the rootless
     /// door. Over a profile that already stands, a secret that is not the
     /// vault's settled root is reported, never refused. The handle carries
-    /// no owner proof: it binds the generic embedded owner actor, as `open`
-    /// does.
+    /// no owner proof and, without the hold opt-in, no root signer: it
+    /// binds the generic embedded owner actor, as `open` does.
     pub fn open_with_host_root(
         path: Option<&Path>,
         options: &OpenOptions,
@@ -239,7 +256,24 @@ impl OneironClient {
         options: &OpenOptions,
     ) -> Result<Self, MemoryError> {
         Ok(Self {
-            backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options)?),
+            backend: Backend::Embedded(EmbeddedClient::attach(path, vault, options, None)?),
+            host_root: None,
+        })
+    }
+
+    /// [`Self::attach`] for a host that can close while its handles live,
+    /// such as an embedded engine: each call of the handle, and of every
+    /// handle rebound from it, first asks `host_open`, so none starts once
+    /// the host has closed; a call already running finishes (FIX 4895).
+    pub fn attach_while_open(
+        path: &Path,
+        vault: std::sync::Arc<oneiron::Vault>,
+        options: &OpenOptions,
+        host_open: HostOpenCheck,
+    ) -> Result<Self, MemoryError> {
+        let embedded = EmbeddedClient::attach(path, vault, options, Some(host_open))?;
+        Ok(Self {
+            backend: Backend::Embedded(embedded),
             host_root: None,
         })
     }
@@ -311,6 +345,29 @@ impl OneironClient {
                     "Reconnect with a credential paired for the actor you want to act as.",
                     "The slip's principal_ref and actor_class bind write identity server-side.",
                 ],
+            )),
+        }
+    }
+
+    /// A new handle whose every read runs under the credential `key` a
+    /// delegated reader presented to this embedded host (FIX 647): the
+    /// paired credential `pair` returned, verified against this vault
+    /// ([`verify_read_credential`]) as the server's door verifies a served
+    /// request's. Its reads then run under that slip's key, never a broader
+    /// one; a read refuses when the slip's holder is not this handle's actor.
+    /// A handle without one reads as before; a rebind drops it.
+    ///
+    /// Connected handles fail typed `FORBIDDEN`: the credential they
+    /// connected with binds their reads server-side already.
+    pub fn with_read_credential(&self, key: &str) -> Result<Self, MemoryError> {
+        match &self.backend {
+            Backend::Embedded(embedded) => Ok(Self {
+                backend: Backend::Embedded(embedded.with_read_credential(key)?),
+                host_root: None,
+            }),
+            Backend::Remote(_) => Err(forbidden(
+                "a connected handle reads under the credential it connected with",
+                &["Connect with the delegated reader's own credential instead."],
             )),
         }
     }

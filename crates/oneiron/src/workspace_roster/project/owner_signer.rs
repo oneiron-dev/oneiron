@@ -44,18 +44,11 @@ impl<'a> OwnerProjectSigner<'a> {
 /// The time an owner door signs at: the authority clock, as a live proof is
 /// judged.
 pub(super) fn owner_signed_at(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<u64> {
-    let floor = crate::authority::AUTHORITY_FIRST_SEEN
-        .get_lenient(
-            &vault.store,
-            txn,
-            &crate::authority::authority_first_seen_clock_key(),
-        )?
-        .unwrap_or(0);
-    Ok(crate::authority::authority_observation_secs(
+    crate::authority::authority_clock_reading_in_txn(
         &vault.store,
-        floor,
+        txn,
         vault.store.clock.now_recorded_at(),
-    ))
+    )
 }
 
 impl Vault {
@@ -75,25 +68,27 @@ impl Vault {
         signer: &OwnerProjectSigner<'_>,
         id: EntityId,
         next: &mut ProjectRecord,
-        over: Option<ProjectAnchor>,
+        over: Option<Vec<ProjectAnchorLink>>,
         signed_at: u64,
     ) -> Result<()> {
         owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let anchor = over.unwrap_or_else(|| ProjectAnchor {
-            authority: next.authority_at(ProjectProofVersion::V2),
-            proof: None,
+        let anchor = over.unwrap_or_else(|| {
+            vec![ProjectAnchorLink {
+                authority: next.authority_at(ProjectProofVersion::V2),
+                proof: None,
+            }]
         });
         let challenge = next.authority_at(ProjectProofVersion::V3).write_challenge(
             id,
             ProjectProofVersion::V3,
             signed_at,
-            Some(&anchor),
+            &anchor,
         )?;
         next.write_proof = Some(ProjectWriteProof {
             slip_wire: signer.wire().to_owned(),
             holder_signature: signer.sign(&challenge)?,
             signed_at,
-            anchor: Some(Box::new(anchor)),
+            anchor,
             version: ProjectProofVersion::V3,
         });
         Ok(())

@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 6] = [
+const PACKS: [(&str, &str); 7] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -37,11 +37,15 @@ const PACKS: [(&str, &str); 6] = [
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/PACK.md"),
     ),
+    (
+        "telegram",
+        include_str!("../../../../../packs/builtin/telegram/PACK.md"),
+    ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 6] = [
+const SETUP_SKILLS: [(&str, &str); 7] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -65,6 +69,10 @@ const SETUP_SKILLS: [(&str, &str); 6] = [
     (
         "native_mail",
         include_str!("../../../../../packs/builtin/native_mail/skills/setup/SKILL.md"),
+    ),
+    (
+        "telegram",
+        include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
@@ -97,7 +105,9 @@ fn builtin_hub_ref(name: &str, source: &PackSource) -> Result<HubRef> {
     )
 }
 
-fn engine_hub_id() -> Result<EntityId> {
+/// The derived hub every engine-seeded pack comes from; with
+/// [`ENGINE_PUBLISHER`] it names the engine's publisher ACTOR.
+pub(super) fn engine_hub_id() -> Result<EntityId> {
     EntityId::derive(
         crate::entity_id::derived_domains::BUILTIN_CONNECTOR_PACK_HUB,
         &[],
@@ -105,7 +115,7 @@ fn engine_hub_id() -> Result<EntityId> {
 }
 
 /// The publisher an engine-seeded receipt names.
-const ENGINE_PUBLISHER: &str = "oneiron-engine";
+pub(super) const ENGINE_PUBLISHER: &str = "oneiron-engine";
 
 /// A removed engine-seeded built-in goes back to the Candidate it was seeded
 /// as, and qualifies again on its checked setup.
@@ -214,9 +224,13 @@ pub(crate) fn seed_builtin_packs(vault: &Vault) -> Result<()> {
             agent: None,
             installed_at: 0,
             notices: Vec::new(),
+            owner_activated: Vec::new(),
         };
         admission::PACK_CANDIDATE.put(&vault.store, &mut txn, &receipt.content_hash, &receipt)?;
     }
+    // The first-party weave lens pack has no connector to qualify: it
+    // installs Active with this seed (FIX 1524).
+    super::lenses::seed_weave_lens_pack_in_txn(vault, &mut txn)?;
     SEEDED.put(&vault.store, &mut txn, &(), &version)?;
     txn.commit()?;
     Ok(())
@@ -294,10 +308,11 @@ impl Vault {
                         &prior.pack_name,
                         &prior.content_hash,
                     )?;
-                    self.halt_updated_pack_connector_routes_in_txn(
+                    self.follow_updated_pack_connector_routes_in_txn(
                         txn,
                         &prior.source_id,
                         &prior.content_hash,
+                        &receipt,
                         at,
                     )?;
                 }

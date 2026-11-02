@@ -187,6 +187,7 @@ impl Vault {
                 grant_ref: Some(reference.to_owned()),
                 diff_handle: item.content_hash.to_vec(),
                 read_frontier_hash: item.policy_frontier,
+                context: Default::default(),
                 redacted_at: None,
             },
         )?;

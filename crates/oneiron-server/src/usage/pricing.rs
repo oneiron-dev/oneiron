@@ -3,25 +3,30 @@
 //! per million tokens. The conversion is integer-only, never through a float.
 use oneiron::llm::LlmCatalogCost;
 
-use super::model::UsageCostRates;
+use super::model::{UsageCostRates, currency_code};
 
 /// 10^-9 currency units in one unit: [`super::Money`]'s scale.
 const NANOS_PER_UNIT: u128 = 1_000_000_000;
 /// Fraction digits a 10^-9 unit amount holds exactly.
 const NANO_DIGITS: usize = 9;
 
-/// The rates `cost` quotes, in 10^-9 units of `currency` per million tokens,
+/// The rates `cost` quotes, in 10^-9 units per million tokens of the
+/// currency it names, or of none when its provider named none (FIX 9534),
 /// stamped with `price_table_snapshot`. An unquoted cache rate stays
-/// unknown, never zero. `None` when any quoted rate does not convert.
+/// unknown, never zero. `None` when any quoted rate does not convert, or the
+/// currency named is not a three-letter code.
 pub fn catalog_cost_rates(
     cost: &LlmCatalogCost,
-    currency: &str,
     price_table_snapshot: String,
 ) -> Option<UsageCostRates> {
     let optional =
         |text: Option<&str>| text.map_or(Some(None), |text| decimal_nanos(text).map(Some));
+    let currency = match cost.currency.as_deref() {
+        Some(code) if !currency_code(code) => return None,
+        code => code.map(str::to_owned),
+    };
     Some(UsageCostRates {
-        currency: currency.to_owned(),
+        currency,
         price_table_snapshot,
         input_per_million: decimal_nanos(&cost.input_per_million)?,
         output_per_million: decimal_nanos(&cost.output_per_million)?,

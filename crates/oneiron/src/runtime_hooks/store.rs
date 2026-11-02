@@ -2,19 +2,28 @@
 //! Hook receipts and the run index (ARCH-0080 §4 Delivery, Crash-safe
 //! outcomes; §6 receipt; §8 golden set).
 
+mod erase;
+
 use serde::{Deserialize, Serialize};
 
-use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
-};
+use crate::batch::ENTITY_METADATA_HEADER_LEN;
+use crate::receipt::{ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
-use crate::skill_hub::pack_catalog::PackHookBinding;
+use crate::skill_hub::pack_catalog::{HookPhase, PackHookBinding};
+use crate::vault::RevisionRef;
 use crate::{EntityId, Error, Result, Vault};
 
-use super::body::HookBudgetOverrun;
+use super::body::{HookBudgetOverrun, HookPreparation, HookSettledCallRef};
+use super::grant::HookGrant;
 use super::lineage::LineageLink;
 use super::source::{
-    ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+    self, ClaimChangelogPosition, FactEntry, FactKind, FactPosition, FactSource, SettlementPosition,
+};
+
+pub(crate) use erase::scrub_hook_source_in_txn;
+pub(super) use erase::{
+    dependencies_erased_in_txn, erased_dependency_ids_in_txn, scrub_intent_payload,
+    scrub_memo_payload, scrub_receipt_payload, scrub_verb_payload,
 };
 
 /// A run's identity: BLAKE3 over its derivation envelope and its position.
@@ -39,13 +48,6 @@ pub(super) const RUN_INDEX: SideTable<(EntityId, u64, RunKey), HookRunRef, Named
 
 /// The derivation envelope's model id for a body that calls no model.
 const HOOK_MODEL_ID: &str = "hook-js";
-
-/// Whether a fact run that did not pin every verdict (the pins passed their
-/// byte bound) screens its Hook receipt by its read pins alone, as before its
-/// verdicts' evidence counted (FIX 5459). Off, such a run screens unknown and
-/// a caller off this device no longer reads its receipt: a byte bound would
-/// refuse a read (FIX 5764).
-const INCOMPLETE_VERDICT_PINS_KEEP_READ_PIN_SCREEN: bool = true;
 
 /// The ARCH-0035 derivation envelope shape, for one hook run. Copied rather
 /// than shared, as `SavedQueryDerivationEnvelope` is.
@@ -156,6 +158,50 @@ pub(super) fn put_cursor_in_txn(
     CURSORS.put(&vault.store, txn, &(binding, [source.tag()]), row)
 }
 
+/// Commits a fact binding's cursor with its real enable, disable or
+/// replacement write. A selector-only update of an already-enabled binding
+/// keeps its cursor; a disabled-to-enabled transition starts at the enable
+/// write, including the settlement head (FIX 10078).
+pub(crate) fn sync_binding_cursor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    binding: EntityId,
+    previous: Option<&PackHookBinding>,
+    current: &PackHookBinding,
+) -> Result<()> {
+    if current.selector.phase != HookPhase::Fact {
+        return Ok(());
+    }
+    let at = vault.store.clock.now_recorded_at();
+    if !current.enabled {
+        for source in FactSource::ALL {
+            let key = (binding, [source.tag()]);
+            let prior = CURSORS.get(&vault.store, txn, &key)?;
+            if prior.is_some_and(|row| row.paused) {
+                continue;
+            }
+            let row = prior.unwrap_or_else(|| CursorRow::new(None, at)).paused(at);
+            CURSORS.put(&vault.store, txn, &key, &row)?;
+        }
+        return Ok(());
+    }
+    let restart = previous.is_none_or(|previous| {
+        !previous.enabled
+            || previous.code != current.code
+            || previous.source != current.source
+            || previous.hook_version != current.hook_version
+            || previous.body_hash != current.body_hash
+    });
+    if !restart {
+        return Ok(());
+    }
+    for source in FactSource::ALL {
+        let start = source::enable_start_in_txn(vault, txn, &binding, source)?;
+        put_cursor_in_txn(vault, txn, binding, source, &CursorRow::new(start, at))?;
+    }
+    Ok(())
+}
+
 /// Moves `binding`'s cursor to `position` unless it already stands there or
 /// past it.
 pub(super) fn advance_cursor_in_txn(
@@ -199,12 +245,14 @@ pub(super) struct HookReadPin {
     pub(super) rows: Vec<HookReadRow>,
 }
 
-/// One row a read served: its id and its revision's content-hash byte.
+/// One row a read served: its id, its revision's content-hash byte and the
+/// full digest of the exact body the hook received.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HookReadRow {
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) id: EntityId,
     pub(super) content_hash: u8,
+    pub(super) body_hash: [u8; 32],
 }
 
 /// One `ai.verdict` a run asked, and what it heard: the verdict's JSON, or
@@ -219,10 +267,175 @@ pub(super) struct HookVerdictPin {
     pub(super) evidence: Option<Vec<EntityId>>,
 }
 
+/// One source body a run's retained input, reads or verdict evidence depends
+/// on. Erasure scrubs by id; the revision and full body digest, when known,
+/// name exactly what the run used.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub(super) struct HookDependency {
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub(super) id: EntityId,
+    pub(super) revision: Option<RevisionRef>,
+    pub(super) body_hash: Option<[u8; 32]>,
+}
+
+/// The post-execution identity beside a memo's stable delivery key. The
+/// remaining memo fields are its ordered read, verdict and preparation
+/// material; this row names the event, binding and grant and carries the
+/// finalized digest over all of them (FIX 10081).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct HookRunDerivation {
+    pub(super) digest: String,
+    pub(super) event_input_hash: [u8; 32],
+    pub(super) event_revision: Option<RevisionRef>,
+    pub(super) event_body_hash: Option<[u8; 32]>,
+    pub(super) hook_version: String,
+    pub(super) selector_hash: String,
+    pub(super) grant_hash: String,
+    /// Every verdict evidence id, including evidence whose text pin did not fit.
+    #[serde(with = "crate::serialize::entity_ref::sequence")]
+    pub(super) verdict_evidence: Vec<EntityId>,
+    /// The runtime's own stable identity, separate from source preparation.
+    pub(super) runtime_identity: Option<String>,
+    pub(super) dependencies: Vec<HookDependency>,
+}
+
+impl HookRunDerivation {
+    pub(in crate::runtime_hooks) fn new(
+        vault: &Vault,
+        binding_id: EntityId,
+        binding: &PackHookBinding,
+        grant: &HookGrant,
+        entry: &FactEntry,
+        reads: &[HookReadPin],
+        verdict_evidence: &[EntityId],
+        runtime_identity: Option<String>,
+    ) -> Result<Self> {
+        let selector = serde_json::to_vec(&binding.selector)
+            .map_err(|_| Error::InvariantViolation("hook selector encode"))?;
+        let mut params = blake3::Hasher::new();
+        params.update(&selector);
+        params.update(binding_id.as_bytes());
+        let mut dependencies = vec![HookDependency {
+            id: entry.entity,
+            revision: entry.revision,
+            body_hash: entry.body_hash,
+        }];
+        dependencies.extend(reads.iter().flat_map(|pin| {
+            pin.rows.iter().map(|row| HookDependency {
+                id: row.id,
+                revision: None,
+                body_hash: Some(row.body_hash),
+            })
+        }));
+        for id in verdict_evidence {
+            let (revision, body_hash) = {
+                let txn = vault.store.env.read_txn()?;
+                let raw = crate::vault::entity_revision::read_entity_revision_in_txn(
+                    vault,
+                    &txn,
+                    id,
+                    crate::vault::ReadMode::Live,
+                )?;
+                let body_hash = raw
+                    .as_deref()
+                    .and_then(|raw| raw.get(ENTITY_METADATA_HEADER_LEN..))
+                    .map(|body| *blake3::hash(body).as_bytes());
+                let revision = match body_hash.as_ref() {
+                    Some(hash) => crate::vault::entity_revision::revision_for_body_hash_in_txn(
+                        vault, &txn, id, hash,
+                    )?,
+                    None => None,
+                };
+                (revision, body_hash)
+            };
+            dependencies.push(HookDependency {
+                id: *id,
+                revision,
+                body_hash,
+            });
+        }
+        dependencies.sort();
+        dependencies.dedup();
+        Ok(Self {
+            digest: String::new(),
+            event_input_hash: entry.input_hash,
+            event_revision: entry.revision,
+            event_body_hash: entry.body_hash,
+            hook_version: binding.hook_version.clone(),
+            selector_hash: params.finalize().to_hex().to_string(),
+            grant_hash: grant.digest(),
+            verdict_evidence: verdict_evidence.to_vec(),
+            runtime_identity,
+            dependencies,
+        })
+    }
+}
+
+#[derive(Serialize)]
+struct HookDerivationMaterial<'a> {
+    binding: &'a EntityId,
+    code: &'a EntityId,
+    body_hash: &'a str,
+    source: FactSource,
+    position: &'a str,
+    fact: FactKind,
+    entity: &'a EntityId,
+    input_hash: &'a str,
+    event_input_hash: &'a [u8; 32],
+    event_revision: Option<RevisionRef>,
+    event_body_hash: Option<[u8; 32]>,
+    reads: &'a [HookReadPin],
+    verdicts: &'a [HookVerdictPin],
+    verdicts_complete: bool,
+    verdict_evidence_known: bool,
+    verdict_evidence: &'a [EntityId],
+    verdict_calls: &'a [HookSettledCallRef],
+    preparation: Option<&'a HookPreparation>,
+    hook_version: &'a str,
+    selector_hash: &'a str,
+    grant_hash: &'a str,
+    runtime_identity: Option<&'a str>,
+}
+
+/// Finalizes the derivation only after the body's reads, verdicts and
+/// preparation are known. It never changes the stable delivery/run key.
+pub(super) fn finalize_derivation(memo: &mut HookRunRecord) -> Result<()> {
+    let material = HookDerivationMaterial {
+        binding: &memo.binding,
+        code: &memo.code,
+        body_hash: &memo.body_hash,
+        source: memo.source,
+        position: &memo.position,
+        fact: memo.fact,
+        entity: &memo.entity,
+        input_hash: &memo.input_hash,
+        event_input_hash: &memo.derivation.event_input_hash,
+        event_revision: memo.derivation.event_revision,
+        event_body_hash: memo.derivation.event_body_hash,
+        reads: &memo.reads,
+        verdicts: &memo.verdicts,
+        verdicts_complete: memo.verdicts_complete,
+        verdict_evidence_known: memo.verdict_evidence_known,
+        verdict_evidence: &memo.derivation.verdict_evidence,
+        verdict_calls: &memo.verdict_calls,
+        preparation: memo.preparation.as_ref(),
+        hook_version: &memo.derivation.hook_version,
+        selector_hash: &memo.derivation.selector_hash,
+        grant_hash: &memo.derivation.grant_hash,
+        runtime_identity: memo.derivation.runtime_identity.as_deref(),
+    };
+    let encoded = serde_json::to_vec(&material)
+        .map_err(|_| Error::InvariantViolation("hook derivation encode"))?;
+    memo.derivation.digest = blake3::hash(&encoded).to_hex().to_string();
+    Ok(())
+}
+
 /// The memo row: a run's saved result. A repeat run finds it and computes
 /// nothing. It does not prove an effect landed; the intent row says that.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HookRunRecord {
+    /// The post-execution derivation beside the memo's stable delivery key.
+    pub(super) derivation: HookRunDerivation,
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) binding: EntityId,
     #[serde(with = "crate::serialize::entity_ref")]
@@ -233,8 +446,10 @@ pub(super) struct HookRunRecord {
     pub(super) fact: FactKind,
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) entity: EntityId,
-    /// The exact input the body saw; `None` past the pin bound.
+    /// The exact input the body saw; `None` past the pin bound or after erase.
     pub(super) input_json: Option<String>,
+    /// Source erasure retired this run's retained payload (FIX 10080).
+    pub(super) history_erased: bool,
     pub(super) input_hash: String,
     pub(super) reads: Vec<HookReadPin>,
     /// Each `ai.verdict` the run asked, in order, while they fit the pin
@@ -242,6 +457,19 @@ pub(super) struct HookRunRecord {
     pub(super) verdicts: Vec<HookVerdictPin>,
     /// False once a verdict did not fit: replay has no verdict history then.
     pub(super) verdicts_complete: bool,
+    /// Whether every verdict the run heard listed the rows its evidence
+    /// resolved to, pinned or not (FIX 5764): the derivation's
+    /// `verdict_evidence` is then the exact set, kept past the pins' bound.
+    pub(super) verdict_evidence_known: bool,
+    /// Every model call the run's verdicts settled on its pack line, in the
+    /// order they settled, whether or not their pins fit (FIX 10075): a
+    /// reference to each settlement, never a second one.
+    #[serde(default)]
+    pub(super) verdict_calls: Vec<HookSettledCallRef>,
+    /// How the body was prepared before it ran (FIX 9208); `body_hash`
+    /// still names the body as authored.
+    #[serde(default)]
+    pub(super) preparation: Option<HookPreparation>,
     pub(super) outcome_json: Option<String>,
     /// The outcome kind, or `refused` / `failed`.
     pub(super) outcome: String,
@@ -307,6 +535,8 @@ pub(super) enum HookIntentState {
 /// Queued work a run saved before its cursor moved.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct HookIntent {
+    /// Source bodies whose erasure retires this intent's saved payload.
+    pub(super) dependencies: Vec<HookDependency>,
     #[serde(with = "crate::serialize::entity_ref")]
     pub(super) binding: EntityId,
     /// The hook's author: the outcome runs as this actor.
@@ -334,12 +564,11 @@ pub(super) fn receipt_id(key: &RunKey) -> String {
 
 /// The rows the run a Hook receipt names (`run_key`, 64 hex) read: a fact
 /// run's memo's reads and the rows each of its verdicts' evidence resolved
-/// to (FIX 5459), else a verb run's saved record's reads. A fact run that
-/// did not pin every verdict lists its reads alone while
-/// [`INCOMPLETE_VERDICT_PINS_KEEP_READ_PIN_SCREEN`]. `None` when the key
-/// names no kept run, or a fact run pinned a verdict without its evidence
-/// rows. The receipt family screens a Hook receipt on them for a caller off
-/// this device (FIX 1119).
+/// to (FIX 5459), every verdict's included, whether or not its pin fit the
+/// byte bound (FIX 5764), else a verb run's saved record's reads. `None`
+/// when the key names no kept run, or a fact run heard a verdict without its
+/// evidence rows. The receipt family screens a Hook receipt on them for a
+/// caller off this device (FIX 1119).
 pub(crate) fn hook_run_read_rows(vault: &Vault, run_key: &str) -> Result<Option<Vec<EntityId>>> {
     let rtxn = vault.store.env.read_txn()?;
     hook_run_read_rows_in(&vault.store, &rtxn, run_key)
@@ -357,22 +586,10 @@ fn hook_run_read_rows_in(
         return Ok(None);
     };
     let (reads, evidence) = match MEMOS.get(dbs, rtxn, &key)? {
-        Some(memo) if !memo.verdicts_complete => {
-            if !INCOMPLETE_VERDICT_PINS_KEEP_READ_PIN_SCREEN {
-                return Ok(None);
-            }
-            (memo.reads, Vec::new())
-        }
-        Some(memo) => {
-            let mut evidence = Vec::new();
-            for verdict in memo.verdicts {
-                let Some(rows) = verdict.evidence else {
-                    return Ok(None);
-                };
-                evidence.extend(rows);
-            }
-            (memo.reads, evidence)
-        }
+        // An erased run's history stands on nothing it kept (FIX 10080).
+        Some(memo) if memo.history_erased => (memo.reads, Vec::new()),
+        Some(memo) if !memo.verdict_evidence_known => return Ok(None),
+        Some(memo) => (memo.reads, memo.derivation.verdict_evidence),
         None => match super::verb::VERB_RUNS.get(dbs, rtxn, &key)? {
             Some(run) => (run.reads, Vec::new()),
             None => return Ok(None),
@@ -387,14 +604,20 @@ fn hook_run_read_rows_in(
     ))
 }
 
-/// The Hook receipt projector: runs, newest first within the query's bound.
+/// The Hook receipt projector: runs, newest first within the query's bound,
+/// from the whole ledger (FIX 3582); past its threshold row the read raises
+/// one check (rule 5).
 pub(crate) fn hook_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"hook",
+    )?;
     let mut out = Vec::new();
-    for row in RECEIPTS
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(MAX_RECEIPT_QUERY_SCAN)
-    {
+    for row in RECEIPTS.iter_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let (_, receipt) = row?;
         if !query.matches(&receipt) {
             continue;
@@ -405,5 +628,6 @@ pub(crate) fn hook_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<R
             retain_newest_receipt(&mut out, receipt, query.limit);
         }
     }
+    count.finish(vault);
     Ok(out)
 }

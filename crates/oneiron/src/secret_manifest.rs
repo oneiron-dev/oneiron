@@ -47,6 +47,23 @@ pub struct SecretManifestEntry {
     pub bindings: Vec<SecretBinding>,
     /// Repo paths holding materializable values; SECRET-03 reads these.
     pub declared_paths: Vec<String>,
+    /// The environment variable name a run reads this secret as (FIX 7608
+    /// slice 6): a name mapped onto this entry's custody `name`, never a
+    /// value. An ordinary secret declares none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env_name: Option<String>,
+}
+
+/// Whether `name` is an environment variable name a manifest may declare
+/// and a dotenv file assigns: a letter or `_`, then letters, digits, `_`,
+/// `.` or `-`.
+#[must_use]
+pub fn is_secret_env_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|first| first.is_ascii_alphabetic() || first == b'_')
+        && bytes.all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'.' | b'-'))
 }
 
 /// The manifest schema version stamped at parse.
@@ -56,11 +73,11 @@ pub const SECRET_MANIFEST_SCHEMA_VERSION: u16 = 1;
 ///
 /// The manifest is line-oriented TOML: a top-level `schema_version` integer,
 /// then one `[[secrets]]` table array per entry, each with `name`, `class`
-/// (the canon kebab-case noun), a `declared_paths` string array, and inline
-/// `[[secrets.bindings]]` tables with `effector`, `tier_ceiling` (integer
-/// 0..=2), and a `scopes` string array. Unknown keys are ignored so the
-/// format can grow, but each value must still end on its line. A key set twice
-/// in one table, a key made both a value and a table, a key under one this
+/// (the canon kebab-case noun), a `declared_paths` string array, an optional
+/// `env_name` string, and inline `[[secrets.bindings]]` tables with
+/// `effector`, `tier_ceiling` (integer 0..=2), and a `scopes` string array.
+/// Unknown keys are ignored so the format can grow, but each value must
+/// still end on its line. A key set twice in one table, a key made both a value and a table, a key under one this
 /// subset reads, or an effector bound twice in one entry, is refused: the
 /// manifest would say two things, and keeping either would let a wider value
 /// pass for a narrower one. The parser is a deliberately small TOML subset —
@@ -74,6 +91,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         name: String,
         class: Option<CustodyClass>,
         declared_paths: Vec<String>,
+        env_name: Option<String>,
         bindings: Vec<ScratchBinding>,
     }
     #[derive(Default)]
@@ -147,7 +165,10 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
         // parser reads.
         let (reads, beneath): (&[&str], Option<&str>) = match scope {
             Scope::Root => (&["schema_version"], Some("secrets")),
-            Scope::Secrets => (&["name", "class", "declared_paths"], Some("bindings")),
+            Scope::Secrets => (
+                &["name", "class", "declared_paths", "env_name"],
+                Some("bindings"),
+            ),
             Scope::Binding => (&["effector", "tier_ceiling", "scopes"], None),
         };
         let head = path.first().map(String::as_str);
@@ -191,6 +212,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                         )?);
                     }
                     "declared_paths" => entry.declared_paths = parse_string_array(value)?,
+                    "env_name" => entry.env_name = Some(parse_string(value)?),
                     _ => extension_value(value)?,
                 }
             }
@@ -258,6 +280,7 @@ pub fn parse_secret_manifest(text: &str) -> Result<SecretManifest> {
                 class,
                 bindings,
                 declared_paths: entry.declared_paths,
+                env_name: entry.env_name,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -530,6 +553,7 @@ pub fn validate_secret_manifest(m: &SecretManifest, floor: &SecretCustodyFloor) 
         )));
     }
     let mut seen_names = std::collections::BTreeSet::new();
+    let mut seen_env_names = std::collections::BTreeSet::new();
     for entry in &m.secrets {
         if entry.name.is_empty() {
             return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
@@ -540,6 +564,17 @@ pub fn validate_secret_manifest(m: &SecretManifest, floor: &SecretCustodyFloor) 
             return Err(Error::Secret(SecretError::InvalidSecretCustodyBody(
                 "duplicate secret manifest entry name",
             )));
+        }
+        // An env name names one secret: a run reads one value under it.
+        if let Some(env_name) = &entry.env_name {
+            if !is_secret_env_name(env_name) {
+                return Err(invalid_manifest(
+                    "secret manifest env_name is not an environment variable name",
+                ));
+            }
+            if !seen_env_names.insert(env_name) {
+                return Err(invalid_manifest("duplicate secret manifest env_name"));
+            }
         }
         let band = floor.band_for(entry.class);
         for binding in &entry.bindings {

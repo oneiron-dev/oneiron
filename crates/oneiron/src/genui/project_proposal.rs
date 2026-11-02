@@ -2,11 +2,13 @@
 
 use super::consent_eval::{
     ConsentActionKind, ConsentActionRequest, ensure_authenticated_actor, ensure_component_request,
-    ensure_declared_action, lens_text, non_empty,
+    ensure_declared_action, non_empty,
 };
 use super::protocol::Of336ActionDescriptor;
 use crate::consent::AuthenticatedOwner;
 use crate::lens::LensRenderId;
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::Store;
 use crate::{EntityId, Error, Result, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -144,7 +146,9 @@ impl ProjectProposalCard {
     }
 
     /// Recheck before rendering or emitting an intent: public fields and decoded
-    /// payloads must not bypass the constructor's constraints.
+    /// payloads must not bypass the constructor's constraints. No count or
+    /// size refuses a card (rule 5); [`Self::observe_sizes`] counts them, and
+    /// a surface may present a long field in parts but never drops one.
     pub fn validate(&self) -> Result<()> {
         for (name, value) in [
             ("card_id", &self.card_id),
@@ -155,7 +159,6 @@ impl ProjectProposalCard {
             ("leader_agent_def_ref", &self.leader_agent_def_ref),
         ] {
             non_empty(name, value.clone())?;
-            lens_text(value.clone())?;
         }
         LensRenderId::new(self.card_id.clone())?;
         for (name, reference) in [
@@ -193,15 +196,9 @@ impl ProjectProposalCard {
             ("board humans", &self.board_human_refs),
             ("starting skills", &self.starting_skill_refs),
         ] {
-            if refs.len() > 128 {
-                return Err(Error::InvalidConfig(format!(
-                    "project proposal {name} exceeds its limit"
-                )));
-            }
             let mut unique = HashSet::new();
             for value in refs {
                 non_empty(name, value.clone())?;
-                lens_text(value.clone())?;
                 if name != "goal axes" {
                     ensure_canonical_ref(name, value)?;
                 }
@@ -212,19 +209,44 @@ impl ProjectProposalCard {
                 }
             }
         }
-        // Atom Kit combines entries into single bounded LensText values. Check
-        // the combined text here so all three adapters accept the same card.
-        for refs in [
-            &self.goal.axes,
-            &self.board_human_refs,
-            &self.starting_skill_refs,
-        ] {
-            lens_text(refs.join(", "))?;
-        }
-        // A client that cannot draw the card shows this text instead. Keep it
-        // complete and bounded.
-        lens_text(self.fallback_text())?;
         Ok(())
+    }
+
+    /// Counts the card against the bounds it was once refused past, each
+    /// under the card and the field's name: its three lists' entries, and
+    /// the bytes of every text a surface renders (each field and entry, each
+    /// list as Atom Kit joins it, and the fallback text). Past a threshold
+    /// row the check is raised and the whole card is kept.
+    pub(crate) fn observe_sizes(&self, store: &Store, txn: &heed::RoTxn<'_>) -> Result<()> {
+        let observe = |scan: EngineScan, field: &str, rows: usize| -> Result<()> {
+            let scope = [self.card_id.as_bytes(), b":".as_slice(), field.as_bytes()].concat();
+            let mut count = ScanCount::start(store, txn, scan, &scope)?;
+            count.rows(rows);
+            count.defer(store);
+            Ok(())
+        };
+        let text = EngineScan::ProjectProposalTextBytes;
+        for (field, value) in [
+            ("card_id", &self.card_id),
+            ("principal_ref", &self.principal_ref),
+            ("source_message_ref", &self.source_message_ref),
+            ("goal", &self.goal.goal),
+            ("why", &self.goal.why),
+            ("leader_agent_def_ref", &self.leader_agent_def_ref),
+        ] {
+            observe(text, field, value.len())?;
+        }
+        for (field, list) in [
+            ("goal_axes", &self.goal.axes),
+            ("board_humans", &self.board_human_refs),
+            ("starting_skills", &self.starting_skill_refs),
+        ] {
+            observe(EngineScan::ProjectProposalEntries, field, list.len())?;
+            let longest = list.iter().map(String::len).max().unwrap_or(0);
+            observe(text, field, longest)?;
+            observe(text, &format!("{field}_joined"), list.join(", ").len())?;
+        }
+        observe(text, "fallback_text", self.fallback_text().len())
     }
 
     #[must_use]

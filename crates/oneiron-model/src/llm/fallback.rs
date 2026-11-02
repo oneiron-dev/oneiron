@@ -118,6 +118,7 @@ impl FallbackRegistry {
             },
             // A deterministic runner is no host evidence: it asserts no record.
             reply_assertions: ReplyAssertions::default(),
+            token_scores: None,
         })
     }
 
@@ -173,6 +174,7 @@ impl DeterministicRunner for JsonRules {
         let class = match failure {
             FatalLlmError::Auth => "auth",
             FatalLlmError::InvalidRequest => "invalid_request",
+            FatalLlmError::InvalidRequestDetail { .. } => "invalid_request",
             FatalLlmError::ContentFiltered => "content_filtered",
             FatalLlmError::EmptyResponse => "empty_response",
             FatalLlmError::Unsupported(_) => "unsupported",

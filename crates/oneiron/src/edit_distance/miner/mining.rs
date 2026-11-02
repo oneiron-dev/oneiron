@@ -1,86 +1,49 @@
 //! ED-04 substitution-cluster mining pass.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 
 use rmpv::Value;
 
-use super::config::{
-    MAX_SUBSTITUTION_TOKENS, MINER_K_DEFAULT, MINER_K_ROW_LABEL, PAYLOAD_KEY_SESSION, TONE_LEXICON,
-    invalid,
-};
+use super::config::{MAX_SUBSTITUTION_TOKENS, PAYLOAD_KEY_SESSION, TONE_LEXICON, invalid};
 use super::emission::emit_cluster;
+use super::hunks::MinableHunks;
 use super::model::{
     AmendmentSource, ArtifactIndex, Bucket, ClusterKey, MinedOutcome, MinerRun, MinerWatermark,
-    Region, Substitution, SubstitutionClass, SubstitutionCluster,
+    Region, SourceEnds, Substitution, SubstitutionClass, SubstitutionCluster,
 };
 use super::store::{advance_watermark_in_txn, miner_watermark};
 use crate::Vault;
 use crate::edge::EdgeActorClass;
-use crate::edit_distance::FinalizedProposalText;
-use crate::edit_distance::PROPOSAL_ARTIFACT;
 use crate::edit_distance::attribution::{
-    AmendmentClass, AmendmentJudgment, amendment_evidence, amendment_judgments,
+    AmendmentJudgment, amendment_evidence, amendment_judgments,
 };
-use crate::edit_distance::delta::{DeltaSource, amendment_delta};
-use crate::entity_id::{EntityId, bytes_to_hex_lower};
+use crate::edit_distance::delta::amendment_delta;
+use crate::edit_distance::{PROPOSAL_ARTIFACT, TextRead};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::scan_check::{EngineScan, ScanCount};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
-
-/// Dial: distinct-receipt count K needed before the substitution miner acts
-/// on a cluster.
-const MINER_K: SideTable<(), MinerK, Raw> = SideTable::new(&side_table::EDIT_DISTANCE_MINER_K);
-
-/// K, stored as decimal ASCII so the dial is readable in a `vault_meta` dump
-/// — the `InboxReviewDial` token convention, applied to a count.
-struct MinerK(u32);
-
-impl RawValue for MinerK {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.0.to_string().into_bytes())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        std::str::from_utf8(bytes)
-            .ok()
-            .and_then(|text| text.parse::<u32>().ok())
-            .filter(|k| *k > 0)
-            .map(Self)
-            .ok_or_else(|| CodecError::Value(Error::CorruptedIndex(MINER_K_ROW_LABEL)))
-    }
-}
 
 // ---------------------------------------------------------------------------
-// The K dial
+// The K threshold
 // ---------------------------------------------------------------------------
 
-/// Reads K, the distinct-receipt threshold (default [`MINER_K_DEFAULT`]).
+/// Reads K, the distinct-receipt threshold: the policy manifest's
+/// `miner_recurrence_receipts` row, seeded as data and changed through the
+/// manifest authoring doors (FIX 9809). A manifest that does not read warns
+/// and reads the shipped row.
 ///
 /// # Errors
 ///
-/// Storage errors; [`Error::CorruptedIndex`] when the stored dial is not a
-/// positive decimal count.
+/// Storage errors opening the read, and a build missing its shipped row.
 pub fn miner_k(vault: &Vault) -> Result<u32> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(MINER_K
-        .get(&vault.store, &rtxn, &())?
-        .map_or(MINER_K_DEFAULT, |dial| dial.0))
-}
-
-/// Persists K.
-///
-/// Stored as decimal ASCII so the dial is readable in a `vault_meta` dump —
-/// the `InboxReviewDial` token convention, applied to a count.
-///
-/// # Errors
-///
-/// [`Error::InvalidClaimBody`] when `k` is zero: a threshold of zero emits on
-/// the FIRST correction, which is the opposite of recurrence. Storage errors.
-pub fn set_miner_k(vault: &Vault, k: u32) -> Result<()> {
-    if k == 0 {
-        return Err(invalid("the substitution miner's K must be at least 1"));
-    }
-    vault.with_write_txn_grouped(|wtxn| MINER_K.put(&vault.store, wtxn, &(), &MinerK(k)))
+    let k = crate::gate::edit_distance_thresholds::edit_distance_threshold_in_txn(
+        &vault.store,
+        &rtxn,
+        crate::gate::edit_distance_thresholds::EditDistanceThreshold::RecurrenceReceipts,
+    )?;
+    Ok(u32::try_from(k).unwrap_or(u32::MAX))
 }
 
 // ---------------------------------------------------------------------------
@@ -268,12 +231,12 @@ fn clusters_from(
     let mut buckets: BTreeMap<ClusterKey, Bucket> = BTreeMap::new();
     for judgment in judgments {
         // An unclear share HOLDS: its notes wait in the unclear ledger. The
-        // miner reads the whole corrected text and cannot tell an unclear
-        // hunk's substitutions from a clear one's, so any amendment with an
-        // unclear share is held whole until a re-judgment clears it.
-        if judgment.share_of(AmendmentClass::Unclear) > 0.0 {
+        // judgment keeps each hunk's label, so an amendment with an unclear
+        // share mines only what its clear hunks made (FIX 9808), and is held
+        // whole when no clear hunk made a substitution.
+        let Some(minable) = MinableHunks::of(judgment) else {
             continue;
-        }
+        };
         let Some(source) = amendment_source(vault, judgment, &artifacts)? else {
             continue;
         };
@@ -300,11 +263,14 @@ fn clusters_from(
         {
             continue;
         }
-        for substitution in substitutions(source.delta_source, source.artifact) {
-            let target = binding.as_ref().map_or_else(Default::default, |_| {
+        for substitution in substitutions(&source.ends) {
+            if !minable.admits(&substitution) {
+                continue;
+            }
+            let target = binding.as_ref().map_or_else(Default::default, |row| {
                 super::policy::infer_target(
                     &policies,
-                    binding.expect("bound decision").principal,
+                    row.principal,
                     &judgment.scope,
                     &substitution.from,
                     &substitution.to,
@@ -322,6 +288,7 @@ fn clusters_from(
                 &judgment.receipt_id,
                 source.skill,
                 binding.as_ref().map_or(judgment.at, |row| row.at),
+                false,
             );
         }
     }
@@ -329,7 +296,7 @@ fn clusters_from(
         if now.is_some_and(|now| !crate::claim::preference_evidence_in_force(row.at, now)) {
             continue;
         }
-        let pair = if let Some(text) = row.target.text() {
+        let (pair, unattributed) = if let Some(text) = row.target.text() {
             if !matches!(
                 row.outcome.as_str(),
                 "approved" | "approved_amended" | "rejected"
@@ -338,7 +305,7 @@ fn clusters_from(
             }
             // Explicit target text is the compiler instruction; no lexical
             // rule is inferred from an empty/insert-only/rejected delta.
-            (String::new(), text.to_owned())
+            ((String::new(), text.to_owned()), false)
         } else {
             if row.outcome != "approved_amended"
                 || judgments
@@ -350,7 +317,10 @@ fn clusters_from(
             let Some(pair) = row.substitution else {
                 continue;
             };
-            pair
+            (
+                pair,
+                row.target == super::target::CompilationTarget::Fallback,
+            )
         };
         let target = if row.target == super::target::CompilationTarget::Fallback {
             super::policy::infer_target(&policies, row.principal, &row.scope, &pair.0, &pair.1)
@@ -368,7 +338,7 @@ fn clusters_from(
         buckets
             .entry(key)
             .or_default()
-            .observe(&row.receipt, None, row.at);
+            .observe(&row.receipt, None, row.at, unattributed);
     }
     Ok(buckets
         .into_iter()
@@ -388,105 +358,85 @@ fn clusters_from(
 /// * no recorded routing facts — the amendment has no scope axis and no actor,
 ///   and inventing either is the failure ED-03 is instrumented against;
 /// * no Δ — nothing measured this window, so there is nothing to read;
-/// * a Δ whose refs name no persisted artifact — the field-diff lane hashes
-///   two MessagePack BODIES, which are not retained, so it resolves to no text
-///   pair at all. The recorded-ops and reconstructed lanes both do resolve,
-///   which is exactly what their refs are for (ED-01 pins them as "directly
-///   replayable" and "directly verifiable").
-fn amendment_source<'a>(
+/// * a Δ whose refs name no retained text — the field-diff lane's ends are
+///   structured bodies in an entity and a receipt, so it resolves to no text
+///   pair at all. A recorded-ops Δ names one artifact's window, a
+///   reconstructed one each end's retained row, which is what the refs are
+///   for.
+fn amendment_source(
     vault: &Vault,
     judgment: &AmendmentJudgment,
-    artifacts: &'a ArtifactIndex,
-) -> Result<Option<AmendmentSource<'a>>> {
+    artifacts: &ArtifactIndex,
+) -> Result<Option<AmendmentSource>> {
     let Some(evidence) = amendment_evidence(vault, &judgment.receipt_id)? else {
         return Ok(None);
     };
     let Some(delta) = amendment_delta(vault, &judgment.receipt_id)? else {
         return Ok(None);
     };
-    Ok(artifacts.resolve(&delta).map(|artifact| AmendmentSource {
+    Ok(artifacts.resolve(&delta).map(|ends| AmendmentSource {
         actor: evidence.actor,
         skill: evidence.skill,
-        delta_source: delta.source,
-        artifact,
+        ends,
     }))
 }
 
-/// Reads the artifact rows once per pass and indexes them under BOTH ref
-/// families ED-01 can hand back.
-///
-/// The op-window pair addresses a [`DeltaSource::RecordedOps`] Δ (hex of the
-/// encoded Loro frontiers, which is what that lane writes); the text-hash pair
-/// addresses a [`DeltaSource::Reconstructed`] one (blake3 of each endpoint
-/// text). One map holds both: the tokens are opaque hex, so the two families
-/// cannot collide in any way a reader would have to reason about.
+/// Reads the artifact rows once per pass, unopened, keyed by the artifact id
+/// a Δ's refs name. Each row opens only when a judgment resolves it and then
+/// stays open for the pass.
 fn artifact_index(vault: &Vault) -> Result<ArtifactIndex> {
     let rtxn = vault.store.env.read_txn()?;
     let mut index = ArtifactIndex {
-        records: Vec::new(),
-        by_refs: BTreeMap::new(),
+        records: BTreeMap::new(),
+        opened: RefCell::new(BTreeMap::new()),
     };
     // Every artifact is indexed: past the threshold row the scan raises one
     // check and reads on, so no judged artifact drops out of mining.
     let mut rows = ScanCount::start(&vault.store, &rtxn, EngineScan::MinerArtifactRows, &[])?;
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, &rtxn, &[])? {
-        let (_, record) = entry?;
+        let (artifact, stored) = entry?;
         rows.row();
-        let position = index.records.len();
-        index.by_refs.insert(
-            (
-                bytes_to_hex_lower(record.proposed_ref.as_bytes()),
-                bytes_to_hex_lower(record.final_ref.as_bytes()),
-            ),
-            position,
-        );
-        index.by_refs.insert(
-            (
-                text_ref(&record.proposed_text),
-                text_ref(&record.final_text),
-            ),
-            position,
-        );
-        index.records.push(record);
+        // A document kept outside the wall joins with its masked texts (FIX
+        // 11539), read here in the index's own transaction.
+        let stored = crate::edit_distance::joined_in_txn(&vault.store, &rtxn, stored)?;
+        index.records.insert(artifact, stored);
     }
     rows.finish(vault);
     Ok(index)
-}
-
-/// The ref ED-01's reconstructed lane writes for one endpoint text.
-fn text_ref(text: &str) -> String {
-    bytes_to_hex_lower(blake3::hash(text.as_bytes()).as_bytes())
 }
 
 // ---------------------------------------------------------------------------
 // Substitution extraction
 // ---------------------------------------------------------------------------
 
-/// Extracts every substitution one artifact shows, through the lane its Δ was
-/// measured on.
+/// Extracts every substitution one amendment shows, through the lane its Δ
+/// was measured on.
 ///
-/// * [`DeltaSource::RecordedOps`] — one pair per recorded CHANGE, from the
-///   change's own before/after text. Op runs are what this lane retains and
-///   they see churn: a word typed, replaced, and typed again yields the
+/// * A recorded window (`recorded_ops`) — one pair per recorded
+///   CHANGE, from the change's own before/after text read at its refs. Op
+///   runs see churn: a word typed, replaced, and typed again yields the
 ///   substitution the decider actually performed.
-/// * [`DeltaSource::Reconstructed`] — the stored text pair is re-diffed here
-///   for line pairs. ED-02's `myers_line_diff` counts lines rather than naming
-///   them, so the pairing is done locally instead of widening that lane's API
-///   for one consumer.
-/// * [`DeltaSource::FieldDiff`] — unreachable: that lane resolves to no
-///   artifact (see [`amendment_source`]). Answered rather than asserted, so a
-///   future body-retaining producer degrades to silence instead of a panic.
-fn substitutions(source: DeltaSource, artifact: &FinalizedProposalText) -> Vec<Substitution> {
-    match source {
-        DeltaSource::RecordedOps => artifact
+/// * Two endpoints (`reconstructed`) — the texts read through
+///   each end's ref are re-diffed here for line pairs. ED-02's
+///   `myers_line_diff` counts lines rather than naming them, so the pairing is
+///   done locally instead of widening that lane's API for one consumer.
+///
+/// A change text the retained document no longer holds yields no pair. A
+/// field-diff Δ resolves to no text at all (see [`amendment_source`]).
+fn substitutions(ends: &SourceEnds) -> Vec<Substitution> {
+    match ends {
+        SourceEnds::Recorded(artifact) => artifact
+            .record
             .ops_by_actor
             .iter()
-            .filter_map(|(_, span)| substitution_pair(&span.before_text, &span.after_text))
+            .filter_map(|(_, span)| match artifact.change_texts(span) {
+                (TextRead::Text(before), TextRead::Text(after)) => {
+                    substitution_pair(&before, &after)
+                }
+                _ => None,
+            })
             .collect(),
-        DeltaSource::Reconstructed => {
-            line_substitutions(&artifact.proposed_text, &artifact.final_text)
-        }
-        DeltaSource::FieldDiff => Vec::new(),
+        SourceEnds::Endpoints(before, after) => line_substitutions(before, after),
     }
 }
 

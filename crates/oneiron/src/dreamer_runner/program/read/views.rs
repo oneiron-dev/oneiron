@@ -134,6 +134,10 @@ pub struct ProgramRunView {
     pub run: Option<ProgramRunStateView>,
     /// One page of the run's steps, in step-ref order.
     pub steps: Vec<ProgramStepView>,
+    /// 32-hex refs of this page's steps whose kept body an erase retired
+    /// before it ever decoded (FIX 9391): erased, never undecodable; each
+    /// one's own read answers `ResponseErased`.
+    pub erased_steps: Vec<String>,
     /// Step rows of this page that do not decode (FIX 5736), skipped.
     pub undecodable_steps: u64,
     /// Where the next page starts; none past the last step.

@@ -177,7 +177,17 @@ impl DiagnosticEventClass {
 /// What an [`DiagnosticEventClass::AgentHealth`] event saw (OF-568). Closed;
 /// an agent-health body names exactly one, every other body none.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthSignal {

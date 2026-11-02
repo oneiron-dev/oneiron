@@ -1,8 +1,11 @@
-//! `/v1/operator`: the host operator's own acts. Only the host's root
-//! credential passes their door, never an owner's or a member's slip, and no
-//! SDK verb row reaches them, so no agent does: MCP, code mode and the facade
-//! serve verb rows only. On a managed vault the account's owner, whom his
-//! supervisor attested for the one request, passes it too, as himself.
+//! `/v1/operator`: the host operator's own acts. The host's root credential
+//! passes their door, and on a self-hosted vault the operator's own
+//! credential (FIX 1814, `auth::operator_credential`) does too, as a
+//! credential class that is never a person or an owner's proof; never an
+//! owner's or a member's slip. No SDK verb row reaches them, so no agent
+//! does: MCP, code mode and the facade serve verb rows only. On a managed
+//! vault the account's owner, whom his supervisor attested for the one
+//! request, passes it too, as himself.
 //!
 //! `POST /v1/operator/shared/recover-owner` is proof-of-control owner recovery
 //! (ARCH-0043, OF-163): a shared vault with no live Owner left takes the
@@ -12,15 +15,15 @@
 //! organization's control; on a self-hosted vault its host's live root, which
 //! acts there as the vault's owner (FIX 2222). A hosted operator's root acts
 //! as nobody, so it gets the typed support-grant refusal and recovers no
-//! Owner. The engine checks what it holds and signs the `OwnerHandover`
-//! (cause `proof_of_control`) with the host's slip issuer.
+//! Owner, and so does the operator's own credential, which acts as no owner.
+//! The engine checks what it holds and signs the `OwnerHandover` (cause
+//! `proof_of_control`) with the host's slip issuer.
 
 use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
-use axum::http::HeaderMap;
 use axum::http::request::Parts;
 use axum::response::Json;
 use axum::routing::post;
@@ -30,6 +33,7 @@ use oneiron::federation::{OwnerRecoveryAuthorization, SharedActExecutionReceipt}
 use serde::Deserialize;
 
 use super::facade::FacadeApiError;
+use super::scoped_auth::AdminCaller;
 use crate::error::ApiError;
 use crate::server::SyncServer;
 
@@ -40,15 +44,30 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
     )
 }
 
+/// Who passes the host operator's door ([`operator`]).
+enum OperatorCaller {
+    /// The host's own root, as the owner its host action names.
+    Root(HostActionAuthority),
+    /// The operator's own credential on a self-hosted vault (FIX 1814): a
+    /// credential class, never a person or an owner's proof.
+    Credential(crate::auth::OperatorCredential),
+}
+
 /// The host operator's door: the host's own root credential, the
 /// unattenuated slip whose holder is `host`, which `ensure_host_root_slip`
-/// mints from this host's `auth_secret` (or a managed supervisor's issuer).
+/// mints from this host's `auth_secret` (or a managed supervisor's issuer),
+/// or on a self-hosted vault the operator's own credential, which the same
+/// issuer mints (`oneiron token operator`, FIX 1814).
 /// `check_api_auth`, the host-level admin routes' gate (`/v1/core/slips/revoke`,
 /// the org-admin setup), admits any owner-grade credential, the owner's own
 /// full slip included; this door narrows it to the root, the test MCP's actor
 /// dispatch applies to "the actual configured root".
-fn operator(headers: &HeaderMap, server: &SyncServer) -> Result<HostActionAuthority, ApiError> {
-    let auth = super::check_api_auth(headers, server)?;
+fn operator(request: &Parts, server: &SyncServer) -> Result<OperatorCaller, ApiError> {
+    let path = crate::auth::request_path(request);
+    let auth = match super::check_api_auth(&request.headers, path, server)? {
+        AdminCaller::Operator(credential) => return Ok(OperatorCaller::Credential(credential)),
+        AdminCaller::Credential(auth) => auth,
+    };
     let root = auth.principal_ref().is_none()
         && auth.verified_slip().is_some_and(|proof| {
             proof.claims().holder_ref == "host" && proof.is_full_vault_owner_grade()
@@ -62,6 +81,7 @@ fn operator(headers: &HeaderMap, server: &SyncServer) -> Result<HostActionAuthor
         Some(root) => server
             .vault()
             .host_action_authority(root)
+            .map(OperatorCaller::Root)
             .map_err(super::host_action::host_action_refusal),
         None => Err(ApiError::forbidden_scope("operator")),
     }
@@ -82,14 +102,26 @@ enum Recoverer {
 
 /// The door of `POST /v1/operator/shared/recover-owner`: a managed vault's
 /// attested account owner as himself, else the host operator's root
-/// ([`operator`]), unchanged.
+/// ([`operator`]), unchanged. The operator's own credential passes the
+/// operator's door but recovers no Owner: a recovery is the owner's act
+/// (FIX 1812), and that credential is no owner's proof (FIX 1814), so it
+/// gets the 403 that names the owner's scope.
 fn recoverer(request: &Parts, server: &SyncServer) -> Result<Recoverer, ApiError> {
     if let Some(holder) = crate::auth::attested_owner(&request.extensions, server)
         && !crate::auth::carries_caller_slip(&request.headers)
     {
         return Ok(Recoverer::AccountOwner(holder));
     }
-    operator(&request.headers, server).map(Recoverer::Operator)
+    match operator(request, server)? {
+        OperatorCaller::Root(action) => Ok(Recoverer::Operator(action)),
+        OperatorCaller::Credential(credential) => {
+            tracing::info!(
+                slip_id = %oneiron_vault_contract::hex(&credential.slip_id()),
+                "an operator credential asked for an owner recovery, which is the owner's act"
+            );
+            Err(ApiError::forbidden_scope("owner"))
+        }
+    }
 }
 
 impl Recoverer {

@@ -1,7 +1,8 @@
 //! Owner-authenticated raw inference. Host injection is explicit and absent by default.
-use crate::models::{OfferLadder, RawInference};
+use crate::models::{CallDeadline, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
+mod defaults_submit;
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -33,20 +34,43 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
                 .put(replace_defaults)
                 .layer(DefaultBodyLimit::max(16 * 1024)),
         )
+        // FIX 8211: the kept proposals, and a holder's answer to one.
+        .route("/defaults/proposals", get(defaults_submit::list_proposals))
+        .route(
+            "/defaults/proposals/{proposal}",
+            post(defaults_submit::rule_proposal),
+        )
         .layer(DefaultBodyLimit::max(64 * 1024 * 1024))
 }
+/// A refusal's wire code and its other wire field (empty for a code-only
+/// body), kept on the response for the OpenAI proxy's call receipt
+/// (FIX 3389) and never written to the wire.
+#[derive(Clone, Debug)]
+pub(super) struct RefusalCode {
+    pub(super) code: String,
+    pub(super) message: String,
+}
+fn coded(mut response: Response, code: &str, message: &str) -> Response {
+    response.extensions_mut().insert(RefusalCode {
+        code: code.to_owned(),
+        message: message.to_owned(),
+    });
+    response
+}
 fn refusal(status: StatusCode, code: &str) -> Response {
-    (status, Json(serde_json::json!({"error":{"code":code}}))).into_response()
+    let response = (status, Json(serde_json::json!({"error":{"code":code}}))).into_response();
+    coded(response, code, "")
 }
 /// A param or provider option that would pick the model or the route
 /// (`LlmRequest::route_selector_override`), named as `key` or `namespace.key`,
 /// with `*` for a namespace no adapter reads.
 fn route_selector_refusal(key: &str) -> Response {
-    (
+    let response = (
         StatusCode::BAD_REQUEST,
         Json(serde_json::json!({"error":{"code":"route_selector_forbidden","key":key}})),
     )
-        .into_response()
+        .into_response();
+    coded(response, "route_selector_forbidden", key)
 }
 fn failure(error: LlmError) -> Response {
     let (status, body) = failure_body(error);
@@ -76,6 +100,9 @@ fn failure_body(error: LlmError) -> (StatusCode, serde_json::Value) {
         // this device answered.
         LlmError::Retryable(RetryableLlmError::KeptOnDevice { .. }) => {
             (StatusCode::SERVICE_UNAVAILABLE, "kept_on_device")
+        }
+        LlmError::Retryable(RetryableLlmError::WorldRouteNotAdmitted) => {
+            (StatusCode::SERVICE_UNAVAILABLE, "world_route_not_admitted")
         }
         LlmError::Retryable(_) => (StatusCode::BAD_GATEWAY, "stream_cut"),
     };
@@ -109,6 +136,8 @@ async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) ->
 async fn replace_defaults(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
     Json(table): Json<oneiron::llm::PurposeDefaultTable>,
 ) -> Response {
     if !auth.is_owner_grade() {
@@ -131,28 +160,29 @@ async fn replace_defaults(
     {
         return refusal(StatusCode::BAD_REQUEST, "extraction_egress_unavailable");
     }
-    match server.vault.set_purpose_default_table(table.table()) {
-        Ok(()) => Json(table.table()).into_response(),
-        Err(oneiron::Error::InvalidConfig(_)) => {
-            refusal(StatusCode::BAD_REQUEST, "invalid_defaults")
-        }
-        Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
-    }
+    // FIX 8211: a live policy-power holder's table lands; anyone else's is
+    // kept as an inert proposal.
+    defaults_submit::submit(&server, &auth, &headers, &extensions, table.table())
 }
 
-/// Admits a raw call: the owner, then the vault's inference policy for the
-/// model the request names. The call itself is admitted rung by rung under a
-/// run on the raw routes' meter, as it goes out.
+/// Admits a raw call: the owner, or an agent whose live Grant the owner
+/// minted names `ai.text` (FIX 3208), whose call is then his; then the
+/// vault's inference policy for the model the request names. The call itself
+/// is admitted rung by rung under a run on the raw routes' meter, as it goes
+/// out.
 pub(super) fn admit(
     server: &SyncServer,
     auth: &CoreAuth,
     request: &mut LlmRequest,
 ) -> Result<(Arc<OfferLadder>, RunAdmission), Box<Response>> {
     if !auth.is_owner_grade() {
-        return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
-    }
-    // FIX 2222: an owner act; a hosted operator's root is refused, typed.
-    if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        if !crate::api::ai::granted_operations(server, auth)
+            .contains(&oneiron::llm::media::AiOperation::Text)
+        {
+            return Err(Box::new(refusal(StatusCode::FORBIDDEN, "owner_required")));
+        }
+    } else if let Err(error) = crate::api::host_action::require_host_owner_act(server, auth) {
+        // FIX 2222: an owner act; a hosted operator's root is refused, typed.
         return Err(Box::new(error.into_response()));
     }
     admit_owner(server, request)
@@ -194,6 +224,7 @@ fn admit_owner(
         Some(locality) => oneiron::llm::HostInferenceBinding::Advertised {
             model: request.model.clone(),
             locality,
+            keyless: false,
         },
         None => oneiron::llm::HostInferenceBinding::Registered,
     };
@@ -205,7 +236,8 @@ fn admit_owner(
         .vault
         .authorize_raw_inference(request.clone(), &context)
         .map_err(|_| {
-            Box::new(if original_purpose == oneiron::CallPurpose::Extraction {
+            let admitted = oneiron::llm::admitted_as(&original_purpose);
+            Box::new(if *admitted == oneiron::CallPurpose::Extraction {
                 refusal(StatusCode::FORBIDDEN, "extraction_egress_denied")
             } else {
                 refusal(StatusCode::BAD_REQUEST, "invalid_request")
@@ -228,7 +260,11 @@ async fn generate(
         Ok(v) => v,
         Err(e) => return *e,
     };
-    match ladder.generate(&run, request, None).await {
+    // The caller's own connection is the raw call's deadline (FIX 8213).
+    match ladder
+        .generate_by(&run, request, None, &|| true, CallDeadline::Open)
+        .await
+    {
         Ok(response) => Json(response).into_response(),
         Err(e) => failure(e),
     }
@@ -257,7 +293,7 @@ async fn stream(
     // The first rung is admitted here, so a refused call answers before the
     // stream starts. Each rung settles itself; a stream the client leaves
     // ends its call, and a started rung keeps its reservation as spend.
-    let mut source = match ladder.stream(&run, request, None) {
+    let mut source = match ladder.stream_by(&run, request, None, CallDeadline::Open) {
         Ok(source) => source,
         Err(e) => return failure(e),
     };
@@ -328,7 +364,9 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
         Box::pin(async move {
             let (ladder, run) =
                 admit_owner(&server, &mut request).map_err(|refused| refused_error(&refused))?;
-            ladder.generate(&run, request, None).await
+            ladder
+                .generate_by(&run, request, None, &|| true, CallDeadline::Open)
+                .await
         })
     }
 
@@ -339,7 +377,7 @@ impl oneiron_llm_own_server::LlmMeshHandler for MeshLlm {
     ) -> oneiron::LlmResult<oneiron::LlmStream<'static>> {
         let (ladder, run) =
             admit_owner(&self.0, &mut request).map_err(|refused| refused_error(&refused))?;
-        ladder.stream(&run, request, None)
+        ladder.stream_by(&run, request, None, CallDeadline::Open)
     }
 
     /// The configured chat models that run on this node or the owner's own

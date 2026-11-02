@@ -13,8 +13,9 @@
 //!
 //! A PDF's note is the text of its pages, read from its bytes: no frontmatter
 //! and no links out, though a note's link can name it. A PDF with no text
-//! layer (a scan) reads as blank; one that is encrypted or does not parse is
-//! passed over and counted.
+//! layer (a scan) holds no text, and one that is encrypted or does not parse
+//! reads none: both are held by name, with the bytes the walk read (FIX
+//! 11276).
 //!
 //! A file of any size is read (rule 5). Text past the note bound lands in
 //! parts: the file's own note holds the first, and each next part is a note of
@@ -30,7 +31,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::ingest::{PdfText, pdf_text};
 use oneiron::limit_ask::EngineLimit;
-use oneiron::note::{ImportedNoteLink, ImportedNoteStanding, NameOnlyReason};
+use oneiron::note::{
+    FileFacts, ImportedNoteLink, ImportedNoteStanding, NameOnlyFile, NameOnlyReason, OriginalBytes,
+};
 use serde::Serialize;
 
 use super::ImportWarning;
@@ -65,11 +68,15 @@ pub(crate) struct Note {
     pub(crate) title: Option<String>,
     /// The frontmatter's `type` or `metadata.type`.
     pub(crate) label: Option<String>,
-    /// The frontmatter as it decodes, for the secret scan.
+    /// The frontmatter as it decodes, for the secret scan; each part of a
+    /// file carries its file's.
     pub(crate) decoded: String,
-    links: Vec<Link>,
+    pub(super) links: Vec<Link>,
     /// For a continuation part, its file's path: the first part's note.
     pub(crate) part_of: Option<String>,
+    /// The file's bytes as the walk opened them, kept as its original (FIX
+    /// 7779): on the file's first part alone, so a file is kept once.
+    pub(crate) original: Option<OriginalBytes>,
 }
 
 impl Note {
@@ -192,9 +199,49 @@ pub(crate) fn crossed_rows(vault: &oneiron::Vault, counts: &NoteCounts) -> Vec<I
 }
 
 /// Every note under `folder`, in path order, a file past the note bound as
-/// its parts.
-pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Result<Vec<Note>> {
+/// its parts, and the files held by name with the bytes the walk read (FIX
+/// 11276).
+pub(crate) fn read_folder(
+    folder: &Path,
+    counts: &mut NoteCounts,
+) -> anyhow::Result<(Vec<Note>, Vec<NameOnlyFile>)> {
+    let (notes, name_only, _, _) = read_folder_inner(folder, counts, None)?;
+    Ok((notes, name_only))
+}
+
+/// [`read_folder`] for a rescan (FIX 1365): a file whose size and mtime both
+/// match `prior`'s record is not read, and its path is skipped. Beside the
+/// notes, the facts of every file read, by path, and the paths skipped.
+pub(crate) fn read_folder_rescan(
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+)> {
+    read_folder_inner(folder, counts, prior)
+}
+
+/// [`read_folder`], skipping what `prior` records when it does: a file whose
+/// size and mtime both match its record keeps what the ledger holds of it,
+/// so neither its read nor its hash runs.
+fn read_folder_inner(
+    folder: &Path,
+    counts: &mut NoteCounts,
+    prior: Option<&HashMap<String, FileFacts>>,
+) -> anyhow::Result<(
+    Vec<Note>,
+    Vec<NameOnlyFile>,
+    HashMap<String, FileFacts>,
+    Vec<String>,
+)> {
     let mut notes = Vec::new();
+    let mut name_only = Vec::new();
+    let mut facts = HashMap::new();
+    let mut skipped = Vec::new();
     super::walk_notes(folder, &mut |shown, file| {
         let Some(path) = relative(folder, shown) else {
             counts.unreadable_name += 1;
@@ -207,6 +254,15 @@ pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Res
             counts.hard_linked += 1;
             return Ok(());
         }
+        let read = FileFacts {
+            bytes: metadata.len(),
+            modified_at: written_at(&metadata),
+        };
+        if prior.is_some_and(|prior| prior.get(&path) == Some(&read)) {
+            skipped.push(path);
+            return Ok(());
+        }
+        facts.insert(path.clone(), read);
         let kind = if Path::new(&path)
             .extension()
             .is_some_and(|extension| extension.eq_ignore_ascii_case("pdf"))
@@ -216,18 +272,26 @@ pub(crate) fn read_folder(folder: &Path, counts: &mut NoteCounts) -> anyhow::Res
             TextKind::Markdown
         };
         let bytes = read_all(file, shown)?;
-        // A file with no text is passed over, and counted.
-        read_text(
-            (path, PART_MARK),
+        // A file with no text is held by its name, with the bytes the walk
+        // read, kept as its original once its ledger row lands (FIX 11276).
+        if let Some((why, original)) = read_text(
+            (path.clone(), PART_MARK),
             bytes,
-            written_at(&metadata),
+            read.modified_at,
             kind,
             counts,
             &mut notes,
-        );
+        ) {
+            name_only.push(NameOnlyFile {
+                path,
+                why,
+                facts: read,
+                original: Some(original),
+            });
+        }
         Ok(())
     })?;
-    Ok(notes)
+    Ok((notes, name_only, facts, skipped))
 }
 
 /// How a file's bytes hold its text.
@@ -242,6 +306,17 @@ pub(super) enum TextKind {
     Plain,
 }
 
+impl TextKind {
+    /// The media type a file read this way keeps its original under.
+    pub(super) fn media_type(self) -> &'static str {
+        match self {
+            Self::Markdown => "text/markdown",
+            Self::Pdf => "application/pdf",
+            Self::Plain => "text/plain",
+        }
+    }
+}
+
 /// When a file was last written (seconds). A file whose time cannot be read
 /// was written by now at the latest.
 pub(super) fn written_at(metadata: &std::fs::Metadata) -> u64 {
@@ -254,7 +329,9 @@ pub(super) fn written_at(metadata: &std::fs::Metadata) -> u64 {
 
 /// The notes one file's `bytes` hold, pushed onto `notes` (a file past the
 /// note bound as its parts, each at `path` and `mark`), or why it holds
-/// none: no text, or none that reads.
+/// none with the bytes themselves: no text, or none that reads. The bytes
+/// are the file's original (FIX 7779): on its first part's note, or beside
+/// its name-only reason when it holds no text (FIX 11276).
 pub(super) fn read_text(
     (path, mark): (String, &str),
     bytes: Vec<u8>,
@@ -262,7 +339,13 @@ pub(super) fn read_text(
     kind: TextKind,
     counts: &mut NoteCounts,
     notes: &mut Vec<Note>,
-) -> Option<NameOnlyReason> {
+) -> Option<(NameOnlyReason, OriginalBytes)> {
+    // The text is read from a copy: the bytes themselves are the file's
+    // original, kept once the file's rows land.
+    let original_of = |bytes: Vec<u8>| OriginalBytes {
+        media_type: kind.media_type().to_owned(),
+        bytes,
+    };
     let (text, raw_hash) = match kind {
         // Bytes, never the lossy text read: a PDF is binary.
         TextKind::Pdf => match pdf_text(&bytes) {
@@ -270,7 +353,7 @@ pub(super) fn read_text(
                 if unread > 0 {
                     if text.trim().is_empty() {
                         counts.unreadable_pdf += 1;
-                        return Some(NameOnlyReason::Unreadable);
+                        return Some((NameOnlyReason::Unreadable, original_of(bytes)));
                     }
                     counts.partly_read_pdf += 1;
                 }
@@ -278,23 +361,25 @@ pub(super) fn read_text(
             }
             Err(_) => {
                 counts.unreadable_pdf += 1;
-                return Some(NameOnlyReason::Unreadable);
+                return Some((NameOnlyReason::Unreadable, original_of(bytes)));
             }
         },
         TextKind::Markdown => (
-            String::from_utf8(bytes)
+            String::from_utf8(bytes.clone())
                 .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()),
             None,
         ),
-        TextKind::Plain => match String::from_utf8(bytes) {
+        TextKind::Plain => match String::from_utf8(bytes.clone()) {
             Ok(text) if !text.contains('\0') => (text, None),
-            _ => return Some(NameOnlyReason::NotText),
+            _ => return Some((NameOnlyReason::NotText, original_of(bytes))),
         },
     };
+    let original = original_of(bytes);
     if text.trim().is_empty() {
         counts.blank += 1;
-        return Some(NameOnlyReason::Empty);
+        return Some((NameOnlyReason::Empty, original));
     }
+    let mut original = Some(original);
     let (front, body) = if kind == TextKind::Markdown {
         markdown::split_frontmatter(&text)
     } else {
@@ -305,7 +390,7 @@ pub(super) fn read_text(
     let Front {
         title,
         label,
-        mut decoded,
+        decoded,
     } = match front.map(markdown::frontmatter) {
         Some(Some(found)) => found,
         unread => {
@@ -352,10 +437,11 @@ pub(super) fn read_text(
                 written_at,
                 title: title.clone(),
                 label: label.clone(),
-                decoded: std::mem::take(&mut decoded),
+                decoded: decoded.clone(),
                 links,
                 markdown,
                 part_of: None,
+                original: original.take(),
             }
         } else {
             counts.parts += 1;
@@ -366,10 +452,14 @@ pub(super) fn read_text(
                 written_at,
                 title: Some(format!("{named} (part {number})")),
                 label: label.clone(),
-                decoded: String::new(),
+                // The part's title and kind come from the file's
+                // frontmatter, so its scan reads that frontmatter too (FIX
+                // 9475): a secret in it keeps every part out, not the first.
+                decoded: decoded.clone(),
                 links,
                 markdown,
                 part_of: Some(path.clone()),
+                original: None,
             }
         });
     }
@@ -502,8 +592,10 @@ fn without_extension(path: &str) -> &str {
 /// note: a link an earlier import resolved keeps its note. What resolved
 /// before is judged from the notes the folder still holds, a changed one by
 /// the title it landed with, so a note whose file left the folder no longer
-/// holds its name. A changed note's links wait with its text. A continuation
-/// part links to its file's first part, which it continues.
+/// holds its name. A changed note's links land with its text through the
+/// present-links resolver; one that lands as a fork for review waits with
+/// its text. A continuation part links to its file's first part, which it
+/// continues.
 pub(crate) fn resolve_links(
     notes: &[Note],
     standings: &[ImportedNoteStanding],
@@ -610,14 +702,14 @@ pub(crate) fn resolve_links(
 
 /// The notes a link can name: by path, title or file name, ignoring case and
 /// a `.md` ending; the first in path order wins a tie.
-struct Index {
+pub(super) struct Index {
     by_path: HashMap<String, usize>,
     by_title: HashMap<String, usize>,
     by_stem: HashMap<String, usize>,
 }
 
 impl Index {
-    fn new<'a>(
+    pub(super) fn new<'a>(
         notes: &'a [Note],
         include: impl Fn(usize) -> bool,
         title: impl Fn(usize) -> Option<&'a str>,
@@ -638,7 +730,7 @@ impl Index {
         index
     }
 
-    fn resolve(&self, target: &str) -> Option<usize> {
+    pub(super) fn resolve(&self, target: &str) -> Option<usize> {
         let wanted = key(target);
         [&self.by_path, &self.by_title, &self.by_stem]
             .into_iter()

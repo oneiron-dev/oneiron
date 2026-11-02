@@ -8,9 +8,7 @@
   "jurisdiction_confidence_floor_millis": 700,
   "prohibited_list_provenance_classes": ["harvested", "dictionary_attack"],
   "conditional_exemption_evidence": [
-    { "jurisdiction": "UK", "evidence": "legal_form" },
     { "jurisdiction": "JP", "evidence": "publication_context" },
-    { "jurisdiction": "EU", "evidence": "legal_form" },
     { "jurisdiction": "EU/FR", "evidence": "legal_form" }
   ],
   "warning": "Seed dataset, not universal legal coverage. These rows are a starting position drawn from primary sources on the verification date; they are not legal advice and they do not cover every jurisdiction, channel, or campaign shape an operator may reach. Counsel-reviewed row updates are data revisions. A row older than the pack's verification-age dial blocks dispatch mechanically rather than degrading to a warning.",
@@ -19,28 +17,44 @@
       "jurisdiction": "UK",
       "channel": "email",
       "rule_kind": "consent_class",
-      "requirement": "Corporate subscribers need no reg-22 consent. Individual subscribers, including sole traders and unincorporated partnerships, need consent or the reg 22(3) soft opt-in. UK GDPR legitimate interests and the absolute Article 21 objection apply to named addresses regardless of subscriber class, so the exemption turns on the recipient's legal form.",
+      "requirement": "Reg 22 governs electronic mail to individual subscribers, including sole traders and unincorporated partnerships. A corporate subscriber (reg 2: a company, a body incorporated by royal charter or letters patent, a partnership in Scotland, a corporation sole, or any other body corporate or entity that is a legal person distinct from its members) needs no reg-22 consent. An individual subscriber needs prior consent; or the reg 22(3) soft opt-in: details obtained in the course of a sale or negotiations for a sale, marketing of the sender's own similar products and services only, and a simple free means of refusing offered at collection and in every later message, never refused; or, for a charity, reg 22(3A): the sole purpose furthers its charitable purposes, the details were obtained while the recipient expressed interest in or offered or gave support for those purposes, and the same refusal conditions. UK GDPR legitimate interests and the absolute Article 21 objection apply to named addresses regardless of subscriber class.",
       "b2b_exemption": "conditional",
+      "consent": {
+        "any_of": [
+          { "all_of": [{ "fact": "legal_form_not_in", "tokens": ["individual", "natural_person", "consumer", "sole_trader", "sole_proprietor", "partnership", "unincorporated_partnership", "general_partnership", "limited_partnership"] }] },
+          { "all_of": [{ "fact": "explicit_opt_in" }] },
+          { "all_of": [{ "fact": "obtained_in_sale_or_negotiation" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] },
+          { "all_of": [{ "fact": "charitable_purpose" }, { "fact": "expressed_support" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
+        ]
+      },
       "source": {
         "citation": "Privacy and Electronic Communications (EC Directive) Regulations 2003, regs 2, 22",
         "url": "https://www.legislation.gov.uk/uksi/2003/2426"
       },
-      "verified_at": 1784505600,
-      "version": 1,
+      "verified_at": 1792972800,
+      "version": 2,
       "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
     },
     {
       "jurisdiction": "UK",
       "channel": "linkedin",
       "rule_kind": "consent_class",
-      "requirement": "Reg 22 electronic mail reaches a platform direct message sent to an individual subscriber's address, so the corporate-versus-individual subscriber distinction governs the platform lane exactly as it governs email. The exemption still turns on the recipient's legal form.",
+      "requirement": "Reg 22 electronic mail reaches a platform direct message sent to an individual subscriber's address, so the corporate-versus-individual subscriber distinction and the same lawful bases govern the platform lane exactly as they govern email: a corporate subscriber, prior consent, the reg 22(3) soft opt-in, or for a charity the reg 22(3A) conditions.",
       "b2b_exemption": "conditional",
+      "consent": {
+        "any_of": [
+          { "all_of": [{ "fact": "legal_form_not_in", "tokens": ["individual", "natural_person", "consumer", "sole_trader", "sole_proprietor", "partnership", "unincorporated_partnership", "general_partnership", "limited_partnership"] }] },
+          { "all_of": [{ "fact": "explicit_opt_in" }] },
+          { "all_of": [{ "fact": "obtained_in_sale_or_negotiation" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] },
+          { "all_of": [{ "fact": "charitable_purpose" }, { "fact": "expressed_support" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
+        ]
+      },
       "source": {
         "citation": "ICO direct marketing guidance, electronic mail",
         "url": "https://ico.org.uk/for-organisations/direct-marketing-and-privacy-and-electronic-communications/"
       },
       "verified_at": 1784505600,
-      "version": 1,
+      "version": 2,
       "penalty_note": "Data (Use and Access) Act 2025 penalty uplift effective 2026-02-05 aligns PECR maxima with UK GDPR."
     },
     {
@@ -189,28 +203,42 @@
       "jurisdiction": "EU",
       "channel": "email",
       "rule_kind": "consent_class",
-      "requirement": "Directive floor: consent for natural persons, soft opt-in for existing customers on similar products. Legal-person treatment is national, so the floor cannot be applied without knowing the recipient's legal form; where a country row is missing, the strict pole applies.",
+      "requirement": "Directive floor: consent for natural persons, or the art. 13(2) soft opt-in for a customer's details obtained in the context of a sale, used for the sender's own similar products or services, with a clear and free opportunity to object at collection and in every message. Legal-person treatment is national, so the floor is also met once the recipient's legal form is recorded and the national row decides; where a country row is missing, the strict pole applies.",
       "b2b_exemption": "conditional",
+      "consent": {
+        "any_of": [
+          { "all_of": [{ "fact": "legal_form_recorded" }] },
+          { "all_of": [{ "fact": "explicit_opt_in" }] },
+          { "all_of": [{ "fact": "obtained_in_sale" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
+        ]
+      },
       "source": {
         "citation": "Directive 2002/58/EC art. 13 (consolidated)",
         "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
       },
       "verified_at": 1784505600,
-      "version": 1,
+      "version": 2,
       "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
     },
     {
       "jurisdiction": "EU",
       "channel": "linkedin",
       "rule_kind": "consent_class",
-      "requirement": "The art. 13 floor is technology-neutral for unsolicited direct marketing communications, so a platform direct message inherits the same natural-person consent rule and the same national legal-person question.",
+      "requirement": "The art. 13 floor is technology-neutral for unsolicited direct marketing communications, so a platform direct message inherits the same natural-person consent rule, the same art. 13(2) soft opt-in, and the same national legal-person question.",
       "b2b_exemption": "conditional",
+      "consent": {
+        "any_of": [
+          { "all_of": [{ "fact": "legal_form_recorded" }] },
+          { "all_of": [{ "fact": "explicit_opt_in" }] },
+          { "all_of": [{ "fact": "obtained_in_sale" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
+        ]
+      },
       "source": {
         "citation": "Directive 2002/58/EC art. 13 (consolidated)",
         "url": "https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX:02002L0058-20091219"
       },
       "verified_at": 1784505600,
-      "version": 1,
+      "version": 2,
       "penalty_note": "National transpositions set their own penalties; several member states add private enforcement on top of the supervisory authority."
     },
     {
@@ -260,14 +288,20 @@
       "jurisdiction": "EU/DE",
       "channel": "email",
       "rule_kind": "consent_class",
-      "requirement": "UWG §7 requires prior express opt-in for both B2B and B2C advertising email. There is no business-recipient exemption; double opt-in is the evidentiary standard German courts expect.",
+      "requirement": "UWG §7(2) no. 2: advertising by electronic mail needs the addressee's prior express consent, for business and consumer recipients alike; there is no business-recipient exemption. §7(3) excepts a customer whose address the business obtained in connection with selling goods or services, used for direct advertising of its own similar goods or services, where the customer has not objected and is told clearly at collection and at every use that they may object at any time at no more than basic transmission cost.",
       "b2b_exemption": "no",
+      "consent": {
+        "any_of": [
+          { "all_of": [{ "fact": "explicit_opt_in" }] },
+          { "all_of": [{ "fact": "obtained_in_sale" }, { "fact": "similar_offering" }, { "fact": "no_objection" }, { "fact": "opt_out_offered_at_collection" }, { "fact": "opt_out_in_message" }] }
+        ]
+      },
       "source": {
         "citation": "Gesetz gegen den unlauteren Wettbewerb §7",
         "url": "https://www.gesetze-im-internet.de/uwg_2004/__7.html"
       },
-      "verified_at": 1784505600,
-      "version": 1,
+      "verified_at": 1792972800,
+      "version": 2,
       "penalty_note": "Private Abmahnung enforcement makes a single unlawful send actionable by competitors, independent of any supervisory fine."
     },
     {

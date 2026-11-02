@@ -16,8 +16,8 @@ use crate::store::GateSystemNoticeRecord;
 use super::clock::PolicyCallClock;
 use super::notice::{
     POLICY_MODEL_HELP_MESSAGE, SYSTEM_NOTICE_AUDIENCE_AUDIT, default_system_notice,
-    host_notice_body, policy_model_rationale_notice, policy_notice, safe_setting_change_offer,
-    trusted_contact_notices,
+    host_notice_body, policy_model_rationale_notice, policy_model_rationale_notice_in_snapshot,
+    policy_notice, safe_setting_change_offer, trusted_contact_notices,
 };
 use super::planes::PolicyPlane;
 use super::receipt::policy_model_reason_codes;
@@ -195,8 +195,15 @@ impl Vault {
         // writes the row for the verdicts it hands out bare, and this flow
         // records its own below. Routing through it would ledger one decision
         // twice.
-        let verdict = self.owner_pattern_only_pass(&request, config)?;
-        self.enforcement_from_verdict(request, config, verdict, false, DecisionLedger::Record)
+        let pass = self.owner_pattern_only_pass(&request, config)?;
+        self.enforcement_from_verdict(
+            request,
+            config,
+            pass.verdict,
+            pass.examined,
+            false,
+            DecisionLedger::Record,
+        )
     }
 
     /// Enforce with the owner's safeguard model available.
@@ -241,7 +248,14 @@ impl Vault {
                 return self.stale_owner_plane_fail_open(request, config);
             }
         }
-        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
+        self.enforcement_from_verdict(
+            request,
+            config,
+            pass.verdict,
+            pass.examined,
+            false,
+            DecisionLedger::Record,
+        )
     }
 
     /// [`Self::enforce_policy_model_with_backend`] for a caller that holds a
@@ -268,7 +282,14 @@ impl Vault {
                 return self.stale_owner_plane_fail_open(request, config);
             }
         }
-        self.enforcement_from_verdict(request, config, pass.verdict, false, DecisionLedger::Record)
+        self.enforcement_from_verdict(
+            request,
+            config,
+            pass.verdict,
+            pass.examined,
+            false,
+            DecisionLedger::Record,
+        )
     }
 
     /// The owner plane could not pin a verdict to the policy in force, so it
@@ -433,6 +454,7 @@ impl Vault {
             request,
             config,
             verdict,
+            false,
             custom_tier_skipped,
             DecisionLedger::AlreadyRecorded,
         )
@@ -443,6 +465,7 @@ impl Vault {
         request: PolicyClassifyRequest,
         config: &PolicyModelConfig,
         verdict: PolicyClassifyVerdict,
+        examined: bool,
         custom_tier_skipped: bool,
         ledger: DecisionLedger,
     ) -> Result<PolicyModelEnforcement> {
@@ -451,19 +474,23 @@ impl Vault {
             DecisionLedger::Record => super::in_force::SettlingDoor::RecordAndEnforce,
             DecisionLedger::AlreadyRecorded => super::in_force::SettlingDoor::EnforceRecorded,
         });
-        // An allow that learned nothing carries no signal and is not
-        // receipted. An allow that DID learn something — a pattern fired and
-        // the model overruled it, say — is exactly the row the substrate owner
-        // needs, so it is. The door that writes the row drops only an allow
-        // still in force; anything else it settles against the policy in
-        // force in the row's own transaction, as the bare doors do, so a
-        // manifest that moved after the pass is never answered with the
-        // decision it replaced.
+        // A clean allow the owner plane gave is one hash-only row (FIX 7805),
+        // as the bare doors write it; only an allow from a plane that was off
+        // for the pass, which examined nothing, is not receipted. An allow
+        // that DID learn something — a pattern fired and the model overruled
+        // it, say — is exactly the row the substrate owner needs, so it is.
+        // The door that writes the row drops only such an allow still in
+        // force; anything else it settles against the policy in force in the
+        // row's own transaction, as the bare doors do, so a manifest that
+        // moved after the pass is never answered with the decision it
+        // replaced. A door enforcing a verdict another door recorded writes
+        // no second row.
         let silent = verdict.decision == PolicyClassifyDecision::Allow
             && verdict.audit.is_none()
             && match ledger {
                 DecisionLedger::Record => {
                     !self.policy_model_verdict_is_stale_with_config(&verdict, &request, config)?
+                        && !examined
                 }
                 DecisionLedger::AlreadyRecorded => true,
             };
@@ -505,12 +532,25 @@ impl Vault {
             .collect::<Vec<_>>();
         // Appended last so it can never become the single surfaced body. The
         // vault-egress path is the owner plane by construction, so it says so
-        // rather than leaving a clean allow's rationale unattributed.
-        system_notices.extend(policy_model_rationale_notice(
-            &verdict,
-            PolicyPlane::OwnerPolicy,
-            None,
-        ));
+        // rather than leaving a clean allow's rationale unattributed. Its MAC
+        // is read in the door's writer or, for a verdict another door
+        // recorded, in a snapshot under the custody read guard.
+        let rationale = match wtxn.as_ref() {
+            Some(wtxn) => policy_model_rationale_notice(
+                &self.store,
+                wtxn,
+                &verdict,
+                PolicyPlane::OwnerPolicy,
+                None,
+            ),
+            None => policy_model_rationale_notice_in_snapshot(
+                &self.store,
+                &verdict,
+                PolicyPlane::OwnerPolicy,
+                None,
+            )?,
+        };
+        system_notices.extend(rationale);
         // The hold's ruling is read in the same transaction that settled the
         // verdict (and queued its hold), or, for a verdict another door
         // recorded, in the same snapshot that finds it still in force: a

@@ -1,10 +1,10 @@
 //! Where one executed attempt settles: its budget, its completion, its
-//! deferral, landing or park, with the milestone and the report count each
-//! writes. The loop then checks whether the pass stops.
+//! failure, deferral, landing or park, with the milestone and the report
+//! count each writes. The loop then checks whether the pass stops.
 
 use super::*;
 use crate::attempt_queue::AttemptId;
-use crate::dreamer_runner::DreamerAdmittedAttempt;
+use crate::dreamer_runner::{DreamerAdmittedAttempt, FailDreamerAttempt};
 use crate::error::ErrorKind;
 
 /// What one executed attempt settles from: the pass, the admitted attempt,
@@ -39,20 +39,56 @@ impl DreamerWakeDriver<'_> {
             hard_cut_error,
         } = state;
         match execution {
-            DreamerAttemptExecution::Completed { completed_units } => {
+            DreamerAttemptExecution::Completed {
+                completed_units,
+                step_hashes,
+            } => {
+                self.store.settle_budget_with_step_receipts(
+                    SettleDreamerBudget {
+                        budget_id: line.clone(),
+                        child_attempt: attempt_id,
+                        actual_units: completed_units,
+                        now: input.now,
+                    },
+                    &step_hashes,
+                )?;
+                self.complete_attempt(exec, admitted, input.now).await?;
+                self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
+                report.completed += 1;
+            }
+            DreamerAttemptExecution::Failed {
+                reason,
+                completed_units,
+            } => {
+                // Terminal for this try alone: its spend settles, the queue
+                // records why, and the pass goes on (FIX 11090).
                 self.store.settle_budget(SettleDreamerBudget {
                     budget_id: line.clone(),
                     child_attempt: attempt_id,
                     actual_units: completed_units,
                     now: input.now,
                 })?;
-                self.complete_attempt(exec, admitted, input.now).await?;
-                self.write_attempt_milestone(admitted, DreamerMilestoneKind::Done, input.now)?;
-                report.completed += 1;
+                self.store.fail(FailDreamerAttempt {
+                    id: attempt_id,
+                    lease_owner: admitted
+                        .status
+                        .attempt
+                        .lease_owner
+                        .clone()
+                        .unwrap_or_default(),
+                    attempt_count: admitted.status.attempt.attempt_count,
+                    reason,
+                    now: input.now,
+                })?;
+                let stage = stage.unwrap_or("failed");
+                self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
+                self.write_attempt_milestone(admitted, DreamerMilestoneKind::Failed, input.now)?;
+                report.failed += 1;
             }
             DreamerAttemptExecution::Deferred {
                 completed_units,
                 retry_at,
+                step_hashes,
             } => {
                 self.store.defer_selection(
                     admitted,
@@ -63,6 +99,7 @@ impl DreamerWakeDriver<'_> {
                         now: input.now,
                     },
                     retry_at,
+                    &step_hashes,
                 )?;
                 let stage = stage.unwrap_or("deferred");
                 self.log_attempt_outcome(admitted, stage, None, None, "settled", "none");
@@ -133,6 +170,7 @@ impl DreamerWakeDriver<'_> {
                         reason: reason.clone(),
                         cause,
                         park_owner: input.lease_owner.clone(),
+                        carried_spend: None,
                         now: input.now,
                     },
                     admitted_lease(admitted, &input.lease_owner),
@@ -154,7 +192,7 @@ impl DreamerWakeDriver<'_> {
                 // reservation is refunded, all of it for an attempt that
                 // never dispatched.
                 let settled =
-                    self.settle_charged_or_abort(line, attempt_id, spend_meter, input.now)?;
+                    self.settle_metered_charge(line, attempt_id, spend_meter, input.now)?;
                 let hard_cut = reason == DREAMER_HARD_CUT_PARK_REASON || self.deadline.expired();
                 let (cause, park) = if let Some(row) = self.store.parked_attempt(attempt_id)? {
                     // One park-owner: the step layer already parked this

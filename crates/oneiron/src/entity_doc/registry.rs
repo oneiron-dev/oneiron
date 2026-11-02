@@ -1,17 +1,20 @@
-//! Bounded per-vault insertion-ordered residency; durable bytes, not the cache, own truth.
+//! Per-vault sharing of the documents reads are using; durable bytes, not
+//! the registry, own truth. A document stays resident while a read uses it,
+//! and its entry goes when the last such read ends (FIX 9849).
 
 use super::{EntityDoc, invalid, storage};
 use crate::error::Result;
 use crate::{EntityId, Vault};
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Weak};
 
 /// Observable registry residency and configured limit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RegistryStatus {
-    /// Maximum resident documents. Zero disables caching.
+    /// Maximum documents in use the registry shares between reads. Zero
+    /// shares none: each read loads its own.
     pub capacity: usize,
-    /// Current resident document count.
+    /// Documents in use the registry shares now.
     pub resident: usize,
 }
 
@@ -38,9 +41,10 @@ pub struct EntityDocumentView {
 
 pub(crate) struct EntityDocRegistry {
     capacity: usize,
-    entries: HashMap<EntityId, (String, u64, Arc<EntityDoc>)>,
-    /// FIFO insertion order; cache hits do not change eviction order.
-    cold: VecDeque<EntityId>,
+    /// Each shared document, with the incarnation and generation it was
+    /// loaded at. The registry owns none of them: an entry stands only while
+    /// a read holds its document.
+    entries: HashMap<EntityId, (String, u64, Weak<EntityDoc>)>,
 }
 
 impl Default for EntityDocRegistry {
@@ -48,54 +52,72 @@ impl Default for EntityDocRegistry {
         Self {
             capacity: 64,
             entries: HashMap::new(),
-            cold: VecDeque::new(),
         }
     }
 }
 impl EntityDocRegistry {
     pub(super) fn remove(&mut self, id: &EntityId) {
         self.entries.remove(id);
-        self.cold.retain(|candidate| candidate != id);
     }
     pub(super) fn clear(&mut self) {
         self.entries.clear();
-        self.cold.clear();
     }
-    pub(super) fn insert(
-        &mut self,
-        id: EntityId,
-        incarnation: String,
-        generation: u64,
-        doc: EntityDoc,
-    ) {
-        self.remove(&id);
-        if self.capacity == 0 {
-            return;
-        }
-        while self.entries.len() >= self.capacity {
-            if let Some(cold) = self.cold.pop_front() {
-                self.entries.remove(&cold);
-            }
-        }
-        self.cold.push_back(id);
+    /// The document a read is using for `id` at `incarnation` and
+    /// `generation`, when the registry shares one.
+    fn shared(&self, id: &EntityId, incarnation: &str, generation: u64) -> Option<Arc<EntityDoc>> {
         self.entries
-            .insert(id, (incarnation, generation, Arc::new(doc)));
+            .get(id)
+            .filter(|(held, at, _)| *at == generation && held == incarnation)
+            .and_then(|(_, _, doc)| doc.upgrade())
+    }
+    /// Shares `doc`, which a read is now using, while fewer than `capacity`
+    /// documents are shared; past it the read keeps its own, unshared, and
+    /// is neither refused nor delayed.
+    fn share(&mut self, id: EntityId, incarnation: String, generation: u64, doc: &Arc<EntityDoc>) {
+        self.entries
+            .retain(|_, (_, _, held)| held.strong_count() > 0);
+        if self.entries.contains_key(&id) || self.entries.len() < self.capacity {
+            self.entries
+                .insert(id, (incarnation, generation, Arc::downgrade(doc)));
+        }
+    }
+    /// Drops `id`'s entry once no read uses its document. An entry a later
+    /// read shares, at any generation, stays.
+    fn release(&mut self, id: &EntityId) {
+        if self
+            .entries
+            .get(id)
+            .is_some_and(|(_, _, doc)| doc.strong_count() == 0)
+        {
+            self.entries.remove(id);
+        }
+    }
+    /// The documents in use the registry shares now.
+    fn resident(&self) -> usize {
+        self.entries
+            .values()
+            .filter(|(_, _, doc)| doc.strong_count() > 0)
+            .count()
     }
 }
 
 impl Vault {
-    /// Changes the bound and immediately evicts the oldest inserted documents. Every
-    /// edit is already durable, so eviction never races a write-behind flush.
+    /// Changes how many documents in use the registry shares. A lowered
+    /// bound stops sharing the excess at once: their reads keep their own
+    /// documents to their end, and none is refused or delayed. Every edit is
+    /// already durable, so this never races a write-behind flush.
     pub fn set_entity_doc_capacity(&self, capacity: usize) -> Result<()> {
         let mut registry = self
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
         registry.capacity = capacity;
-        while registry.entries.len() > capacity {
-            if let Some(cold) = registry.cold.pop_front() {
-                registry.entries.remove(&cold);
-            }
+        registry
+            .entries
+            .retain(|_, (_, _, doc)| doc.strong_count() > 0);
+        let excess: Vec<EntityId> = registry.entries.keys().skip(capacity).copied().collect();
+        for id in excess {
+            registry.entries.remove(&id);
         }
         Ok(())
     }
@@ -108,7 +130,7 @@ impl Vault {
             .map_err(|_| invalid("document registry poisoned"))?;
         Ok(RegistryStatus {
             capacity: registry.capacity,
-            resident: registry.entries.len(),
+            resident: registry.resident(),
         })
     }
 
@@ -222,28 +244,31 @@ impl Vault {
     ) -> Result<T> {
         let txn = self.store.env.read_txn()?;
         let h = storage::head(&self.store, &txn, entity)?;
-        let cached = {
-            let registry = self
-                .entity_docs
-                .lock()
-                .map_err(|_| invalid("document registry poisoned"))?;
-            registry
-                .entries
-                .get(entity)
-                .filter(|(incarnation, generation, _)| {
-                    *generation == h.generation && *incarnation == h.incarnation
-                })
-                .map(|(_, _, doc)| Arc::clone(doc))
-        };
-        if let Some(doc) = cached {
-            return Ok(read(&doc));
-        }
-        let doc = storage::load(&self.store, &txn, &h)?;
-        let out = read(&doc);
-        self.entity_docs
+        let shared = self
+            .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?
-            .insert(*entity, h.incarnation, h.generation, doc);
+            .shared(entity, &h.incarnation, h.generation);
+        let doc = match shared {
+            Some(doc) => doc,
+            None => {
+                let doc = Arc::new(storage::load(&self.store, &txn, &h)?);
+                self.entity_docs
+                    .lock()
+                    .map_err(|_| invalid("document registry poisoned"))?
+                    .share(*entity, h.incarnation, h.generation, &doc);
+                doc
+            }
+        };
+        let out = read(&doc);
+        // This read's document goes with it, under the registry's lock, so
+        // the last read to end drops the entry: no read keeps a cold one.
+        let mut registry = self
+            .entity_docs
+            .lock()
+            .map_err(|_| invalid("document registry poisoned"))?;
+        drop(doc);
+        registry.release(entity);
         Ok(out)
     }
 }

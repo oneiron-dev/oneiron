@@ -25,7 +25,7 @@ const RESPONSE_PAIR: SideTable<String, ResponsePairPick, Named> =
 const MAX_PAIR_REF_BYTES: usize = 256;
 
 /// The owner's pick on one blind preference pair.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ResponsePairPick {
     pub pair_ref: String,
     pub preferred: PreferredResponse,

@@ -24,7 +24,8 @@ pub(super) fn answer(proxy: &OpenEgressProxy, query: &[u8]) -> io::Result<Vec<u8
                 "owner DNS allowlist",
             ));
         }
-        let answer = exchange(proxy, query)?;
+        let answer =
+            exchange_dns_query(query, proxy.config.request_timeout, UnusableResolver::Fail)?;
         check_answers(&answer)?;
         // The answer binds the name the guest asked for, once the whole
         // reply is checked (FIX 7652).
@@ -62,9 +63,32 @@ pub(super) fn answer(proxy: &OpenEgressProxy, query: &[u8]) -> io::Result<Vec<u8
     }
 }
 
-/// The host resolvers' reply to `query`: the first resolver's that answers,
-/// over TCP when its UDP reply was truncated.
-fn exchange(proxy: &OpenEgressProxy, query: &[u8]) -> io::Result<Vec<u8>> {
+/// What the shared DNS transport does with a host resolver it cannot use
+/// for the query: one it fails to reach over UDP, or whose reply is not an
+/// answer to the query (FIX 7558). A resolver that never answers is always
+/// skipped, and a truncated reply's TCP exchange always decides, under both.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnusableResolver {
+    /// Fails the query with that resolver's error: the sandbox door's rule,
+    /// whose first resolver to answer decides.
+    Fail,
+    /// Asks the next host resolver, failing only when none is left: the
+    /// headless relay's rule, whose first valid answer wins.
+    Skip,
+}
+
+/// The host resolvers' reply to `query`: from `/etc/resolv.conf`'s
+/// resolvers in order over UDP, and again over TCP where a UDP reply came
+/// back truncated, each read bounded by `wait` (FIX 7558). The sandbox door
+/// ([`answer`]) and the headless relay share this transport: it checks no
+/// allowlist, refuses no address and keeps no receipt, and each caller keeps
+/// its own query check. What a resolver the transport cannot use does to
+/// the query is `fallback`.
+pub fn exchange_dns_query(
+    query: &[u8],
+    wait: Duration,
+    fallback: UnusableResolver,
+) -> io::Result<Vec<u8>> {
     let config = std::fs::read_to_string("/etc/resolv.conf")?;
     let resolvers: Vec<IpAddr> = config
         .lines()
@@ -77,45 +101,90 @@ fn exchange(proxy: &OpenEgressProxy, query: &[u8]) -> io::Result<Vec<u8>> {
         .collect();
     let mut error = io::Error::other("host has no DNS resolver");
     for resolver in resolvers {
-        let socket = UdpSocket::bind(if resolver.is_ipv4() {
-            "0.0.0.0:0"
-        } else {
-            "[::]:0"
-        })?;
-        socket.set_read_timeout(Some(proxy.config.request_timeout))?;
-        socket.connect(SocketAddr::new(resolver, 53))?;
-        socket.send(query)?;
+        let target = SocketAddr::new(resolver, 53);
+        let socket = match udp_query(target, query, wait) {
+            Ok(socket) => socket,
+            Err(failed) => {
+                if fallback == UnusableResolver::Skip {
+                    error = failed;
+                    continue;
+                }
+                return Err(failed);
+            }
+        };
         let mut answer = vec![0; 65536];
         match socket.recv(&mut answer) {
             Ok(n) => {
                 answer.truncate(n);
                 if answer.len() < 12 || answer[..2] != query[..2] || answer[2] & 0x80 == 0 {
-                    return Err(io::Error::other("invalid host DNS reply"));
-                }
-                if answer[2] & 2 != 0 {
-                    use std::io::{Read, Write};
-                    let mut stream = TcpStream::connect_timeout(
-                        &SocketAddr::new(resolver, 53),
-                        proxy.config.request_timeout,
-                    )?;
-                    stream.set_read_timeout(Some(proxy.config.request_timeout))?;
-                    stream.set_write_timeout(Some(proxy.config.request_timeout))?;
-                    stream.write_all(&(query.len() as u16).to_be_bytes())?;
-                    stream.write_all(query)?;
-                    let mut len = [0; 2];
-                    stream.read_exact(&mut len)?;
-                    answer.resize(u16::from_be_bytes(len) as usize, 0);
-                    stream.read_exact(&mut answer)?;
-                    if answer.len() < 12 || answer[..2] != query[..2] {
-                        return Err(io::Error::other("invalid TCP DNS reply"));
+                    let failed = io::Error::other("invalid host DNS reply");
+                    if fallback == UnusableResolver::Skip {
+                        error = failed;
+                        continue;
                     }
+                    return Err(failed);
                 }
-                return Ok(answer);
+                if answer[2] & 2 == 0 {
+                    return Ok(answer);
+                }
+                return tcp_answer(target, query, wait, fallback);
             }
             Err(e) => error = e,
         }
     }
     Err(error)
+}
+
+/// `query` sent to `target` over UDP, its answer's read bounded by `wait`.
+fn udp_query(target: SocketAddr, query: &[u8], wait: Duration) -> io::Result<UdpSocket> {
+    let socket = UdpSocket::bind(if target.is_ipv4() {
+        "0.0.0.0:0"
+    } else {
+        "[::]:0"
+    })?;
+    socket.set_read_timeout(Some(wait))?;
+    socket.connect(target)?;
+    socket.send(query)?;
+    Ok(socket)
+}
+
+/// `target`'s reply to `query` over TCP, each wait bounded by `wait`: the
+/// second asking of a truncated UDP reply. Under [`UnusableResolver::Fail`]
+/// any reply with the query's id answers, under [`UnusableResolver::Skip`]
+/// only an answer to it does, as each caller read before (FIX 7558).
+fn tcp_answer(
+    target: SocketAddr,
+    query: &[u8],
+    wait: Duration,
+    fallback: UnusableResolver,
+) -> io::Result<Vec<u8>> {
+    use std::io::{Read, Write};
+    let mut stream = TcpStream::connect_timeout(&target, wait)?;
+    stream.set_read_timeout(Some(wait))?;
+    stream.set_write_timeout(Some(wait))?;
+    let prefixed = match fallback {
+        UnusableResolver::Fail => query.len() as u16,
+        UnusableResolver::Skip => u16::try_from(query.len()).map_err(io::Error::other)?,
+    };
+    stream.write_all(&prefixed.to_be_bytes())?;
+    stream.write_all(query)?;
+    let mut len = [0; 2];
+    stream.read_exact(&mut len)?;
+    let mut answer = vec![0; usize::from(u16::from_be_bytes(len))];
+    stream.read_exact(&mut answer)?;
+    match fallback {
+        UnusableResolver::Fail => {
+            if answer.len() < 12 || answer[..2] != query[..2] {
+                return Err(io::Error::other("invalid TCP DNS reply"));
+            }
+        }
+        UnusableResolver::Skip => {
+            if answer.len() < 12 || answer[..2] != query[..2] || answer[2] & 0x80 == 0 {
+                return Err(io::Error::other("invalid host DNS reply"));
+            }
+        }
+    }
+    Ok(answer)
 }
 
 /// A name of the owner allowlist that `wanted` takes and `ip` is bound to
@@ -171,7 +240,8 @@ fn refresh(proxy: &OpenEgressProxy, name: &str, ip: IpAddr) -> bool {
     let Some(query) = query_for(name, ip) else {
         return false;
     };
-    let reply = exchange(proxy, &query).and_then(|reply| check_answers(&reply).map(|()| reply));
+    let reply = exchange_dns_query(&query, proxy.config.request_timeout, UnusableResolver::Fail)
+        .and_then(|reply| check_answers(&reply).map(|()| reply));
     let (bytes, decision) = match &reply {
         Ok(reply) => (reply.as_slice(), PolicyClassifyDecision::Allow),
         Err(_) => (&[][..], PolicyClassifyDecision::Block),

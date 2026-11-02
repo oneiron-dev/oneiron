@@ -53,13 +53,15 @@ pub(crate) use policy::{
     require_append_references_in_txn,
 };
 pub(crate) use quote::{
-    ProvenRoomQuote, QuotedReply, pin_body_quotes_at_message_birth_in_txn,
-    require_quote_landing_in_txn, witness_reply_field_count, witness_turn_quotes,
+    ProvenRoomQuote, QuotedReply, pin_arrived_body_quotes_in_txn,
+    pin_body_quotes_at_message_birth_in_txn, require_quote_landing_in_txn,
+    witness_reply_field_count, witness_turn_quotes,
 };
 pub use quote::{QuoteAnchor, RoomQuote};
 pub use quote_strips::{
     QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage, ReplyStripsRequest,
 };
+pub(crate) use redacted::capture_withdrawn_record_in_txn;
 pub(crate) use redacted::{capture_before_erase, read as redacted_record_pin};
 pub use reply::{ReplyStrip, Thread, ThreadMeta};
 pub(crate) use reply::{
@@ -69,8 +71,8 @@ pub(crate) use reply::{
 pub(crate) use scopes::resolve_in_txn;
 pub(crate) use thread_projection::selected_thread_in_txn;
 pub use types::{
-    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, QuoteSpan, ResolvedScope,
-    ScopePath, ScopeSelector,
+    AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest, DagReplyTarget, QuoteSpan,
+    ResolvedScope, ScopePath, ScopeSelector,
 };
 pub(crate) use writes::{append_at_in_txn, append_in_txn, put_thread_event_in_txn};
 

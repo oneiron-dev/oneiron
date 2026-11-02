@@ -30,21 +30,24 @@ pub(crate) fn setting_value_in_scope_sourced_in_txn(
     let rows = match decided {
         Decided::Owner => None,
         Decided::Catalog => Some(Vec::new()),
-        Decided::Fit { subject, type_node } => {
-            fit_heads_in_txn(vault, txn, spec, subject, type_node.as_deref())?
-        }
+        Decided::Fit {
+            project,
+            subject,
+            type_node,
+        } => fit_heads_in_txn(vault, txn, spec, project, subject, type_node.as_deref())?,
     };
     Ok((value, rows))
 }
 
-/// The active head CLAIM of each cell one fit of `spec` is cached from: on
-/// `subject`, else its knob's global subject; at `type_node`, else
-/// root-typed; with no executor, axis or consent scope. `None` when no such
-/// cell holds one.
+/// The active head CLAIM of each cell one fit of `spec` is cached from: in
+/// `project`'s scope exactly, else the vault's (FIX 6038); on `subject`,
+/// else its knob's global subject; at `type_node`, else root-typed; with no
+/// executor, axis or consent scope. `None` when no such cell holds one.
 fn fit_heads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
+    project: Option<EntityId>,
     subject: Option<EntityId>,
     type_node: Option<&str>,
 ) -> Result<Option<Vec<EntityId>>> {
@@ -64,6 +67,7 @@ fn fit_heads_in_txn(
             || cell.executor.is_some()
             || cell.axis.is_some()
             || cell.consent_scope.is_some()
+            || cell.project != project
             || !cell.type_ref.as_ref().is_some_and(typed)
         {
             continue;

@@ -679,6 +679,8 @@ pub(crate) fn answer_connector_question(
             ConnectorCallOutcome::Delivered {
                 intent,
                 result: Some(result),
+                result_absence: None,
+                budget_steering: Vec::new(),
             },
         ),
         WorkerEvent::Failed {

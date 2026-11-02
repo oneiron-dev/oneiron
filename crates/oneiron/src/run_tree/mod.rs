@@ -12,6 +12,7 @@ mod signal;
 pub(crate) use render::effective_parent;
 pub(crate) use signal::{SignalIntent, validate_signal_rows};
 mod types;
+mod wire;
 
 pub use self::a2a::project_attempt_to_a2a;
 pub use self::adapter::{RunTreeAdapter, mark_run_tree_failure};
@@ -29,7 +30,9 @@ pub use self::signal::{
 pub use self::types::{
     RunTree, RunTreeEvent, RunTreeEventKind, RunTreeFailure, RunTreeFailureDiagram, RunTreeNode,
     RunTreeNodeMarker, RunTreeNodeMarkerKind, RunTreeRepair, RunTreeStatus, RunTreeTimestamps,
+    RunTreeWire, RunTreeWireNode,
 };
+pub use self::wire::RunTreeWireError;
 
 #[cfg(test)]
 mod tests;

@@ -48,7 +48,7 @@ use super::CalendarError;
 
 /// Last instant in the existing chrono conversion range (262142-12-31 UTC).
 /// Keep CAL-01's established range even though the TZif parser supports more.
-const MAX_SUPPORTED_UTC: u64 = 8_210_266_876_799;
+pub(crate) const MAX_SUPPORTED_UTC: u64 = 8_210_266_876_799;
 
 /// A civil (local) date and time: no zone, no offset, no instant.
 /// The IANA zone travels separately as `calendar.tz`.

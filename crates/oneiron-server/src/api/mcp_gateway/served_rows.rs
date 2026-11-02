@@ -103,9 +103,23 @@ pub(super) fn unknown_act_answer(
     Ok((ran, Some(Vec::new())))
 }
 
-/// The acts whose known rows reach the release only since FIX 8171 (their
-/// producers listed none before, so they answered as [`unknown_act_answer`]).
-const KNOWN_ROW_ACTS: &[&str] = &["vault.coach.training_offers.pilots.prepare"];
+/// The acts that answer the word that they ran when the off-device
+/// release holds their known rows, never a withheld error after their commit
+/// (FIX 8171, FIX 8526): the pilot prepare whose producers started listing
+/// rows, and every act whose facade door already narrows a held answer that
+/// way (FIX 3414). Each lists known rows, so none answered as
+/// [`unknown_act_answer`].
+const KNOWN_ROW_ACTS: &[&str] = &[
+    "vault.coach.training_offers.pilots.prepare",
+    "vault.records.erase_confirm",
+    "connector.call",
+    "vault.fanout.resume",
+    "vault.fanout.resume_as",
+    "vault.fanout.ack",
+    "vault.shared.execute",
+    "vault.artifacts.review_slides",
+    "vault.artifacts.ask",
+];
 
 /// [`unknown_act_answer`], then, for one of [`KNOWN_ROW_ACTS`] whose rows
 /// are known (FIX 8171, F1): an act that ran, off this device, whose answer

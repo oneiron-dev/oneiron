@@ -43,12 +43,14 @@ pub(crate) struct MeshRoutes {
 
 impl MeshRoutes {
     /// Serves the rows earlier refreshes wrote at once, before this run's
-    /// first refresh. Calls go out on the current runtime.
+    /// first refresh. Calls go out on the current runtime, holding their
+    /// bytes on `staging`, the vault's one mesh budget (FIX 9323).
     pub(super) fn new(
         router: Arc<ModelRouter>,
         rests: Arc<OfferCooldowns>,
         vault: &Arc<Vault>,
         mesh: Arc<dyn MeshTransport>,
+        staging: oneiron_llm_own_server::StagingBudget,
     ) -> Self {
         let routes = Self {
             router,
@@ -57,8 +59,9 @@ impl MeshRoutes {
                 mesh,
                 Arc::new(VaultLlmNodes(Arc::clone(vault))),
                 tokio::runtime::Handle::current(),
-                // What its calls hold at once (FIX 8619).
-                oneiron_llm_own_server::StagingBudget::default(),
+                // What its calls hold at once (FIX 8619), on the vault's
+                // one budget.
+                staging,
             ),
         };
         routes.publish(vault);
@@ -122,9 +125,13 @@ impl MeshRoutes {
 }
 
 /// The node a row names, when the row is discovery's own: an own-server
-/// route a mesh catalog refresh wrote for a model that node offers.
+/// route a mesh catalog refresh wrote for a model that node offers. A row a
+/// withdrawn offer left stale routes nowhere (FIX 4546).
 fn mesh_peer(row: &ModelRegistryRow) -> Option<MachineId> {
-    if row.wire != ModelWireFormat::OwnServer || row.catalog.locality != ModelLocality::OwnServer {
+    if row.wire != ModelWireFormat::OwnServer
+        || row.catalog.locality != ModelLocality::OwnServer
+        || row.is_stale()
+    {
         return None;
     }
     let peer = row.catalog.metadata.get(MESH_PEER)?.as_str()?;

@@ -1,8 +1,15 @@
 //! Commit-envelope writer and read-time provenance fold for authored text.
-use super::{ProposalTextArtifact, StampKind, parse_stamp, stamp};
+//!
+//! A receipt names its writer by the actor's stamp token (FIX 10930): its
+//! process actor, and its process identity where that would spell the
+//! actor's id. The fold resolves the token and reads each receipt back
+//! naming the resolved actor.
+use super::{ProposalTextArtifact, StampKind, parse_stamp};
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
+use crate::entity_doc::EntityDoc;
 use crate::error::{Error, Result};
+use crate::provenance::ActorStamp;
 use crate::provenance::made_by::{
     MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
 };
@@ -51,7 +58,8 @@ impl ProposalTextArtifact {
     }
 
     /// Folds the complete history. Missing or malformed receipts exclude the
-    /// row rather than guessing that unreceipted text was stated by a person.
+    /// row rather than guessing that unreceipted text was stated by a person,
+    /// and so does a receipt whose stamp token resolves to no one (FIX 10930).
     pub fn provenance(&self, vault: &crate::Vault) -> Result<Option<RowProvenance>> {
         let mut receipts = Vec::new();
         let mut authority_error = None;
@@ -66,15 +74,13 @@ impl ProposalTextArtifact {
                         .and_then(|message| message.split_once(RECEIPT_PREFIX))
                         .and_then(|(_, json)| serde_json::from_str::<MadeBy>(json).ok())
                         .filter(|made_by| Some(made_by.at) == u64::try_from(meta.timestamp).ok())
-                        .filter(|made_by| {
-                            let Some((_, actor)) = parse_stamp(meta.message.as_deref()) else {
-                                return false;
-                            };
-                            if actor.entity_ref() != made_by.process.actor
-                                || (actor.actor_class() != EdgeActorClass::Human
+                        .and_then(|mut made_by| {
+                            let (kind, stamp) = parse_stamp(meta.message.as_deref())?;
+                            if stamp.token != made_by.process.actor
+                                || (stamp.class != EdgeActorClass::Human
                                     && made_by.process.class == MadeByClass::Stated)
                             {
-                                return false;
+                                return None;
                             }
                             let required_rows: Vec<EntityId> = made_by
                                 .inputs
@@ -85,35 +91,61 @@ impl ProposalTextArtifact {
                             if let Some(trigger) = &made_by.trigger {
                                 match trigger_is_valid(vault, trigger) {
                                     Ok(true) => {}
-                                    Ok(false) => return false,
+                                    Ok(false) => return None,
                                     Err(error) => {
                                         authority_error = Some(error);
-                                        return false;
+                                        return None;
                                     }
                                 }
                             }
                             for row in required_rows {
                                 match vault.get_entity_type(&row) {
                                     Ok(Some(_)) => {}
-                                    Ok(None) => return false,
+                                    Ok(None) => return None,
                                     Err(error) => {
                                         authority_error = Some(error);
-                                        return false;
+                                        return None;
                                     }
                                 }
                             }
+                            // A generated birth names a Prompt input and a valid trigger
+                            // (FIX 9810); later edits may omit both.
+                            let is_generated_birth = kind == StampKind::Open
+                                && made_by.process.class == MadeByClass::Concluded;
+                            let names_birth = made_by
+                                .inputs
+                                .iter()
+                                .any(|input| input.role == MadeByInputRole::Prompt)
+                                && made_by.trigger.is_some();
+                            if is_generated_birth && !names_birth {
+                                return None;
+                            }
+                            // The token resolves to an actor of the stamp's
+                            // class, or the receipt names no one (FIX 10930).
+                            let actor =
+                                match crate::provenance::resolve_actor_stamp(vault, &stamp.token) {
+                                    Ok(Some(actor)) if actor.actor_class() == stamp.class => actor,
+                                    Ok(_) => return None,
+                                    Err(error) => {
+                                        authority_error = Some(error);
+                                        return None;
+                                    }
+                                };
                             match crate::edit_distance::peer_actor_stamp_is_honored(
                                 vault,
                                 meta.id.peer,
                                 made_by.at,
                                 &actor,
                             ) {
-                                Ok(honored) => honored,
+                                Ok(true) => {}
+                                Ok(false) => return None,
                                 Err(error) => {
                                     authority_error = Some(error);
-                                    false
+                                    return None;
                                 }
                             }
+                            resolve_process_actor(&mut made_by.process, stamp, actor);
+                            Some(made_by)
                         })
                         .and_then(|made_by| {
                             let end = meta.id.counter.checked_add(i32::try_from(meta.len).ok()?)?;
@@ -141,14 +173,14 @@ impl ProposalTextArtifact {
     pub(super) fn commit_receipted(
         &self,
         kind: StampKind,
-        actor: &WriteActor,
+        writer: (&WriteActor, ActorStamp),
         receipt: Option<MadeBy>,
     ) -> Result<()> {
         let at = crate::unix_seconds_now();
         let message = receipted_message(
             &self.doc.doc,
             kind,
-            actor,
+            writer,
             self.source_turn_ref,
             receipt,
             at,
@@ -164,10 +196,14 @@ impl ProposalTextArtifact {
     }
 }
 
+/// One artifact commit's message: its stamp and its receipt, by `writer`,
+/// the writing actor and its stamp token. The receipt, the caller's or the
+/// default one, must name the actor, and is written naming its token (FIX
+/// 10930).
 pub(super) fn receipted_message(
     doc: &LoroDoc,
     kind: StampKind,
-    actor: &WriteActor,
+    (actor, stamp): (&WriteActor, ActorStamp),
     source_turn_ref: Option<EntityId>,
     receipt: Option<MadeBy>,
     at: u64,
@@ -198,6 +234,11 @@ pub(super) fn receipted_message(
     if receipt.process.actor != actor.entity_ref() || !receipt.process.is_valid() {
         return Err(Error::InvalidConfig("invalid text commit process".into()));
     }
+    // The receipt names the token in the actor's place (FIX 10930).
+    if receipt.process.identity == actor.entity_ref().to_hex() {
+        receipt.process.identity = stamp.token.to_hex();
+    }
+    receipt.process.actor = stamp.token;
     let encoded = serde_json::to_string(&receipt)
         .map_err(|_| Error::InvariantViolation("text receipt encoding"))?;
     // The prior frontier distinguishes even same-second edits by one actor:
@@ -205,9 +246,86 @@ pub(super) fn receipted_message(
     let before = format!("{:x}", Sha256::digest(doc.oplog_frontiers().encode()));
     let message = format!(
         "{} before={before} {RECEIPT_PREFIX}{encoded}",
-        stamp(kind, actor)
+        super::stamp(kind, stamp)
     );
     Ok(message)
+}
+
+/// `process` read back naming `actor`, the actor `stamp`'s token resolved
+/// to: its actor, and its identity where it spelled the token (FIX 10930).
+fn resolve_process_actor(process: &mut MadeByProcess, stamp: ActorStamp, actor: WriteActor) {
+    if process.identity == stamp.token.to_hex() {
+        process.identity = actor.entity_ref().to_hex();
+    }
+    process.actor = actor.entity_ref();
+}
+
+/// The process the birth receipt of `doc` names: the receipt on its causally
+/// earliest opening commit, kept only when it names that commit's stamp
+/// token and is dated at the commit. The token is resolved here (FIX 10930,
+/// L08-A 20:41): the process names the resolved actor, and an identity that
+/// spelled the token spells the actor. `None` for an opening with no such
+/// receipt, a token nothing here resolves, and a history with no single
+/// earliest opening. It authenticates no peer stamp.
+pub(crate) fn birth_process(
+    vault: &crate::Vault,
+    doc: &EntityDoc,
+) -> Result<Option<MadeByProcess>> {
+    let Ok((opening, _)) = super::earliest_opening(&doc.doc) else {
+        return Ok(None);
+    };
+    let Some(message) = opening.message.as_deref() else {
+        return Ok(None);
+    };
+    let Some((_, stamp)) = parse_stamp(Some(message)) else {
+        return Ok(None);
+    };
+    let Some(made_by) = message
+        .split_once(RECEIPT_PREFIX)
+        .and_then(|(_, json)| serde_json::from_str::<MadeBy>(json).ok())
+    else {
+        return Ok(None);
+    };
+    if made_by.process.actor != stamp.token
+        || Some(made_by.at) != u64::try_from(opening.timestamp).ok()
+    {
+        return Ok(None);
+    }
+    let Some(actor) = crate::provenance::resolve_actor_stamp(vault, &stamp.token)? else {
+        return Ok(None);
+    };
+    let mut process = made_by.process;
+    if process.identity == stamp.token.to_hex() {
+        process.identity = actor.entity_ref().to_hex();
+    }
+    process.actor = actor.entity_ref();
+    Ok(Some(process))
+}
+
+/// A message [`receipted_message`] spells (`<prefix> <open|edit>
+/// actor=<id>.<class> before=<hash> |made_by=<json>`), cut around its stamp's
+/// actor id: the stamp before the id, the id (any token, so an erased one
+/// cuts too), the stamp's rest up to its receipt, and the receipt's JSON as
+/// written. `None` for any other message. It reads a spelling only and
+/// authenticates nothing (FIX 6479).
+pub(crate) fn cut_receipted_message(message: &str) -> Option<(&str, &str, &str, &str)> {
+    let (stamped, receipt) = message.split_once(RECEIPT_PREFIX)?;
+    let rest = stamped
+        .strip_prefix(crate::sync::window::PROPOSAL_TEXT_COMMIT_MSG_PREFIX)?
+        .strip_prefix(' ')?;
+    let (kind, rest) = rest.split_once(' ')?;
+    StampKind::parse(kind)?;
+    let id_on = rest.strip_prefix(super::STAMP_ACTOR_PREFIX)?;
+    let (id, class_on) = id_on.split_once('.')?;
+    let (class, before) = class_on.split_once(' ')?;
+    crate::edit_distance::actor_class_from_token(class)?;
+    let hash = before.strip_prefix("before=")?.strip_suffix(' ')?;
+    if id.is_empty() || hash.is_empty() || hash.contains(' ') {
+        return None;
+    }
+    let head = stamped.get(..stamped.len() - id_on.len())?;
+    let tail = id_on.get(id.len()..)?;
+    Some((head, id, tail, receipt))
 }
 
 fn trigger_is_valid(vault: &crate::Vault, trigger: &MadeByTrigger) -> Result<bool> {

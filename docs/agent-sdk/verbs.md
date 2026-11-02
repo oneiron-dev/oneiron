@@ -49,9 +49,15 @@ both bindings and their export-census tests in one change.
 - `vault.shape.read`
 - `vault.shape.plan`
 - `vault.shape.apply`
+- `vault.shape.plan.card`
+- `vault.shape.items.receipt`
+- `vault.shape.groups`
+- `vault.shape.groups.resolve`
 - `self.message`
 - `self.grants.ask`
+- `self.grants.asked`
 - `vault.companions.access_requests.answer`
+- `self.grants.answer`
 - `vault.personas.preview`
 - `vault.personas.export`
 - `vault.personas.edit`
@@ -66,6 +72,7 @@ both bindings and their export-census tests in one change.
 - `vault.fanout.launch`
 - `self.budget`
 - `self.budget.land`
+- `self.billing.account.file`
 - `vault.budgets.lease.open`
 - `vault.budgets.lease`
 - `vault.budgets.lease.top_up`
@@ -79,8 +86,11 @@ both bindings and their export-census tests in one change.
 - `vault.budgets.rsi.top_up`
 - `vault.budgets.rsi.hold`
 - `vault.budgets.rsi.hold.resume`
+- `vault.budgets.resident_shares`
+- `vault.budgets.resident_shares.set`
 - `vault.runners.seats.quotas`
 - `vault.runners.seats.top_up`
+- `vault.runners.seats.resume`
 - `vault.fanout.resume`
 - `vault.fanout.resume_as`
 - `vault.fanout.ack`
@@ -94,6 +104,7 @@ both bindings and their export-census tests in one change.
 - `vault.finalize_stream`
 - `vault.cancel_stream`
 - `vault.message_stream_partial`
+- `vault.message_streams.refused`
 - `vault.messages.durability`
 - `vault.witness`
 - `vault.claims.upsert`
@@ -142,7 +153,10 @@ both bindings and their export-census tests in one change.
 - `vault.retrieval.policy.admit`
 - `vault.retrieval.policy.update`
 - `vault.export`
+- `vault.export.transfer.read`
+- `vault.export.transfer.release`
 - `self.credential.attenuate`
+- `self.actor`
 - `vault.scope.position`
 - `vault.scope.ceiling`
 - `vault.export.scoped`
@@ -176,6 +190,7 @@ both bindings and their export-census tests in one change.
 - `vault.campaign.program.archive`
 - `vault.turn_programs.arm`
 - `vault.turn_programs.disarm`
+- `vault.turn_programs.rebind`
 - `self.saved_query.create`
 - `self.saved_query.read`
 - `self.saved_query.update`
@@ -201,6 +216,7 @@ both bindings and their export-census tests in one change.
 - `vault.inbox.concerns.review`
 - `vault.inbox.lens`
 - `vault.inbox.groups`
+- `vault.inbox.groups.resolve`
 - `vault.weave.digest.render`
 - `vault.weave.link.corrections`
 - `self.inbox.lens`
@@ -242,6 +258,7 @@ both bindings and their export-census tests in one change.
 - `vault.skills.optimize.preferences.set`
 - `vault.skills.optimize.tradeoff_asks`
 - `vault.skills.optimize.tradeoff_asks.pick`
+- `vault.skills.optimize.tradeoff_asks.resolve`
 - `vault.skills.governance.get`
 - `vault.skills.governance.set`
 - `vault.packs.hooks.bind`
@@ -286,6 +303,7 @@ both bindings and their export-census tests in one change.
 - `vault.authority.audit`
 - `vault.authority.history.export`
 - `vault.authority.history.import`
+- `vault.authority.clock.repair`
 - `vault.wire_health.thresholds.get`
 - `vault.wire_health.thresholds.set`
 - `vault.slim.policy`
@@ -299,6 +317,8 @@ both bindings and their export-census tests in one change.
 - `vault.mesh.set_alpn_grant`
 - `vault.mesh.revoke_machine`
 - `vault.mesh.dial`
+- `vault.outbox.diverged.list`
+- `vault.outbox.diverged.answer`
 - `vault.inspection.resolve`
 - `vault.shared.propose_delete`
 - `vault.shared.propose_transfer`
@@ -332,6 +352,7 @@ both bindings and their export-census tests in one change.
 - `vault.shared.policy.propose`
 - `vault.shared.policy.answer`
 - `vault.shared.policy.change`
+- `vault.shared.policy.changes`
 - `vault.federation.coreference.link`
 - `vault.federation.coreference.confirm`
 - `vault.federation.coreference.share_consent`
@@ -391,6 +412,10 @@ both bindings and their export-census tests in one change.
 - `vault.off_record.notes.create`
 - `vault.off_record.claims.upsert`
 - `self.off_record.execute`
+- `self.off_record.results.list`
+- `self.off_record.results.read`
+- `self.off_record.waits.get`
+- `self.off_record.waits.answer`
 - `vault.off_record.rooms.status`
 - `vault.off_record.rooms.start`
 - `vault.off_record.rooms.witness`
@@ -436,6 +461,7 @@ both bindings and their export-census tests in one change.
 - `vault.coach.training_offers.pilots.prepare`
 - `vault.coach.training_offers.pilots.complete`
 - `vault.coach.training_offers.pilots.get`
+- `vault.coach.training_offers.sources`
 - `vault.research.bind`
 - `vault.research.fork`
 - `vault.research.weave`
@@ -457,6 +483,9 @@ both bindings and their export-census tests in one change.
 - `vault.authority.handoff_alarms`
 - `vault.authority.handoff_alarms.acknowledge`
 - `vault.roots.requests.cancel`
+- `vault.roots.requests.create`
+- `vault.roots.requests.list`
+- `vault.owner_work.get`
 - `vault.cleanup.run`
 - `vault.cleanup.review`
 - `vault.cleanup.decide`
@@ -464,6 +493,7 @@ both bindings and their export-census tests in one change.
 - `vault.archive.delete.confirm`
 - `vault.usage.events.undecodable`
 - `vault.usage.events.remove_undecodable`
+- `vault.usage.repair.receipts`
 - `vault.entities.mention`
 - `vault.legal_holds.place`
 - `vault.legal_holds.widen`
@@ -531,6 +561,12 @@ both bindings and their export-census tests in one change.
 - `vault.settings.learning.put`
 - `vault.settings.learning.clear`
 - `vault.secrets.lift_history`
+- `vault.secrets.register`
+- `vault.secrets.rotate`
+- `vault.secrets.rewrap`
+- `vault.secrets.revoke`
+- `vault.secrets.custody.get`
+- `vault.secrets.custody.submit`
 - `vault.widen_proposals`
 - `vault.widen_proposals.approve`
 - `vault.widen_proposals.decline`
@@ -542,9 +578,11 @@ both bindings and their export-census tests in one change.
 - `vault.settings.inference_defaults`
 - `vault.settings.inference_defaults.replace`
 - `vault.lenses.propose`
+- `vault.lenses.propose_from_pack`
 - `vault.lenses.activate`
 - `vault.lenses.deactivate`
 - `vault.lenses.list`
+- `vault.lenses.export_pack`
 - `vault.lenses.select`
 - `vault.lenses.resolve`
 - `vault.lenses.result_set.action`
@@ -640,6 +678,7 @@ both bindings and their export-census tests in one change.
 - `vault.code.ingress.get`
 - `vault.code.origin.register`
 - `vault.code.origin.mirror.get`
+- `vault.code.origin.mirror.plan`
 - `vault.code.origin.mirror.set`
 - `vault.code.origin.mirror.strategy`
 - `vault.code.origin.mirror.clear`
@@ -698,6 +737,8 @@ both bindings and their export-census tests in one change.
 - `vault.agents.grants.revoke`
 - `vault.repo.git_push.mint`
 - `vault.repo.git_push.revoke`
+- `vault.connectors.read_grants.grant`
+- `vault.connectors.read_grants.revoke`
 - `vault.repo.anchor.bind`
 - `vault.repo.snapshots.get`
 - `vault.repo.snapshots.read`
@@ -729,7 +770,8 @@ both bindings and their export-census tests in one change.
 - `vault.task_types.get`
 - `vault.agents.spawn.get`
 - `vault.agents.spawn`
-- `vault.tasks.cancel_force`
+- `vault.tasks.cancel.force`
+- `vault.tasks.comm_widen.revoke`
 - `vault.runs.branches.get`
 - `vault.runs.pause`
 - `vault.runs.resume`
@@ -802,6 +844,7 @@ both bindings and their export-census tests in one change.
 - `vault.projects.route_tradeoff`
 - `vault.conversations.turn.continue`
 - `vault.conversations.turn.retry`
+- `vault.conversations.turn.rebind`
 - `vault.messages.react`
 - `vault.rooms.host`
 - `vault.rooms.host.pin`
@@ -821,6 +864,9 @@ both bindings and their export-census tests in one change.
 - `vault.skills.outcomes.get`
 - `vault.models.manifest.read`
 - `vault.models.manifest.replace`
+- `vault.settings.web_connector`
+- `vault.settings.web_connector.replace`
+- `vault.connectors.web.usage`
 - `vault.models.oneironer.bind`
 - `vault.models.routes.read`
 - `vault.models.routes.replace`
@@ -843,6 +889,7 @@ both bindings and their export-census tests in one change.
 - `ai.streams.terminal`
 - `ai.reply`
 - `vault.receipts.context`
+- `vault.receipts.craft_reply_manifest`
 - `ai.voice.asr.open`
 - `ai.voice.asr.hypothesis`
 - `ai.voice.asr.finalize`
@@ -863,6 +910,7 @@ both bindings and their export-census tests in one change.
 - `vault.models.trials.get`
 - `vault.models.trials.approve`
 - `vault.models.trials.run`
+- `vault.models.trials.resend_arm`
 - `vault.models.trials.complete`
 - `vault.models.bindings.propose`
 - `vault.models.bindings.get`
@@ -883,6 +931,7 @@ both bindings and their export-census tests in one change.
 - `ai.video`
 - `ai.video.poll`
 - `ai.video.cancel`
+- `ai.ask_image`
 - `ai.verdict`
 - `vault.graph.ask`
 - `vault.graph.admit`
@@ -891,6 +940,7 @@ both bindings and their export-census tests in one change.
 - `vault.questions.pause`
 - `vault.questions.backfill`
 - `vault.questions.read`
+- `vault.questions.outcome_windows`
 - `vault.questions.answers`
 - `vault.questions.refresh`
 - `vault.questions.outcomes`
@@ -901,6 +951,7 @@ both bindings and their export-census tests in one change.
 - `vault.decisions.bands.enforce`
 - `vault.decisions.asks.answer`
 - `vault.decisions.asks.climb`
+- `vault.decisions.asks.confirm_grant`
 - `self.decisions.asks`
 - `connector.list`
 - `connector.status`
@@ -1023,6 +1074,7 @@ both bindings and their export-census tests in one change.
 - `vault.consolidation.home.get`
 - `vault.consolidation.home.pick`
 - `vault.consolidation.lineage`
+- `vault.consolidation.candidate_decisions`
 - `vault.consolidation.promote`
 - `vault.consolidation.pin`
 - `vault.consolidation.frontier`
@@ -1044,6 +1096,7 @@ both bindings and their export-census tests in one change.
 - `vault.sieve.lease.refill`
 - `vault.free_time.policy.get`
 - `vault.free_time.policy.set`
+- `vault.free_time.policy.set_as`
 - `vault.free_time.cycles`
 - `vault.free_time.cycle`
 - `vault.claims.vet`
@@ -1125,3 +1178,7 @@ both bindings and their export-census tests in one change.
 - `vault.identity.events.get`
 - `vault.identity.proposals.resolve`
 - `vault.identity.proposals.for_pair`
+- `vault.custody.members.drain.begin`
+- `vault.custody.members.drain.commit`
+- `vault.custody.members.drain.folder`
+- `vault.custody.members.reenrol`

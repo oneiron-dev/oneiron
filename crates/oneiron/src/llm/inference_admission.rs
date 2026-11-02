@@ -24,6 +24,12 @@ pub enum HostInferenceBinding {
     Advertised {
         model: ModelId,
         locality: ModelLocality,
+        /// Host-attested only (FIX 10592): true means the constructing host
+        /// verified every rung that may serve this route is Payer::Local +
+        /// OwnServer + KeyCustody::Keyless from its host-bound ladder, via
+        /// OfferLadder::all_keyless_own_server. False is paid, today's
+        /// behavior exactly. Read beside selected_locality, never from caller JSON.
+        keyless: bool,
     },
 }
 
@@ -39,6 +45,13 @@ impl HostInferenceContext<'_> {
             HostInferenceBinding::Registered => None,
             HostInferenceBinding::Advertised { locality, .. } => Some(*locality),
         }
+    }
+    /// Mirrors selected_locality: None-binding (Registered) is false.
+    pub fn selected_keyless(&self) -> bool {
+        matches!(
+            &self.binding,
+            HostInferenceBinding::Advertised { keyless: true, .. }
+        )
     }
 }
 
@@ -172,7 +185,9 @@ impl InferencePolicySnapshot {
                     .catalog
                     .locality
             }
-            HostInferenceBinding::Advertised { model, locality } if model == selected => *locality,
+            HostInferenceBinding::Advertised {
+                model, locality, ..
+            } if model == selected => *locality,
             HostInferenceBinding::Advertised { .. } => {
                 return Err(invalid("host backend model differs from selected route"));
             }
@@ -210,7 +225,7 @@ fn invalid(reason: &'static str) -> Error {
 /// The purpose whose defaults row and gates admit and route a call. An
 /// agent's free time sends its own records out as an extraction does, so
 /// both autonomy labels are admitted and routed as extraction (FIX 4453).
-pub(crate) fn admitted_as(purpose: &CallPurpose) -> &CallPurpose {
+pub fn admitted_as(purpose: &CallPurpose) -> &CallPurpose {
     match purpose {
         CallPurpose::AutonomyForHuman | CallPurpose::AutonomyOwnTime => &CallPurpose::Extraction,
         purpose => purpose,

@@ -399,12 +399,16 @@ pub(super) fn pad_equivalent(
 
 /// Fills each pad row the rebuilt `window` names by bare reference, and
 /// whose pad current custody does not hold, with its carrier: from the row
-/// just landed, never from the artifact (KS-5). One custody holds stays a
-/// reference, as the window's durable state keeps it (FIX 7107); a pad not
-/// here stays a reference.
+/// just landed, never from the artifact (KS-5). Each pad a landed row holds
+/// that custody lacks is taken into current custody first and read back
+/// (FIX 7293), so the window keeps its references, as its durable state and
+/// the WindowSync pad envelope do (FIX 7107), and a re-bootstrap installs
+/// no carrier. A pad custody still cannot take keeps its carrier (KEEP
+/// TODAY, Engine 10-22); a pad not here stays a reference.
 #[cfg(feature = "sync")]
 fn carry_window_pads(vault: &crate::Vault, window: &LoroDoc) -> Result<()> {
     use super::canonical::{binary_rows, id, insert, parse_id};
+    super::canonical::prepare_artifact_pads(vault);
     let txn = vault.store.env.read_txn()?;
     let mut carried = false;
     for (key, blob) in binary_rows(window, "entities")? {

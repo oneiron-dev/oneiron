@@ -71,6 +71,9 @@ pub struct VaultWaveTaskPort<'a> {
     /// The launch approval a gated apply's cut waits on (OF-393); `None`:
     /// the ungated apply, whose cut lands at once.
     gate: Option<WaveLaunchGate>,
+    /// The credential caller whose request applied the wave, if one did; a
+    /// held launch keeps it until the owner rules.
+    requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 impl<'a> VaultWaveTaskPort<'a> {
     /// A caller-bound batch uses the ordinary gated wave port, with no
@@ -81,10 +84,12 @@ impl<'a> VaultWaveTaskPort<'a> {
         actor_class: EdgeActorClass,
         origin: TaskCreateOrigin,
         gate: WaveLaunchGate,
+        requester: Option<crate::agent_dispatch::QueuedRequester>,
     ) -> Self {
         let mut port = Self::new(vault, actor, actor_class);
         port.origin = Some(origin);
         port.gate = Some(gate);
+        port.requester = requester;
         port
     }
 
@@ -96,6 +101,7 @@ impl<'a> VaultWaveTaskPort<'a> {
             attempt: None,
             origin: None,
             gate: None,
+            requester: None,
         }
     }
 }
@@ -522,6 +528,7 @@ impl WaveTaskPort for VaultWaveTaskPort<'_> {
                         statement,
                         gate,
                         now,
+                        requester: self.requester.clone(),
                     },
                 )?;
                 match admission {
@@ -754,6 +761,18 @@ impl Vault {
         {
             return Ok(None);
         }
+        // FIX 11592: an agent try whose requester's authority was withdrawn
+        // ends unrun, on the TASK runner's turn; nothing is claimed here.
+        let dispatcher = crate::agent_dispatch::AgentDispatcher::new(self);
+        if crate::agent_dispatch::record_dispatch_input(&row).is_some_and(|input| {
+            dispatcher
+                .requester_withdrawn_in_txn(&txn, &input)
+                .is_some()
+        }) {
+            drop(txn);
+            dispatcher.end_withdrawn(id, lease_owner, now)?;
+            return Ok(None);
+        }
         let claimed = queue.claim_id_in_txn(
             &mut txn,
             id,
@@ -894,6 +913,7 @@ pub(super) struct ApprovedCut<'a> {
     pub(super) cut: WavePlan,
     pub(super) statement: &'a FanoutStatement,
     pub(super) now: u64,
+    pub(super) requester: Option<crate::agent_dispatch::QueuedRequester>,
 }
 
 /// Lands an approved cut in the approval's transaction, as its actor: the
@@ -915,8 +935,11 @@ pub(super) fn land_approved_cut_in(
         attempt: None,
         origin: approved.origin,
         gate: None,
+        requester: None,
     };
-    let memory = vault.memory(approved.actor, approved.actor_class);
+    let memory = vault
+        .memory(approved.actor, approved.actor_class)
+        .with_kept_requester(approved.requester.clone());
     let fingerprint = port.check_cut_in(&memory, txn, &cut)?;
     port.freeze_statement_in(txn, &cut, approved.statement)?;
     port.land_cut_in(&memory, txn, &cut, &fingerprint, approved.now)

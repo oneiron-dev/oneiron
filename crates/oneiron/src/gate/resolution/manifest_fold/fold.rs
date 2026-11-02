@@ -4,7 +4,7 @@ use super::*;
 
 // One fold per manifest row, in manifest order: splitting it would scatter one manifest.
 #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
-pub(crate) fn resolve_policy_manifest(
+pub(super) fn fold_policy_manifest(
     store: &impl crate::store::ManifestDbs,
     txn: &heed::RoTxn<'_>,
 ) -> Result<PolicyManifestResolution> {
@@ -42,6 +42,9 @@ pub(crate) fn resolve_policy_manifest(
     let mut conversion_tasks = AuthoredMin::default();
     let mut depth_default = AuthoredMin::default();
     let mut depth_max = AuthoredMin::default();
+    // The seeded `policy_values` rows are fallbacks an authored row of the
+    // same key and scope replaces (FIX 9802, 9809, 11346).
+    let mut value_seeds = crate::gate::policy_value_seeds::SeededPolicyValueRows::default();
 
     for index_entry in store.port_entity_ids_by_type(txn, ENTITY_TYPE_POLICY_MANIFEST, None)? {
         let id = match index_entry {
@@ -398,6 +401,9 @@ pub(crate) fn resolve_policy_manifest(
                     .booking_conversion_rows
                     .extend(decoded.booking_conversion_rows);
                 resolution
+                    .booking_anti_abuse_rows
+                    .extend(decoded.booking_anti_abuse_rows);
+                resolution
                     .dreamer_failure_rules
                     .extend(decoded.dreamer_failure_rules);
                 if let Some(precedence) = decoded.dreamer_failure_precedence {
@@ -441,14 +447,27 @@ pub(crate) fn resolve_policy_manifest(
                     }
                 }
 
-                if let Some(bounds) = decoded.diagnostic_bounds {
+                if let Some(row) = decoded.diagnostic_bounds {
                     match resolution.diagnostic_bounds {
-                        None => resolution.diagnostic_bounds = Some(bounds),
-                        Some(existing) if existing == bounds => {}
+                        None => resolution.diagnostic_bounds = Some(row.bounds),
+                        Some(existing) if existing == row.bounds => {}
                         Some(_) => resolution.diagnostics.malformed_manifest_seen = true,
                     }
+                    row.attribute(
+                        &mut resolution.diagnostic_bounds_origin,
+                        resolution.diagnostic_bounds,
+                        id,
+                        body,
+                    );
                 }
-                resolution.policy_values.extend(decoded.policy_values);
+                value_seeds.fold(
+                    store,
+                    txn,
+                    &id,
+                    body,
+                    decoded.policy_values,
+                    &mut resolution.policy_values,
+                )?;
                 if let Some(ask_policy) = decoded.ask_policy {
                     match &mut resolution.ask_policy {
                         Some(current) => {
@@ -471,11 +490,10 @@ pub(crate) fn resolve_policy_manifest(
                     .sheet_answer_limits
                     .extend(decoded.sheet_answer_limits);
                 if let Some(limits) = decoded.goal_limits {
-                    resolution.goal_limits = Some(
-                        resolution
-                            .goal_limits
-                            .map_or(limits, |old| old.restrict(limits)),
-                    );
+                    resolution.goal_limits = Some(match resolution.goal_limits.take() {
+                        Some(old) => old.restrict(limits),
+                        None => limits,
+                    });
                 }
                 if let Some(limits) = decoded.voice_ref_limits {
                     if id == crate::gate::default_policy_manifest_id()? {
@@ -593,6 +611,7 @@ pub(crate) fn resolve_policy_manifest(
     // A trusted owner-authored row wins over the immutable shipped fallback.
     // A conflict among owner rows never silently picks a pruning horizon.
     resolution.gate_decision_retention = owner_retention.or(default_retention);
+    value_seeds.finish(&mut resolution.policy_values);
     resolution.project_depth_default = depth_default.resolve();
     resolution.project_depth_max = depth_max.resolve();
     resolution.project_conversion.max_tasks = conversion_tasks

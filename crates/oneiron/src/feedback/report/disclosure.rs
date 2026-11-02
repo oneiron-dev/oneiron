@@ -23,10 +23,11 @@ use super::{
 };
 use crate::consent::{
     AudienceBound, AuthenticatedOwner, ComposedEffect, ConsentDecision, DisclosureClass,
-    DisclosureEnvelope, EffectFacts, GrantBound, UndoFidelity, evaluate_consent,
-    load_active_standing_grants,
+    DisclosureEnvelope, EffectFacts, GrantBound, StandingConsentGrant, UndoFidelity,
+    evaluate_consent, load_active_standing_grants,
 };
 use crate::entity_id::bytes_to_hex_lower;
+use crate::error::GateError;
 use crate::{EntityId, Error, Result, Vault};
 
 /// The data class a publisher's standing disclosure covers: the text a
@@ -102,14 +103,17 @@ fn request_digest(request: &ReportRequest) -> Result<[u8; 32]> {
     Ok(*hasher.finalize().as_bytes())
 }
 
-/// The standing disclosure bound for one publisher's report text, all
-/// engine-derived: audience `publisher:<publisher>`, class
-/// `feedback.report_text`, envelope `report_text:publisher:<publisher>`.
-fn publisher_bound(publisher_ref: &str) -> Result<GrantBound> {
+/// The standing disclosure bound for one publisher's report text in one
+/// disclosure round, all engine-derived: audience `publisher:<publisher>`,
+/// class `feedback.report_text`, envelope
+/// `report_text:publisher:<publisher>:round:<round>` (FIX 9368).
+fn publisher_bound(publisher_ref: &str, round: u64) -> Result<GrantBound> {
     GrantBound::disclosure(
         AudienceBound::singleton(format!("publisher:{publisher_ref}"))?,
         DisclosureClass::new(REPORT_TEXT_CLASS)?,
-        DisclosureEnvelope::new([format!("report_text:publisher:{publisher_ref}")])?,
+        DisclosureEnvelope::new([format!(
+            "report_text:publisher:{publisher_ref}:round:{round}"
+        )])?,
     )
 }
 
@@ -126,20 +130,20 @@ fn text_effect(issue_ref: &str, digest: &[u8; 32], bound: GrantBound) -> Result<
     ComposedEffect::new(facts).with_disclosure_requirement(bound)
 }
 
-/// The registry reference of the live standing grant that covers one
-/// issue's text to `publisher_ref` now, by the one evaluator; `None` when
-/// none does.
-fn covering_grant(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
+/// The registry reference of the standing grant in `grants` that covers one
+/// issue's text to `publisher_ref`, by the one evaluator; `None` when none
+/// does. Pure of IO: the caller supplies the already-loaded grant set
+/// (FIX 9366, one load per pass).
+fn covering_grant_with_grants(
     issue_ref: &str,
     publisher_ref: &str,
     digest: &[u8; 32],
+    round: u64,
+    grants: &[StandingConsentGrant],
 ) -> Result<Option<String>> {
-    let bound = publisher_bound(publisher_ref)?;
+    let bound = publisher_bound(publisher_ref, round)?;
     let effect = text_effect(issue_ref, digest, bound.clone())?;
-    let grants = load_active_standing_grants(&vault.store, txn)?;
-    if evaluate_consent(&effect, None, &grants) != ConsentDecision::Auto {
+    if evaluate_consent(&effect, None, grants) != ConsentDecision::Auto {
         return Ok(None);
     }
     Ok(grants
@@ -149,14 +153,17 @@ fn covering_grant(
 }
 
 impl Vault {
-    /// `issue`'s effective disclosure as `txn` reads it. A publisher-routed
-    /// report with text is approved by its own issue-once basis, else by a
-    /// standing grant live now, and otherwise waits on the owner. A denied,
-    /// local or content-free report keeps its view; so does one with no text.
-    pub(super) fn project_report_disclosure_in_txn(
+    /// `issue`'s effective disclosure against the already-loaded `grants`
+    /// (FIX 9366, one load per pass). Same view as
+    /// [`Self::project_report_disclosure_in_txn`]: a publisher-routed report
+    /// with text is approved by its own issue-once basis, else by a covering
+    /// grant in `grants`, and otherwise waits on the owner. A denied, local
+    /// or content-free report keeps its view; so does one with no text.
+    /// Pure of grant IO: the caller loaded `grants` once on the pass txn.
+    pub(super) fn project_report_disclosure_with_grants_in_txn(
         &self,
-        txn: &heed::RoTxn<'_>,
         issue: &mut ReportIssue,
+        grants: &[StandingConsentGrant],
     ) -> Result<()> {
         let ReportRoute::Publisher { publisher_ref } = &issue.route else {
             return Ok(());
@@ -181,7 +188,13 @@ impl Vault {
             issue.disclosure = ReportDisclosure::Approved;
             return Ok(());
         }
-        let grant = covering_grant(self, txn, &issue.issue_ref, publisher_ref, &digest)?;
+        let grant = covering_grant_with_grants(
+            &issue.issue_ref,
+            publisher_ref,
+            &digest,
+            issue.disclosure_round,
+            grants,
+        )?;
         (issue.disclosure, issue.disclosure_basis) = match grant {
             Some(grant_ref) => (
                 ReportDisclosure::Approved,
@@ -192,29 +205,83 @@ impl Vault {
         Ok(())
     }
 
+    /// `issue`'s effective disclosure as `txn` reads it. A publisher-routed
+    /// report with text is approved by its own issue-once basis, else by a
+    /// standing grant live now, and otherwise waits on the owner. A denied,
+    /// local or content-free report keeps its view; so does one with no text.
+    pub(super) fn project_report_disclosure_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        issue: &mut ReportIssue,
+    ) -> Result<()> {
+        // Cases that never touch grants return without a scan, as before;
+        // only a text issue without a matching issue-once basis loads.
+        let ReportRoute::Publisher { publisher_ref } = &issue.route else {
+            return Ok(());
+        };
+        if !issue.request.carries_text()
+            || !matches!(
+                issue.disclosure,
+                ReportDisclosure::NeedsApproval | ReportDisclosure::Approved
+            )
+        {
+            return Ok(());
+        }
+        let digest = request_digest(&issue.request)?;
+        if let Some(ReportDisclosureBasis::IssueOnce {
+            publisher_ref: approved,
+            request_digest,
+            ..
+        }) = &issue.disclosure_basis
+            && approved == publisher_ref
+            && *request_digest == bytes_to_hex_lower(&digest)
+        {
+            issue.disclosure = ReportDisclosure::Approved;
+            return Ok(());
+        }
+        let grants = load_active_standing_grants(&self.store, txn)?;
+        self.project_report_disclosure_with_grants_in_txn(issue, &grants)
+    }
+
     /// The owner's disclosure choice for one issue to `publisher_ref`, in the
-    /// writer that records it. Stop-asking mints the publisher's standing
-    /// grant here, through the consent registry's one minting door.
+    /// writer that records it. Approve-once appends its consent receipt for
+    /// the issue's exact text effect (FIX 9368); stop-asking mints the
+    /// publisher's standing grant. Both go through the consent registry's
+    /// own doors, here.
     pub(super) fn report_disclosure_choice_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
-        publisher_ref: &str,
+        (issue_ref, publisher_ref): (&str, &str),
         request: &ReportRequest,
+        round: u64,
         choice: ReportDisclosureChoice,
     ) -> Result<(ReportDisclosure, Option<ReportDisclosureBasis>)> {
         Ok(match choice {
-            ReportDisclosureChoice::ApproveOnce => (
-                ReportDisclosure::Approved,
-                Some(ReportDisclosureBasis::IssueOnce {
-                    publisher_ref: publisher_ref.to_owned(),
-                    request_digest: bytes_to_hex_lower(&request_digest(request)?),
-                    decided_at: self.now_recorded_at(),
-                }),
-            ),
+            ReportDisclosureChoice::ApproveOnce => {
+                let digest = request_digest(request)?;
+                let effect =
+                    text_effect(issue_ref, &digest, publisher_bound(publisher_ref, round)?)?;
+                // The same approval asked again keeps its first receipt.
+                match self.approve_once_in_txn(txn, owner, effect.digest()) {
+                    Err(Error::Gate(GateError::ConsentApproveOnceSpent(_))) | Ok(_) => {}
+                    Err(error) => return Err(error),
+                }
+                (
+                    ReportDisclosure::Approved,
+                    Some(ReportDisclosureBasis::IssueOnce {
+                        publisher_ref: publisher_ref.to_owned(),
+                        request_digest: bytes_to_hex_lower(&digest),
+                        decided_at: self.now_recorded_at(),
+                    }),
+                )
+            }
             ReportDisclosureChoice::StopAskingForPublisher => {
-                let receipt =
-                    self.create_standing_grant_in_txn(txn, owner, publisher_bound(publisher_ref)?)?;
+                let receipt = self.create_standing_grant_in_txn(
+                    txn,
+                    owner,
+                    publisher_bound(publisher_ref, round)?,
+                )?;
                 let grant_ref = receipt.grant_ref().ok_or(Error::InvariantViolation(
                     "a standing grant's receipt names its grant",
                 ))?;
@@ -223,7 +290,13 @@ impl Vault {
                     Some(ReportDisclosureBasis::StandingGrant { grant_ref }),
                 )
             }
-            ReportDisclosureChoice::Deny => (ReportDisclosure::Denied, None),
+            ReportDisclosureChoice::Deny => {
+                let digest = request_digest(request)?;
+                let effect =
+                    text_effect(issue_ref, &digest, publisher_bound(publisher_ref, round)?)?;
+                self.deny_consent_in_txn(txn, owner, effect.digest())?;
+                (ReportDisclosure::Denied, None)
+            }
         })
     }
 
@@ -264,7 +337,7 @@ impl Vault {
                     let effect = text_effect(
                         &issue.issue_ref,
                         &binding.request_digest,
-                        publisher_bound(&binding.publisher_ref)?,
+                        publisher_bound(&binding.publisher_ref, issue.disclosure_round)?,
                     )?;
                     self.record_standing_grant_use_in_txn(txn, grant_ref, effect.digest())?;
                     Ok(true)

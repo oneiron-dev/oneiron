@@ -15,8 +15,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -27,8 +26,9 @@ use oneiron::dreamer_consolidation::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -36,14 +36,63 @@ use crate::server::SyncServer;
 /// The most conflicts one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/conflicts", get(list))
-        .route("/conflicts/settle", post(settle))
-        .route("/conflicts/settled", get(settled))
-        .route("/conflicts/revert", post(revert))
-        .route("/conflicts/review", post(resume_review))
-        .route("/conflicts/review/revoke", post(hold_review))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conflicts",
+                summary: "Every unanswered contradiction, oldest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/settle",
+                summary: "The owner's answer to one marker.",
+                row: None,
+            },
+            post(settle),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conflicts/settled",
+                summary: "The standing settlements, the Dreamer's among them, newest first.",
+                row: None,
+            },
+            get(settled),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/revert",
+                summary: "The owner's revert of one settlement.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/review",
+                summary: "Ends the owner's hold on the Dreamer's review of one subject or of every subject in the vault, so it settles them through its ladder again.",
+                row: None,
+            },
+            post(resume_review),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/conflicts/review/revoke",
+                summary: "Holds the Dreamer's review on exactly that scope; it leaves those conflicts here for the owner until /review ends the hold.",
+                row: None,
+            },
+            post(hold_review),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -90,7 +139,7 @@ struct AlternativeView {
     confidence: f32,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SettleConflict {
     /// The open marker, as 32 hex.
@@ -103,11 +152,23 @@ struct SettleConflict {
     keep: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/settle`'s body (FIX 11611):
+/// [`SettleConflict`].
+pub(crate) fn settle_conflict_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SettleConflict>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertSettlement {
     /// The settlement's `conflict.resolved` answer, as 32 hex.
     resolved: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/conflicts/revert`'s body (FIX 11611):
+/// [`RevertSettlement`].
+pub(crate) fn revert_settlement_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertSettlement>()
 }
 
 #[derive(Debug, Serialize)]
@@ -122,7 +183,7 @@ struct SettledView {
     by_dreamer: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct SettlementReverted {
     resolved: String,
     /// The marker, open again for the owner.
@@ -138,7 +199,13 @@ struct SettlementReverted {
     receipt_ref: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/revert`'s answer (FIX 11611):
+/// [`SettlementReverted`].
+pub(crate) fn settlement_reverted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SettlementReverted>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReviewScope {
     /// `subject` or `vault`.
@@ -148,18 +215,36 @@ struct ReviewScope {
     subject: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/review`'s body (FIX 11611),
+/// shared with `POST /v1/owner/conflicts/review/revoke`: [`ReviewScope`].
+pub(crate) fn review_scope_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewScope>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReviewResumed {
     /// False when no such hold was live.
     resumed: bool,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/review`'s answer (FIX 11611):
+/// [`ReviewResumed`].
+pub(crate) fn review_resumed_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewResumed>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReviewHeld {
     hold_ref: String,
 }
 
-#[derive(Debug, Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/conflicts/review/revoke`'s answer
+/// (FIX 11611): [`ReviewHeld`].
+pub(crate) fn review_held_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewHeld>()
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ConflictSettled {
     marker: String,
     settlement: &'static str,
@@ -178,9 +263,13 @@ struct ConflictSettled {
     /// absent on every other settlement.
     #[serde(skip_serializing_if = "Option::is_none")]
     approval_ref: Option<String>,
+    /// The work still owed after the settlement committed, from its receipt
+    /// (FIX 11859, L13 10:48); absent when none is.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<oneiron::memory::SettleWarning>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PendingReviewView {
     /// The retained alternative the Keep named.
     kept: String,
@@ -189,6 +278,12 @@ struct PendingReviewView {
     /// The import review it waits in; absent when it waits with its round.
     #[serde(skip_serializing_if = "Option::is_none")]
     review: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/conflicts/settle`'s answer (FIX 11611):
+/// [`ConflictSettled`].
+pub(crate) fn conflict_settled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConflictSettled>()
 }
 
 fn view(vault: &oneiron::Vault, conflict: OpenConflict) -> OwnerResult<ConflictView> {
@@ -267,10 +362,10 @@ async fn list(
 async fn settle(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SettleConflict>, JsonRejection>,
+    payload: OwnerJsonBody<SettleConflict>,
 ) -> OwnerReply<ConflictSettled> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let settled = blocking(move || -> OwnerResult<ConflictSettled> {
         let marker = entity_id("marker", &request.marker)?;
@@ -310,6 +405,7 @@ async fn settle(
                 pending_review: None,
                 receipt_ref: receipt.receipt_ref,
                 approval_ref: receipt.approval_ref,
+                warnings: receipt.warnings,
             },
             ConflictSettleOutcome::ImportReviewPending {
                 staged,
@@ -326,6 +422,7 @@ async fn settle(
                 }),
                 receipt_ref,
                 approval_ref: None,
+                warnings: Vec::new(),
             },
         })
     })
@@ -380,10 +477,10 @@ async fn settled(
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertSettlement>, JsonRejection>,
+    payload: OwnerJsonBody<RevertSettlement>,
 ) -> OwnerReply<SettlementReverted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let reverted = blocking(move || -> OwnerResult<SettlementReverted> {
         let resolved = entity_id("resolved", &request.resolved)?;
@@ -440,10 +537,10 @@ fn review_scope(request: &ReviewScope) -> OwnerResult<ConflictReviewScope> {
 async fn resume_review(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReviewScope>, JsonRejection>,
+    payload: OwnerJsonBody<ReviewScope>,
 ) -> OwnerReply<ReviewResumed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let resumed = blocking(move || -> OwnerResult<ReviewResumed> {
         let scope = review_scope(&request)?;
@@ -466,10 +563,10 @@ async fn resume_review(
 async fn hold_review(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReviewScope>, JsonRejection>,
+    payload: OwnerJsonBody<ReviewScope>,
 ) -> OwnerReply<ReviewHeld> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let held = blocking(move || -> OwnerResult<ReviewHeld> {
         let scope = review_scope(&request)?;

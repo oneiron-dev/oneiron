@@ -19,6 +19,10 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::ManifestDbs;
 pub(crate) mod checkpoint;
+#[cfg(all(unix, feature = "sync"))]
+mod retained;
+#[cfg(all(unix, feature = "sync"))]
+pub(crate) use self::retained::retained_body_side_keys_in_txn;
 
 /// Where a body's bytes live.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

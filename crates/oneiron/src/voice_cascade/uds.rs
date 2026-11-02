@@ -88,6 +88,7 @@ impl BridgeLimits {
             fire_limit: self.fire_limit,
             final_limit: self.final_limit,
             deadline: self.deadline,
+            threads: None,
         }
     }
 }

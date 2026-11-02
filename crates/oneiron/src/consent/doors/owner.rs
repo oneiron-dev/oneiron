@@ -150,18 +150,25 @@ impl Vault {
         mut owner: AuthenticatedOwner,
         credential: crate::authority::VerifiedSlip,
     ) -> Result<AuthenticatedOwner> {
-        let claims = credential.claims();
-        if !credential.is_full_vault_owner_grade()
-            || claims.holder_ref != owner.actor.to_hex()
-            || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
-        {
-            return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
-                "credential is not this owner's own full slip",
-            )));
-        }
+        own_full_slip(&owner, &credential)?;
         owner.credential = Some(Box::new(credential));
         self.recheck_owner(&owner)?;
         Ok(owner)
+    }
+
+    /// [`Self::bind_owner_credential`] judged in the caller's transaction
+    /// `txn`, answering the owner's actor: the owner's repair of a damaged
+    /// authority clock judges it against the floor it staged there (FIX
+    /// 10106).
+    pub(crate) fn bind_owner_credential_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        mut owner: AuthenticatedOwner,
+        credential: crate::authority::VerifiedSlip,
+    ) -> Result<EntityId> {
+        own_full_slip(&owner, &credential)?;
+        owner.credential = Some(Box::new(credential));
+        owner.revalidate_in_txn(self, txn)
     }
 
     /// Rechecks `owner` against the vault as it stands now: the person is
@@ -198,5 +205,42 @@ impl Vault {
         let actor = owner.revalidate_in_txn(self, &txn)?;
         Ok(crate::claim::ScopedReadActorKey::vault_owner(actor)
             .guarded_by_owner_proof(owner.clone()))
+    }
+}
+
+/// Whether `credential` is `owner`'s own unattenuated human slip.
+fn own_full_slip(
+    owner: &AuthenticatedOwner,
+    credential: &crate::authority::VerifiedSlip,
+) -> Result<()> {
+    let claims = credential.claims();
+    if !credential.is_full_vault_owner_grade()
+        || claims.holder_ref != owner.actor.to_hex()
+        || claims.actor_class.as_deref() != Some(CONSENT_ACTOR_CLASS)
+    {
+        return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            "credential is not this owner's own full slip",
+        )));
+    }
+    Ok(())
+}
+
+impl AuthenticatedOwner {
+    /// The slip this proof is bound to, for a persisted delegation that
+    /// rechecks it at redemption (a Slack install): its slip id, or `None`
+    /// for a proof bound to no credential.
+    pub(crate) fn credential_slip_id_for_persist(&self) -> Option<[u8; 32]> {
+        self.credential
+            .as_ref()
+            .map(|credential| credential.claims().slip_id)
+    }
+
+    /// The host action this proof was authenticated from, for a persisted
+    /// delegation: its owner and its root slip id (`None` for the dev
+    /// mode), or `None` for a proof with no host action.
+    pub(crate) fn host_action_for_persist(&self) -> Option<(Option<[u8; 32]>, EntityId)> {
+        self.host_action
+            .as_ref()
+            .map(|action| (action.root_slip_id(), action.owner()))
     }
 }

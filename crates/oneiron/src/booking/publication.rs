@@ -96,6 +96,14 @@ pub struct BookingPagePublication {
     pub theme: ThemeTokens,
     pub landing: BookingLandingContent,
     pub initial_availability: PublicBookingAvailability,
+    /// Who pays an anonymous visitor's free-text parse on this page (FIX
+    /// 5288): the publisher's chosen sponsor, stored at publish and read
+    /// from the publication the parse request already loads. `None`: no
+    /// sponsor was stored, and the parse pays as it always has. Validated
+    /// only as a well-formed id, by the type itself at decode. Never
+    /// emitted in the public render model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sponsor: Option<EntityId>,
 }
 
 impl BookingPagePublication {
@@ -178,6 +186,35 @@ pub fn decode_public_booking_page_value(value: &rmpv::Value) -> Result<BookingPa
         .map_err(|_| Error::InvalidClaimBody("public booking value does not match its schema"))?;
     decoded.validate().map_err(Error::InvalidClaimBody)?;
     Ok(decoded)
+}
+
+/// Who pays an anonymous visitor's free-text parse on a page `publisher`
+/// publishes (FIX 5288, CALLS "FIX 5288 booking sponsor"): the publisher
+/// sponsors the page's anonymous parses. `None` when the publish door has
+/// no publishing principal in hand.
+pub fn publication_sponsor(publisher: EntityId) -> Option<EntityId> {
+    Some(publisher)
+}
+
+/// Stamps the publication-time sponsor onto a `booking.public_page` claim
+/// value at the owner write door (FIX 5288): the publishing principal, by
+/// [`publication_sponsor`]. A value that is not an object is left alone, so
+/// a malformed write keeps today's refusal, never a new one.
+pub(crate) fn stamp_publication_sponsor(value: &mut serde_json::Value, publisher: EntityId) {
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    match publication_sponsor(publisher) {
+        Some(sponsor) => {
+            object.insert(
+                "sponsor".to_owned(),
+                serde_json::Value::String(sponsor.to_hex()),
+            );
+        }
+        None => {
+            object.remove("sponsor");
+        }
+    }
 }
 
 /// Structural claim gate, used by the existing booking/config family dispatcher
@@ -268,12 +305,36 @@ fn load_public_booking_page_in_txn(
     )
 }
 
-fn load_public_booking_page_listed_in_txn(
+/// The verified live owner who published `page_ref`'s live publication: the
+/// principal the page's standing invite grant is bound to, and so the actor
+/// its bookings' invites are sent as (FIX 7850). `None` when the page has no
+/// live, published publication.
+///
+/// # Errors
+///
+/// Storage errors, and a stored publication that does not decode.
+pub fn live_booking_page_publisher(
+    vault: &Vault,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let rtxn = vault.store.env.read_txn()?;
+    let Some((_, body, owner)) = live_publication_claim_in_txn(vault, &rtxn, page_ref, now)? else {
+        return Ok(None);
+    };
+    Ok(decode_public_booking_page_value(&body.value)?
+        .published
+        .then_some(owner))
+}
+
+/// The live `booking.public_page` claim of `page_ref`, its id and its
+/// verified live owner. Every check but the decoded value's own.
+fn live_publication_claim_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     page_ref: EntityId,
     now: u64,
-) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
+) -> Result<Option<(EntityId, ClaimBody, EntityId)>> {
     if !crate::vault::live_entity_row_in_txn(&vault.store, rtxn, &page_ref)?.is_live() {
         return Ok(None);
     }
@@ -303,6 +364,18 @@ fn load_public_booking_page_listed_in_txn(
     if crate::memory::verify_public_booking_owner_in_txn(vault, rtxn, owner).is_err() {
         return Ok(None);
     }
+    Ok(Some((id, body, owner)))
+}
+
+fn load_public_booking_page_listed_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<(BookingPagePublication, Vec<EntityId>)>> {
+    let Some((id, body, _)) = live_publication_claim_in_txn(vault, rtxn, page_ref, now)? else {
+        return Ok(None);
+    };
     let value = decode_public_booking_page_value(&body.value)?;
     if !value.published {
         return Ok(None);

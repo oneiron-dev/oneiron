@@ -65,7 +65,7 @@ pub(crate) fn validate_transition(
     if fresh {
         verify_live(store, txn, id, &next, proof, posture)?;
     }
-    if prior.is_none() && proof.anchor.is_some() {
+    if prior.is_none() && !proof.anchor.is_empty() {
         return Err(refused("a new project has no earlier authority"));
     }
     let chain = revisions_of_row(id, &next)?;
@@ -246,21 +246,20 @@ fn verify_live(
         .mints
         .get(&slip.claims.slip_id)
         .ok_or_else(|| refused("project write slip not minted"))?;
-    let floor = crate::authority::AUTHORITY_FIRST_SEEN
-        .get_lenient(
-            store,
-            txn,
-            &crate::authority::authority_first_seen_clock_key(),
-        )?
-        .unwrap_or(0);
-    let now =
-        crate::authority::authority_observation_secs(store, floor, store.clock.now_recorded_at());
+    let now = crate::authority::authority_clock_reading_in_txn(
+        store,
+        txn,
+        store.clock.now_recorded_at(),
+    )?;
     if proof.signed_at > now {
         return Err(refused("project write proof is dated ahead"));
     }
-    let challenge = next
-        .authority()
-        .write_challenge(id, proof.version, proof.signed_at, proof.anchor.as_deref())
+    let challenge = proof
+        .anchor_links()
+        .and_then(|anchor| {
+            next.authority()
+                .write_challenge(id, proof.version, proof.signed_at, anchor)
+        })
         .map_err(|_| refused("invalid project write proof"))?;
     slip.verify_with_host_key(
         &mint.signer,

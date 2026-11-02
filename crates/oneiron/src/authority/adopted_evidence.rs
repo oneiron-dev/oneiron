@@ -56,6 +56,11 @@ impl AdoptedEvidence {
         }))
     }
 
+    /// The image this vault adopted.
+    pub(super) fn image(&self) -> &AuthorityCheckpointV2 {
+        self.checkpoint.image()
+    }
+
     /// Each covered row's summary, by hash.
     pub(super) fn rows(&self) -> &BTreeMap<AuthorityEntryHash, AuthorityCheckpointRow> {
         &self.checkpoint.image().rows
@@ -134,6 +139,32 @@ pub(crate) fn adopted_evidence_in_txn(
     txn: &heed::RoTxn<'_>,
 ) -> Result<Option<Arc<AdoptedEvidence>>> {
     Ok(super::log_budget::door_view(store, txn)?.evidence.clone())
+}
+
+/// The residence directives and results the image this vault adopted carries
+/// whole (FIX 5412), by hash, read in `txn`: a machine's directive reader
+/// reads them beside the rows it stores. Empty with no adoption, and empty
+/// where the image dropped them for
+/// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`] (FIX 11400),
+/// as before #4095 carried them.
+pub(crate) fn carried_residence_rows_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<AuthorityEntryHash, AuthorityLogEntry>> {
+    let Some(evidence) = adopted_evidence_in_txn(store, txn)? else {
+        return Ok(BTreeMap::new());
+    };
+    Ok(evidence
+        .bodies()
+        .iter()
+        .filter(|(_, entry)| {
+            matches!(
+                entry.op,
+                AuthorityOp::ResidenceDirective(_) | AuthorityOp::ResidenceResult(_)
+            )
+        })
+        .map(|(hash, entry)| (*hash, entry.clone()))
+        .collect())
 }
 
 /// What a reader that wants one authority row whole reads where this vault

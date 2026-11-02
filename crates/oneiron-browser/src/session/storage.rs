@@ -26,7 +26,7 @@ use crate::cdp::Visits;
 use crate::driver::CdpDriver;
 use crate::driver::state::{Store, StoreRead};
 use crate::retention::HandleRetention;
-use crate::{StoragePhase, SwitchComponent, SwitchLoss, SwitchNotCarried};
+use crate::{SnapshotBounds, StoragePhase, SwitchComponent, SwitchLoss, SwitchNotCarried};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
@@ -35,6 +35,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 /// page-controlled input: a snapshot past a bound is not carried, and the
 /// record says so, never cut short and called whole. A switch's own read of
 /// its cookies and its current origin's stores takes them whole (FIX 8008).
+/// `read_chars`, `snapshot_origins` and `snapshot_bytes` are defaults a
+/// call's `SnapshotBounds` stands in for (FIX 10335).
 pub(crate) struct SwitchStateLimits {
     /// Items one store holds.
     pub(crate) items: usize,
@@ -157,6 +159,9 @@ struct Tab {
 /// target, and their charge.
 pub(crate) struct OriginSnapshots {
     tabs: HashMap<String, Tab>,
+    /// The bounds kept now: `read_chars`, `snapshot_origins` and
+    /// `snapshot_bytes`, defaults until a call named its own (FIX 10335).
+    bounds: (usize, usize, usize),
     charge: Box<dyn HandleRetention>,
     /// The bytes the charge holds.
     held: usize,
@@ -184,6 +189,11 @@ pub(crate) struct Sink {
 }
 
 impl Sink {
+    /// The bound one read after an act, at hand-back or on exit takes now.
+    pub(crate) fn read_chars(&self) -> usize {
+        lock(&self.collector).bounds.0
+    }
+
     /// Keeps `sample`, read off tab `tab` in `phase`.
     pub(crate) fn keep(&self, tab: &str, phase: StoragePhase, sample: Sample) {
         lock(&self.collector).keep(self.pipe, tab, phase, sample);
@@ -292,8 +302,14 @@ fn merge(read: StoreSample, earlier: Option<Kept>, kept: (StoragePhase, u64, boo
 impl OriginSnapshots {
     /// Snapshots charged through `charge`, holding nothing yet.
     pub(crate) fn collector(charge: Box<dyn HandleRetention>) -> Collector {
+        let limits = switch_state_limits();
         Arc::new(Mutex::new(Self {
             tabs: HashMap::new(),
+            bounds: (
+                limits.read_chars,
+                limits.snapshot_origins,
+                limits.snapshot_bytes,
+            ),
             charge,
             held: 0,
             order: 0,
@@ -318,6 +334,22 @@ impl OriginSnapshots {
     /// The session landed receipt `seq`: later reads follow it.
     pub(crate) fn landed(collector: &Collector, seq: u64) {
         lock(collector).receipt = seq;
+    }
+
+    /// Keeps `bounds` from now on, each named one in place of the one kept
+    /// (`snapshot_bounds_policy`, CALLS row, FIX 10335): what the snapshots
+    /// hold past a lower one gives way at the next read kept.
+    pub(crate) fn bound(collector: &Collector, bounds: &SnapshotBounds) {
+        let size = |bound: Option<u64>, kept: usize| {
+            bound.map_or(kept, |bound| usize::try_from(bound).unwrap_or(usize::MAX))
+        };
+        let mut snapshots = lock(collector);
+        let (chars, origins, bytes) = snapshots.bounds;
+        snapshots.bounds = (
+            size(bounds.read_chars, chars),
+            size(bounds.snapshot_origins, origins),
+            size(bounds.snapshot_bytes, bytes),
+        );
     }
 
     fn keep(&mut self, pipe: u64, tab: &str, phase: StoragePhase, sample: Sample) {
@@ -409,11 +441,11 @@ impl OriginSnapshots {
     /// than its bound and `bytes` more fit the snapshots' bound: whether
     /// they do.
     fn make_room(&mut self, tab: &str, bytes: usize) -> bool {
-        let limits = switch_state_limits();
+        let (_, origins, held) = self.bounds;
         loop {
             let count = self.tabs.get(tab).map_or(0, |kept| kept.origins.len());
-            let crowded = count >= limits.snapshot_origins;
-            if !crowded && self.held + bytes <= limits.snapshot_bytes {
+            let crowded = count >= origins;
+            if !crowded && self.held + bytes <= held {
                 return true;
             }
             let oldest = self

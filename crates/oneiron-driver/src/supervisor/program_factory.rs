@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
 use oneiron::dreamer_wake::{ClaimAuthoringSelection, TurnProgramExecutor, TurnProgramRuntime};
-use oneiron::{BudgetGuard, Result, Vault, WavePlanner, WriteActor};
+use oneiron::fanout_auto::FanoutDecisions;
+use oneiron::{BudgetGuard, EntityId, Result, Vault, WavePlanner, WriteActor};
 
 use super::attachment::{LinkedShutdown, PassAttachment};
 use super::factory::{PassExecutorFactory, SkillOptimizerLoan};
@@ -61,6 +62,13 @@ impl<F: PassExecutorFactory> PassExecutorFactory for ProgramExecutorFactory<F> {
 
     fn wave_planner(&self) -> Option<Arc<dyn WavePlanner + Send + Sync>> {
         self.inner.wave_planner()
+    }
+
+    fn wave_fanout_decisions<R, G>(&self, principal: EntityId, rule: G) -> R
+    where
+        G: FnOnce(Option<&FanoutDecisions<'_>>) -> R,
+    {
+        self.inner.wave_fanout_decisions(principal, rule)
     }
 
     fn dispatch_wave_candidate(

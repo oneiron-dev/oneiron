@@ -13,6 +13,7 @@ A shape it cannot read becomes `unknown` (`Any` in Python) and is listed in the
 census with its reason; `serde_json::Value` is opaque by design and counted
 apart.
 """
+import builtins
 import json
 import keyword
 import re
@@ -94,6 +95,17 @@ RESERVED = {'Record', 'Partial', 'Required', 'Readonly', 'Pick', 'Omit', 'Array'
             'Date', 'Error', 'Object', 'String', 'Number', 'Boolean', 'Symbol', 'Function', 'RegExp', 'JSON', 'Math', 'Uint8Array',
             'Headers', 'URL', 'Blob', 'File', 'Event', 'Node', 'Element', 'Text', 'Document', 'Window', 'Location', 'Storage',
             'Any', 'Literal', 'TypedDict', 'NotRequired', 'Generic', 'TypeVar', 'Facade', 'None', 'Self'}
+# Python's own builtins (`MemoryError`, ...): a stub class by that name would
+# shadow the builtin wherever the stub is imported, so Python spells such a
+# declaration with this prefix, in its class and in every reference to it
+# (FIX 6555). TypeScript keeps the engine's name.
+PY_BUILTIN_PREFIX = 'Facade'
+PY_BUILTINS = frozenset(name for name in dir(builtins) if not name.startswith('_'))
+
+
+def py_name(name):
+    'The name Python spells a declaration with: a builtin\'s name takes `PY_BUILTIN_PREFIX`.'
+    return PY_BUILTIN_PREFIX + name if name in PY_BUILTINS else name
 
 
 # ---------------------------------------------------------------- Rust text
@@ -345,7 +357,7 @@ def parse_type(text):
 # ---------------------------------------------------------------- the index
 
 class Item:
-    __slots__ = ('crate', 'file', 'module', 'name', 'kind', 'top', 'attrs', 'generics', 'body', 'shape', 'uses')
+    __slots__ = ('crate', 'file', 'module', 'name', 'kind', 'top', 'public', 'attrs', 'generics', 'body', 'shape', 'uses')
 
     def key(self):
         return (self.crate, self.file, self.name, self.module)
@@ -404,9 +416,11 @@ class Index:
                     self.macros[match.group(1)] = text[match.start():close_of(text, match.end() - 1)]
 
     def read_item(self, crate, file, module, text, match):
-        indent, _, kind, name = match.groups()
+        indent, public, kind, name = match.groups()
         item = Item()
         item.crate, item.file, item.module, item.name, item.kind, item.top = crate, file, module, name, kind, not indent
+        # Nameable outside its crate: a bare `pub`, never `pub(crate)` and the like.
+        item.public = public is not None and public.strip() == 'pub'
         # The attributes: the lines above the header back to the previous item.
         lines, start = [], match.start()
         while start > 0:
@@ -600,13 +614,16 @@ class Inventory:
         # What a typed binding needs past the wire shape: each derived enum's
         # serde tagging and variants, by declaration name, and each named
         # field a writer must send as `null` rather than omit (an `Option`
-        # under a field codec with no `default`), by (owner, key), and each
-        # declaration that refuses unknown fields.
+        # under a field codec with no `default`), by (owner, key), each
+        # declaration that refuses unknown fields, and each struct that
+        # derives no `Debug`, whose own Debug keeps a value out (FIX 4993).
         self.variants = {}
         self.null_fields = set()
         self.closed = set()
+        self.redacted = set()
         self.roots = {}       # rust text -> IR
         self.preferred = {}   # item key -> the name a codec module gives its mirror
+        self._py_erased, self._py_erased_at = set(), None  # see `py_erased`
         crate, file = ROOT_CONTEXT
         file = file[len(CRATES[crate]) + 1:]
         self.root_context = (crate, file, Path(file).parent.parts)
@@ -839,11 +856,19 @@ class Inventory:
         serde = attr_args(item.attrs, 'serde')
         derived = derives(item.attrs)
         # What the type writes: its `into` type, else its own derive; a type
-        # that only reads takes the shape it reads `from`.
+        # that only reads takes the shape it reads `from`. A wire no caller
+        # can name is written under this type's own name, never its own
+        # (FIX 11203: `SensitivityCeiling`, not `SensitivityCeilingWire`).
         conversions = ('into',) if 'Serialize' in derived else ('into', 'try_from', 'from')
         for key in conversions:
             if isinstance(serde.get(key), str):
-                return self.ir(parse_type(serde[key]), context, params, where)
+                target = parse_type(serde[key])
+                wire = self.private_wire(target, item)
+                if wire is None:
+                    return self.ir(target, context, params, where)
+                value = self.item_ir(wire, decl)
+                if item.kind == 'struct' and 'Debug' not in derived: self.redacted.add(where)
+                return value
         if not derived & {'Serialize', 'Deserialize'}:
             return self.manual(item, context, params, where)
         if derived & {'Serialize_repr', 'Deserialize_repr'}:
@@ -852,6 +877,7 @@ class Inventory:
         case = serialize_case(serde.get('rename_all'))
         default = serde.get('default') is True or isinstance(serde.get('default'), str)
         if serde.get('deny_unknown_fields') is True: self.closed.add(where)
+        if item.kind == 'struct' and 'Debug' not in derived: self.redacted.add(where)
         if item.kind == 'struct':
             if item.shape == 'unit': return NULL
             if item.shape == 'tuple':
@@ -865,6 +891,14 @@ class Inventory:
             extra = [(tag, ('lit', serialize_case(serde.get('rename')) or item.name), False)] if isinstance(tag, str) else []
             return self.object(item.body, case, default, context, params, where, extra=extra)
         return self.enum(item, serde, case, context, params, where)
+
+    def private_wire(self, ast, item):
+        'The type a conversion of `item` names, when it is a non-generic one of its own file that is not `pub`; else None.'
+        if ast[0] != 'path' or ast[2]: return None
+        found = self.index.resolve(ast[1], item.crate, item.file, item.module)
+        if not isinstance(found, Item) or found is item or found.public or found.generics or found.kind == 'type': return None
+        if (found.crate, found.file) != (item.crate, item.file): return None
+        return found
 
     def enum(self, item, serde, case, context, params, where):
         tag, content = serde.get('tag'), serde.get('content')
@@ -1047,8 +1081,37 @@ class Inventory:
     # ---- Python
 
     def python(self, census_lines):
-        hoisted, typevars = [], set()
-        names = set(decl['name'] for decl in self.decls.values())
+        hoisted, typevars, _ = self.py_declarations(self.py_erased())
+        out = '"""Generated by scripts/sdk/generate.py from the Rust types each facade row of\n'
+        out += 'scripts/sdk/agent-verbs.json names; edit the Rust types or the table.\n\n'
+        out += 'Keys are the engine\'s own wire spelling. Shapes the generator could not read\n'
+        out += 'are `Any`, and the census below counts them.\n\n'
+        out += ''.join(line + '\n' for line in census_lines) + '"""\n\n'
+        out += 'from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar\n\n'
+        out += ''.join(f'{name} = TypeVar({json.dumps(name)})\n' for name in sorted(typevars))
+        out += '\n' + ''.join(hoisted)
+        return out
+
+    def py_erased(self):
+        """The Python names the stubs spell as a shape that takes no type
+        arguments: a `dict[str, Any]` fallback, or an alias whose shape names
+        none of its parameters. A reference to one drops its arguments, which
+        a type checker would refuse as a subscript (FIX 5706); the broad dict
+        stays. Found to a fixed point, since a reference can come before the
+        declaration it names."""
+        if self._py_erased_at != len(self.order):
+            erased = set()
+            while True:
+                found = self.py_declarations(erased)[2]
+                if found <= erased: break
+                erased |= found
+            self._py_erased, self._py_erased_at = erased, len(self.order)
+        return self._py_erased
+
+    def py_declarations(self, erased):
+        'Every declaration as the stubs spell it, with the type variables it uses and the names it erased.'
+        hoisted, typevars, found = [], set(), set()
+        names = set(py_name(decl['name']) for decl in self.decls.values())
 
         def fresh(base):
             name, n = base, 2
@@ -1085,11 +1148,12 @@ class Inventory:
                 # A variant of a generic type is generic over the parameters it uses.
                 used = sorted(type_params(node))
                 klass(name, node, used, owner)
-                return name + ('[' + ', '.join(used) + ']' if used else '')
+                return name + ('[' + ', '.join(used) + ']' if used and name not in found else '')
             if kind == 'ref':
                 decl = self.decls[node[1]]
                 args = '[' + ', '.join(py(a, owner) for a in node[2]) + ']' if node[2] else ''
-                return decl['name'] + args
+                name = py_name(decl['name'])
+                return name + ('' if name in erased or name in found else args)
             raise ValueError(node)
 
         def klass(name, node, params, owner):
@@ -1098,10 +1162,15 @@ class Inventory:
             bases, fields = [], []
             for member in members:
                 if member[0] == 'object': fields += member[1]
+                # A flattened optional record (TypeScript's `Partial<T>`) adds
+                # its keys as NotRequired ones, never as a base whose keys a
+                # TypedDict would require (FIX 6555).
+                elif member[0] == 'partial' and member[1][0] == 'ref' and not member[1][2] and self.is_record(member[1]):
+                    fields += [(key, value, True) for key, value, _ in self.record_fields(member[1])]
                 elif member[0] == 'partial' and member[1][0] == 'ref' and self.is_record(member[1]): bases.append(py(member[1], owner))
                 elif member[0] == 'ref' and self.is_record(member): bases.append(py(member, owner))
                 else:
-                    hoisted.append(f'{name} = dict[str, Any]\n'); return
+                    hoisted.append(f'{name} = dict[str, Any]\n'); found.add(name); return
             generic = ', Generic[' + ', '.join(params) + ']' if params else ''
             rows = []
             for key, value, optional in fields:
@@ -1109,7 +1178,7 @@ class Inventory:
                 rows.append((key, f'NotRequired[{text}]' if optional else text))
             if any(not key.isidentifier() or keyword.iskeyword(key) for key, _ in rows):
                 if bases or params:
-                    hoisted.append(f'{name} = dict[str, Any]\n'); return
+                    hoisted.append(f'{name} = dict[str, Any]\n'); found.add(name); return
                 body = ', '.join(json.dumps(key) + ': ' + text for key, text in rows)
                 hoisted.append(f'{name} = TypedDict({json.dumps(name)}, {{{body}}})\n'); return
             head = f'class {name}(' + ', '.join(bases or ['TypedDict']) + generic + '):\n'
@@ -1119,19 +1188,27 @@ class Inventory:
             decl = self.decls[key]
             node = decl['ir']
             typevars.update(decl['params'])
+            name = py_name(decl['name'])
             if node[0] in ('object', 'and') and (node[0] == 'object' or all(m[0] in ('object', 'ref', 'partial') for m in node[1])):
-                klass(decl['name'], node, decl['params'], decl['name'])
+                klass(name, node, decl['params'], name)
             else:
-                hoisted.append(f'{decl["name"]} = {py(node, decl["name"])}\n')
-        out = '"""Generated by scripts/sdk/generate.py from the Rust types each facade row of\n'
-        out += 'scripts/sdk/agent-verbs.json names; edit the Rust types or the table.\n\n'
-        out += 'Keys are the engine\'s own wire spelling. Shapes the generator could not read\n'
-        out += 'are `Any`, and the census below counts them.\n\n'
-        out += ''.join(line + '\n' for line in census_lines) + '"""\n\n'
-        out += 'from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar\n\n'
-        out += ''.join(f'{name} = TypeVar({json.dumps(name)})\n' for name in sorted(typevars))
-        out += '\n' + ''.join(hoisted)
-        return out
+                text = py(node, name)
+                # A generic alias whose shape names none of its parameters is
+                # not generic in Python: its references take no arguments.
+                if decl['params'] and not any(re.search(r'\b' + re.escape(param) + r'\b', text) for param in decl['params']):
+                    found.add(name)
+                hoisted.append(f'{name} = {text}\n')
+        return hoisted, typevars, found
+
+    def record_fields(self, node):
+        'Every key a record reference holds, its own and its bases\', each with its optionality.'
+        partial = node[0] == 'partial'
+        if partial: node = node[1]
+        ir = self.decls[node[1]]['ir']
+        fields = []
+        for member in ir[1] if ir[0] == 'and' else [ir]:
+            fields += member[1] if member[0] == 'object' else self.record_fields(member)
+        return [(key, value, True) for key, value, _ in fields] if partial else fields
 
     def is_record(self, node):
         'Whether a reference names a declaration Python spells as a TypedDict class.'
@@ -1153,7 +1230,7 @@ class Inventory:
         if kind == 'ref':
             decl = self.decls[node[1]]
             args = '[' + ', '.join(self._py_outer(a, prefix) for a in node[2]) + ']' if node[2] else ''
-            return prefix + decl['name'] + args
+            return prefix + py_name(decl['name']) + ('' if py_name(decl['name']) in self.py_erased() else args)
         return 'dict[str, Any]'
 
 

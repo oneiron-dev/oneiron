@@ -3,7 +3,7 @@
 //! caller's read admits, and the gated effect `vault.shape.apply`. A caller
 //! who cannot read a world plans as though it were not there. The plan card
 //! presents a plan on the gen-UI envelope.
-use super::{Memory, MemoryResult};
+use super::{Memory, MemoryError, MemoryResult};
 use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::genui::ShapePlanCard;
@@ -58,13 +58,19 @@ impl Memory<'_> {
     /// [`ShapePlanCard::generated_ui`] puts it on the envelope.
     pub fn shape_plan_card(&self, input: &ShapePlanRequest) -> MemoryResult<ShapePlanCard> {
         let plan = self.shape_plan(input)?;
-        let apply = self.vault.shape_apply(&plan.frontier)?;
+        // The open apply reads as `vault.shape.read` lists it (FIX 9960).
+        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        let apply = self
+            .vault
+            .shape_apply_visible(&plan.frontier, &mut |id| read.is_entity_readable(id))?;
         Ok(ShapePlanCard::of(&plan, apply.as_ref()))
     }
 
     /// `vault.shape.apply`: lands a plan. On an embedded handle the vault's
-    /// owner lands it through the owner's doors; any other caller's apply
-    /// stores the seed and leaves each item waiting for the owner's word.
+    /// owner lands it through the owner's doors, from where his request
+    /// reached this install (`with_owner_surface`, this install's own
+    /// unless a host bound another); any other caller's apply stores the
+    /// seed and leaves each item waiting for the owner's word.
     pub fn shape_apply(&self, input: &ShapeApplyRequest) -> MemoryResult<ShapeApplyReceipt> {
         let now = crate::unix_seconds_now();
         if let Ok(owner) = self.embedded_owner("vault.shape.apply") {
@@ -72,6 +78,7 @@ impl Memory<'_> {
                 ShapeApplier::Owner {
                     owner: &owner,
                     slips: None,
+                    surface: self.owner_surface(),
                 },
                 input,
                 now,
@@ -89,38 +96,29 @@ impl Memory<'_> {
         &self,
         input: &ShapeApplyRequest,
     ) -> MemoryResult<ShapeApplyReceipt> {
-        self.shape_apply_as_principal_by(input, false)
-            .map(|(receipt, _)| receipt)
+        self.shape_apply_as_principal_listing(input).0
     }
 
     /// [`Self::shape_apply_as_principal`], beside the rows its receipt
-    /// stands on ([`crate::Vault::apply_shape_listing`]): `None` for a
-    /// resumed apply. The same credential, locality, actor and read.
+    /// stands on ([`crate::Vault::apply_shape_listing`]), a resumed apply's
+    /// included; a refusal answers beside the rows read before it. The same
+    /// credential, locality, actor and read.
     pub fn shape_apply_as_principal_listing(
         &self,
         input: &ShapeApplyRequest,
-    ) -> MemoryResult<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
-        self.shape_apply_as_principal_by(input, true)
-    }
-
-    /// The principal's apply, listing its rows when `listing` asks.
-    fn shape_apply_as_principal_by(
-        &self,
-        input: &ShapeApplyRequest,
-        listing: bool,
-    ) -> MemoryResult<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
+    ) -> (MemoryResult<ShapeApplyReceipt>, Option<Vec<EntityId>>) {
         let now = crate::unix_seconds_now();
-        let read = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // The read lane is the caller's authority; it lists no row.
+        let read = match self.read_lane(ClaimReadStatus::Surfaceable) {
+            Ok(read) => read,
+            Err(refusal) => return (Err(refusal), Some(Vec::new())),
+        };
         let applier = ShapeApplier::Actor {
             actor: self.actor,
             credential: self.read_proof.as_ref(),
         };
         let visible = &mut |id: &EntityId| read.is_entity_readable(id);
-        Ok(if listing {
-            self.vault
-                .apply_shape_listing(applier, input, now, visible)?
-        } else {
-            (self.vault.apply_shape(applier, input, now, visible)?, None)
-        })
+        let (receipt, rows) = self.vault.apply_shape_listing(applier, input, now, visible);
+        (receipt.map_err(MemoryError::from), rows)
     }
 }

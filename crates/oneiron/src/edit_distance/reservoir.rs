@@ -4,11 +4,11 @@
 //!
 //! # The pair
 //!
-//! ED-00 retains both ends of a proposal's edit window
-//! ([`FinalizedProposalText`](super::FinalizedProposalText): `proposed_text` as
-//! drafted, `final_text` as the decider left it). Those two strings ARE the
-//! preference pair — `rejected` and `chosen` — and they exist nowhere else,
-//! which is why ED-00's retention is a contract rather than a convenience.
+//! ED-00 retains the proposal document, and its record's refs name both ends
+//! of the edit window: the text as drafted and as the decider left it, read
+//! through [`RetainedProposal`](super::RetainedProposal). Those two texts ARE
+//! the preference pair — `rejected` and `chosen` — and an end the document no
+//! longer holds is no pair, never a guessed one.
 //!
 //! Retention is NOT eligibility. `finalize` persists every artifact it closes,
 //! including the ones nobody has ruled on yet and the ones a decider rejected,
@@ -18,19 +18,19 @@
 //! durably recorded an AMENDMENT — an approved-and-changed outcome — against
 //! the artifact, which is `amendment_recorded_in_txn`'s question and the
 //! same one [`record_amendment_evidence`](super::attribution::record_amendment_evidence)
-//! asks before it will record anything. Texts that are equal are dropped too,
-//! and that filter is exact rather than heuristic: an untouched approval
-//! amended nothing.
+//! asks before it will record anything. Equal texts are dropped too: an
+//! untouched approval amended nothing.
 //!
 //! SFT and DPO are two views of one pair — `chosen` alone is the supervised
 //! target, the pair is the preference sample — so this module ships ONE schema
 //! and no second exporter.
 //!
-//! # One receipt id joins all three ledgers
+//! # One receipt id joins both ledgers
 //!
-//! An amendment's Δ (ED-01), its evidence (ED-03) and the generation that
-//! folded it (ED-07) are three `vault_meta` ledgers keyed by one STRING: the
-//! receipt the amendment was recorded against. For a proposal-TEXT amendment
+//! An amendment's Δ (ED-01) and its evidence (ED-03), which carries the
+//! executor stamp its drafting attempt froze (FIX 9812), are two `vault_meta`
+//! ledgers keyed by one STRING: the receipt the amendment was recorded
+//! against. For a proposal-TEXT amendment
 //! that string is [`amendment_receipt_id`] — the artifact's id under a pinned
 //! namespace, exactly as an identity-op amendment's is `proposal_outcome:<id>`
 //! and a settle's is `artifact_settle:<id>:<ref>`.
@@ -80,7 +80,10 @@
 //! reservoir drift from the decision every other door is held to. The effect
 //! is a pure disclosure requiring [`RESERVOIR_EXPORT_AUDIENCE`], so an
 //! uncovered export HIDES (the disclosure fail-safe) rather than asking, and
-//! revocation is immediate because the evaluator loads the grants live.
+//! revocation is immediate because the evaluator loads the grants live. That
+//! grant clears the door, not each pair: every pair and its input source pass
+//! the `eligibility` check before serialization, and a pair that fails is
+//! left out and counted on the receipt (FIX 9796).
 //!
 //! It is TWO-PHASE. Phase 1 takes the consent decision, enumerates, runs the
 //! fence tripwire, resolves every pair and serializes the whole corpus into
@@ -109,19 +112,25 @@ use std::io;
 
 use serde::{Deserialize, Serialize};
 
-use super::PROPOSAL_ARTIFACT;
+use super::{PROPOSAL_ARTIFACT, RetainedProposal};
 use crate::Vault;
 use crate::consent::{
-    AudienceBound, ComposedEffect, ConsentDecision, DisclosureClass, DisclosureEnvelope,
-    EffectFacts, GrantBound, MAX_CONSENT_REF_LEN, UndoFidelity,
+    AudienceBound, AuthenticatedOwner, ComposedEffect, ConsentDecision, DisclosureClass,
+    DisclosureEnvelope, EffectFacts, GrantBound, MAX_CONSENT_REF_LEN, UndoFidelity,
 };
 use crate::edit_distance::attribution::amendment_evidence_in_txn;
 use crate::edit_distance::delta::amendment_recorded_in_txn;
-use crate::edit_distance::routing::folded_model_version_in_txn;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+
+mod eligibility;
+pub use eligibility::CorpusUse;
+pub(crate) use eligibility::owner_readable_proposal_in;
+pub use eligibility::{
+    ReservoirSourcePeople, ReservoirSourcePreview, ReservoirSourceRow, reservoir_source_preview,
+};
 
 // ---------------------------------------------------------------------------
 // Keyspace + pinned strings
@@ -186,6 +195,10 @@ pub const FIELD_EXPORT_CONTENT_HASH: &str = "reservoir_content_hash";
 pub const FIELD_EXPORT_TASK_CLASSES: &str = "reservoir_task_classes";
 /// Receipt field: the `since` floor in Unix seconds; absent means unbounded.
 pub const FIELD_EXPORT_SINCE: &str = "reservoir_since";
+/// Receipt field: how many pairs the source check left out.
+pub const FIELD_EXPORT_EXCLUDED: &str = "reservoir_excluded";
+/// Receipt field: `reason_code=count` for each, comma-joined; absent when none.
+pub const FIELD_EXPORT_EXCLUDED_REASONS: &str = "reservoir_excluded_reasons";
 
 /// Longest accepted task class — the ED lane's scope bound, shared with
 /// `edit_distance::attribution` and `edit_distance::routing` so one scope
@@ -216,8 +229,9 @@ pub struct TrainingPair {
     /// The skill the amended proposal rode, when it rode one.
     #[serde(serialize_with = "serialize_opt_entity_hex")]
     pub skill: Option<EntityId>,
-    /// The generation ED-07 bound to this pair's own amendment receipt — never
-    /// the model serving NOW, which would be a guess about history.
+    /// The executor identity at revision the amendment's evidence was stamped
+    /// with (FIX 9812) — never the model serving NOW, which would be a guess
+    /// about history. `None` when the stamp is unknown.
     pub model_id: Option<String>,
     /// The amendment this pair came from, as the id ED-00 mints for the
     /// artifact that carried it.
@@ -282,6 +296,8 @@ pub struct ExportManifest {
     pub content_hash: String,
     /// The export receipt recording scope, count and hash.
     pub receipt: EntityId,
+    /// Pairs the source check left out, by reason code.
+    pub excluded: BTreeMap<String, u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -299,10 +315,12 @@ pub struct ExportManifest {
 /// never leaves a partial export behind.
 ///
 /// The export is a point-in-time snapshot. It is receipted and handed to the
-/// caller; nothing stores it as truth.
+/// caller; nothing stores it as truth. `owner` reads each pair and its input
+/// source, and `corpus_use` says whether a run's consent ticks also apply.
 ///
 /// # Errors
 ///
+/// * [`GateError::ConsentOwnerNotAuthenticated`] when `owner` no longer holds.
 /// * [`GateError::ConsentGrantNotFound`] when the consent evaluator does not clear
 ///   the export — fail-closed, and revocation is immediate.
 /// * [`Error::InvariantViolation`] when a candidate's `source_turn_ref` is
@@ -312,10 +330,16 @@ pub struct ExportManifest {
 /// * [`Error::CorruptedIndex`] on an undecodable row; storage and I/O errors.
 pub fn export_reservoir(
     vault: &Vault,
+    owner: &AuthenticatedOwner,
     scope: ReservoirScope,
+    corpus_use: CorpusUse<'_>,
     out: &mut dyn io::Write,
 ) -> Result<ExportManifest> {
     let scope = normalized_scope(scope)?;
+    // The owner's own read, for a corpus that leaves this device (CALLS
+    // `FIX 9796 corpus reader off device`).
+    let key = vault.owner_proof_read_key(owner)?;
+    let reader = vault.scoped_read(key.at(crate::claim::CallerLocality::OffDevice));
 
     // ── phase 1: decide, resolve, serialize. Nothing is written. ──────────
     //
@@ -323,9 +347,11 @@ pub fn export_reservoir(
     // an approve-once marker, so it writes, and a read snapshot held across it
     // would be a read txn wrapping a write txn on one thread.
     authorize_export(vault)?;
-    let pairs = {
+    reader.persist_grant_clock()?;
+    let (pairs, excluded) = {
         let rtxn = vault.store.env.read_txn()?;
-        resolve_candidates(vault, &rtxn, &scope)?
+        let pairs = resolve_candidates(vault, &rtxn, &scope)?;
+        eligibility::admitted_pairs_in(vault, &rtxn, owner, &reader, corpus_use, pairs)?
     };
     let mut body = Vec::new();
     for pair in &pairs {
@@ -334,7 +360,7 @@ pub fn export_reservoir(
         body.push(b'\n');
     }
     let content_hash = blake3::hash(&body).to_hex().to_string();
-    let receipt = record_export(vault, &scope, pairs.len(), &content_hash)?;
+    let receipt = record_export(vault, &scope, pairs.len(), &excluded, &content_hash)?;
 
     // ── phase 2: the only failure left is the sink's own I/O. ─────────────
     out.write_all(&body)?;
@@ -343,6 +369,7 @@ pub fn export_reservoir(
         pairs: pairs.len(),
         content_hash,
         receipt,
+        excluded,
     })
 }
 
@@ -418,14 +445,12 @@ fn resolve_candidates(
 ) -> Result<Vec<TrainingPair>> {
     let mut pairs = Vec::new();
     for entry in PROPOSAL_ARTIFACT.iter_from(&vault.store, rtxn, &[])? {
-        let (_key, record) = entry?;
-
+        let retained = RetainedProposal::open(super::joined_in_txn(&vault.store, rtxn, entry?.1)?);
         // THE TRIPWIRE, at the enumeration source and ahead of every filter.
         // Probing before the eligibility, pair and scope filters is deliberate:
         // a filter that ran first could hide an inertness bug behind a narrow
-        // scope, and an inertness violation is not a row to skip — it is an
-        // export to refuse.
-        if let Some(turn) = record.source_turn_ref
+        // scope, and an inertness violation is an export to refuse.
+        if let Some(turn) = retained.record.source_turn_ref
             && vault.store.off_record_sessions.contains_entity(&turn)?
         {
             return Err(Error::InvariantViolation(
@@ -434,32 +459,35 @@ fn resolve_candidates(
             ));
         }
 
-        // An untouched approval leaves the two ends equal: nothing was changed,
-        // so there is no preference to learn.
-        if record.proposed_text == record.final_text {
+        // An untouched approval leaves the two ends equal: no preference.
+        let (Some(rejected), Some(chosen)) = (
+            retained.proposed_text().into_text(),
+            retained.final_text().into_text(),
+        ) else {
+            continue;
+        };
+        if rejected == chosen {
             continue;
         }
         // ELIGIBILITY. Differing texts alone say an artifact was EDITED, not
         // that the edit was kept — a rejected proposal is edited and discarded,
         // and one still awaiting a ruling has been edited and decided nothing.
-        // Only a recorded amendment says a decider approved what is in
-        // `final_text`, and that is what makes `chosen` an honest label.
-        let receipt_id = amendment_receipt_id(record.artifact_ref.entity_id());
+        // Only a recorded amendment makes `chosen` an honest label.
+        let receipt_id = amendment_receipt_id(retained.record.artifact_ref.entity_id());
         if !amendment_recorded_in_txn(vault, rtxn, &receipt_id)? {
             continue;
         }
 
-        // The tag ledgers, all under the amendment's one receipt id. A miss is
-        // not a failure — it leaves that tag `None`, which is the Notes
-        // contract (absence explicit, never guessed).
+        // The tag ledgers, all under the amendment's one receipt id. A miss
+        // leaves that tag `None` (the Notes contract: absence explicit).
         let evidence = amendment_evidence_in_txn(vault, rtxn, &receipt_id)?;
         let pair = TrainingPair {
-            rejected: record.proposed_text,
-            chosen: record.final_text,
+            rejected,
+            chosen,
             task_class: evidence.as_ref().map(|row| row.scope.clone()),
             skill: evidence.as_ref().and_then(|row| row.skill),
-            model_id: folded_model_version_in_txn(vault, rtxn, &receipt_id)?,
-            receipt_ref: record.artifact_ref.entity_id(),
+            model_id: evidence.as_ref().and_then(|row| row.executor.clone()),
+            receipt_ref: retained.record.artifact_ref.entity_id(),
         };
         // `observed_at` is the `since` axis: a tag fact rather than a pair
         // fact, so it filters here and never rides [`TrainingPair`].
@@ -564,12 +592,14 @@ struct StoredExport {
     task_classes: Option<Vec<String>>,
     since: Option<u64>,
     at: u64,
+    excluded: BTreeMap<String, u64>,
 }
 
 fn record_export(
     vault: &Vault,
     scope: &ReservoirScope,
     pairs: usize,
+    excluded: &BTreeMap<String, u64>,
     content_hash: &str,
 ) -> Result<EntityId> {
     let id = vault.store.clock.entity_id()?;
@@ -580,6 +610,7 @@ fn record_export(
         task_classes: scope.task_classes.clone(),
         since: scope.since,
         at: vault.store.clock.now_recorded_at(),
+        excluded: excluded.clone(),
     };
     vault.with_write_txn_grouped(|wtxn| EXPORT.put(&vault.store, wtxn, &id, &row))?;
     Ok(id)
@@ -633,6 +664,7 @@ fn export_receipt_record(id: &EntityId, row: &StoredExport) -> ReceiptRecord {
     if let Some(since) = row.since {
         fields.insert(FIELD_EXPORT_SINCE.to_owned(), since.to_string());
     }
+    eligibility::excluded_fields(&row.excluded, &mut fields);
     ReceiptRecord {
         receipt_id: format!("{EXPORT_RECEIPT_ID_PREFIX}{}", id.to_hex()),
         receipt_kind: ReceiptKind::ScopedRead,

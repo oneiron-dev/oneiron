@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use heed::RoTxn;
 
@@ -18,6 +18,12 @@ use super::types::{
 };
 use crate::disclosure::DisclosureContext;
 use crate::vault::NoMatchFloors;
+
+mod selection;
+pub(crate) use selection::select_context_pack_rows;
+pub(super) use selection::{
+    keep_critical_through, pack_critical_accounting, truncate_critical_first,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContextPackBudgetKind {
@@ -135,68 +141,8 @@ impl WorldShare<'_> {
     }
 }
 
-/// Picks `rows` in score order under per-kind `caps` and a `limit`. A
-/// non-base claim enters only while the world share holds; one held back
-/// enters as soon as later base claims make room, so the page goes short,
-/// never over the share, when base claims are scarce. Picked rows keep
-/// their score order. Also returns whether the share kept a claim out.
-fn select_rows(
-    rows: &[(ScoredEntity, ContextPackBudgetKind, ShareRole)],
-    caps: Option<ContextPackBudgetCounts>,
-    limit: usize,
-    fraction: f32,
-) -> (Vec<ScoredEntity>, bool) {
-    let fits = |used: &ContextPackBudgetCounts, kind: ContextPackBudgetKind| {
-        caps.is_none_or(|caps| used.get(kind) < caps.get(kind))
-    };
-    let mut picked = vec![false; rows.len()];
-    let mut used = ContextPackBudgetCounts::default();
-    let (mut total, mut base, mut non_base) = (0_usize, 0_usize, 0_usize);
-    let mut held = VecDeque::new();
-    for (index, &(_, kind, role)) in rows.iter().enumerate() {
-        if total >= limit {
-            break;
-        }
-        if !fits(&used, kind) {
-            continue;
-        }
-        if role == ShareRole::NonBaseClaim && !non_base_claims_fit(base, non_base + 1, fraction) {
-            held.push_back(index);
-            continue;
-        }
-        picked[index] = true;
-        used.increment(kind);
-        total += 1;
-        match role {
-            ShareRole::Free => {}
-            ShareRole::NonBaseClaim => non_base += 1,
-            ShareRole::BaseClaim => {
-                base += 1;
-                while total < limit
-                    && fits(&used, kind)
-                    && non_base_claims_fit(base, non_base + 1, fraction)
-                {
-                    let Some(next) = held.pop_front() else {
-                        break;
-                    };
-                    picked[next] = true;
-                    used.increment(kind);
-                    total += 1;
-                    non_base += 1;
-                }
-            }
-        }
-    }
-    let rows = rows
-        .iter()
-        .zip(picked)
-        .filter_map(|(&(scored, ..), picked)| picked.then_some(scored))
-        .collect();
-    (rows, !held.is_empty())
-}
-
 /// Returns whether the world share kept a claim out; a kind's zero cap
-/// is not the share's.
+/// is not the share's. The `critical` claims take each cap first.
 pub(super) fn apply_context_pack_retrieval_budget(
     scores: &mut Vec<ScoredEntity>,
     store: &StoreRead<'_>,
@@ -204,6 +150,7 @@ pub(super) fn apply_context_pack_retrieval_budget(
     metadata_cache: &mut EntityMetadataCache,
     budget: ContextPackRetrievalBudget,
     world_share: Option<WorldShare<'_>>,
+    critical: &HashSet<EntityId>,
 ) -> Result<bool> {
     if scores.is_empty() {
         return Ok(false);
@@ -234,17 +181,25 @@ pub(super) fn apply_context_pack_retrieval_budget(
 
     let caps =
         redistribute_context_pack_budget(ContextPackBudgetCounts::from_budget(budget), available);
-    let (rows, share_held_back) = select_rows(&candidates, Some(caps), usize::MAX, fraction);
+    let (rows, share_held_back) = selection::select_rows_critical_first(
+        &candidates,
+        critical,
+        Some(caps),
+        usize::MAX,
+        fraction,
+    );
     *scores = rows;
     Ok(share_held_back)
 }
 
 /// Cuts an `All`-world pack's scored rows to `limit` under its world share
-/// ([`select_rows`]), after any reorder that followed the budget.
+/// (`selection::ShareSelection`), after any reorder that followed the
+/// budget, the `critical` claims first.
 pub(super) fn truncate_under_world_share(
     scores: &mut Vec<ScoredEntity>,
     limit: usize,
     share: WorldShare<'_>,
+    critical: &HashSet<EntityId>,
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     metadata_cache: &mut EntityMetadataCache,
@@ -257,7 +212,7 @@ pub(super) fn truncate_under_world_share(
         };
         rows.push((scored, kind, share.role(kind, &scored.id)));
     }
-    *scores = select_rows(&rows, None, limit, share.fraction).0;
+    *scores = selection::select_rows_critical_first(&rows, critical, None, limit, share.fraction).0;
     Ok(())
 }
 

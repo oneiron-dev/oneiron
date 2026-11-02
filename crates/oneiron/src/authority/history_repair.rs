@@ -89,6 +89,8 @@ impl Vault {
         let mut refused = BTreeSet::new();
         loop {
             match self.import_page_in(decoded.clone(), true) {
+                // The evidence a local append kept waiting on this history
+                // is put again by the landing commit itself (FIX 2989).
                 Ok(PageVerdict::Landed(written)) => {
                     return Ok(AuthorityRepairOutcome::Applied { written, refused });
                 }

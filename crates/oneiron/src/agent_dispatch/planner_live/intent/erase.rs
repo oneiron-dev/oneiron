@@ -4,15 +4,20 @@
 //! intent takes its erased form, a text-free receipt: its row, parent,
 //! project, launch and team ids and its recorded times, state `erased` and
 //! whose erase it was, and no ask, digest, adapter key, placed stamp, plan,
-//! refusal, start, pack or exposure. An erased asker is forgotten with it;
-//! the content goes first, so the match is never lost before it.
+//! refusal, start, pack or exposure: of each leader run's exposure it keeps
+//! the span and its hash alone. An erased asker is forgotten with it; the
+//! content goes first, so the match is never lost before it.
 //!
 //! Every write of an intent passes the same fence, so a copy read before an
 //! erase, a late settle, freeze, launch, refusal or exposure among them,
 //! writes the erased form back, never the text. A launch on an erased
 //! target records that outcome and launches nothing. Without the marker an
 //! actor's scrub forgets the asker alone, as it always has (FIX 4582): the
-//! intent keeps the rest, and one in flight is in doubt (FIX 5097).
+//! intent keeps the rest, and one in flight is in doubt (FIX 5097). It keeps
+//! the asker's erase selector too, a hash that names no one, so that asker's
+//! later hard erase still reaches the intent (FIX 9182). An erase runs here
+//! before the attempt payload pass, which takes an asker-erased intent's ask
+//! out of the rows it launched (FIX 9181).
 
 use std::collections::BTreeSet;
 
@@ -21,10 +26,29 @@ use crate::agent_dispatch::AgentDispatcher;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::team::{PlannedIntentView, SpawnErasure};
+use crate::team::{ErasedPackSpan, PlannedIntentView, SpawnErasure};
 
 use super::{INTENTS, IntentName, IntentPhase, LaunchStand, PlannedIntent, PlannedLaunch};
+
+/// The derivation context of an asker's erase selector.
+const ASKER_ERASE_KEY_CONTEXT: &str = "oneiron spawn planned intent asker erase v1";
+
+/// The erase selector of the asker `actor` (FIX 9182): a domain-separated
+/// hash of its id, which an erase of `actor` recomputes to find the intents
+/// it asked after a plain scrub forgot it. It grants nothing.
+pub(super) fn asker_erase_key(actor: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key(ASKER_ERASE_KEY_CONTEXT);
+    hasher.update(actor.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// Each erased asker's selector (FIX 11094): value-free and permanent, so a
+/// hard erase still reaches, through the fence, a stale copy whose asker a
+/// plain scrub already forgot.
+const ASKER_ERASED: SideTable<[u8; 32], (), Raw> =
+    SideTable::new(&side_table::SPAWN_PLANNED_INTENT_ASKER_ERASED);
 
 /// Who among an intent's asker and its plan's target an erase reached.
 #[derive(Clone, Copy)]
@@ -46,6 +70,7 @@ impl PlannedIntent {
     fn erase(&mut self, reached: Reached) {
         if reached.asker {
             self.actor = None;
+            self.asker_erase_key = None;
         }
         let cause = if reached.target {
             SpawnErasure::TargetErased
@@ -62,7 +87,12 @@ impl PlannedIntent {
         self.refusal = None;
         self.pattern_launch = None;
         self.pattern_pack = None;
-        self.leader_exposures.clear();
+        // Each run's exposure leaves its span, text-free, so a continuation
+        // claimed after the erase still tombstones the text its fork holds.
+        for (run, exposure) in std::mem::take(&mut self.leader_exposures) {
+            self.erased_pack_spans
+                .insert(run, ErasedPackSpan::from(&exposure));
+        }
     }
 }
 
@@ -71,9 +101,10 @@ impl AgentDispatcher<'_> {
     /// Behind its permanent hard-delete marker it is an erase, as an asker
     /// or a target: [`Self::erase_planned_intent_content_in_txn`]. Without
     /// the marker, each intent it asked keeps its key, ask, custody, plan or
-    /// refusal, frozen start and pack, launch and leader exposures, and
-    /// names no asker: its asker can no longer replay, settle or launch it,
-    /// and a launched team's leader still runs with what its launch froze.
+    /// refusal, frozen start and pack, launch and leader exposures and its
+    /// asker's erase selector, and names no asker: its asker can no longer
+    /// replay, settle or launch it, and a launched team's leader still runs
+    /// with what its launch froze.
     /// One still in flight moves to in doubt (FIX 5097): its custody can no
     /// longer settle it. One-way, in the scrub's own transaction. An id
     /// whose entity is no actor scans nothing.
@@ -113,7 +144,11 @@ impl AgentDispatcher<'_> {
     /// An erase of `erased` from the planned intents (Engine 10-22): each
     /// intent one of them asked, or whose plan seats one as its target,
     /// takes its erased form in every phase, and an erased asker is
-    /// forgotten. One pass over the intents, in the erase's own transaction.
+    /// forgotten. An asker a plain scrub forgot is found by its erase
+    /// selector (FIX 9182). Each erased id's selector is recorded in the
+    /// erased-asker table, so the fence still reaches a stale copy whose
+    /// asker a plain scrub already forgot. One pass over the intents, in the
+    /// erase's own transaction.
     /// An id stored as anything but a person, a machine or an AGENT_DEF
     /// asks and seats nothing, and is passed over.
     ///
@@ -126,19 +161,27 @@ impl AgentDispatcher<'_> {
         erased: &BTreeSet<EntityId>,
     ) -> Result<()> {
         let mut ids = BTreeSet::new();
+        let mut selectors = BTreeSet::new();
         for id in erased {
             if !names_no_actor(store, wtxn, id)? {
                 ids.insert(*id);
+                selectors.insert(asker_erase_key(id));
             }
         }
         if ids.is_empty() {
             return Ok(());
         }
+        for selector in &selectors {
+            ASKER_ERASED.put(store, wtxn, selector, &())?;
+        }
         let mut rows = Vec::new();
         for row in INTENTS.iter_from(store, wtxn, &[])? {
             let (key, mut intent) = row?;
             let reached = Reached {
-                asker: intent.actor.is_some_and(|actor| ids.contains(&actor)),
+                asker: intent.actor.is_some_and(|actor| ids.contains(&actor))
+                    || intent
+                        .asker_erase_key
+                        .is_some_and(|selector| selectors.contains(&selector)),
                 target: intent.target().is_some_and(|target| ids.contains(&target)),
             };
             if reached.asker || reached.target {
@@ -150,6 +193,47 @@ impl AgentDispatcher<'_> {
             INTENTS.put(store, wtxn, &key, &intent)?;
         }
         Ok(())
+    }
+
+    /// The keys of the planned intents an asker's erase took, as the 64 hex
+    /// their launches' dedupe keys carry (FIX 9181), read in `txn`: each row
+    /// one of them launched holds its asker's ask in its plan and briefing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or an intent row that cannot be read.
+    pub(crate) fn asker_erased_intent_keys_in(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeSet<String>> {
+        let mut keys = BTreeSet::new();
+        for row in INTENTS.iter_from(store, txn, &[])? {
+            let (key, intent) = row?;
+            if intent.erasure == Some(SpawnErasure::AskerErased) {
+                keys.insert(crate::entity_id::bytes_to_hex_lower(&key));
+            }
+        }
+        Ok(keys)
+    }
+
+    /// Whether an asker's erase took the planned intent whose key is
+    /// `intent_key`, as the 64 hex a launch's dedupe key carries, read in
+    /// `txn` (FIX 9181). A key that names no intent is none.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, or an intent row that cannot be read.
+    pub(crate) fn intent_asker_erased_in(
+        store: &Store,
+        txn: &heed::RoTxn<'_>,
+        intent_key: &str,
+    ) -> Result<bool> {
+        let Some(key) = crate::task_verb::decode_hex::<32>(intent_key) else {
+            return Ok(false);
+        };
+        Ok(INTENTS
+            .get(store, txn, &key)?
+            .is_some_and(|intent| intent.erasure == Some(SpawnErasure::AskerErased)))
     }
 
     /// Whether an erase took the target `planned`'s plan seats: its
@@ -212,9 +296,11 @@ impl AgentDispatcher<'_> {
 
 /// Writes `row` at `key` on `wtxn` through the erase's fence: when the
 /// permanent hard-delete marker stands for its asker or its plan's target,
-/// `row` takes its erased form first, so a copy read before an erase writes
-/// the erased form back. An erased row stays erased. A marker that cannot be
-/// read leaves `row` as it is: the fence never fails the write it stands in.
+/// or its asker's erase selector stands in the erased-asker table, `row`
+/// takes its erased form first, so a copy read before an erase writes the
+/// erased form back. An erased row stays erased. A marker or selector that
+/// cannot be read leaves `row` as it is: the fence never fails the write it
+/// stands in.
 ///
 /// # Errors
 ///
@@ -226,7 +312,8 @@ pub(super) fn put_intent_in_txn(
     row: &mut PlannedIntent,
 ) -> Result<()> {
     let reached = Reached {
-        asker: marked_in_txn(store, wtxn, row.actor),
+        asker: marked_in_txn(store, wtxn, row.actor)
+            || asker_erased_in_txn(store, wtxn, row.asker_erase_key),
         target: marked_in_txn(store, wtxn, row.target()),
     };
     if reached.asker || reached.target || row.phase == IntentPhase::Erased {
@@ -250,6 +337,20 @@ fn marked_in_txn(store: &Store, txn: &heed::RoTxn<'_>, id: Option<EntityId>) -> 
         tracing::warn!("planned intent fence: a hard-delete marker could not be read");
         false
     })
+}
+
+/// Whether the asker the erase selector `selector` names was hard-erased,
+/// read on `txn` for the fence: `false` for no selector.
+fn asker_erased_in_txn(store: &Store, txn: &heed::RoTxn<'_>, selector: Option<[u8; 32]>) -> bool {
+    let Some(selector) = selector else {
+        return false;
+    };
+    ASKER_ERASED
+        .contains(store, txn, &selector)
+        .unwrap_or_else(|_| {
+            tracing::warn!("planned intent fence: an erased-asker selector could not be read");
+            false
+        })
 }
 
 /// Whether `id` is a stored row of a type no actor has: no person, machine

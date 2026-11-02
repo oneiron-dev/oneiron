@@ -11,7 +11,29 @@ pub fn capture_canonical_window(
     window: &str,
     doc: &LoroDoc,
 ) -> Result<CanonicalSnapshot> {
-    capture_canonical_window_within(vault, window, doc, usize::MAX)
+    capture_canonical_window_within(vault, window, doc, usize::MAX).map(|(snapshot, _)| snapshot)
+}
+
+/// Publishes into current custody each pad a row holds that custody lacks,
+/// and reads it back, before a Layer-1 artifact is captured or a rebuilt
+/// window keeps its pad rows, so each names its pad by reference (KS-5, FIX
+/// 7313, 7293). A pad custody still does not hold the same keeps its
+/// carrier there, warned by count; a fault preparing them is warned and
+/// never stops the capture.
+pub(crate) fn prepare_artifact_pads(vault: &Vault) {
+    match vault.prepare_image_pads() {
+        Ok(0) => {}
+        Ok(unprepared) => tracing::warn!(
+            unprepared,
+            "world key pads current custody does not hold the same keep their carriers in this \
+             capture"
+        ),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "world key pads were not prepared for this capture; any custody lacks keeps its \
+             carrier"
+        ),
+    }
 }
 
 /// [`capture_canonical_window`] holding at most `limit` bytes of copies: the
@@ -19,13 +41,14 @@ pub fn capture_canonical_window(
 /// copy that would pass `limit` is refused with
 /// [`ArtifactError::OverlayLimit`] before it is made, so the copies of a
 /// window far over the limit cost the limit, not the window. One document
-/// is read whole before it is counted, as opening it reads it.
+/// is read whole before it is counted, as opening it reads it. The second
+/// half is the NOTE births' measured overrun, if the measure passed `limit`.
 pub(crate) fn capture_canonical_window_within(
     vault: &Vault,
     window: &str,
     doc: &LoroDoc,
     limit: usize,
-) -> Result<CanonicalSnapshot> {
+) -> Result<(CanonicalSnapshot, Option<RecoveryBudgetOverrun>)> {
     let budget = &mut ByteBudget::new(limit);
     // The shallow value names the roots without copying what they hold.
     let LoroValue::Map(containers) = doc.get_value() else {
@@ -51,6 +74,7 @@ pub(crate) fn capture_canonical_window_within(
             "message_docs",
             "withdrawn_cutoffs",
             "peer_origins",
+            "asset_body_refs",
         ]
         .contains(&name.as_str())
     }) {
@@ -72,7 +96,7 @@ pub(crate) fn capture_canonical_window_within(
         schema_manifest: CanonicalSchemaManifest {
             oneiron_schema_version: crate::store::STORAGE_ABI_VERSION,
             loro_version: "1.13.9".to_owned(),
-            container_schema_version: 1,
+            container_schema_version: 2,
             analyzer_manifest_blake3: *blake3::hash(
                 vault
                     .analyzer
@@ -91,6 +115,7 @@ pub(crate) fn capture_canonical_window_within(
         peer_origins: Vec::new(),
         row_births: Vec::new(),
         withdrawn_cutoffs: Vec::new(),
+        asset_body_refs: Vec::new(),
     };
     for (key, blob) in binary_rows_within(doc, "entities", budget)? {
         // A pad row goes by its bare reference, its pad in current custody
@@ -342,8 +367,7 @@ pub(crate) fn capture_canonical_window_within(
             }
         }
     }
-    document::capture(vault, &txn, &mut snapshot, budget)?;
-    #[cfg(feature = "sync")]
+    let measured = document::capture(vault, &txn, &mut snapshot, budget)?;
     for entity in &snapshot.entity_blobs {
         if crate::batch::EntityMetadataHeader::parse(&entity.blob)
             .is_some_and(|h| h.entity_type != crate::registry::ENTITY_TYPE_NOTE)
@@ -388,11 +412,13 @@ pub(crate) fn capture_canonical_window_within(
     }
     // FIX 4550: the peer origins of the final rows, with their final bytes.
     peer_origins::capture(doc, &mut snapshot, budget)?;
-    // FIX 3069, 8820: the final rows' births, and the window's cutoffs.
+    // FIX 3069, 8820, 5489: the final rows' births, the window's cutoffs,
+    // and the body references that bind the final rows.
     #[cfg(feature = "sync")]
     {
         row_births::capture(vault, &txn, doc, &mut snapshot, budget)?;
         withdrawn_cutoffs::capture(vault, &txn, doc, &mut snapshot, budget)?;
+        asset_body_refs::capture(doc, &mut snapshot, budget)?;
     }
     // Only a TASK row carries a refusal: a forged fact may name any id as its
     // task, and the artifact's validation refuses a mark on anything else.
@@ -467,5 +493,5 @@ pub(crate) fn capture_canonical_window_within(
             ));
         }
     }
-    Ok(snapshot)
+    Ok((snapshot, measured))
 }

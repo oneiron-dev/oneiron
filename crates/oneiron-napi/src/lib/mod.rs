@@ -16,6 +16,6 @@ mod vault;
 
 pub use self::email::{channel_identity_email_address, parse_email_inbound_surface_event};
 pub use self::vault::NapiVault;
-pub use facade::{ActorScopedVault, VaultBridge};
+pub use facade::{ActorScopedVault, VaultBridge, seal_custody_submit};
 
 pub(crate) use self::boundary::{parse_search_limit, validate_query_len};

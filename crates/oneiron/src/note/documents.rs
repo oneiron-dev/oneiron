@@ -2,6 +2,7 @@
 
 use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{Error, RecordError, Result};
+use crate::provenance::ActorStamp;
 use crate::side_table::{self, HexId, Raw, RawValue, SideTable};
 use crate::{EntityId, Vault};
 use loro::cursor::{Cursor, Side};
@@ -74,7 +75,7 @@ pub struct NoteVersion {
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum NoteEdit {
+pub enum NoteProgramEdit {
     ReplaceSpan {
         start: NoteAnchor,
         end: NoteAnchor,
@@ -99,7 +100,7 @@ pub enum NoteEdit {
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum NoteEditOutcome {
+pub enum NoteProgramEditOutcome {
     Edited {
         head: EntityId,
     },
@@ -113,6 +114,12 @@ pub enum NoteEditOutcome {
         receipt: crate::memory::CommitReceipt,
     },
 }
+
+// The old paths inside this crate-visible module (it is `pub(crate) mod documents`).
+#[allow(unused_imports)]
+pub(crate) use NoteProgramEdit as NoteEdit;
+#[allow(unused_imports)]
+pub(crate) use NoteProgramEditOutcome as NoteEditOutcome;
 
 pub struct NoteDocument {
     pub(super) note: EntityId,
@@ -179,29 +186,29 @@ impl NoteDocument {
     /// operation door may admit these edits; proposal documents are disposable.
     pub(super) fn semantic_edit(
         &self,
-        edit: &NoteEdit,
-    ) -> Result<Option<(Vec<u8>, Vec<super::NoteEdit>)>> {
+        edit: &NoteProgramEdit,
+    ) -> Result<Option<(Vec<u8>, Vec<super::NoteScalarEdit>)>> {
         let mut base = self.doc.oplog_frontiers().encode();
         let change = match edit {
-            NoteEdit::ReplaceSpan { start, end, text } => {
+            NoteProgramEdit::ReplaceSpan { start, end, text } => {
                 let start = self.position(start)?;
                 let end = self.position(end)?;
                 if end < start {
                     return Err(invalid("reversed span"));
                 }
-                super::NoteEdit {
+                super::NoteScalarEdit {
                     start,
                     delete: end - start,
                     insert: text.clone(),
                 }
             }
-            NoteEdit::InsertAfter { anchor, text }
-            | NoteEdit::AppendToSection { end: anchor, text } => super::NoteEdit {
+            NoteProgramEdit::InsertAfter { anchor, text }
+            | NoteProgramEdit::AppendToSection { end: anchor, text } => super::NoteScalarEdit {
                 start: self.position(anchor)?,
                 delete: 0,
                 insert: text.clone(),
             },
-            NoteEdit::WholeText {
+            NoteProgramEdit::WholeText {
                 text,
                 timeout_ms,
                 base: version,
@@ -232,20 +239,22 @@ impl NoteDocument {
                 }
                 text_change(&original, text)
             }
-            NoteEdit::Rewrite { .. } => return Ok(None),
+            NoteProgramEdit::Rewrite { .. } => return Ok(None),
         };
         Ok(Some((base, vec![change])))
     }
+    /// Applies `edit`, each commit naming the writer's stamp token `stamp`
+    /// (FIX 10930): in place, or as the rewrite fork it returns.
     pub(super) fn apply(
         &self,
         clock: &crate::ports::StoreClock,
-        edit: &NoteEdit,
-        actor: EntityId,
+        edit: &NoteProgramEdit,
+        stamp: ActorStamp,
         at: u64,
     ) -> Result<Option<Self>> {
         let text = self.doc.get_text(TEXT);
         match edit {
-            NoteEdit::ReplaceSpan {
+            NoteProgramEdit::ReplaceSpan {
                 start,
                 end,
                 text: replacement,
@@ -260,18 +269,18 @@ impl NoteDocument {
                 text.insert(start, replacement)
                     .map_err(|_| invalid("replace text"))?;
             }
-            NoteEdit::InsertAfter {
+            NoteProgramEdit::InsertAfter {
                 anchor,
                 text: insertion,
             }
-            | NoteEdit::AppendToSection {
+            | NoteProgramEdit::AppendToSection {
                 end: anchor,
                 text: insertion,
             } => {
                 text.insert(self.position(anchor)?, insertion)
                     .map_err(|_| invalid("insert text"))?;
             }
-            NoteEdit::WholeText {
+            NoteProgramEdit::WholeText {
                 text: replacement,
                 timeout_ms,
                 base,
@@ -303,23 +312,23 @@ impl NoteDocument {
                     .is_err()
                 {
                     return self
-                        .rewrite(clock.entity_id()?, replacement, actor, at)
+                        .rewrite(clock.entity_id()?, replacement, stamp, at)
                         .map(Some);
                 }
-                stamp(&candidate, actor, at, "edit");
+                stamp_program_edit(&candidate, stamp, at, "edit");
                 self.doc
                     .import(&snapshot(&candidate)?)
                     .map_err(|_| invalid("diff import"))?;
                 return Ok(None);
             }
-            NoteEdit::Rewrite { text } => {
-                return self.rewrite(clock.entity_id()?, text, actor, at).map(Some);
+            NoteProgramEdit::Rewrite { text } => {
+                return self.rewrite(clock.entity_id()?, text, stamp, at).map(Some);
             }
         }
-        stamp(&self.doc, actor, at, "edit");
+        stamp_program_edit(&self.doc, stamp, at, "edit");
         Ok(None)
     }
-    fn rewrite(&self, head: EntityId, text: &str, actor: EntityId, at: u64) -> Result<Self> {
+    fn rewrite(&self, head: EntityId, text: &str, stamp: ActorStamp, at: u64) -> Result<Self> {
         let fork = self
             .doc
             .fork_at(&self.doc.state_frontiers())
@@ -331,7 +340,7 @@ impl NoteDocument {
         target
             .insert(0, text)
             .map_err(|_| invalid("rewrite insert"))?;
-        stamp(&fork, actor, at, "rewrite");
+        stamp_program_edit(&fork, stamp, at, "rewrite");
         Ok(Self {
             note: self.note,
             head,
@@ -343,8 +352,10 @@ impl NoteDocument {
 pub(crate) fn invalid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidNoteBody(reason))
 }
-pub(super) fn stamp(doc: &LoroDoc, actor: EntityId, at: u64, action: &str) {
-    doc.set_next_commit_message(&format!("note:v1:{action}:actor={}", actor.to_hex()));
+/// Commits `doc` under the program-edit stamp of `action`, naming the
+/// writer's stamp token in the actor's place (FIX 10930).
+fn stamp_program_edit(doc: &LoroDoc, stamp: ActorStamp, at: u64, action: &str) {
+    doc.set_next_commit_message(&format!("note:v1:{action}:actor={}", stamp.token.to_hex()));
     doc.set_next_commit_timestamp(at.min(i64::MAX as u64) as i64);
     doc.commit();
 }
@@ -524,6 +535,7 @@ pub(crate) fn load_retained_head(
     {
         let canonical = super::document::NoteDocument::load(note, &raw)?;
         super::citation_erase::validate_pins(vault, txn, &canonical.pins()?)?;
+        measure_retained(vault, txn, note, &canonical.doc);
         return Ok(Some(canonical.doc));
     }
     if head != note {
@@ -550,12 +562,28 @@ pub(crate) fn load_retained_head(
         }
         super::storage::import_complete(&doc, &update.bytes)?;
     }
+    measure_retained(vault, txn, note, &doc);
     Ok(Some(doc))
+}
+
+/// Counts a retained head's document `doc` of NOTE `note` against the NOTE
+/// scan rows, as a load is (rule 5, FIX 10361); a failed count warns and
+/// the head serves.
+fn measure_retained(vault: &Vault, txn: &heed::RoTxn<'_>, note: EntityId, doc: &LoroDoc) {
+    if let Err(error) = super::scan::measure_document(
+        &vault.store,
+        txn,
+        note,
+        doc,
+        &vault.store.pending_scan_checks,
+    ) {
+        tracing::warn!(kind = ?error.kind(), "retained NOTE head was not measured");
+    }
 }
 
 /// Conservative Unicode diff. A wide changed span is reviewed if it crosses
 /// a citation; never use guessed CRDT IDs or drop intervening citation guards.
-pub(super) fn text_change(before: &str, after: &str) -> super::NoteEdit {
+pub(super) fn text_change(before: &str, after: &str) -> super::NoteScalarEdit {
     let before: Vec<_> = before.chars().collect();
     let after: Vec<_> = after.chars().collect();
     let start = before
@@ -569,7 +597,7 @@ pub(super) fn text_change(before: &str, after: &str) -> super::NoteEdit {
         .zip(after[start..].iter().rev())
         .take_while(|(a, b)| a == b)
         .count();
-    super::NoteEdit {
+    super::NoteScalarEdit {
         start,
         delete: before.len() - start - suffix,
         insert: after[start..after.len() - suffix].iter().collect(),
@@ -585,6 +613,20 @@ impl Vault {
         Ok(super::document_store::load(self, txn, note)?
             .view()?
             .markdown)
+    }
+    /// [`Self::note_text_in_txn`] with the NOTE and its document read through
+    /// `store`, a room's view included.
+    pub(crate) fn note_text_from_in_txn(
+        &self,
+        store: &impl crate::store::ManifestDbs,
+        txn: &heed::RoTxn<'_>,
+        note: EntityId,
+    ) -> Result<String> {
+        Ok(
+            super::document_store::load_in(self, store, txn, note, store.pending_scan_checks())?
+                .view()?
+                .markdown,
+        )
     }
 }
 impl Vault {

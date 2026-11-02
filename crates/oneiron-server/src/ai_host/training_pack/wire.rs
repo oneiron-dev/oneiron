@@ -337,6 +337,9 @@ struct LoadFileWire {
 struct ProbeWire {
     probe_id: String,
     input_blake3: String,
+    /// The BLAKE3 of the probe's token ids as its windows (FIX 7568).
+    #[serde(default)]
+    tokens_blake3: Option<String>,
     tokens_match: bool,
     training_logits: Vec<f64>,
     export_logits: Vec<f64>,
@@ -474,6 +477,11 @@ pub(super) fn decode_output(
         .map(|probe| {
             Ok(ProbeMeasurement {
                 input_blake3: hash_from_hex("probe input_blake3", &probe.input_blake3)?,
+                tokens_blake3: probe
+                    .tokens_blake3
+                    .as_deref()
+                    .map(|hex| hash_from_hex("probe tokens_blake3", hex))
+                    .transpose()?,
                 probe_id: probe.probe_id,
                 training_argmax: probe.training_argmax,
                 export_argmax: probe.export_argmax,
@@ -485,19 +493,29 @@ pub(super) fn decode_output(
     let probe_training_blake3 =
         hash_from_hex("training load_set_blake3", &training.load_set_blake3)?;
     let probe_export_blake3 = hash_from_hex("export load_set_blake3", &export.load_set_blake3)?;
+    let exported_checkpoint = upload(output, export, &question.output_model)?;
+    // The receipt is reproduced on the stack that would serve the head
+    // before it may serve (FIX 7568).
+    let candle_parity = super::parity::candle_parity(
+        question,
+        &request.plan.probes,
+        &exported_checkpoint,
+        &probes,
+    );
     Ok(TrainOutput {
         run: request.run,
         spec_blake3: request.spec_blake3,
         probe_training_blake3,
         probe_export_blake3,
         training_checkpoint: upload(output, training, &question.output_model)?,
-        exported_checkpoint: upload(output, export, &question.output_model)?,
+        exported_checkpoint,
         probes,
         settings: receipt.settings,
         harness: receipt.harness,
         receipt: whole,
         service_units: receipt.service_units.quantity,
         question_check: Some(question_check),
+        candle_parity: Some(candle_parity),
     })
 }
 

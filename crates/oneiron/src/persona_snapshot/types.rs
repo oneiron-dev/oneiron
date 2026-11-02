@@ -299,6 +299,11 @@ pub struct PersonaSnapshotCompile {
     /// The audience's folded read of every candidate claim, when the card is
     /// FOR someone. Claims the audience may not read are counted here.
     pub read_receipt: Option<crate::claim::ScopedReadReceipt>,
+    /// The claims the relationship rows' labels read (FIX 6080): each related
+    /// person's name claim, and their role claim where the relationship
+    /// record names no role. Outside the compile fingerprint.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub label_claims: Vec<EntityId>,
 }
 
 /// Strike decisions applied at export over a compile's row list.
@@ -347,6 +352,12 @@ pub struct PersonaSnapshotArtifact {
     pub included_row_ids: Vec<String>,
     /// Row ids struck out of the artifact.
     pub struck_row_ids: Vec<String>,
+    /// blake3 hex fingerprint over both renders, as the export record keeps
+    /// it: the MemoryPack-lite JSON, a NUL byte, then the markdown.
+    pub artifact_fingerprint: String,
+    /// The vault ref slots both renders left out, as the export record names
+    /// them (FIX 1199); empty for a copy that carries its refs.
+    pub omitted_refs: Vec<String>,
 }
 
 /// Persisted PERSONA_SNAPSHOT_EXPORT record body.

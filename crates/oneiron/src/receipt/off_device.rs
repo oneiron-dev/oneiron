@@ -5,7 +5,8 @@
 
 use super::family::collect_receipt_records;
 use super::kernel::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, lineage_scan_query,
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScanPosition,
+    lineage_scan_query,
 };
 use super::projection::finalize_receipt_query_records;
 use crate::Vault;
@@ -36,8 +37,88 @@ const ROW_FIELDS: &[(ReceiptKind, &[&str])] = &[
             "agent",
             "code_artifact_id",
             "blob_artifact_id",
+            "ask_ref",
         ],
     ),
+    // A gate decision: the grant it ruled under and the bundle that grant
+    // names; an escalation's TASK; a graduation answer's answerer and
+    // decision; a skill-edit verdict's proposal, skill, accepted verdict
+    // and missing sources; a cleanup digest's archived, skipped and
+    // rejected rows. (FIX 4848)
+    (
+        ReceiptKind::Gate,
+        &[
+            "grant_ref",
+            "bundle_ref",
+            "task_ref",
+            "answerer",
+            "decision_ref",
+            "skill_edit_proposal",
+            "skill_edit_skill",
+            "skill_edit_accepted_verdict",
+            "skill_edit_missing_sources",
+            "cleanup_archived_ids",
+            "cleanup_skipped_ids",
+            "cleanup_rejected_ids",
+        ],
+    ),
+    // An outbound send: its TASK; a craft reply's MESSAGE; an emit's
+    // activated memories and the project its run froze. (FIX 4848)
+    (
+        ReceiptKind::Outbound,
+        &[
+            "task_ref",
+            "message_id",
+            "activated_memory_ids",
+            "type_ref.project",
+        ],
+    ),
+    // A scoped read: the grant's scope rows. (FIX 4848)
+    (
+        ReceiptKind::ScopedRead,
+        &[
+            "space_ref",
+            "conversation_ref",
+            "identity_ref",
+            "envelope_ref",
+            "person_ref",
+            "facet_ref",
+            "calendar_ref",
+            "page_ref",
+        ],
+    ),
+    // A served form: the ASSET it served, and the ASSET_TEXT it read in
+    // place of the body. (FIX 4848)
+    (ReceiptKind::ServedForm, &["asset_ref", "asset_text_ref"]),
+    // A task-highway call: its parked proposal, the TASK a copy redid and
+    // the parent it dropped, its stale brief pins, and its composer's
+    // lens rows. (FIX 4848)
+    (
+        ReceiptKind::TaskLifecycle,
+        &[
+            "proposal_ref",
+            "redo_of",
+            "redo_parent_dropped",
+            "stale_pins",
+            "lens_refs",
+        ],
+    ),
+    // An identity-topology assertion: the pair it distinguished, a
+    // cancellation's participant, and a held channel request's ref.
+    // (FIX 4848)
+    (
+        ReceiptKind::IdentityLifecycle,
+        &["pair_a", "pair_b", "participant", "request_ref"],
+    ),
+    // A commitment's terminal status: its obligor and beneficiary.
+    // (FIX 4848)
+    (
+        ReceiptKind::CommitmentLifecycle,
+        &["obligor_ref", "beneficiary_ref"],
+    ),
+    // A settlement: the artifact it settled. Its trigger names the
+    // artifact at a version, which is not a row spelling. (FIX 4848)
+    (ReceiptKind::ArtifactSettle, &["artifact_ref"]),
 ];
 
 /// The families whose `actor` and `on_behalf_of` are parties the receipt
@@ -132,8 +213,22 @@ impl Vault {
         query: ReceiptQuery,
         destination: &ReadDestination,
     ) -> Result<Vec<ReceiptRecord>> {
+        self.receipts_walk_for_caller(query, destination)
+            .map(|(page, _)| page)
+    }
+
+    /// [`Self::receipts_for_caller`], beside where its walk stopped when the
+    /// work cap cut it short of a full page before the receipts ran out: the
+    /// position of the last receipt it walked, kept or withheld, so a page
+    /// that kept few or none still moves on from there (FIX 10186). `None`
+    /// when the page is the whole answer up to its limit.
+    pub(crate) fn receipts_walk_for_caller(
+        &self,
+        query: ReceiptQuery,
+        destination: &ReadDestination,
+    ) -> Result<(Vec<ReceiptRecord>, Option<ReceiptScanPosition>)> {
         if !destination.is_off_device() || query.limit == 0 {
-            return self.receipts(query);
+            return self.receipts(query).map(|page| (page, None));
         }
         let limit = query.limit;
         let lineage = match query.job_ref {
@@ -159,11 +254,13 @@ impl Vault {
             let collected = ordered.len();
             let mut page = Vec::new();
             let mut walked = 0;
+            let mut last_walked = None;
             for receipt in ordered {
                 if page.len() == limit {
                     break;
                 }
                 walked += 1;
+                last_walked = Some(ReceiptScanPosition::of(&receipt));
                 if off_device_admits(self, &receipt, destination)? {
                     page.push(receipt);
                 }
@@ -177,8 +274,14 @@ impl Vault {
             } else {
                 collected < bound
             };
-            if settled || bound >= MAX_RECEIPT_QUERY_SCAN {
-                return Ok(page);
+            if settled {
+                return Ok((page, None));
+            }
+            if bound >= MAX_RECEIPT_QUERY_SCAN {
+                // Cut by the cap: a short page, and receipts may lie past
+                // the last one walked.
+                let cut = (page.len() < limit).then_some(last_walked).flatten();
+                return Ok((page, cut));
             }
             bound = bound
                 .saturating_mul(REFILL_GROWTH)

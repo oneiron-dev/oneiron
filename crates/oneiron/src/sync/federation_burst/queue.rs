@@ -1,11 +1,15 @@
 //! Actual deferred payloads and their identity-bound, idempotent completion.
 
-use super::{FederationPeer, corrupt, observations};
+use super::schedule::{self, RetainedWorkQueue, Waiting};
+use super::{FederationBurstWorkState, FederationPeer, corrupt, erase, observations};
 use crate::llm::NormalizedBurstInputs;
+use crate::store::Store;
 use crate::sync::transport::MAX_DECODED_PAYLOAD_BYTES;
 use crate::sync::{WindowKey, encode_sync_selector};
-use crate::{Result, Vault};
+use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
+
+const DEFERRED_PREFIX: &[u8] = b"m:federation-deferred:v1:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(in crate::sync) enum WorkKind {
@@ -32,6 +36,14 @@ pub(in crate::sync) struct DeferredWork {
     pub(super) isolated_update: Option<IsolatedParts>,
     pub(super) streak_ratio: f32,
     pub(super) selector: Vec<u8>,
+    /// When the batch was retained: a store clock id, so the drain serves
+    /// a caller's batches oldest first (FIX 7997).
+    pub(super) arrival: [u8; 16],
+    /// When its wait ends, in seconds; an identity never retained has none.
+    pub(super) deadline: u64,
+    /// The rows whose bytes the batch carries, which an erase of any of them
+    /// scrubs (FIX 7998).
+    pub(super) carried: Vec<EntityId>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -47,10 +59,13 @@ struct StoredWork {
     streak: u32,
     streak_ratio: f32,
     isolated_update: Option<IsolatedParts>,
+    arrival: [u8; 16],
+    deadline: u64,
+    carried: Vec<EntityId>,
 }
 
 fn prefix(peer: &FederationPeer) -> Result<Vec<u8>> {
-    let mut prefix = b"m:federation-deferred:v1:".to_vec();
+    let mut prefix = DEFERRED_PREFIX.to_vec();
     prefix.extend_from_slice(&peer.digest());
     // Delivery is additionally bound to the exact requested selector. The
     // observation bucket intentionally is not: narrowing cannot reset rate.
@@ -96,18 +111,40 @@ impl DeferredWork {
                 rate_ratio: 0.0,
                 streak: 0,
             },
+            arrival: [0; 16],
+            deadline: 0,
+            carried: Vec::new(),
         })
     }
 
-    pub(in crate::sync) fn revalidate_authority_in_txn(
+    /// How this retained batch has ended at `now` without its turn, if it
+    /// has: it was held under a grant or pact scope that has since changed
+    /// (FIX 7999), or its wait is over (FIX 7997).
+    pub(in crate::sync) fn ended_in_txn(
         &self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         peer: &FederationPeer,
-    ) -> Result<()> {
+        now: u64,
+    ) -> Result<Option<FederationBurstWorkState>> {
         if self.authority_digest != peer.authority_digest_in_txn(vault, txn)? {
-            return Err(crate::Error::InvalidConfig("federation batch grant or pact scope changed; reject the retained batch and send a newly authorized delivery".into()));
+            return Ok(Some(FederationBurstWorkState::StaleAuthority));
         }
+        Ok((self.deadline != 0 && self.deadline <= now)
+            .then_some(FederationBurstWorkState::Expired))
+    }
+
+    /// Starts this batch's wait in the admitting writer: its arrival, and its
+    /// deadline from the owner's wait for retained federation work.
+    pub(super) fn arrive_in_txn(
+        &mut self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        now: u64,
+    ) -> Result<()> {
+        self.arrival = vault.store.clock.ulid()?;
+        let wait = schedule::wait_secs_in(vault, txn, RetainedWorkQueue::FederationBurst)?;
+        self.deadline = now.saturating_add(wait);
         Ok(())
     }
 
@@ -117,7 +154,7 @@ impl DeferredWork {
     }
 
     pub(super) fn key(&self) -> Vec<u8> {
-        let mut key = b"m:federation-deferred:v1:".to_vec();
+        let mut key = DEFERRED_PREFIX.to_vec();
         key.extend_from_slice(&self.peer);
         key.extend_from_slice(blake3::hash(&self.selector).as_bytes());
         key.extend_from_slice(&self.id);
@@ -176,10 +213,14 @@ impl DeferredWork {
             streak: self.inputs.streak,
             streak_ratio: self.streak_ratio,
             isolated_update: self.isolated_update.clone(),
+            arrival: self.arrival,
+            deadline: self.deadline,
+            carried: self.carried.clone(),
         })
         .map_err(|_| corrupt())?;
         // Storage capacity is distinct from the peer-relative burst verdict.
-        // Keep accepted work durable; the sender can retry a capacity refusal.
+        // Accepted work stays durable: the queue's byte totals are observed
+        // against these thresholds, never refused (FIX 7996, 8852).
         crate::store::check_queue_capacity(
             &vault.store.sync_queue,
             txn,
@@ -188,7 +229,7 @@ impl DeferredWork {
             value.len(),
             vault.config.map_size / 16,
         )?;
-        let mut peer_prefix = b"m:federation-deferred:v1:".to_vec();
+        let mut peer_prefix = DEFERRED_PREFIX.to_vec();
         peer_prefix.extend_from_slice(&self.peer);
         crate::store::check_queue_capacity(
             &vault.store.sync_queue,
@@ -199,7 +240,12 @@ impl DeferredWork {
             vault.config.map_size / 32,
         )?;
         vault.store.sync_queue.put(txn, &self.key(), &value)?;
-        Ok(())
+        erase::register_in_txn(
+            &vault.store,
+            txn,
+            &self.carried,
+            &erase::CarriedBy::Burst(self.key()),
+        )
     }
 
     pub(super) fn decode(value: &[u8]) -> Result<Self> {
@@ -234,6 +280,55 @@ impl DeferredWork {
                 rate_ratio: row.rate_ratio,
                 streak: row.streak,
             },
+            arrival: row.arrival,
+            deadline: row.deadline,
+            carried: row.carried,
+        })
+    }
+
+    /// Removes the retained batch: its row, its review copies and its
+    /// carrier rows. Its receipt is the caller's to settle.
+    pub(super) fn remove_in_txn(&self, store: &Store, txn: &mut heed::RwTxn<'_>) -> Result<()> {
+        store.sync_queue.delete(txn, &self.key())?;
+        super::review_doors::scrub_in_txn(store, txn, &self.peer, &self.id)?;
+        erase::forget_in_txn(
+            store,
+            txn,
+            &self.carried,
+            &erase::CarriedBy::Burst(self.key()),
+        )
+    }
+
+    /// Ends the retained batch with `state`, keeping only its content-free
+    /// receipt. Nothing is imported and no outcome is observed: an ended
+    /// batch says nothing about the peer's structural health.
+    pub(super) fn retire_in_txn(
+        &self,
+        store: &Store,
+        txn: &mut heed::RwTxn<'_>,
+        state: FederationBurstWorkState,
+    ) -> Result<()> {
+        self.remove_in_txn(store, txn)?;
+        super::ledger::settle_in_txn(store, txn, &self.id, state)
+    }
+
+    /// [`Self::retire_in_txn`] in its own writer, when the batch is still
+    /// retained and still ends as `state` there; the peer's other batches
+    /// go on draining (FIX 7997, 7999).
+    pub(in crate::sync) fn retire(
+        &self,
+        vault: &Vault,
+        peer: &FederationPeer,
+        state: FederationBurstWorkState,
+    ) -> Result<()> {
+        vault.with_write_txn_grouped(|txn| {
+            let Some(saved) = self.load_in_txn(vault, txn)? else {
+                return Ok(());
+            };
+            if saved.ended_in_txn(vault, txn, peer, vault.now_recorded_at())? == Some(state) {
+                saved.retire_in_txn(&vault.store, txn, state)?;
+            }
+            Ok(())
         })
     }
 
@@ -257,8 +352,13 @@ impl DeferredWork {
         }
         vault.with_write_txn_grouped(|txn| {
             peer.revalidate_in_txn(vault, txn)?;
-            vault.store.sync_queue.delete(txn, &self.key())?;
-            super::ledger::settle(vault, txn, peer, self, structural_failure)?;
+            self.remove_in_txn(&vault.store, txn)?;
+            let state = if structural_failure {
+                FederationBurstWorkState::Rejected
+            } else {
+                FederationBurstWorkState::Imported
+            };
+            super::ledger::settle(vault, txn, peer, self, state)?;
             // Keep a small, payload-free delivery witness. If the socket dies
             // after direct enqueue, the same authenticated ticket can fetch
             // again. A guessed hash with no witness cannot bypass observation.
@@ -287,44 +387,113 @@ impl DeferredWork {
         Self::find_update(vault, peer, Some(id))
     }
 
+    /// The oldest ready update this peer retained under its selector. A
+    /// batch held under an older grant or pact scope, and one past its wait,
+    /// ends alone with its typed receipt; the others still drain (FIX 7997,
+    /// 7999). A selector read waits for its peer's replay, and an isolated
+    /// update for the peer's rate to come back to its baseline.
     fn find_update(
         vault: &Vault,
         peer: &FederationPeer,
         id: Option<&[u8; 32]>,
     ) -> Result<Option<Self>> {
         peer.revalidate(vault)?;
-        let txn = vault.store.env.read_txn()?;
+        let now = vault.now_recorded_at();
         let prefix = prefix(peer)?;
-        for row in vault.store.sync_queue.prefix_iter(&txn, &prefix)? {
+        let (turns, stale) = {
+            let txn = vault.store.env.read_txn()?;
+            let current = peer.authority_digest_in_txn(vault, &txn)?;
+            let rate_ready = observations::replay_ready_in_txn(vault, &txn, peer, now)?;
+            let mut waiting = Vec::new();
+            let mut stale = Vec::new();
+            for row in vault.store.sync_queue.prefix_iter(&txn, &prefix)? {
+                let (key, value) = row?;
+                let work = Self::decode(&value)?;
+                if work.key().as_slice() != key.as_ref() {
+                    return Err(corrupt());
+                }
+                let window = WindowKey::try_new(&work.window).ok_or_else(corrupt)?;
+                let expected = Self::new(peer, &window, work.kind, &work.payload)?;
+                if work.id != expected.id
+                    || work.selector != expected.selector
+                    || work.peer != expected.peer
+                {
+                    return Err(corrupt());
+                }
+                if id.is_some_and(|id| work.id != *id) {
+                    continue;
+                }
+                if work.authority_digest != current {
+                    stale.push(work);
+                    continue;
+                }
+                let ready = work.kind != WorkKind::Selector
+                    && (work.isolated_update.is_none() || rate_ready);
+                waiting.push(Waiting {
+                    caller: prefix.clone(),
+                    arrival: work.arrival,
+                    deadline: work.deadline,
+                    ready,
+                    item: work,
+                });
+            }
+            (schedule::turns(waiting, None, now), stale)
+        };
+        for work in stale {
+            work.retire(vault, peer, FederationBurstWorkState::StaleAuthority)?;
+        }
+        for work in turns.expired {
+            work.retire(vault, peer, FederationBurstWorkState::Expired)?;
+        }
+        Ok(turns.due.into_iter().next().map(|(_, work)| work))
+    }
+}
+
+/// Scrubs the retained batch stored at `key` for an erase of a row it
+/// carries: its bytes and review copies go, and its receipt says it was
+/// erased (FIX 7998).
+pub(super) fn erase_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, key: &[u8]) -> Result<()> {
+    let work = match store.sync_queue.get(txn, key)? {
+        Some(value) => DeferredWork::decode(&value)?,
+        None => return Ok(()),
+    };
+    if work.key().as_slice() != key {
+        return Err(corrupt());
+    }
+    work.retire_in_txn(store, txn, FederationBurstWorkState::Erased)
+}
+
+/// Ends every retained batch past its wait with its typed receipt, whoever
+/// its peer is, so work a peer never comes back for does not wait for ever
+/// (FIX 7997). Returns how many ended.
+pub(crate) fn expire_retained_work(vault: &Vault) -> Result<u64> {
+    let now = vault.now_recorded_at();
+    let expired = {
+        let txn = vault.store.env.read_txn()?;
+        let mut expired = Vec::new();
+        for row in vault.store.sync_queue.prefix_iter(&txn, DEFERRED_PREFIX)? {
             let (key, value) = row?;
-            let work = Self::decode(&value)?;
-            if work.key().as_slice() != key.as_ref() {
-                return Err(corrupt());
-            }
-            let window = WindowKey::try_new(&work.window).ok_or_else(corrupt)?;
-            let expected = Self::new(peer, &window, work.kind, &work.payload)?;
-            if work.id != expected.id
-                || work.selector != expected.selector
-                || work.peer != expected.peer
-            {
-                return Err(corrupt());
-            }
-            if id.is_some_and(|id| work.id != *id) {
-                continue;
-            }
-            work.revalidate_authority_in_txn(vault, &txn, peer)?;
-            if work.kind != WorkKind::Selector
-                && (work.isolated_update.is_none()
-                    || observations::replay_ready_in_txn(
-                        vault,
-                        &txn,
-                        peer,
-                        vault.now_recorded_at(),
-                    )?)
-            {
-                return Ok(Some(work));
+            if DeferredWork::decode(&value)?.deadline <= now {
+                expired.push(key.to_vec());
             }
         }
-        Ok(None)
+        expired
+    };
+    if expired.is_empty() {
+        return Ok(0);
     }
+    vault.with_write_txn_grouped(|txn| {
+        let mut ended = 0;
+        for key in &expired {
+            let work = match vault.store.sync_queue.get(txn, key)? {
+                Some(value) => DeferredWork::decode(&value)?,
+                None => continue,
+            };
+            if work.key() == *key && work.deadline <= now {
+                work.retire_in_txn(&vault.store, txn, FederationBurstWorkState::Expired)?;
+                ended += 1;
+            }
+        }
+        Ok(ended)
+    })
 }

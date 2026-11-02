@@ -337,7 +337,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         let row =
             read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(Error::EntityNotFound)?;
-        let call = row.binding.pending.connector_call();
+        let call = row
+            .binding
+            .pending
+            .connector_call()
+            .ok_or(Error::EntityNotFound)?;
         let choices = offered_choices(&row.binding)
             .into_iter()
             .map(|choice| choice.as_str().replace('_', " "))
@@ -418,6 +422,7 @@ impl Vault {
                         &[CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED],
                     )
                 })?;
+                self.signal_code_owned_call_asks();
                 let stopped = ConnectorCallOutcome::Refused {
                     decision_ref: None,
                     reasons: vec![CODE_WAIT_ORIGINAL_AUTHORITY_REFUSED.to_owned()],
@@ -468,8 +473,11 @@ impl Vault {
             let row = read_code_consent_wait_in_txn(self, &txn, wait_id)?.ok_or(
                 IntentLedgerError::InvalidInput("no code consent wait by that id"),
             )?;
-            row.approved_unsettled()
-                .then(|| row.binding.pending.connector_call().call_ref)
+            row.binding
+                .pending
+                .connector_call()
+                .filter(|_| row.approved_unsettled())
+                .map(|call| call.call_ref)
         };
         if let Some(call_ref) = call_ref {
             let pending = {
@@ -514,6 +522,7 @@ impl Vault {
                 }
                 Ok(())
             })?;
+            self.signal_code_owned_call_asks();
         }
         Ok(self.code_consent_wait_view(wait_id, false)?)
     }
@@ -544,7 +553,9 @@ impl Vault {
 
 /// Settles a held call a code consent wait owns as refused, in the caller's
 /// writer, unless it already settled, so the settler acknowledges it and
-/// nothing runs under it.
+/// nothing runs under it. The row withdraws the owner questions it named in
+/// the same write (FIX 2551); its committer wakes their waiters with
+/// [`Vault::signal_code_owned_call_asks`].
 pub(crate) fn settle_code_owned_call_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -568,7 +579,22 @@ pub(crate) fn settle_code_owned_call_in_txn(
         decision_ref: decision_ref.clone(),
         reasons: reasons.clone(),
     });
+    vault.withdraw_call_owner_asks_in_txn(txn, call_ref, &mut row);
     PENDING_CALLS.put(&vault.store, txn, call_ref, &row)
+}
+
+/// The rows the held call `call_ref`'s passes picked (FIX 5455), read in
+/// the caller's transaction: what its code consent wait's refusal delivers
+/// beside its reply (FIX 5818), as an approved or expired call's does.
+/// `None` for a call with no row, and for one whose rows are not known.
+pub(crate) fn code_owned_call_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    call_ref: &EntityId,
+) -> crate::Result<Option<Vec<EntityId>>> {
+    Ok(PENDING_CALLS
+        .get(&vault.store, txn, call_ref)?
+        .and_then(|row| row.source_rows))
 }
 
 /// The code-bound approval context a scoped connector effect's admission

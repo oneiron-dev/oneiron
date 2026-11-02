@@ -14,6 +14,10 @@ side_tables! {
     /// One turn's saved tag set under its derivation envelope: unconfirmed mentions, the turn's
     /// mood and merge evidence. Derived, local, never synced. Key: turn id16.
     TAGGING_TAG_SET: VaultMeta b"tagging:tags:v1:" Named;
+    /// The review decision an owner accepted of a TASK no write had settled yet (FIX 11757),
+    /// which the TASK's settlement names as its anchor: the first one, kept after the settlement
+    /// as history and gone with the TASK's erase. Key: id16 (TASK).
+    TASK_ACCEPTED_REVIEW: VaultMeta b"tasks.accepted_review.v1/" Named Engine;
     /// Owner/question-class ask band and consumed receipt markers. Key: id16 + u16be + class [+ ':' id16].
     TASK_ASK_BAND: VaultMeta b"tasks.ask.band.v1:" Raw;
     /// Local ed25519 seed (32 bytes) that signs one ask group's option-link words. Key: id16 (group).
@@ -47,8 +51,6 @@ side_tables! {
     TASK_BY_OWNER_BACKFILLED: VaultMeta b"tasks.by_owner.backfilled.v1" Raw;
     /// Owner's tasks forward index. Key: id16 + id16 + id16.
     TASK_BY_OWNER_FORWARD: VaultMeta b"tasks.by_owner.v1/" Raw;
-    /// Marker that the one-time consult party fact migration has run. Key: ().
-    TASK_CONSULT_PARTY_BACKFILLED: VaultMeta b"tasks.consult_party.backfilled.v1" Raw;
     /// Per-actor task-create rate window. Key: id16 + u64be.
     TASK_CREATE_RATE_WINDOW: VaultMeta b"tasks.create.rate.v1\0" Raw;
     /// The creator attempt a create's agent TASK lands under (OF-532): parent attempt, its project
@@ -124,7 +126,8 @@ side_tables! {
     TEAM_PATTERN_SKILL: VaultMeta b"team:pattern_skill:v1:" Named;
     /// One team run's receipt (type, pattern, models, shape, who decided, coverage, confessions,
     /// anchored outcome). Key: string (team reference).
-    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named;
+    TEAM_RECEIPT: VaultMeta b"team:receipt:v1:" Named
+        => crate::learning::erase_team_receipt_scope_in_txn;
     /// One team start as the host saw it: stamp, leader, root TASK, queued members and widenings.
     /// Key: string (leader attempt hex, `:`, team reference).
     TEAM_RUN: VaultMeta b"team:run:v1:" Named;
@@ -157,6 +160,10 @@ side_tables! {
     /// The MESSAGE rows a kept TURN lost to a window demotion (OF-534, FIX 3859), until each is
     /// back with its PartOf edge: derived, local, never synced. Key: id16 (turn).
     TURN_MISSING_MESSAGES: VaultMeta b"turn:missing_messages:v1:" Named;
+    /// A TURN owed a tag pass that a physical tear, with no vault in hand, could not mark (FIX
+    /// 6262), until the tagging reconciler's upkeep marks it: derived, local, never synced. Empty
+    /// marker. Key: id16 (turn).
+    TURN_TAG_OWED: VaultMeta b"turn:tag_owed:v1:" Raw;
     /// A typed body's Loro snapshot at its head. Key: id16 (entity).
     TYPED_BODY_DOC: VaultMeta b"typed_body:doc:v1:" Raw;
     /// Work on a typed body away from its head: opener, base frontier and state. Key: id16
@@ -192,7 +199,12 @@ side_tables! {
     TYPED_QUESTION_ROOT_SOURCES: VaultMeta b"typed_question:root_sources:v1:" Named;
     /// Unit-to-question refresh watcher. Key: id16(unit) + id16(question).
     TYPED_QUESTION_UNIT_WATCH: VaultMeta b"typed_question:unit:v1:" Raw;
-    TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named;
+    /// FIX 11231: one graph unit's person ask, kept while it waits and once its holder's
+    /// answer landed on the unit: the question, principal and unit it decides, the declined
+    /// decision it went up from, and the answer claim that landed. Key: u64be(ask sequence).
+    TYPED_QUESTION_UNIT_ASK: VaultMeta b"typed_question:unit_ask:v1:" Named;
+    TYPED_QUESTION: VaultMeta b"typed_question:v1:" Named
+        => crate::llm::decision::questions::erase_questions_for_actor_in_txn;
     /// Reverse watch index from an outcome predicate to the questions learning from it. Key:
     /// string(predicate) "\x00" id16(question).
     TYPED_QUESTION_WATCH: VaultMeta b"typed_question:watch:v1:" Raw;
@@ -257,6 +269,9 @@ side_tables! {
     /// One vault shape apply's journal (ARCH-0070): its plan items and how each landed, so a torn
     /// apply resumes. Key: string (the plan's frontier, hex).
     VAULT_SHAPE_APPLY: VaultMeta b"vault_shape:apply:v1:" Named;
+    /// One entity kind's wire declaration as a vault shape apply landed it (ARCH-0070, FIX 2300):
+    /// whether the kind is declared on the wire, by whom and when. Key: string (the kind's name).
+    VAULT_SHAPE_WIRE: VaultMeta b"vault_shape:wire:v1:" Named;
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named;
     /// Per-owner index over voice reference bank rows. Key: id16 (owner) + the indexed row's full
@@ -308,15 +323,24 @@ side_tables! {
     /// One immutable wrong-link label filed from a live weave report. Key: edge ref (33 bytes) +
     /// id16 (label receipt id).
     WEAVE_WRONG_LINK_LABEL: VaultMeta b"weave:wrong-link:v1:" Named;
+    /// The owner's web connector switch (FIX 11598): which provider serves `connector.web.*`, on
+    /// whose key. Absent means Tavily on the deploy's backend key. Key: ().
+    WEB_CONNECTOR_SETTING: VaultMeta b"web_connector:setting:v1" Named;
+    /// One usage row per web connector call: provider, tool, key source, latency, cost and the
+    /// provider's request id; never the query, URL or results. Key: u64 BE (ms) + id16.
+    WEB_CONNECTOR_USAGE: VaultMeta b"web_connector:usage:v1:" Named;
     /// Guards a companion PERSON against being claimed by a second principal's onboarding. Key: id16
     /// (companion person id).
-    WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw;
+    WORKSPACE_ROSTER_COMPANION_PRINCIPAL: VaultMeta b"workspace_roster:companion_principal:v1:" Raw
+        => crate::workspace_roster::erase_companion_principal_actor_in_txn;
     /// One onboarded member's roster row (actor, optional companion person/actor/facet, identity).
     /// Key: string (workspace_ref) "\x00" hex32 (person id).
-    WORKSPACE_ROSTER_MEMBER: VaultMeta b"workspace_roster:member:v1:" Raw;
+    WORKSPACE_ROSTER_MEMBER: VaultMeta b"workspace_roster:member:v1:" Raw
+        => crate::workspace_roster::erase_member_actor_in_txn;
     /// Guards one member's workspace-onboarding slot against a second onboarding with different
     /// inputs. Key: string (workspace_ref) "\x00" id16 (person id).
-    WORKSPACE_ROSTER_MEMBER_INTENT: VaultMeta b"workspace_roster:member_intent:v1:" Raw;
+    WORKSPACE_ROSTER_MEMBER_INTENT: VaultMeta b"workspace_roster:member_intent:v1:" Raw
+        => crate::workspace_roster::erase_member_intent_actor_in_txn;
     /// Idempotency journal tracking one member-onboarding request's progress through the pinned step
     /// ladder. Key: string (caller-supplied onboarding_id).
     WORKSPACE_ONBOARDING: VaultMeta b"workspace_roster:onboarding:v1:" Raw;

@@ -5,7 +5,9 @@
 //! admitted with, and a free-time item's call the agent, cycle, item and
 //! spend scope the engine stamped on its run before it began (FIX 4453);
 //! every other call stays unbound. A model call carries the vault catalog's
-//! list price as it read when the call was admitted (FIX 2629).
+//! list price as it read when the call was admitted (FIX 2629), except one on
+//! the owner's own key to a custom endpoint, which logs token counts only
+//! (FIX 7765).
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, RwLock};
 
@@ -15,8 +17,8 @@ use oneiron::llm::run_admission::{Payer, PayerAccount, PermitFacts, RunEvent, Ru
 
 use self::pricing::CatalogPrices;
 use crate::usage::{
-    UnpricedReason, UsageAllocation, UsageCostInput, UsageCostRates, UsageError, UsageEvent,
-    UsageEventType, UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
+    UnpricedReason, UsageAllocation, UsageCostRates, UsageError, UsageEvent, UsageEventType,
+    UsageLedger, UsageMode, UsageRun, UsageTokenCounts,
 };
 
 mod pricing;
@@ -38,7 +40,12 @@ pub struct VaultUsage {
 
 struct AdmittedCall {
     facts: PermitFacts,
+    /// `None` too for a call on the owner's own key to a custom endpoint,
+    /// which logs token counts only (FIX 7765).
     rates: Option<UsageCostRates>,
+    /// Whether the call went out on the owner's own key to a custom
+    /// endpoint (`pricing::custom_endpoint`), read at admission.
+    custom_endpoint: bool,
     /// The rows `rates` was read from: the catalog row's, none for the
     /// host's override (FIX 5760).
     price_sources: Option<Vec<EntityId>>,
@@ -89,19 +96,15 @@ impl VaultUsage {
     /// price: an explicit override of the catalog's price for calls admitted
     /// on exactly `offer`, `None` to drop it. Already-admitted calls keep
     /// their snapshot. Without a price, quantities are still recorded and no
-    /// money amount is invented.
+    /// money amount is invented; rates that name no currency are kept as
+    /// such (FIX 9534).
     pub fn set_cost_rates(
         &self,
         offer: impl Into<String>,
         rates: Option<UsageCostRates>,
     ) -> Result<(), UsageError> {
         if let Some(rates) = &rates {
-            UsageCostInput {
-                token_counts: UsageTokenCounts::default(),
-                cost_rates: rates.clone(),
-                service_amount: 0,
-            }
-            .calculate()?;
+            rates.validate()?;
         }
         let mut tables = self
             .provider_rates

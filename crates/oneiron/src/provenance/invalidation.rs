@@ -22,17 +22,8 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::Store;
-use crate::vault::MAX_EDGE_QUERY_RESULTS;
 use heed::RwTxn;
 use std::ops::ControlFlow;
-
-/// How many inbound `claim_of` rows the withdrawal check walks before
-/// refusing. A WORK bound, like the claim lookup's walk (`claim::read`): the
-/// walk holds only the written edge's own wrappers, never its source's whole
-/// fan-in, so it sits an order of magnitude above the materialization cap,
-/// and ordinary claims about a busy source do not turn a valid write into a
-/// refusal.
-const WITHDRAWAL_SCAN_CEILING: usize = MAX_EDGE_QUERY_RESULTS * 10;
 
 /// Re-derives the subject edge's flags once `id` is dependency-stale.
 ///
@@ -90,7 +81,6 @@ pub(crate) fn refresh_stale_wrapper_in_txn(
         &subject,
         None,
         &[ClaimLifecycleStatus::Active],
-        usize::MAX,
         |claim, _| {
             let candidate = claim.precedence();
             if winner
@@ -165,8 +155,9 @@ pub(crate) fn image_needs_cohort_check(
 /// class. A live wrapper, or no wrapper at all (none replicated yet), leaves
 /// the image's flags as written. Changed flags invalidate both endpoints' PPR
 /// and bump the graph version. The walk stops at the first live wrapper and
-/// refuses past [`WITHDRAWAL_SCAN_CEILING`] `claim_of` rows, never reading a
-/// crowded source as an empty cohort.
+/// otherwise reads every `claim_of` row of the source (FIX 8692), never
+/// reading a crowded source as an empty cohort; the decision lands in the
+/// transaction that wrote the edge.
 pub(crate) fn withdraw_image_support_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -233,7 +224,6 @@ fn withdrawn_support(
             ClaimLifecycleStatus::Superseded,
             ClaimLifecycleStatus::Retracted,
         ],
-        WITHDRAWAL_SCAN_CEILING,
         |claim, lifecycle| {
             if lifecycle == ClaimLifecycleStatus::Active {
                 live = true;

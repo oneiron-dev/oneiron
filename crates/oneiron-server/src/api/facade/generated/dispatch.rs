@@ -37,7 +37,7 @@ async fn vault_commitments_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_commitments_get(
@@ -68,7 +68,7 @@ async fn vault_commitments_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_commitments_instances(
@@ -102,7 +102,7 @@ async fn vault_commitments_instances(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_commitments_proposals(
@@ -136,7 +136,7 @@ async fn vault_commitments_proposals(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_commitments_fulfill(
@@ -170,7 +170,7 @@ async fn vault_commitments_fulfill(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_commitments_release(
@@ -204,7 +204,7 @@ async fn vault_commitments_release(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_commitments_supersede(
@@ -238,7 +238,7 @@ async fn vault_commitments_supersede(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn fetch(
@@ -278,7 +278,7 @@ async fn fetch(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn crawl(
@@ -318,7 +318,7 @@ async fn crawl(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn report(
@@ -389,7 +389,7 @@ async fn feedback_preview(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn feedback_send(
@@ -419,7 +419,7 @@ async fn feedback_send(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_reports_disclosure(
@@ -453,7 +453,7 @@ async fn vault_reports_disclosure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_reports_route(
@@ -484,7 +484,7 @@ async fn vault_reports_route(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_reports_outbound(
@@ -515,7 +515,7 @@ async fn vault_reports_outbound(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_focus_wakes(
@@ -794,7 +794,7 @@ async fn self_identity_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_identity_settle(
@@ -1077,7 +1077,7 @@ async fn vault_people_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_entities_look_before_mint(
@@ -1118,7 +1118,7 @@ async fn vault_entities_look_before_mint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_mention(
@@ -1158,7 +1158,7 @@ async fn vault_identity_mention(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shape_read(
@@ -1218,9 +1218,13 @@ async fn vault_shape_apply(
     oneiron::task_verb::sdk::validate_input("vault.shape.apply", &value)?;
     let mut hooks = facade_hooks_pre(server, call, "vault.shape.apply", value).await?;
     let ran = async {
-        let (output, listed) =
-            super::host_doors::vault_shape_apply(server, auth, facade_door_input(&mut hooks)?)
-                .await;
+        let (output, listed) = super::host_doors::vault_shape_apply(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
         Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
     }
     .await;
@@ -1233,7 +1237,131 @@ async fn vault_shape_apply(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_shape_plan_card(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.shape.plan.card",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_shape_items_receipt(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.shape.items.receipt",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_shape_groups(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shape.groups")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shape.groups", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.shape.groups", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shape_groups(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_shape_groups_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shape.groups.resolve")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shape.groups.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.shape.groups.resolve", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shape_groups_resolve(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_message(
@@ -1281,6 +1409,28 @@ async fn self_grants_ask(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_grants_asked(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.grants.asked",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_companions_access_requests_answer(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -1318,7 +1468,38 @@ async fn vault_companions_access_requests_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn self_grants_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    facade_outside_room_turn(call, "self.grants.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.grants.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.grants.answer", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::self_grants_answer(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_personas_preview(
@@ -1349,7 +1530,7 @@ async fn vault_personas_preview(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_personas_export(
@@ -1380,7 +1561,7 @@ async fn vault_personas_export(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_personas_edit(
@@ -1411,7 +1592,7 @@ async fn vault_personas_edit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_memory_diary_query(
@@ -1445,7 +1626,7 @@ async fn self_memory_diary_query(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn cancel(
@@ -1551,7 +1732,7 @@ async fn tasks_create(
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke_born(
@@ -1567,7 +1748,7 @@ async fn tasks_create(
         Ok(FacadeCallOutput::listed(output, &producers))
     })
     .await
-    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.create")))?
+    .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("tasks.create")))?
 }
 async fn tasks_wave(
     server: &Arc<SyncServer>,
@@ -1596,7 +1777,7 @@ async fn tasks_wave(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_fanout_spawn(
@@ -1631,7 +1812,7 @@ async fn vault_fanout_spawn(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_fanout_slots(
@@ -1714,6 +1895,28 @@ async fn self_budget_land(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn self_billing_account_file(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "self.billing.account.file",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_budgets_lease_open(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -1745,7 +1948,7 @@ async fn vault_budgets_lease_open(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_lease(
@@ -1776,7 +1979,7 @@ async fn vault_budgets_lease(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_lease_top_up(
@@ -1810,7 +2013,7 @@ async fn vault_budgets_lease_top_up(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_hold(
@@ -1841,7 +2044,7 @@ async fn vault_budgets_hold(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_hold_resume(
@@ -1875,7 +2078,7 @@ async fn vault_budgets_hold_resume(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_local(
@@ -1906,7 +2109,7 @@ async fn vault_budgets_local(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_reservations(
@@ -1940,7 +2143,7 @@ async fn vault_budgets_reservations(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_settlements(
@@ -1974,7 +2177,7 @@ async fn vault_budgets_settlements(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_rsi_configure(
@@ -2008,7 +2211,7 @@ async fn vault_budgets_rsi_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_rsi(
@@ -2039,7 +2242,7 @@ async fn vault_budgets_rsi(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_rsi_top_up(
@@ -2073,7 +2276,7 @@ async fn vault_budgets_rsi_top_up(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_rsi_hold(
@@ -2104,7 +2307,7 @@ async fn vault_budgets_rsi_hold(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_budgets_rsi_hold_resume(
@@ -2138,7 +2341,76 @@ async fn vault_budgets_rsi_hold_resume(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_budgets_resident_shares(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.budgets.resident_shares")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.budgets.resident_shares", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.budgets.resident_shares", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_budgets_resident_shares(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_budgets_resident_shares_set(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.budgets.resident_shares.set")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.budgets.resident_shares.set", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.budgets.resident_shares.set", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_budgets_resident_shares_set(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runners_seats_quotas(
@@ -2172,7 +2444,7 @@ async fn vault_runners_seats_quotas(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runners_seats_top_up(
@@ -2206,7 +2478,41 @@ async fn vault_runners_seats_top_up(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_runners_seats_resume(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.runners.seats.resume")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.runners.seats.resume", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.runners.seats.resume", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_runners_seats_resume(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_fanout_resume(
@@ -2237,7 +2543,7 @@ async fn vault_fanout_resume(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_fanout_resume_as(
@@ -2268,7 +2574,7 @@ async fn vault_fanout_resume_as(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_fanout_ack(
@@ -2298,7 +2604,7 @@ async fn vault_fanout_ack(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn tasks_update(
@@ -2326,7 +2632,7 @@ async fn tasks_update(
         &["task_ref"],
     )?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
         let output = facade_invoke(
@@ -2341,7 +2647,7 @@ async fn tasks_update(
         Ok(FacadeCallOutput::listed(output, &producers))
     })
     .await
-    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.update")))?
+    .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("tasks.update")))?
 }
 async fn tasks_accept(
     server: &Arc<SyncServer>,
@@ -2387,8 +2693,8 @@ async fn tasks_redo(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    let position = facade_landing(server, call)?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     facade_room_turn_serves(
@@ -2398,22 +2704,23 @@ async fn tasks_redo(
     )?;
     facade_admit_readable_ref(&server.vault, auth, &value, "task_ref")?;
     let (server, owned) = (Arc::clone(server), call.owned());
-    tokio::task::spawn_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
+    super::clock_ingress::run_blocking(move || -> Result<FacadeCallOutput, FacadeApiError> {
         let call = owned.call();
         let producers = oneiron::memory::ProducerRows::default();
-        let output = facade_invoke(
+        let output = facade_invoke_born(
             &server,
             &call,
             actor,
             class,
             "tasks.redo",
             value,
+            position,
             &producers,
         )?;
         Ok(FacadeCallOutput::listed(output, &producers))
     })
     .await
-    .map_err(|_| FacadeApiError::from(super::host_doors::internal("tasks.redo")))?
+    .map_err(|_| FacadeApiError::from(super::host_doors::support::internal("tasks.redo")))?
 }
 async fn vault_commit_message(
     server: &Arc<SyncServer>,
@@ -2571,6 +2878,40 @@ async fn vault_message_stream_partial(
         &producers,
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_message_streams_refused(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.message_streams.refused")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.message_streams.refused", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.message_streams.refused", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_message_streams_refused(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
 }
 async fn vault_messages_durability(
     server: &Arc<SyncServer>,
@@ -2738,7 +3079,7 @@ async fn vault_retrieval_aging_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_aging_configure(
@@ -2773,7 +3114,7 @@ async fn vault_retrieval_aging_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_weights_get(
@@ -2807,7 +3148,7 @@ async fn vault_retrieval_weights_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_weights_configure(
@@ -2842,7 +3183,7 @@ async fn vault_retrieval_weights_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_hyde_configure(
@@ -2876,7 +3217,7 @@ async fn vault_retrieval_hyde_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_hyde_get(
@@ -2910,7 +3251,7 @@ async fn vault_retrieval_hyde_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_hyde_pending(
@@ -2944,7 +3285,7 @@ async fn vault_retrieval_hyde_pending(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_hyde_complete(
@@ -2978,7 +3319,7 @@ async fn vault_retrieval_hyde_complete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_hyde_receipt(
@@ -3012,7 +3353,7 @@ async fn vault_retrieval_hyde_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_annotations_put(
@@ -3200,7 +3541,7 @@ async fn vault_affect_claims_consolidate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_coping_record(
@@ -3234,7 +3575,7 @@ async fn vault_affect_coping_record(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_coping_update(
@@ -3268,7 +3609,7 @@ async fn vault_affect_coping_update(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_coping_aggregate(
@@ -3302,7 +3643,7 @@ async fn vault_affect_coping_aggregate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_wellness_policy_get(
@@ -3337,7 +3678,7 @@ async fn vault_affect_wellness_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_wellness_policy_configure(
@@ -3377,7 +3718,7 @@ async fn vault_affect_wellness_policy_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_wellness_derive(
@@ -3411,7 +3752,7 @@ async fn vault_affect_wellness_derive(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_affect_wellness_get(
@@ -3445,7 +3786,7 @@ async fn vault_affect_wellness_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cluster(
@@ -3524,7 +3865,7 @@ async fn vault_cluster_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cluster_merge(
@@ -3559,7 +3900,7 @@ async fn vault_cluster_merge(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cluster_split(
@@ -3594,7 +3935,7 @@ async fn vault_cluster_split(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cluster_resolve_proposal(
@@ -3629,7 +3970,7 @@ async fn vault_cluster_resolve_proposal(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_recall(
@@ -3660,7 +4001,7 @@ async fn vault_retrieval_recall(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_runs(
@@ -3691,7 +4032,7 @@ async fn vault_retrieval_runs(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_run(
@@ -3722,7 +4063,7 @@ async fn vault_retrieval_run(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_turn(
@@ -3753,7 +4094,7 @@ async fn vault_retrieval_turn(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_outcomes_put(
@@ -3787,7 +4128,7 @@ async fn vault_retrieval_outcomes_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_outcomes_end(
@@ -3821,7 +4162,7 @@ async fn vault_retrieval_outcomes_end(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_trace(
@@ -3852,7 +4193,7 @@ async fn vault_retrieval_trace(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_export(
@@ -3883,7 +4224,7 @@ async fn vault_retrieval_export(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_replay(
@@ -3914,7 +4255,7 @@ async fn vault_retrieval_replay(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_policy_get(
@@ -3948,7 +4289,7 @@ async fn vault_retrieval_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_policy_pin(
@@ -3982,7 +4323,7 @@ async fn vault_retrieval_policy_pin(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_policy_train(
@@ -4016,7 +4357,7 @@ async fn vault_retrieval_policy_train(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_policy_evaluate(
@@ -4051,7 +4392,7 @@ async fn vault_retrieval_policy_evaluate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_policy_admit(
@@ -4085,7 +4426,7 @@ async fn vault_retrieval_policy_admit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_retrieval_policy_update(
@@ -4119,7 +4460,7 @@ async fn vault_retrieval_policy_update(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_export(
@@ -4148,11 +4489,9 @@ async fn vault_export(
     // presents neither: the request's own owner proof, which the
     // export revalidates in its snapshot. Never the hosted root.
     let owner = match (proof, &action) {
-        (None, None) if auth.managed_owner().is_some() => Some(super::host_doors::owner_proof(
-            auth,
-            server,
-            "vault.export",
-        )?),
+        (None, None) if auth.managed_owner().is_some() => Some(
+            super::host_doors::support::owner_proof(auth, server, "vault.export")?,
+        ),
         _ => None,
     };
     if proof.is_none() && action.is_none() && owner.is_none() {
@@ -4168,63 +4507,15 @@ async fn vault_export(
     let args = hooks.args.clone();
     let ran = async {
         let input: oneiron::memory::ExportOptions = facade_input(args)?;
-        // Beside the archive, the rows its snapshot read past where
+        // Beside the answer, the rows its snapshot read past where
         // the caller's rows go (its locality, with the machine its
         // connection proved; FIX 4937): every owner path lists them.
-        // A slip keeps its own path; a host action with no slip (the
-        // dev mode) takes the engine's host-action export; the
-        // attested owner takes the engine's request-proof export,
-        // toward its own destination. Each arm's receipt records the
-        // owner's act, with where he spoke from as this request proved
-        // it (audit only; FIX 4625, 4626).
-        let surface = call.surface();
-        let (output, rows) = match (proof, action, owner) {
-            (Some(proof), _, _) if proof.claims().holder_ref == "host" => {
-                server.vault.export_with_verified_host_owner_listing(
-                    &input,
-                    proof,
-                    surface,
-                    auth.destination(),
-                )?
-            }
-            (Some(proof), _, _) => {
-                let (actor, class) = facade_actor(server, auth)?;
-                let producers = oneiron::memory::ProducerRows::default();
-                let output = server
-                    .vault
-                    .memory(actor, class)
-                    .for_destination(&auth.destination())
-                    .listing_producers(&producers)
-                    .export_with_verified_owner(&input, proof, surface)?;
-                (output, producers.take())
-            }
-            (None, Some(action), _) => server.vault.export_with_host_action_listing(
-                &input,
-                &action,
-                surface,
-                auth.destination(),
-            )?,
-            (None, None, Some(owner)) => server.vault.export_with_authenticated_owner_listing(
-                &input,
-                &owner,
-                surface,
-                auth.destination(),
-            )?,
-            (None, None, None) => {
-                return Err(FacadeApiError::forbidden(
-                    "full-vault export requires verified owner authority",
-                    ["Present a verified owner credential."],
-                ));
-            }
-        };
-        let output = serde_json::to_value(output).map_err(|_| {
-            FacadeApiError::new(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                MEMORY_CODE_INTERNAL,
-                "export result encoding failed",
-                ["Report this SDK response mismatch."],
-            )
-        })?;
+        // The answer is the archive inline, or kept on the server and
+        // named by a transfer, as the caller's `delivery` asks (FIX
+        // 3676); the leaf runs all four owner paths for both.
+        let (output, rows) = super::export_transfer::vault_export_answer(
+            server, call, &input, proof, action, owner,
+        )?;
         Ok::<_, FacadeApiError>((output, rows))
     }
     .await;
@@ -4238,6 +4529,74 @@ async fn vault_export(
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
         rows: Some(rows),
+    })
+}
+async fn vault_export_transfer_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.export.transfer.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.export.transfer.read", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.export.transfer.read", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_export_transfer_read(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_export_transfer_release(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.export.transfer.release")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.export.transfer.release", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.export.transfer.release", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_export_transfer_release(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_credential_attenuate(
@@ -4271,8 +4630,37 @@ async fn self_credential_attenuate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
+}
+async fn self_actor(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.actor")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.actor", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.actor", value).await?;
+    let ran = async {
+        Ok::<_, FacadeApiError>(facade_output(
+            super::host_doors::self_actor(server, auth, facade_door_input(&mut hooks)?).await?,
+        )?)
+    }
+    .await;
+    let output = match ran {
+        Ok(output) => output,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput::unlisted(
+        facade_hooks_post(server, hooks, output).await?,
+    ))
 }
 async fn vault_scope_position(
     server: &Arc<SyncServer>,
@@ -4544,7 +4932,7 @@ async fn vault_explain_memory(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_explain_gate(
@@ -4575,7 +4963,7 @@ async fn vault_explain_gate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_kv_get(
@@ -4726,7 +5114,7 @@ async fn vault_campaign_compliance_install(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_campaign_compliance_amend(
@@ -4789,7 +5177,7 @@ async fn vault_campaign_compliance_approve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_campaign_compliance_reject(
@@ -4830,7 +5218,7 @@ async fn vault_campaign_compliance_reject(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_campaign_compliance_verify(
@@ -4871,7 +5259,7 @@ async fn vault_campaign_compliance_verify(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_campaign_compliance_result(
@@ -4955,7 +5343,7 @@ async fn vault_campaign_stage_evidence(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_campaign_unsubscribe(
@@ -5107,6 +5495,28 @@ async fn vault_turn_programs_disarm(
         actor,
         class,
         "vault.turn_programs.disarm",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_turn_programs_rebind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.turn_programs.rebind",
         value,
         &producers,
     )?;
@@ -5312,7 +5722,7 @@ async fn vault_weave_digest(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_lens(
@@ -5332,6 +5742,7 @@ async fn vault_weave_lens(
             server,
             auth,
             call.lens_owner(),
+            None,
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -5347,7 +5758,7 @@ async fn vault_weave_lens(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_link_wrong(
@@ -5378,7 +5789,7 @@ async fn vault_weave_link_wrong(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_owner_link_wrong(
@@ -5412,7 +5823,7 @@ async fn vault_weave_owner_link_wrong(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_item_wrong(
@@ -5443,7 +5854,7 @@ async fn vault_weave_item_wrong(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_owner_item_wrong(
@@ -5477,7 +5888,7 @@ async fn vault_weave_owner_item_wrong(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_enqueue(
@@ -5517,7 +5928,7 @@ async fn vault_weave_enqueue(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_schedules_list(
@@ -5557,7 +5968,7 @@ async fn vault_weave_schedules_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_schedules_put(
@@ -5597,7 +6008,7 @@ async fn vault_weave_schedules_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_schedules_clear(
@@ -5637,7 +6048,7 @@ async fn vault_weave_schedules_clear(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_setting_changes_list(
@@ -5678,7 +6089,7 @@ async fn vault_weave_setting_changes_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_setting_changes_answer(
@@ -5719,7 +6130,7 @@ async fn vault_weave_setting_changes_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_setting_changes_undo(
@@ -5760,7 +6171,7 @@ async fn vault_weave_setting_changes_undo(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_digest_feedback_put(
@@ -5801,7 +6212,7 @@ async fn vault_weave_digest_feedback_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_owner_digest_render(
@@ -5842,7 +6253,7 @@ async fn vault_weave_owner_digest_render(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_inbox_concerns_review(
@@ -5882,7 +6293,7 @@ async fn vault_inbox_concerns_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_inbox_lens(
@@ -5922,7 +6333,7 @@ async fn vault_inbox_lens(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_inbox_groups(
@@ -5962,7 +6373,47 @@ async fn vault_inbox_groups(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_inbox_groups_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.inbox.groups.resolve")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.inbox.groups.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.inbox.groups.resolve", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_inbox_groups_resolve(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_weave_digest_render(
@@ -6059,7 +6510,7 @@ async fn vault_skills_bootstrap(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_default_get(
@@ -6093,7 +6544,7 @@ async fn vault_skill_hubs_default_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_restoreDefaults(
@@ -6127,7 +6578,7 @@ async fn vault_skills_restoreDefaults(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_put(
@@ -6158,7 +6609,7 @@ async fn vault_skill_hubs_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_get(
@@ -6189,7 +6640,7 @@ async fn vault_skill_hubs_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_publishers_admit(
@@ -6224,7 +6675,7 @@ async fn vault_skill_hubs_publishers_admit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_publishers_revoke(
@@ -6259,7 +6710,7 @@ async fn vault_skill_hubs_publishers_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_refs_get(
@@ -6293,7 +6744,7 @@ async fn vault_skill_hubs_refs_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skill_hubs_refs_set(
@@ -6327,7 +6778,7 @@ async fn vault_skill_hubs_refs_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_install(
@@ -6358,7 +6809,7 @@ async fn vault_packs_install(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sync(
@@ -6388,7 +6839,7 @@ async fn vault_packs_sync(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_get(
@@ -6418,7 +6869,7 @@ async fn vault_packs_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_import(
@@ -6449,7 +6900,7 @@ async fn vault_skills_import(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_sync(
@@ -6480,7 +6931,7 @@ async fn vault_skills_sync(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_receipts(
@@ -6511,7 +6962,7 @@ async fn vault_skills_receipts(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_convert(
@@ -6542,7 +6993,7 @@ async fn vault_skills_convert(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_get(
@@ -6572,7 +7023,7 @@ async fn vault_skills_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_list(
@@ -6603,7 +7054,7 @@ async fn vault_skills_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_archive(
@@ -6634,7 +7085,7 @@ async fn vault_skills_archive(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_restore(
@@ -6665,7 +7116,7 @@ async fn vault_skills_restore(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_fork(
@@ -6674,8 +7125,8 @@ async fn vault_skills_fork(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.skills.fork")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.skills.fork", &value)?;
@@ -6696,7 +7147,7 @@ async fn vault_skills_fork(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_rules_set(
@@ -6727,7 +7178,7 @@ async fn vault_skills_rules_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_code_auto_install_set(
@@ -6762,7 +7213,7 @@ async fn vault_skills_code_auto_install_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_permissions_approve(
@@ -6797,7 +7248,7 @@ async fn vault_skills_permissions_approve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_start(
@@ -6831,7 +7282,7 @@ async fn vault_skills_optimize_start(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_result(
@@ -6865,7 +7316,7 @@ async fn vault_skills_optimize_result(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_projects_goal_intake_complete(
@@ -6900,7 +7351,7 @@ async fn vault_projects_goal_intake_complete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_projects_goal_get(
@@ -6934,7 +7385,7 @@ async fn vault_projects_goal_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_propose(
@@ -6968,7 +7419,7 @@ async fn vault_skills_optimize_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_measure(
@@ -7002,7 +7453,7 @@ async fn vault_skills_optimize_measure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_score(
@@ -7036,7 +7487,7 @@ async fn vault_skills_optimize_score(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_admit(
@@ -7070,7 +7521,7 @@ async fn vault_skills_optimize_admit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_goal_get(
@@ -7104,7 +7555,7 @@ async fn vault_skills_optimize_goal_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_goal_bind(
@@ -7139,7 +7590,7 @@ async fn vault_skills_optimize_goal_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_preferences_get(
@@ -7174,7 +7625,7 @@ async fn vault_skills_optimize_preferences_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_preferences_set(
@@ -7209,7 +7660,7 @@ async fn vault_skills_optimize_preferences_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_tradeoff_asks(
@@ -7244,7 +7695,7 @@ async fn vault_skills_optimize_tradeoff_asks(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_optimize_tradeoff_asks_pick(
@@ -7284,7 +7735,47 @@ async fn vault_skills_optimize_tradeoff_asks_pick(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_skills_optimize_tradeoff_asks_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.optimize.tradeoff_asks.resolve")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.optimize.tradeoff_asks.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.skills.optimize.tradeoff_asks.resolve",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_skills_optimize_tradeoff_asks_resolve(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_governance_get(
@@ -7318,7 +7809,7 @@ async fn vault_skills_governance_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_governance_set(
@@ -7352,7 +7843,7 @@ async fn vault_skills_governance_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_hooks_bind(
@@ -7383,7 +7874,7 @@ async fn vault_packs_hooks_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_hooks_list(
@@ -7414,7 +7905,7 @@ async fn vault_packs_hooks_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_hooks_grant_set(
@@ -7448,7 +7939,7 @@ async fn vault_packs_hooks_grant_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_hooks_grant_get(
@@ -7482,7 +7973,7 @@ async fn vault_packs_hooks_grant_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_hooks_qualify(
@@ -7516,7 +8007,7 @@ async fn vault_packs_hooks_qualify(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_put(
@@ -7546,7 +8037,7 @@ async fn vault_packs_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_preview(
@@ -7610,7 +8101,7 @@ async fn vault_packs_connector_prepare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_connector_get(
@@ -7644,7 +8135,7 @@ async fn vault_packs_connector_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_connector_qualify(
@@ -7678,7 +8169,7 @@ async fn vault_packs_connector_qualify(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_connector_accept(
@@ -7712,7 +8203,7 @@ async fn vault_packs_connector_accept(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_connector_update(
@@ -7746,7 +8237,7 @@ async fn vault_packs_connector_update(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_connector_grants_get(
@@ -7781,7 +8272,7 @@ async fn vault_packs_connector_grants_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_connector_grants_put(
@@ -7816,7 +8307,7 @@ async fn vault_packs_connector_grants_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_remove(
@@ -7847,7 +8338,7 @@ async fn vault_packs_remove(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_propose(
@@ -7887,7 +8378,7 @@ async fn vault_packs_sections_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_list(
@@ -7927,7 +8418,7 @@ async fn vault_packs_sections_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_grant(
@@ -7967,7 +8458,7 @@ async fn vault_packs_sections_grant(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_revoke(
@@ -8007,7 +8498,7 @@ async fn vault_packs_sections_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_suggest(
@@ -8047,7 +8538,7 @@ async fn vault_packs_sections_suggest(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_suggestions_get(
@@ -8088,7 +8579,7 @@ async fn vault_packs_sections_suggestions_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_sections_suggestions_set(
@@ -8129,7 +8620,7 @@ async fn vault_packs_sections_suggestions_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_chat_completions(
@@ -8165,7 +8656,7 @@ async fn ai_chat_completions(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_proxy_admit(
@@ -8199,7 +8690,7 @@ async fn vault_connectors_proxy_admit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_proxy_revoke_write(
@@ -8234,7 +8725,7 @@ async fn vault_connectors_proxy_revoke_write(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_redraft(
@@ -8269,7 +8760,7 @@ async fn vault_connectors_slates_redraft(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_narrow(
@@ -8309,7 +8800,7 @@ async fn vault_connectors_slates_narrow(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_scope_outcome(
@@ -8344,7 +8835,7 @@ async fn vault_connectors_slates_scope_outcome(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_revision_offers(
@@ -8384,7 +8875,7 @@ async fn vault_connectors_slates_revision_offers(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_defer_revision(
@@ -8424,7 +8915,7 @@ async fn vault_connectors_slates_defer_revision(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_accept_revision(
@@ -8464,7 +8955,7 @@ async fn vault_connectors_slates_accept_revision(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_slates_reask_issuer(
@@ -8499,7 +8990,7 @@ async fn vault_connectors_slates_reask_issuer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_subscriptions_put(
@@ -8534,7 +9025,7 @@ async fn vault_connectors_subscriptions_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_subscriptions_list(
@@ -8569,7 +9060,7 @@ async fn vault_connectors_subscriptions_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_subscriptions_revoke(
@@ -8604,7 +9095,7 @@ async fn vault_connectors_subscriptions_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_setup_prepare(
@@ -8638,7 +9129,7 @@ async fn vault_packs_setup_prepare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_setup_get(
@@ -8669,7 +9160,7 @@ async fn vault_packs_setup_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_setup_answer(
@@ -8703,7 +9194,7 @@ async fn vault_packs_setup_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_packs_setup_verify(
@@ -8737,7 +9228,7 @@ async fn vault_packs_setup_verify(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_authority_audit(
@@ -8768,7 +9259,7 @@ async fn vault_authority_audit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_authority_history_export(
@@ -8802,7 +9293,7 @@ async fn vault_authority_history_export(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_authority_history_import(
@@ -8836,7 +9327,41 @@ async fn vault_authority_history_import(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_authority_clock_repair(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.authority.clock.repair")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.authority.clock.repair", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.authority.clock.repair", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_authority_clock_repair(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_wire_health_thresholds_get(
@@ -8871,7 +9396,7 @@ async fn vault_wire_health_thresholds_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_wire_health_thresholds_set(
@@ -8906,7 +9431,7 @@ async fn vault_wire_health_thresholds_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_slim_policy(
@@ -8937,7 +9462,7 @@ async fn vault_slim_policy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_slim_state(
@@ -8967,7 +9492,7 @@ async fn vault_slim_state(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_slim_resume_step(
@@ -8998,7 +9523,7 @@ async fn vault_slim_resume_step(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_slim_drop_heavy(
@@ -9029,7 +9554,7 @@ async fn vault_slim_drop_heavy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_slim_resume(
@@ -9060,7 +9585,7 @@ async fn vault_slim_resume(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_mesh_path_receipts(
@@ -9094,7 +9619,7 @@ async fn vault_mesh_path_receipts(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_mesh_identity(
@@ -9125,7 +9650,7 @@ async fn vault_mesh_identity(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_mesh_bind_machine(
@@ -9159,7 +9684,7 @@ async fn vault_mesh_bind_machine(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_mesh_set_alpn_grant(
@@ -9193,7 +9718,7 @@ async fn vault_mesh_set_alpn_grant(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_mesh_revoke_machine(
@@ -9227,7 +9752,7 @@ async fn vault_mesh_revoke_machine(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_mesh_dial(
@@ -9257,7 +9782,75 @@ async fn vault_mesh_dial(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbox_diverged_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbox.diverged.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.outbox.diverged.list", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbox_diverged_list(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_outbox_diverged_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.outbox.diverged.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.outbox.diverged.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.outbox.diverged.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_outbox_diverged_answer(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_inspection_resolve(
@@ -9313,7 +9906,7 @@ async fn vault_shared_propose_delete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_propose_transfer(
@@ -9347,7 +9940,7 @@ async fn vault_shared_propose_transfer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_propose_remove_owner(
@@ -9382,7 +9975,7 @@ async fn vault_shared_propose_remove_owner(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_execute(
@@ -9413,7 +10006,7 @@ async fn vault_shared_execute(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_receipt(
@@ -9444,7 +10037,7 @@ async fn vault_shared_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_outcomes(
@@ -9475,7 +10068,7 @@ async fn vault_shared_outcomes(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_deletion(
@@ -9506,7 +10099,7 @@ async fn vault_shared_deletion(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_org_admin_configure(
@@ -9540,7 +10133,7 @@ async fn vault_org_admin_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_org_admin_powers(
@@ -9571,7 +10164,7 @@ async fn vault_org_admin_powers(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_reset_project_access(
@@ -9624,7 +10217,7 @@ async fn vault_members_delegate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_projection(
@@ -9677,7 +10270,7 @@ async fn vault_members_add(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_invitation_slip(
@@ -9711,7 +10304,7 @@ async fn vault_members_invitation_slip(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_change(
@@ -9742,7 +10335,7 @@ async fn vault_members_change(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_remove(
@@ -9773,7 +10366,7 @@ async fn vault_members_remove(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_leave(
@@ -9804,7 +10397,7 @@ async fn vault_members_leave(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_invitations(
@@ -9838,7 +10431,7 @@ async fn vault_members_invitations(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_accept(
@@ -9869,7 +10462,7 @@ async fn vault_members_accept(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_decline(
@@ -9900,7 +10493,7 @@ async fn vault_members_decline(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_members_withdraw_invitation(
@@ -9935,7 +10528,7 @@ async fn vault_members_withdraw_invitation(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_object(
@@ -9966,7 +10559,7 @@ async fn vault_shared_object(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_withdraw_objection(
@@ -10001,7 +10594,7 @@ async fn vault_shared_withdraw_objection(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_started(
@@ -10032,7 +10625,7 @@ async fn vault_shared_started(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_matured(
@@ -10063,7 +10656,7 @@ async fn vault_shared_matured(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_erase_ask(
@@ -10094,7 +10687,7 @@ async fn vault_shared_erase_ask(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_erase_asks(
@@ -10128,7 +10721,7 @@ async fn vault_shared_erase_asks(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_close_erase_ask(
@@ -10162,7 +10755,7 @@ async fn vault_shared_close_erase_ask(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_policy_get(
@@ -10196,7 +10789,7 @@ async fn vault_shared_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_policy_propose(
@@ -10230,7 +10823,7 @@ async fn vault_shared_policy_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_policy_answer(
@@ -10264,7 +10857,7 @@ async fn vault_shared_policy_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shared_policy_change(
@@ -10298,7 +10891,41 @@ async fn vault_shared_policy_change(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_shared_policy_changes(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.shared.policy.changes")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.shared.policy.changes", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.shared.policy.changes", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_shared_policy_changes(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_coreference_link(
@@ -10333,7 +10960,7 @@ async fn vault_federation_coreference_link(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_coreference_confirm(
@@ -10368,7 +10995,7 @@ async fn vault_federation_coreference_confirm(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_coreference_share_consent(
@@ -10408,7 +11035,7 @@ async fn vault_federation_coreference_share_consent(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_coreference_unlink(
@@ -10443,7 +11070,7 @@ async fn vault_federation_coreference_unlink(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_baseline(
@@ -10478,7 +11105,7 @@ async fn vault_federation_burst_baseline(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_policy(
@@ -10512,7 +11139,7 @@ async fn vault_federation_burst_policy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_policy_set(
@@ -10547,7 +11174,7 @@ async fn vault_federation_burst_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_ingress(
@@ -10581,7 +11208,7 @@ async fn vault_federation_burst_ingress(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_disposition(
@@ -10616,7 +11243,7 @@ async fn vault_federation_burst_disposition(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_review(
@@ -10650,7 +11277,7 @@ async fn vault_federation_burst_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_review_release(
@@ -10685,7 +11312,7 @@ async fn vault_federation_burst_review_release(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_review_reject(
@@ -10720,7 +11347,7 @@ async fn vault_federation_burst_review_reject(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_burst_replay(
@@ -10754,7 +11381,7 @@ async fn vault_federation_burst_replay(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_identity(
@@ -10789,7 +11416,7 @@ async fn vault_federation_connect_identity(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_grants_mint(
@@ -10824,7 +11451,7 @@ async fn vault_federation_connect_grants_mint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_offer(
@@ -10858,7 +11485,7 @@ async fn vault_federation_connect_offer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_accept(
@@ -10893,7 +11520,7 @@ async fn vault_federation_connect_accept(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_narrow(
@@ -10928,7 +11555,7 @@ async fn vault_federation_connect_narrow(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_rescope_offer(
@@ -10968,7 +11595,7 @@ async fn vault_federation_connect_rescope_offer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_rescope_accept(
@@ -11008,7 +11635,7 @@ async fn vault_federation_connect_rescope_accept(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_disconnect(
@@ -11043,7 +11670,7 @@ async fn vault_federation_connect_disconnect(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_export(
@@ -11078,7 +11705,7 @@ async fn vault_federation_connect_export(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_federation_connect_rejoin(
@@ -11113,7 +11740,7 @@ async fn vault_federation_connect_rejoin(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_name(
@@ -11147,7 +11774,7 @@ async fn vault_trusted_contacts_name(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_list(
@@ -11181,7 +11808,7 @@ async fn vault_trusted_contacts_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_consent(
@@ -11215,7 +11842,7 @@ async fn vault_trusted_contacts_consent(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_revoke(
@@ -11249,7 +11876,7 @@ async fn vault_trusted_contacts_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_dial_set(
@@ -11284,7 +11911,7 @@ async fn vault_trusted_contacts_dial_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_tier_set(
@@ -11319,7 +11946,7 @@ async fn vault_trusted_contacts_tier_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_concern_asks(
@@ -11354,7 +11981,7 @@ async fn vault_trusted_contacts_concern_asks(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_concern_authorize(
@@ -11394,7 +12021,7 @@ async fn vault_trusted_contacts_concern_authorize(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_concern_propose(
@@ -11440,7 +12067,7 @@ async fn vault_trusted_contacts_concern_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_trusted_contacts_concern_deliver(
@@ -11486,7 +12113,7 @@ async fn vault_trusted_contacts_concern_deliver(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_guests_share(
@@ -11517,7 +12144,7 @@ async fn vault_guests_share(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_guests_export_envelope(
@@ -11551,7 +12178,7 @@ async fn vault_guests_export_envelope(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_guests_reshare(
@@ -11582,7 +12209,7 @@ async fn vault_guests_reshare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_guests_revoke(
@@ -11613,7 +12240,7 @@ async fn vault_guests_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_guests_mint_slip(
@@ -11644,7 +12271,7 @@ async fn vault_guests_mint_slip(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_support_grants_mint(
@@ -11678,7 +12305,7 @@ async fn vault_support_grants_mint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_support_grants_list(
@@ -11712,7 +12339,7 @@ async fn vault_support_grants_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_support_grants_revoke(
@@ -11746,7 +12373,7 @@ async fn vault_support_grants_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_files_sources_attach(
@@ -11780,7 +12407,7 @@ async fn vault_files_sources_attach(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_files_sources_rescan(
@@ -11814,7 +12441,7 @@ async fn vault_files_sources_rescan(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_files_sources_detach(
@@ -11848,7 +12475,7 @@ async fn vault_files_sources_detach(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_files_sources_list(
@@ -11882,7 +12509,7 @@ async fn vault_files_sources_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_files_sources_files(
@@ -11916,7 +12543,7 @@ async fn vault_files_sources_files(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_residence_mode(
@@ -11947,7 +12574,7 @@ async fn vault_residence_mode(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_residence_open(
@@ -11978,7 +12605,7 @@ async fn vault_residence_open(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_residence_index(
@@ -12009,7 +12636,7 @@ async fn vault_residence_index(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_residence_prune(
@@ -12040,7 +12667,7 @@ async fn vault_residence_prune(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_residence_directives(
@@ -12074,7 +12701,7 @@ async fn vault_residence_directives(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_start(
@@ -12105,7 +12732,7 @@ async fn vault_off_record_start(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_status(
@@ -12139,7 +12766,7 @@ async fn vault_off_record_status(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_witness(
@@ -12173,7 +12800,7 @@ async fn vault_off_record_witness(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_discard(
@@ -12207,7 +12834,7 @@ async fn vault_off_record_discard(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_recall(
@@ -12241,7 +12868,7 @@ async fn vault_off_record_recall(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_notes_create(
@@ -12275,7 +12902,7 @@ async fn vault_off_record_notes_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_claims_upsert(
@@ -12309,7 +12936,7 @@ async fn vault_off_record_claims_upsert(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_off_record_execute(
@@ -12343,7 +12970,143 @@ async fn self_off_record_execute(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_results_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.results.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.results.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.results.list", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_results_list(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_results_read(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.results.read")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.results.read", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.results.read", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_results_read(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_waits_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.waits.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.waits.get", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.waits.get", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_waits_get(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn self_off_record_waits_answer(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "self.off_record.waits.answer")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("self.off_record.waits.answer", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "self.off_record.waits.answer", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::self_off_record_waits_answer(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_off_record_rooms_status(
@@ -12688,7 +13451,7 @@ async fn vault_records_erase_preview(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_records_erase_confirm(
@@ -12722,7 +13485,7 @@ async fn vault_records_erase_confirm(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_records_erase_sweep(
@@ -12756,7 +13519,7 @@ async fn vault_records_erase_sweep(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_research_create_child(
@@ -12790,7 +13553,7 @@ async fn vault_research_create_child(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_research_archive(
@@ -12975,7 +13738,7 @@ async fn vault_evals_inventory(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_cohorts_setup(
@@ -13009,7 +13772,7 @@ async fn vault_evals_cohorts_setup(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_author_now(
@@ -13040,7 +13803,7 @@ async fn vault_evals_author_now(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_authoring_result(
@@ -13074,7 +13837,7 @@ async fn vault_evals_authoring_result(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_families(
@@ -13105,7 +13868,7 @@ async fn vault_evals_families(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_families_assign(
@@ -13139,7 +13902,7 @@ async fn vault_evals_families_assign(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_cases(
@@ -13170,7 +13933,7 @@ async fn vault_evals_cases(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_cases_record(
@@ -13204,7 +13967,7 @@ async fn vault_evals_cases_record(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_cohorts(
@@ -13235,7 +13998,7 @@ async fn vault_evals_cohorts(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_cohorts_open(
@@ -13269,7 +14032,7 @@ async fn vault_evals_cohorts_open(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_exposure(
@@ -13300,7 +14063,7 @@ async fn vault_evals_exposure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_sufficiency(
@@ -13334,7 +14097,7 @@ async fn vault_evals_sufficiency(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_labels_blocked(
@@ -13368,7 +14131,7 @@ async fn vault_evals_labels_blocked(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_evals_labels_pick(
@@ -13402,7 +14165,7 @@ async fn vault_evals_labels_pick(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers(
@@ -13436,7 +14199,7 @@ async fn vault_coach_training_offers(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_get(
@@ -13471,7 +14234,7 @@ async fn vault_coach_training_offers_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_trigger(
@@ -13506,7 +14269,7 @@ async fn vault_coach_training_offers_trigger(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_result(
@@ -13541,7 +14304,7 @@ async fn vault_coach_training_offers_result(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_answer(
@@ -13576,7 +14339,7 @@ async fn vault_coach_training_offers_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_undo(
@@ -13611,7 +14374,7 @@ async fn vault_coach_training_offers_undo(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_candidates(
@@ -13651,7 +14414,7 @@ async fn vault_coach_training_offers_candidates(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_candidates_prepare(
@@ -13694,7 +14457,7 @@ async fn vault_coach_training_offers_candidates_prepare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_pilots_prepare(
@@ -13734,7 +14497,7 @@ async fn vault_coach_training_offers_pilots_prepare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_pilots_complete(
@@ -13774,7 +14537,7 @@ async fn vault_coach_training_offers_pilots_complete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_coach_training_offers_pilots_get(
@@ -13814,7 +14577,42 @@ async fn vault_coach_training_offers_pilots_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_coach_training_offers_sources(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.coach.training_offers.sources")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.coach.training_offers.sources", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.coach.training_offers.sources", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_coach_training_offers_sources(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_research_bind(
@@ -13958,7 +14756,7 @@ async fn vault_research_evaluate_split(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_research_mark_invalid(
@@ -14256,7 +15054,7 @@ async fn vault_authority_handoff_alarms(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_authority_handoff_alarms_acknowledge(
@@ -14296,7 +15094,7 @@ async fn vault_authority_handoff_alarms_acknowledge(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_roots_requests_cancel(
@@ -14331,7 +15129,107 @@ async fn vault_roots_requests_cancel(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_roots_requests_create(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.roots.requests.create")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.roots.requests.create", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.roots.requests.create", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_roots_requests_create(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_roots_requests_list(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.roots.requests.list")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.roots.requests.list", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.roots.requests.list", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_roots_requests_list(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_owner_work_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.owner_work.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.owner_work.get", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.owner_work.get", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::vault_owner_work_get(server, auth, facade_door_input(&mut hooks)?)
+                .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cleanup_run(
@@ -14362,7 +15260,7 @@ async fn vault_cleanup_run(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cleanup_review(
@@ -14393,7 +15291,7 @@ async fn vault_cleanup_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_cleanup_decide(
@@ -14424,7 +15322,7 @@ async fn vault_cleanup_decide(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_archive_delete_preview(
@@ -14502,7 +15400,7 @@ async fn vault_usage_events_undecodable(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_usage_events_remove_undecodable(
@@ -14538,7 +15436,41 @@ async fn vault_usage_events_remove_undecodable(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_usage_repair_receipts(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.usage.repair.receipts")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.usage.repair.receipts", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.usage.repair.receipts", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_usage_repair_receipts(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_entities_mention(
@@ -14569,7 +15501,7 @@ async fn vault_entities_mention(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_legal_holds_place(
@@ -14603,7 +15535,7 @@ async fn vault_legal_holds_place(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_legal_holds_widen(
@@ -14637,7 +15569,7 @@ async fn vault_legal_holds_widen(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_legal_holds_list(
@@ -14668,7 +15600,7 @@ async fn vault_legal_holds_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_legal_holds_log(
@@ -14699,7 +15631,7 @@ async fn vault_legal_holds_log(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_legal_holds_lift_and_erase(
@@ -14734,7 +15666,7 @@ async fn vault_legal_holds_lift_and_erase(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_courtesy_delete_send(
@@ -14768,7 +15700,7 @@ async fn vault_courtesy_delete_send(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_courtesy_delete_sent(
@@ -14802,7 +15734,7 @@ async fn vault_courtesy_delete_sent(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_courtesy_delete_incoming(
@@ -14836,7 +15768,7 @@ async fn vault_courtesy_delete_incoming(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_courtesy_delete_answer(
@@ -14870,7 +15802,7 @@ async fn vault_courtesy_delete_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_list(
@@ -14904,7 +15836,7 @@ async fn vault_embedding_spaces_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_declare(
@@ -14938,7 +15870,7 @@ async fn vault_embedding_spaces_declare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_bind(
@@ -14972,7 +15904,7 @@ async fn vault_embedding_spaces_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_one_space(
@@ -15007,7 +15939,7 @@ async fn vault_embedding_spaces_one_space(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_retire(
@@ -15041,7 +15973,7 @@ async fn vault_embedding_spaces_retire(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_move(
@@ -15075,7 +16007,7 @@ async fn vault_embedding_spaces_move(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_move_check(
@@ -15110,7 +16042,7 @@ async fn vault_embedding_spaces_move_check(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_move_approve(
@@ -15145,7 +16077,7 @@ async fn vault_embedding_spaces_move_approve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_move_undo(
@@ -15180,7 +16112,7 @@ async fn vault_embedding_spaces_move_undo(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_move_abandon(
@@ -15215,7 +16147,7 @@ async fn vault_embedding_spaces_move_abandon(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_probes_list(
@@ -15250,7 +16182,7 @@ async fn vault_embedding_spaces_probes_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_probes_put(
@@ -15285,7 +16217,7 @@ async fn vault_embedding_spaces_probes_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_embedding_spaces_probes_delete(
@@ -15320,7 +16252,7 @@ async fn vault_embedding_spaces_probes_delete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_policy_owner_get(
@@ -15351,7 +16283,7 @@ async fn vault_policy_owner_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_policy_owner_configure(
@@ -15385,7 +16317,7 @@ async fn vault_policy_owner_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_policy_owner_row_change(
@@ -15419,7 +16351,7 @@ async fn vault_policy_owner_row_change(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_policy_outbound_decide(
@@ -15460,7 +16392,7 @@ async fn vault_policy_outbound_decide(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_policy_relay_decide(
@@ -15501,7 +16433,7 @@ async fn vault_policy_relay_decide(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_approve_once(
@@ -15535,7 +16467,7 @@ async fn vault_consent_approve_once(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_connectors_calls_approve_once(
@@ -15570,7 +16502,7 @@ async fn vault_connectors_calls_approve_once(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_deny(
@@ -15601,7 +16533,7 @@ async fn vault_consent_deny(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_create_standing_grant(
@@ -15636,7 +16568,7 @@ async fn vault_consent_create_standing_grant(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_registry(
@@ -15667,7 +16599,7 @@ async fn vault_consent_registry(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_failure_signals_held(
@@ -15702,7 +16634,7 @@ async fn vault_consent_failure_signals_held(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_revoke(
@@ -15733,7 +16665,7 @@ async fn vault_consent_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_bypass_grant_warning(
@@ -15768,7 +16700,7 @@ async fn vault_consent_bypass_grant_warning(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_create_bypass_grant(
@@ -15803,7 +16735,7 @@ async fn vault_consent_create_bypass_grant(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_active_bypass_grants(
@@ -15838,7 +16770,7 @@ async fn vault_consent_active_bypass_grants(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_bypassed_effect_receipts(
@@ -15878,7 +16810,7 @@ async fn vault_consent_bypassed_effect_receipts(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_policy(
@@ -15913,7 +16845,7 @@ async fn vault_consent_graduation_policy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_policy_set(
@@ -15948,7 +16880,7 @@ async fn vault_consent_graduation_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_policy_clear(
@@ -15983,7 +16915,7 @@ async fn vault_consent_graduation_policy_clear(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_stats(
@@ -16017,7 +16949,7 @@ async fn vault_consent_graduation_stats(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_outcome(
@@ -16052,7 +16984,7 @@ async fn vault_consent_graduation_outcome(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_offers(
@@ -16087,7 +17019,7 @@ async fn vault_consent_graduation_offers(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_answer(
@@ -16122,7 +17054,7 @@ async fn vault_consent_graduation_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_trust_table(
@@ -16157,7 +17089,7 @@ async fn vault_consent_graduation_trust_table(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_settings_unpin(
@@ -16197,7 +17129,7 @@ async fn vault_consent_graduation_settings_unpin(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consent_graduation_demote(
@@ -16232,7 +17164,7 @@ async fn vault_consent_graduation_demote(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_consent_graduation_demote(
@@ -16285,7 +17217,7 @@ async fn vault_gate_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_gate_policy_put(
@@ -16294,8 +17226,8 @@ async fn vault_gate_policy_put(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.gate.policy.put")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.gate.policy.put", &value)?;
@@ -16316,7 +17248,7 @@ async fn vault_gate_policy_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_gate_policy_propose(
@@ -16369,7 +17301,7 @@ async fn vault_gate_checker_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_gate_checker_set(
@@ -16400,7 +17332,7 @@ async fn vault_gate_checker_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_learning_read(
@@ -16431,7 +17363,7 @@ async fn vault_learning_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_learning_projection(
@@ -16465,7 +17397,7 @@ async fn vault_learning_projection(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_seal_confess(
@@ -16496,7 +17428,7 @@ async fn vault_seal_confess(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_seal_audit(
@@ -16526,7 +17458,7 @@ async fn vault_seal_audit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_seal_receipt(
@@ -16557,7 +17489,7 @@ async fn vault_seal_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_seal_pending(
@@ -16588,7 +17520,7 @@ async fn vault_seal_pending(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_seal_run(
@@ -16618,7 +17550,7 @@ async fn vault_seal_run(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_seal_complete(
@@ -16649,7 +17581,7 @@ async fn vault_seal_complete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_settings_learning(
@@ -16683,7 +17615,7 @@ async fn vault_settings_learning(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_settings_learning_put(
@@ -16717,7 +17649,7 @@ async fn vault_settings_learning_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_settings_learning_clear(
@@ -16751,7 +17683,7 @@ async fn vault_settings_learning_clear(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_secrets_lift_history(
@@ -16785,7 +17717,216 @@ async fn vault_secrets_lift_history(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_register(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.register")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.register", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.register", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_register(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_rotate(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.rotate")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.rotate", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.rotate", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_rotate(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_rewrap(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.rewrap")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.rewrap", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.rewrap", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_rewrap(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.revoke", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.revoke", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_revoke(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_custody_get(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.custody.get")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.custody.get", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.custody.get", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_custody_get(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_secrets_custody_submit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.secrets.custody.submit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.secrets.custody.submit", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.secrets.custody.submit", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_secrets_custody_submit(
+            server,
+            auth,
+            call.surface(),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_widen_proposals(
@@ -16816,7 +17957,7 @@ async fn vault_widen_proposals(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_widen_proposals_approve(
@@ -16850,7 +17991,7 @@ async fn vault_widen_proposals_approve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_widen_proposals_decline(
@@ -16884,7 +18025,7 @@ async fn vault_widen_proposals_decline(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_claims_review(
@@ -16924,7 +18065,7 @@ async fn vault_claims_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_claims_settle(
@@ -16964,7 +18105,7 @@ async fn vault_claims_settle(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_craft_candidates(
@@ -16995,7 +18136,7 @@ async fn vault_craft_candidates(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_craft_candidates_answer(
@@ -17029,7 +18170,7 @@ async fn vault_craft_candidates_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_settings_wake_policy_set(
@@ -17064,7 +18205,7 @@ async fn vault_settings_wake_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_settings_inference_defaults(
@@ -17099,7 +18240,7 @@ async fn vault_settings_inference_defaults(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_settings_inference_defaults_replace(
@@ -17140,7 +18281,7 @@ async fn vault_settings_inference_defaults_replace(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_lenses_propose(
@@ -17160,6 +18301,28 @@ async fn vault_lenses_propose(
         actor,
         class,
         "vault.lenses.propose",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_lenses_propose_from_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.lenses.propose_from_pack",
         value,
         &producers,
     )?;
@@ -17193,7 +18356,7 @@ async fn vault_lenses_activate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_lenses_deactivate(
@@ -17227,7 +18390,7 @@ async fn vault_lenses_deactivate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_lenses_list(
@@ -17256,6 +18419,28 @@ async fn vault_lenses_list(
         actor,
         class,
         "vault.lenses.list",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_lenses_export_pack(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.lenses.export_pack",
         value,
         &producers,
     )?;
@@ -17307,7 +18492,7 @@ async fn vault_lenses_select(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_lenses_resolve(
@@ -17356,7 +18541,7 @@ async fn vault_lenses_resolve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_lenses_result_set_action(
@@ -17434,6 +18619,7 @@ async fn vault_lenses_default(
             server,
             auth,
             call.lens_owner(),
+            None,
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -17449,7 +18635,7 @@ async fn vault_lenses_default(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_disclosure_offer(
@@ -17505,7 +18691,7 @@ async fn vault_disclosure_ceiling_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_disclosure_ceiling_set(
@@ -17539,7 +18725,7 @@ async fn vault_disclosure_ceiling_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_disclosure_ceiling_clear(
@@ -17573,7 +18759,7 @@ async fn vault_disclosure_ceiling_clear(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_disclosure_reveals(
@@ -17607,7 +18793,7 @@ async fn vault_disclosure_reveals(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_disclosure_reveals_answer(
@@ -17642,7 +18828,7 @@ async fn vault_disclosure_reveals_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn reveal(
@@ -17732,7 +18918,7 @@ async fn self_use(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_secrets_materialize(
@@ -17772,7 +18958,7 @@ async fn self_secrets_materialize(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_secrets_renew(
@@ -17812,7 +18998,7 @@ async fn self_secrets_renew(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_secrets_teardown(
@@ -17852,7 +19038,7 @@ async fn self_secrets_teardown(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_secrets_use(
@@ -17892,7 +19078,7 @@ async fn self_secrets_use(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shares_create(
@@ -17945,7 +19131,7 @@ async fn vault_shares_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_shares_view(
@@ -17976,7 +19162,7 @@ async fn vault_shares_view(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn host_compact(
@@ -18016,7 +19202,7 @@ async fn host_compact(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn host_wake(
@@ -18056,7 +19242,7 @@ async fn host_wake(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn host_budget_hit(
@@ -18096,7 +19282,7 @@ async fn host_budget_hit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_hooks_replay(
@@ -18127,7 +19313,7 @@ async fn vault_hooks_replay(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_hooks_regen_due(
@@ -18158,7 +19344,7 @@ async fn vault_hooks_regen_due(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_hooks_regen_get(
@@ -18189,7 +19375,7 @@ async fn vault_hooks_regen_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_hooks_regen_adopt(
@@ -18223,7 +19409,7 @@ async fn vault_hooks_regen_adopt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_publish_approval(
@@ -18258,7 +19444,7 @@ async fn vault_artifacts_publish_approval(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_publish(
@@ -18267,8 +19453,8 @@ async fn vault_artifacts_publish(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.artifacts.publish")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.artifacts.publish", &value)?;
@@ -18292,7 +19478,7 @@ async fn vault_artifacts_publish(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_repoint(
@@ -18301,8 +19487,8 @@ async fn vault_artifacts_repoint(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.artifacts.repoint")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.artifacts.repoint", &value)?;
@@ -18326,7 +19512,7 @@ async fn vault_artifacts_repoint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_pointer(
@@ -18360,7 +19546,7 @@ async fn vault_artifacts_pointer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_unpublish(
@@ -18394,7 +19580,7 @@ async fn vault_artifacts_unpublish(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_link_token(
@@ -18428,7 +19614,7 @@ async fn vault_artifacts_link_token(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_register(
@@ -18463,7 +19649,7 @@ async fn vault_artifacts_live_preview_register(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_read(
@@ -18504,7 +19690,7 @@ async fn vault_artifacts_live_preview_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_close(
@@ -18539,7 +19725,7 @@ async fn vault_artifacts_live_preview_close(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_invite(
@@ -18574,7 +19760,7 @@ async fn vault_artifacts_live_preview_invite(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_revoke_invite(
@@ -18614,7 +19800,7 @@ async fn vault_artifacts_live_preview_revoke_invite(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_share(
@@ -18649,7 +19835,7 @@ async fn vault_artifacts_live_preview_share(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_live_preview_revoke_share(
@@ -18689,7 +19875,7 @@ async fn vault_artifacts_live_preview_revoke_share(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_view(
@@ -19295,7 +20481,7 @@ async fn vault_code_symbols_declare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_symbols_renew(
@@ -19329,7 +20515,7 @@ async fn vault_code_symbols_renew(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_symbols_release(
@@ -19363,7 +20549,7 @@ async fn vault_code_symbols_release(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_proposal_submit(
@@ -19397,7 +20583,7 @@ async fn vault_code_proposal_submit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_conflict_record(
@@ -19431,7 +20617,7 @@ async fn vault_code_conflict_record(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_conflict_view(
@@ -19465,7 +20651,7 @@ async fn vault_code_conflict_view(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_proposal_resolve(
@@ -19499,7 +20685,7 @@ async fn vault_code_proposal_resolve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_proposal_review(
@@ -19533,7 +20719,7 @@ async fn vault_code_proposal_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_proposal_settle(
@@ -19567,7 +20753,7 @@ async fn vault_code_proposal_settle(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_proposal_settlement(
@@ -19601,7 +20787,7 @@ async fn vault_code_proposal_settlement(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_oplog(
@@ -19631,7 +20817,7 @@ async fn vault_code_oplog(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn execute_code(
@@ -19654,7 +20840,17 @@ async fn execute_code(
             facade_door_input(&mut hooks)?,
         )
         .await;
-        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+        Ok::<_, FacadeApiError>((
+            facade_output(output.map_err(|failure| {
+                super::host_doors::support::source_run_refusal(
+                    server,
+                    auth,
+                    Some(listed.as_slice()),
+                    failure,
+                )
+            })?)?,
+            listed,
+        ))
     }
     .await;
     let (output, listed) = match ran {
@@ -19666,7 +20862,7 @@ async fn execute_code(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_model_heal_count(
@@ -19700,7 +20896,7 @@ async fn vault_code_model_heal_count(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_type_diagnostics(
@@ -19734,7 +20930,7 @@ async fn vault_code_type_diagnostics(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_waits_resolve(
@@ -19768,7 +20964,7 @@ async fn vault_code_waits_resolve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_waits_receipt(
@@ -19802,7 +20998,7 @@ async fn vault_code_waits_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_results_status(
@@ -19833,7 +21029,7 @@ async fn vault_results_status(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_results_recover(
@@ -19864,7 +21060,7 @@ async fn vault_results_recover(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_results_read(
@@ -19895,7 +21091,7 @@ async fn vault_results_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_results_slice(
@@ -19926,7 +21122,7 @@ async fn vault_results_slice(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_repo_diff(
@@ -19979,7 +21175,7 @@ async fn vault_code_export(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_export_preview(
@@ -20019,7 +21215,7 @@ async fn vault_code_export_preview(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_export_preview_read(
@@ -20059,7 +21255,7 @@ async fn vault_code_export_preview_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_import(
@@ -20090,7 +21286,7 @@ async fn vault_code_import(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_repos_get(
@@ -20121,7 +21317,7 @@ async fn vault_code_repos_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_forks_get(
@@ -20152,7 +21348,7 @@ async fn vault_code_forks_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_imports_create(
@@ -20186,7 +21382,7 @@ async fn vault_code_imports_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_imports_get(
@@ -20217,7 +21413,7 @@ async fn vault_code_imports_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_ingress_get(
@@ -20248,7 +21444,7 @@ async fn vault_code_ingress_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_register(
@@ -20282,7 +21478,7 @@ async fn vault_code_origin_register(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_mirror_get(
@@ -20316,7 +21512,41 @@ async fn vault_code_origin_mirror_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_code_origin_mirror_plan(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.code.origin.mirror.plan")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.code.origin.mirror.plan", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.code.origin.mirror.plan", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_code_origin_mirror_plan(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_mirror_set(
@@ -20350,7 +21580,7 @@ async fn vault_code_origin_mirror_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_mirror_strategy(
@@ -20385,7 +21615,7 @@ async fn vault_code_origin_mirror_strategy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_mirror_clear(
@@ -20419,7 +21649,7 @@ async fn vault_code_origin_mirror_clear(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_mirror_push(
@@ -20453,7 +21683,7 @@ async fn vault_code_origin_mirror_push(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publish_request(
@@ -20488,7 +21718,7 @@ async fn vault_code_origin_publish_request(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publish_review(
@@ -20523,7 +21753,7 @@ async fn vault_code_origin_publish_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publish_get(
@@ -20557,7 +21787,7 @@ async fn vault_code_origin_publish_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publish_approve(
@@ -20592,7 +21822,7 @@ async fn vault_code_origin_publish_approve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publish_execute(
@@ -20627,7 +21857,7 @@ async fn vault_code_origin_publish_execute(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publish_cancel(
@@ -20662,7 +21892,7 @@ async fn vault_code_origin_publish_cancel(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_authority_get(
@@ -20697,7 +21927,7 @@ async fn vault_code_origin_authority_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_authority_set(
@@ -20732,7 +21962,7 @@ async fn vault_code_origin_authority_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_origin_publications(
@@ -20766,7 +21996,7 @@ async fn vault_code_origin_publications(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_bind(
@@ -20800,7 +22030,7 @@ async fn vault_code_checkout_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_claim(
@@ -20834,7 +22064,7 @@ async fn vault_code_checkout_claim(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_get(
@@ -20868,7 +22098,7 @@ async fn vault_code_checkout_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_renew(
@@ -20902,7 +22132,7 @@ async fn vault_code_checkout_renew(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_reclaim(
@@ -20936,7 +22166,7 @@ async fn vault_code_checkout_reclaim(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_takeover(
@@ -20970,7 +22200,7 @@ async fn vault_code_checkout_takeover(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_publish(
@@ -21004,7 +22234,7 @@ async fn vault_code_checkout_publish(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_settle(
@@ -21038,7 +22268,7 @@ async fn vault_code_checkout_settle(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checkout_teardown(
@@ -21072,7 +22302,7 @@ async fn vault_code_checkout_teardown(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_views_materialize(
@@ -21106,7 +22336,7 @@ async fn vault_code_views_materialize(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_views_get(
@@ -21137,7 +22367,7 @@ async fn vault_code_views_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_views_read(
@@ -21168,7 +22398,7 @@ async fn vault_code_views_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_views_action(
@@ -21202,7 +22432,7 @@ async fn vault_code_views_action(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_views_build(
@@ -21233,7 +22463,7 @@ async fn vault_code_views_build(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_cache_get(
@@ -21264,7 +22494,7 @@ async fn vault_code_cache_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_cache_reuse(
@@ -21295,7 +22525,7 @@ async fn vault_code_cache_reuse(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_snapshots_ingest(
@@ -21329,7 +22559,7 @@ async fn vault_code_snapshots_ingest(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_snapshots_get(
@@ -21363,7 +22593,7 @@ async fn vault_code_snapshots_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_snapshots_read(
@@ -21397,7 +22627,7 @@ async fn vault_code_snapshots_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_symbols_definitions(
@@ -21431,7 +22661,7 @@ async fn vault_code_symbols_definitions(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_enqueue(
@@ -21465,7 +22695,7 @@ async fn vault_code_merge_queue_enqueue(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_stage(
@@ -21499,7 +22729,7 @@ async fn vault_code_merge_queue_stage(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_observe(
@@ -21533,7 +22763,7 @@ async fn vault_code_merge_queue_observe(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_requeue_survivors(
@@ -21573,7 +22803,7 @@ async fn vault_code_merge_queue_requeue_survivors(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_land_reviewed(
@@ -21608,7 +22838,7 @@ async fn vault_code_merge_queue_land_reviewed(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_settle_slow(
@@ -21643,7 +22873,7 @@ async fn vault_code_merge_queue_settle_slow(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_recover(
@@ -21677,7 +22907,7 @@ async fn vault_code_merge_queue_recover(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_init(
@@ -21711,7 +22941,7 @@ async fn vault_code_merge_queue_init(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_check(
@@ -21745,7 +22975,7 @@ async fn vault_code_merge_queue_check(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_diagnose(
@@ -21780,7 +23010,7 @@ async fn vault_code_merge_queue_diagnose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_check_status(
@@ -21815,7 +23045,7 @@ async fn vault_code_merge_queue_check_status(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_checks_get(
@@ -21846,7 +23076,7 @@ async fn vault_code_checks_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_review_policy_get(
@@ -21892,7 +23122,7 @@ async fn vault_code_merge_queue_review_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_review_policy_set(
@@ -21938,7 +23168,7 @@ async fn vault_code_merge_queue_review_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_code_merge_queue_export_green(
@@ -21973,7 +23203,7 @@ async fn vault_code_merge_queue_export_green(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_export(
@@ -22026,7 +23256,7 @@ async fn vault_agents_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_get(
@@ -22056,7 +23286,7 @@ async fn vault_agents_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_update(
@@ -22087,7 +23317,7 @@ async fn vault_agents_update(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_dreaming_get(
@@ -22121,7 +23351,7 @@ async fn vault_agents_dreaming_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_dreaming_set(
@@ -22155,7 +23385,7 @@ async fn vault_agents_dreaming_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_grants_mint(
@@ -22190,7 +23420,7 @@ async fn vault_agents_grants_mint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_grants_revoke(
@@ -22225,7 +23455,7 @@ async fn vault_agents_grants_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_git_push_mint(
@@ -22260,7 +23490,7 @@ async fn vault_repo_git_push_mint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_git_push_revoke(
@@ -22295,7 +23525,77 @@ async fn vault_repo_git_push_revoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_read_grants_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.read_grants.grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.read_grants.grant", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.read_grants.grant", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_read_grants_grant(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_read_grants_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.read_grants.revoke")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.read_grants.revoke", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.connectors.read_grants.revoke", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_read_grants_revoke(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_anchor_bind(
@@ -22326,7 +23626,7 @@ async fn vault_repo_anchor_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_snapshots_get(
@@ -22367,7 +23667,7 @@ async fn vault_repo_snapshots_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_snapshots_read(
@@ -22408,7 +23708,7 @@ async fn vault_repo_snapshots_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_symbols_definitions(
@@ -22449,7 +23749,7 @@ async fn vault_repo_symbols_definitions(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_views_get(
@@ -22490,7 +23790,7 @@ async fn vault_repo_views_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_views_read(
@@ -22531,7 +23831,7 @@ async fn vault_repo_views_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_merge_queue_observe(
@@ -22572,7 +23872,7 @@ async fn vault_repo_merge_queue_observe(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_snapshots_ingest(
@@ -22613,7 +23913,7 @@ async fn vault_repo_snapshots_ingest(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_work_open(
@@ -22654,7 +23954,7 @@ async fn vault_repo_work_open(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_symbols_declare(
@@ -22695,7 +23995,7 @@ async fn vault_repo_symbols_declare(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_symbols_renew(
@@ -22736,7 +24036,7 @@ async fn vault_repo_symbols_renew(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_symbols_release(
@@ -22777,7 +24077,7 @@ async fn vault_repo_symbols_release(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_proposal_submit(
@@ -22818,7 +24118,7 @@ async fn vault_repo_proposal_submit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_merge_queue_enqueue(
@@ -22859,7 +24159,7 @@ async fn vault_repo_merge_queue_enqueue(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_checkout_bind(
@@ -22900,7 +24200,7 @@ async fn vault_repo_checkout_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_repo_export(
@@ -22941,7 +24241,7 @@ async fn vault_repo_export(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_base(
@@ -22972,7 +24272,7 @@ async fn vault_agents_base(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_standing_blocks_configure(
@@ -23007,7 +24307,7 @@ async fn vault_standing_blocks_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_standing_blocks_reconfigure(
@@ -23042,7 +24342,7 @@ async fn vault_standing_blocks_reconfigure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_standing_blocks_get(
@@ -23076,7 +24376,7 @@ async fn vault_standing_blocks_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_standing_blocks_list(
@@ -23110,7 +24410,7 @@ async fn vault_standing_blocks_list(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workflows_save(
@@ -23141,7 +24441,7 @@ async fn vault_workflows_save(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workflows_get(
@@ -23172,7 +24472,7 @@ async fn vault_workflows_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workflows_update(
@@ -23203,7 +24503,7 @@ async fn vault_workflows_update(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workflows_dispatch(
@@ -23237,7 +24537,7 @@ async fn vault_workflows_dispatch(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workflows_dispatch_bound(
@@ -23277,7 +24577,7 @@ async fn vault_workflows_dispatch_bound(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workflows_status(
@@ -23308,7 +24608,7 @@ async fn vault_workflows_status(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_task_types_pin(
@@ -23339,7 +24639,7 @@ async fn vault_task_types_pin(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_task_types_get(
@@ -23370,7 +24670,7 @@ async fn vault_task_types_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_spawn_get(
@@ -23401,7 +24701,7 @@ async fn vault_agents_spawn_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_spawn(
@@ -23432,7 +24732,7 @@ async fn vault_agents_spawn(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_tasks_cancel_force(
@@ -23443,10 +24743,10 @@ async fn vault_tasks_cancel_force(
     let auth = call.auth();
     auth.require(CoreScope::Write)?;
     auth.require_unrestricted_record_scope()?;
-    facade_outside_room_turn(call, "vault.tasks.cancel_force")?;
+    facade_outside_room_turn(call, "vault.tasks.cancel.force")?;
     let value = input?;
-    oneiron::task_verb::sdk::validate_input("vault.tasks.cancel_force", &value)?;
-    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.cancel_force", value).await?;
+    oneiron::task_verb::sdk::validate_input("vault.tasks.cancel.force", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.cancel.force", value).await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_tasks_cancel_force(
             server,
@@ -23466,7 +24766,47 @@ async fn vault_tasks_cancel_force(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_tasks_comm_widen_revoke(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.tasks.comm_widen.revoke")?;
+    let caller = facade_actor(server, auth)?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.tasks.comm_widen.revoke", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.tasks.comm_widen.revoke", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_tasks_comm_widen_revoke(
+            server,
+            auth,
+            caller,
+            Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
+                &server.vault,
+                &hooks,
+            )),
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_branches_get(
@@ -23500,7 +24840,7 @@ async fn vault_runs_branches_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_pause(
@@ -23575,7 +24915,7 @@ async fn vault_consults_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workspace_establish(
@@ -23609,7 +24949,7 @@ async fn vault_workspace_establish(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workspace_members_onboard(
@@ -23644,7 +24984,7 @@ async fn vault_workspace_members_onboard(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_workspace_roster(
@@ -23675,7 +25015,7 @@ async fn vault_workspace_roster(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_agents_export_pack(
@@ -23819,7 +25159,7 @@ async fn vault_artifacts_review_slides(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_ask(
@@ -23850,7 +25190,7 @@ async fn vault_artifacts_ask(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_admit(
@@ -23881,7 +25221,7 @@ async fn vault_artifacts_admit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_critic_review(
@@ -23912,7 +25252,7 @@ async fn vault_critic_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_propose_outline(
@@ -23996,7 +25336,7 @@ async fn vault_artifacts_keep_outline(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_decline_outline(
@@ -24037,7 +25377,7 @@ async fn vault_artifacts_decline_outline(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_design_deck(
@@ -24885,7 +26225,7 @@ async fn vault_projects_confirm(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_projects_roster_write(
@@ -25222,6 +26562,28 @@ async fn vault_conversations_turn_retry(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_conversations_turn_rebind(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unnarrowed_facets()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.conversations.turn.rebind",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
 async fn vault_messages_react(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -25250,7 +26612,7 @@ async fn vault_messages_react(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_rooms_host(
@@ -25571,7 +26933,7 @@ async fn vault_skills_pack_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_outcomes_project(
@@ -25605,7 +26967,7 @@ async fn vault_skills_outcomes_project(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_outcomes_get(
@@ -25639,7 +27001,7 @@ async fn vault_skills_outcomes_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_manifest_read(
@@ -25673,7 +27035,7 @@ async fn vault_models_manifest_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_manifest_replace(
@@ -25707,7 +27069,110 @@ async fn vault_models_manifest_replace(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_settings_web_connector(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.web_connector")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.web_connector", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.settings.web_connector", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_web_connector(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_settings_web_connector_replace(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.settings.web_connector.replace")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.settings.web_connector.replace", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.settings.web_connector.replace", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_settings_web_connector_replace(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_connectors_web_usage(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.connectors.web.usage")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.connectors.web.usage", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.connectors.web.usage", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_connectors_web_usage(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_oneironer_bind(
@@ -25741,7 +27206,7 @@ async fn vault_models_oneironer_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_routes_read(
@@ -25775,7 +27240,7 @@ async fn vault_models_routes_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_routes_replace(
@@ -25809,7 +27274,7 @@ async fn vault_models_routes_replace(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_roles_read(
@@ -25843,7 +27308,7 @@ async fn vault_models_roles_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_roles_invoke(
@@ -25877,7 +27342,7 @@ async fn vault_models_roles_invoke(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_skills_attribution_settle(
@@ -26161,7 +27626,7 @@ async fn ai_steps_submit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_steps_receipt(
@@ -26191,7 +27656,7 @@ async fn ai_steps_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_streams_open(
@@ -26412,7 +27877,7 @@ async fn ai_reply(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_receipts_context(
@@ -26432,6 +27897,28 @@ async fn vault_receipts_context(
         actor,
         class,
         "vault.receipts.context",
+        value,
+        &producers,
+    )?;
+    Ok(FacadeCallOutput::listed(output, &producers))
+}
+async fn vault_receipts_craft_reply_manifest(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    let value = input?;
+    let (actor, class) = facade_actor(server, auth)?;
+    let producers = oneiron::memory::ProducerRows::default();
+    let output = facade_invoke(
+        server,
+        call,
+        actor,
+        class,
+        "vault.receipts.craft_reply_manifest",
         value,
         &producers,
     )?;
@@ -26465,7 +27952,7 @@ async fn ai_voice_asr_open(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_asr_hypothesis(
@@ -26499,7 +27986,7 @@ async fn ai_voice_asr_hypothesis(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_asr_finalize(
@@ -26530,7 +28017,7 @@ async fn ai_voice_asr_finalize(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_asr_close(
@@ -26561,7 +28048,7 @@ async fn ai_voice_asr_close(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_start(
@@ -26591,7 +28078,7 @@ async fn ai_voice_start(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_audio(
@@ -26621,7 +28108,7 @@ async fn ai_voice_audio(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_events(
@@ -26651,7 +28138,7 @@ async fn ai_voice_events(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_ack(
@@ -26681,7 +28168,7 @@ async fn ai_voice_ack(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_usage(
@@ -26711,7 +28198,7 @@ async fn ai_voice_usage(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_tool(
@@ -26751,7 +28238,7 @@ async fn ai_voice_tool(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_end(
@@ -26781,7 +28268,7 @@ async fn ai_voice_end(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_voice_close(
@@ -26811,7 +28298,7 @@ async fn ai_voice_close(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_anonymous_chat(
@@ -26859,7 +28346,7 @@ async fn vault_models_catalog_refresh(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_catalog_get(
@@ -26893,7 +28380,7 @@ async fn vault_models_catalog_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_catalog_diff(
@@ -26927,7 +28414,7 @@ async fn vault_models_catalog_diff(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_trials_nominate(
@@ -26961,7 +28448,7 @@ async fn vault_models_trials_nominate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_trials_get(
@@ -26995,7 +28482,7 @@ async fn vault_models_trials_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_trials_approve(
@@ -27029,7 +28516,7 @@ async fn vault_models_trials_approve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_trials_run(
@@ -27063,7 +28550,41 @@ async fn vault_models_trials_run(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_models_trials_resend_arm(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.models.trials.resend_arm")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.models.trials.resend_arm", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.models.trials.resend_arm", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_models_trials_resend_arm(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_trials_complete(
@@ -27097,7 +28618,7 @@ async fn vault_models_trials_complete(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_bindings_propose(
@@ -27131,7 +28652,7 @@ async fn vault_models_bindings_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_bindings_get(
@@ -27165,7 +28686,7 @@ async fn vault_models_bindings_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_bindings_read(
@@ -27199,7 +28720,7 @@ async fn vault_models_bindings_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_bindings_accept(
@@ -27233,7 +28754,7 @@ async fn vault_models_bindings_accept(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_models_bindings_deny(
@@ -27267,7 +28788,7 @@ async fn vault_models_bindings_deny(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_options(
@@ -27297,7 +28818,7 @@ async fn ai_options(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_image(
@@ -27327,7 +28848,7 @@ async fn ai_image(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_speech(
@@ -27357,7 +28878,7 @@ async fn ai_speech(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_voices_packs_put(
@@ -27388,7 +28909,7 @@ async fn vault_voices_packs_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_voices_render_consent(
@@ -27422,7 +28943,7 @@ async fn vault_voices_render_consent(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_voices_targets_provision(
@@ -27456,7 +28977,7 @@ async fn vault_voices_targets_provision(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_voices_targets_evict(
@@ -27490,7 +29011,7 @@ async fn vault_voices_targets_evict(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_voices_inspect(
@@ -27521,7 +29042,7 @@ async fn vault_voices_inspect(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_voices_lineage(
@@ -27552,7 +29073,7 @@ async fn vault_voices_lineage(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_transcribe(
@@ -27582,7 +29103,7 @@ async fn ai_transcribe(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_embed(
@@ -27612,7 +29133,7 @@ async fn ai_embed(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_video(
@@ -27642,7 +29163,7 @@ async fn ai_video(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_video_poll(
@@ -27672,7 +29193,7 @@ async fn ai_video_poll(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_video_cancel(
@@ -27702,7 +29223,37 @@ async fn ai_video_cancel(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn ai_ask_image(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_lane_record_scope()?;
+    facade_outside_room_turn(call, "ai.ask_image")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("ai.ask_image", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "ai.ask_image", value).await?;
+    let ran = async {
+        let (output, listed) =
+            super::host_doors::ai_ask_image(server, auth, facade_door_input(&mut hooks)?).await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn ai_verdict(
@@ -27732,7 +29283,7 @@ async fn ai_verdict(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_graph_ask(
@@ -27741,8 +29292,8 @@ async fn vault_graph_ask(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unnarrowed_facets()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.graph.ask")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.graph.ask", &value)?;
@@ -27762,7 +29313,7 @@ async fn vault_graph_ask(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_graph_admit(
@@ -27793,7 +29344,7 @@ async fn vault_graph_admit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_create(
@@ -27802,8 +29353,8 @@ async fn vault_questions_create(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.create")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.create", &value)?;
@@ -27824,7 +29375,7 @@ async fn vault_questions_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_edit(
@@ -27833,8 +29384,8 @@ async fn vault_questions_edit(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.edit")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.edit", &value)?;
@@ -27855,7 +29406,7 @@ async fn vault_questions_edit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_pause(
@@ -27864,8 +29415,8 @@ async fn vault_questions_pause(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.pause")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.pause", &value)?;
@@ -27886,7 +29437,7 @@ async fn vault_questions_pause(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_backfill(
@@ -27920,7 +29471,7 @@ async fn vault_questions_backfill(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_read(
@@ -27930,7 +29481,7 @@ async fn vault_questions_read(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.read")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.read", &value)?;
@@ -27951,7 +29502,42 @@ async fn vault_questions_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_questions_outcome_windows(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.questions.outcome_windows")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.questions.outcome_windows", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.questions.outcome_windows", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_questions_outcome_windows(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_answers(
@@ -27961,7 +29547,7 @@ async fn vault_questions_answers(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.answers")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.answers", &value)?;
@@ -27985,7 +29571,7 @@ async fn vault_questions_answers(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_refresh(
@@ -28019,7 +29605,7 @@ async fn vault_questions_refresh(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_outcomes(
@@ -28053,7 +29639,7 @@ async fn vault_questions_outcomes(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_outcomes_project(
@@ -28088,7 +29674,7 @@ async fn vault_questions_outcomes_project(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_questions_schedule(
@@ -28098,7 +29684,7 @@ async fn vault_questions_schedule(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     facade_outside_room_turn(call, "vault.questions.schedule")?;
     let value = input?;
     oneiron::task_verb::sdk::validate_input("vault.questions.schedule", &value)?;
@@ -28122,7 +29708,7 @@ async fn vault_questions_schedule(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_decisions_bands_read(
@@ -28156,7 +29742,7 @@ async fn vault_decisions_bands_read(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_decisions_bands_learn(
@@ -28190,7 +29776,7 @@ async fn vault_decisions_bands_learn(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_decisions_bands_enforce(
@@ -28224,7 +29810,7 @@ async fn vault_decisions_bands_enforce(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_decisions_asks_answer(
@@ -28258,7 +29844,7 @@ async fn vault_decisions_asks_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_decisions_asks_climb(
@@ -28292,7 +29878,42 @@ async fn vault_decisions_asks_climb(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_decisions_asks_confirm_grant(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.decisions.asks.confirm_grant")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.decisions.asks.confirm_grant", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.decisions.asks.confirm_grant", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_decisions_asks_confirm_grant(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_decisions_asks(
@@ -28323,7 +29944,7 @@ async fn self_decisions_asks(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn connector_list(
@@ -28407,7 +30028,7 @@ async fn connector_call(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn connector_schema(
@@ -28574,7 +30195,7 @@ async fn vault_booking_availability(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_booking_book(
@@ -28605,7 +30226,7 @@ async fn vault_booking_book(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_booking_reschedule(
@@ -28639,7 +30260,7 @@ async fn vault_booking_reschedule(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_booking_cancel(
@@ -28670,7 +30291,7 @@ async fn vault_booking_cancel(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_booking_constraint_turn(
@@ -28704,7 +30325,7 @@ async fn vault_booking_constraint_turn(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_booking_page_token(
@@ -28738,7 +30359,7 @@ async fn vault_booking_page_token(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_invite(
@@ -28791,7 +30412,7 @@ async fn calendar_ics_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_ics_poll(
@@ -28822,7 +30443,7 @@ async fn calendar_ics_poll(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_ics_status(
@@ -28853,7 +30474,7 @@ async fn calendar_ics_status(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_passports_read(
@@ -28931,7 +30552,7 @@ async fn calendar_connector_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_connector_get(
@@ -28962,7 +30583,7 @@ async fn calendar_connector_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_connector_pull(
@@ -28996,7 +30617,7 @@ async fn calendar_connector_pull(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_connector_write(
@@ -29030,7 +30651,7 @@ async fn calendar_connector_write(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_connector_kill(
@@ -29064,7 +30685,7 @@ async fn calendar_connector_kill(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_imip_configure(
@@ -29098,7 +30719,7 @@ async fn calendar_imip_configure(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn calendar_imip_get(
@@ -29129,7 +30750,7 @@ async fn calendar_imip_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_create(
@@ -29185,7 +30806,7 @@ async fn vault_calendar_ics_import(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_occurrences(
@@ -29241,7 +30862,7 @@ async fn vault_calendar_instances_move(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_read(
@@ -29385,7 +31006,7 @@ async fn vault_calendar_check_in_due(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_check_in_answer(
@@ -29419,7 +31040,7 @@ async fn vault_calendar_check_in_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_outcome_policy_get(
@@ -29454,7 +31075,7 @@ async fn vault_calendar_outcome_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_outcome_policy_set(
@@ -29489,7 +31110,7 @@ async fn vault_calendar_outcome_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_calendar_transcript_ingest(
@@ -29698,7 +31319,7 @@ async fn vault_writes_critical_confirm_pending(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_writes_critical_confirm_clear(
@@ -29739,7 +31360,7 @@ async fn vault_writes_critical_confirm_clear(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_writes_critical_confirm_decline(
@@ -29780,7 +31401,7 @@ async fn vault_writes_critical_confirm_decline(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_writes_critical_confirm_receipt(
@@ -29821,7 +31442,7 @@ async fn vault_writes_critical_confirm_receipt(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_writes_pending(
@@ -29976,7 +31597,7 @@ async fn vault_vectors_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_search_hybrid(
@@ -30222,8 +31843,8 @@ async fn vault_esign_create(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30245,7 +31866,7 @@ async fn vault_esign_get(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30266,8 +31887,8 @@ async fn vault_esign_links_issue(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30288,8 +31909,8 @@ async fn vault_esign_send_for_signature(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30332,8 +31953,8 @@ async fn vault_esign_remind(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30354,8 +31975,8 @@ async fn vault_esign_void(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30376,8 +31997,8 @@ async fn vault_esign_signing_act(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30398,8 +32019,8 @@ async fn vault_esign_signing_pdf(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30420,8 +32041,8 @@ async fn vault_esign_signing_image(
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
-    auth.require(CoreScope::Write)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_granted(CoreScope::Write)?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30443,7 +32064,7 @@ async fn vault_esign_signing_signature(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30465,7 +32086,7 @@ async fn vault_esign_seal_get(
 ) -> Result<FacadeCallOutput, FacadeApiError> {
     let auth = call.auth();
     auth.require(CoreScope::Read)?;
-    auth.require_unrestricted_record_scope()?;
+    auth.require_lane_record_scope()?;
     let value = input?;
     let (actor, class) = facade_actor(server, auth)?;
     let producers = oneiron::memory::ProducerRows::default();
@@ -30534,7 +32155,7 @@ async fn vault_conversations_turns_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_conversations_records_append(
@@ -30569,7 +32190,7 @@ async fn vault_conversations_records_append(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_batch(
@@ -30599,7 +32220,7 @@ async fn vault_batch(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_put(
@@ -31316,7 +32937,7 @@ async fn vault_artifacts_body_deck_preview(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_artifacts_append(
@@ -31478,7 +33099,7 @@ async fn vault_runs_step(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_checkpoint(
@@ -31518,7 +33139,7 @@ async fn vault_runs_checkpoint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_turn_programs_admission(
@@ -31558,7 +33179,7 @@ async fn vault_turn_programs_admission(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_program(
@@ -31598,7 +33219,7 @@ async fn vault_runs_program(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_program_step(
@@ -31638,7 +33259,7 @@ async fn vault_runs_program_step(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_program_checkpoint(
@@ -31678,7 +33299,7 @@ async fn vault_runs_program_checkpoint(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_program_hold_release(
@@ -31713,7 +33334,7 @@ async fn vault_runs_program_hold_release(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_home_get(
@@ -31747,7 +33368,7 @@ async fn vault_consolidation_home_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_home_pick(
@@ -31782,7 +33403,7 @@ async fn vault_consolidation_home_pick(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_lineage(
@@ -31816,7 +33437,47 @@ async fn vault_consolidation_lineage(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_consolidation_candidate_decisions(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consolidation.candidate_decisions")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consolidation.candidate_decisions", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consolidation.candidate_decisions",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_consolidation_candidate_decisions(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_promote(
@@ -31856,7 +33517,7 @@ async fn vault_consolidation_promote(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_pin(
@@ -31896,7 +33557,7 @@ async fn vault_consolidation_pin(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_frontier(
@@ -31936,7 +33597,7 @@ async fn vault_consolidation_frontier(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_accounting(
@@ -31976,7 +33637,7 @@ async fn vault_consolidation_accounting(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_consolidation_evidence(
@@ -32016,7 +33677,7 @@ async fn vault_consolidation_evidence(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_evidence(
@@ -32047,7 +33708,7 @@ async fn vault_sieve_evidence(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_evidence_replay(
@@ -32081,7 +33742,7 @@ async fn vault_sieve_evidence_replay(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_cadence(
@@ -32112,7 +33773,7 @@ async fn vault_sieve_cadence(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_settlements(
@@ -32146,7 +33807,7 @@ async fn vault_sieve_settlements(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_settlements_get(
@@ -32180,7 +33841,7 @@ async fn vault_sieve_settlements_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_queue(
@@ -32211,7 +33872,7 @@ async fn vault_sieve_queue(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_retained(
@@ -32242,7 +33903,7 @@ async fn vault_sieve_retained(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_receipts(
@@ -32273,7 +33934,7 @@ async fn vault_sieve_receipts(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_policy(
@@ -32304,7 +33965,7 @@ async fn vault_sieve_policy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_policy_set(
@@ -32335,7 +33996,7 @@ async fn vault_sieve_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_recipe_policy(
@@ -32369,7 +34030,7 @@ async fn vault_sieve_recipe_policy(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_recipe_policy_set(
@@ -32403,7 +34064,7 @@ async fn vault_sieve_recipe_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_lease(
@@ -32434,7 +34095,7 @@ async fn vault_sieve_lease(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_sieve_lease_refill(
@@ -32468,7 +34129,7 @@ async fn vault_sieve_lease_refill(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_free_time_policy_get(
@@ -32502,7 +34163,7 @@ async fn vault_free_time_policy_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_free_time_policy_set(
@@ -32521,6 +34182,7 @@ async fn vault_free_time_policy_set(
         let (output, listed) = super::host_doors::vault_free_time_policy_set(
             server,
             auth,
+            call.surface(),
             facade_door_input(&mut hooks)?,
         )
         .await;
@@ -32536,7 +34198,41 @@ async fn vault_free_time_policy_set(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_free_time_policy_set_as(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.free_time.policy.set_as")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.free_time.policy.set_as", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.free_time.policy.set_as", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_free_time_policy_set_as(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_free_time_cycles(
@@ -32567,7 +34263,7 @@ async fn vault_free_time_cycles(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_free_time_cycle(
@@ -32598,7 +34294,7 @@ async fn vault_free_time_cycle(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_claims_vet(
@@ -32638,7 +34334,7 @@ async fn vault_claims_vet(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_claims_vetting(
@@ -32678,7 +34374,7 @@ async fn vault_claims_vetting(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_memory_signal_extraction(
@@ -32719,7 +34415,7 @@ async fn vault_memory_signal_extraction(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_memory_signal_extraction_result(
@@ -32761,7 +34457,7 @@ async fn vault_memory_signal_extraction_result(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_claims_seed(
@@ -32819,7 +34515,7 @@ async fn vault_channel_identities_provision(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_bind(
@@ -32853,7 +34549,7 @@ async fn vault_channel_identities_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_fulfill(
@@ -32888,7 +34584,7 @@ async fn vault_channel_identities_fulfill(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_rotate(
@@ -32923,7 +34619,7 @@ async fn vault_channel_identities_rotate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_release(
@@ -32958,7 +34654,7 @@ async fn vault_channel_identities_release(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_route_inbound(
@@ -32998,7 +34694,7 @@ async fn vault_channel_identities_route_inbound(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_get(
@@ -33082,7 +34778,7 @@ async fn vault_channel_identities_selection_update(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_channel_identities_select(
@@ -33183,7 +34879,7 @@ async fn vault_delivery_window_policy_put(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_delivery_window_policy_list(
@@ -33240,7 +34936,7 @@ async fn vault_delivery_window_policy_retract(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_delivery_window_evaluate(
@@ -33324,7 +35020,7 @@ async fn vault_summaries_create(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_read(
@@ -33408,7 +35104,7 @@ async fn vault_summaries_keep(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_edit(
@@ -33448,7 +35144,7 @@ async fn vault_summaries_edit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_patch(
@@ -33488,7 +35184,7 @@ async fn vault_summaries_patch(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_regenerate(
@@ -33528,7 +35224,7 @@ async fn vault_summaries_regenerate(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_proposals_read(
@@ -33591,7 +35287,7 @@ async fn vault_summaries_proposals_merge(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_proposals_switch(
@@ -33632,7 +35328,7 @@ async fn vault_summaries_proposals_switch(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_summaries_proposals_reject(
@@ -33673,7 +35369,7 @@ async fn vault_summaries_proposals_reject(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_bless_brief_kind(
@@ -33751,7 +35447,7 @@ async fn vault_notes_follow_citation(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_create(
@@ -34099,7 +35795,7 @@ async fn vault_notes_history_purge(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_history_purge_execute(
@@ -34134,7 +35830,7 @@ async fn vault_notes_history_purge_execute(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_history_purge_receipts(
@@ -34169,7 +35865,7 @@ async fn vault_notes_history_purge_receipts(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_editor_bind(
@@ -34209,7 +35905,7 @@ async fn vault_notes_editor_bind(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_editor_close(
@@ -34249,7 +35945,7 @@ async fn vault_notes_editor_close(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_notes_edit(
@@ -34506,7 +36202,7 @@ async fn vault_tasks_linear_mapping_edit(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_tasks_linear_provenance(
@@ -34582,7 +36278,7 @@ async fn self_run_attach(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_folds_describe(
@@ -34622,7 +36318,7 @@ async fn self_folds_describe(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_history(
@@ -34662,7 +36358,7 @@ async fn self_history(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_review(
@@ -34702,7 +36398,7 @@ async fn vault_runs_review(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_settle(
@@ -34743,7 +36439,7 @@ async fn vault_runs_settle(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_runs_settlement(
@@ -34783,7 +36479,7 @@ async fn vault_runs_settlement(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_revert_run(
@@ -34824,7 +36520,7 @@ async fn vault_revert_run(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_merge(
@@ -34859,7 +36555,7 @@ async fn vault_identity_merge(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_split(
@@ -34894,7 +36590,7 @@ async fn vault_identity_split(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_facet(
@@ -34929,7 +36625,7 @@ async fn vault_identity_facet(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_assert_distinct(
@@ -34964,7 +36660,7 @@ async fn vault_identity_assert_distinct(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_propose(
@@ -34999,7 +36695,7 @@ async fn vault_identity_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_undo(
@@ -35034,7 +36730,7 @@ async fn vault_identity_undo(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_resolve(
@@ -35065,7 +36761,7 @@ async fn vault_identity_resolve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_events_get(
@@ -35099,7 +36795,7 @@ async fn vault_identity_events_get(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_proposals_resolve(
@@ -35135,7 +36831,7 @@ async fn vault_identity_proposals_resolve(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_identity_proposals_for_pair(
@@ -35170,7 +36866,146 @@ async fn vault_identity_proposals_for_pair(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_custody_members_drain_begin(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.custody.members.drain.begin")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.begin", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.custody.members.drain.begin", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_custody_members_drain_begin(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_custody_members_drain_commit(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.custody.members.drain.commit")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.commit", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.custody.members.drain.commit", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_custody_members_drain_commit(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_custody_members_drain_folder(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.custody.members.drain.folder")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.custody.members.drain.folder", &value)?;
+    let mut hooks =
+        facade_hooks_pre(server, call, "vault.custody.members.drain.folder", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_custody_members_drain_folder(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_custody_members_reenrol(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.custody.members.reenrol")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.custody.members.reenrol", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.custody.members.reenrol", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_custody_members_reenrol(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn connector_answer(
@@ -35210,7 +37045,7 @@ async fn connector_answer(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_open(
@@ -35251,7 +37086,7 @@ async fn self_browser_open(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_observe(
@@ -35292,7 +37127,7 @@ async fn self_browser_observe(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_find(
@@ -35333,7 +37168,7 @@ async fn self_browser_find(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_click(
@@ -35374,7 +37209,7 @@ async fn self_browser_click(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_click_at(
@@ -35415,7 +37250,7 @@ async fn self_browser_click_at(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_type(
@@ -35456,7 +37291,7 @@ async fn self_browser_type(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_select(
@@ -35497,7 +37332,7 @@ async fn self_browser_select(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_wait_for(
@@ -35538,7 +37373,7 @@ async fn self_browser_wait_for(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_expect(
@@ -35579,7 +37414,7 @@ async fn self_browser_expect(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_screenshot(
@@ -35620,7 +37455,7 @@ async fn self_browser_screenshot(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_view(
@@ -35661,7 +37496,7 @@ async fn self_browser_view(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_crop(
@@ -35702,7 +37537,7 @@ async fn self_browser_crop(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_zoom(
@@ -35743,7 +37578,7 @@ async fn self_browser_zoom(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_batch(
@@ -35786,7 +37621,7 @@ async fn self_browser_batch(
     Ok(FacadeCallOutput {
         value: facade_hooks_post_counted(server, hooks, "self.browser.batch", output, decided)
             .await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_library_find(
@@ -35827,7 +37662,7 @@ async fn self_browser_library_find(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_library_draft(
@@ -35868,7 +37703,7 @@ async fn self_browser_library_draft(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_demonstration_start(
@@ -35910,7 +37745,7 @@ async fn self_browser_demonstration_start(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_demonstration_stop(
@@ -35952,7 +37787,7 @@ async fn self_browser_demonstration_stop(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_library_propose(
@@ -35993,7 +37828,7 @@ async fn self_browser_library_propose(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_library_retire(
@@ -36034,7 +37869,7 @@ async fn self_browser_library_retire(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_library_retired(
@@ -36075,7 +37910,7 @@ async fn self_browser_library_retired(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_library_run(
@@ -36124,7 +37959,7 @@ async fn self_browser_library_run(
             decided,
         )
         .await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_handover(
@@ -36165,7 +38000,7 @@ async fn self_browser_handover(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_browser_switch_engine(
@@ -36206,7 +38041,7 @@ async fn self_browser_switch_engine(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn vault_claims_supersede(
@@ -36241,7 +38076,7 @@ async fn vault_claims_supersede(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_fold(
@@ -36281,7 +38116,7 @@ async fn self_fold(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_compact(
@@ -36321,7 +38156,7 @@ async fn self_compact(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_unfold(
@@ -36361,7 +38196,7 @@ async fn self_unfold(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_folds(
@@ -36401,7 +38236,7 @@ async fn self_folds(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn tasks_refuse(
@@ -36436,7 +38271,7 @@ async fn tasks_refuse(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_report_blocked(
@@ -36471,7 +38306,7 @@ async fn self_report_blocked(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_agents_spawn(
@@ -36506,7 +38341,7 @@ async fn self_agents_spawn(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_leader_split(
@@ -36541,7 +38376,7 @@ async fn self_leader_split(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_skills_call(
@@ -36576,7 +38411,7 @@ async fn self_skills_call(
     };
     Ok(FacadeCallOutput {
         value: facade_hooks_post(server, hooks, output).await?,
-        rows: super::host_doors::ListedRows::rows(listed),
+        rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
 async fn self_focus_refresh(
@@ -36597,6 +38432,7 @@ async fn self_focus_refresh(
             super::host_doors::self_focus_refresh(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36637,6 +38473,7 @@ async fn self_focus_subscribe(
             super::host_doors::self_focus_subscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36677,6 +38514,7 @@ async fn self_focus_unsubscribe(
             super::host_doors::self_focus_unsubscribe(
                 server,
                 auth,
+                call.session()?,
                 caller,
                 Some(oneiron::task_verb::verb_hook_boundary::door_invocation(
                     &server.vault,
@@ -36713,1699 +38551,2540 @@ pub(super) fn nested_readable_paths(verb: &str) -> &'static [&'static str] {
 /// the one verb table every server transport serves. A board, browser or run
 /// row is refused by the context it needs, which no facade call carries; any
 /// other name is refused as an unknown verb, with its correction when it is a
-/// canonical verb under the wrong root.
+/// canonical verb under the wrong root. An owner's erase or revoke, as the
+/// engine classifies the verb and its own input, reads the restriction-only
+/// clock through its owner proof, hooks and door (FIX 11201).
 pub(crate) async fn call_verb(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
     verb: &str,
     input: Result<serde_json::Value, FacadeApiError>,
 ) -> Result<FacadeCallOutput, FacadeApiError> {
+    let restrictive = super::clock_ingress::restrictive_call(server, verb, input.as_ref().ok());
+    super::clock_ingress::scoped(restrictive, call_verb_row(server, call, verb, input)).await
+}
+/// [`call_verb`]'s row for `verb`. Each row's future is on the heap, so this
+/// one stays small however large its largest row is (FIX 12072).
+async fn call_verb_row(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
     match verb {
-        "vault.commitments.create" => vault_commitments_create(server, call, input).await,
-        "vault.commitments.get" => vault_commitments_get(server, call, input).await,
-        "vault.commitments.instances" => vault_commitments_instances(server, call, input).await,
-        "vault.commitments.proposals" => vault_commitments_proposals(server, call, input).await,
-        "vault.commitments.fulfill" => vault_commitments_fulfill(server, call, input).await,
-        "vault.commitments.release" => vault_commitments_release(server, call, input).await,
-        "vault.commitments.supersede" => vault_commitments_supersede(server, call, input).await,
-        "fetch" => fetch(server, call, input).await,
-        "crawl" => crawl(server, call, input).await,
-        "report" => report(server, call, input).await,
-        "feedback.preview" => feedback_preview(server, call, input).await,
-        "feedback.send" => feedback_send(server, call, input).await,
-        "vault.reports.disclosure" => vault_reports_disclosure(server, call, input).await,
-        "vault.reports.route" => vault_reports_route(server, call, input).await,
-        "vault.reports.outbound" => vault_reports_outbound(server, call, input).await,
-        "self.focus.wakes" => self_focus_wakes(server, call, input).await,
-        "self.focus.scratchpad.recall" => self_focus_scratchpad_recall(server, call, input).await,
-        "self.focus.scratchpad.append" => self_focus_scratchpad_append(server, call, input).await,
-        "self.focus.scratchpad.seal" => self_focus_scratchpad_seal(server, call, input).await,
-        "self.memory.diary" => self_memory_diary(server, call, input).await,
-        "self.memory.diary.reads" => self_memory_diary_reads(server, call, input).await,
-        "self.memory.diary.review" => self_memory_diary_review(server, call, input).await,
-        "self.standing.get" => self_standing_get(server, call, input).await,
-        "self.standing.list" => self_standing_list(server, call, input).await,
-        "self.standing.edit" => self_standing_edit(server, call, input).await,
-        "self.identity.answer" => self_identity_answer(server, call, input).await,
-        "self.identity.settle" => self_identity_settle(server, call, input).await,
-        "self.inbox.list" => self_inbox_list(server, call, input).await,
-        "self.inbox.mark" => self_inbox_mark(server, call, input).await,
-        "self.inbox.concern" => self_inbox_concern(server, call, input).await,
-        "self.inbox.concern.outcome" => self_inbox_concern_outcome(server, call, input).await,
-        "self.inbox.concern.move" => self_inbox_concern_move(server, call, input).await,
-        "vault.diagnostics.list" => vault_diagnostics_list(server, call, input).await,
-        "vault.diagnostics.get" => vault_diagnostics_get(server, call, input).await,
-        "vault.coach.inspect" => vault_coach_inspect(server, call, input).await,
-        "vault.people.list" => vault_people_list(server, call, input).await,
-        "vault.people.get" => vault_people_get(server, call, input).await,
-        "vault.people.create" => vault_people_create(server, call, input).await,
+        "vault.commitments.create" => Box::pin(vault_commitments_create(server, call, input)).await,
+        "vault.commitments.get" => Box::pin(vault_commitments_get(server, call, input)).await,
+        "vault.commitments.instances" => {
+            Box::pin(vault_commitments_instances(server, call, input)).await
+        }
+        "vault.commitments.proposals" => {
+            Box::pin(vault_commitments_proposals(server, call, input)).await
+        }
+        "vault.commitments.fulfill" => {
+            Box::pin(vault_commitments_fulfill(server, call, input)).await
+        }
+        "vault.commitments.release" => {
+            Box::pin(vault_commitments_release(server, call, input)).await
+        }
+        "vault.commitments.supersede" => {
+            Box::pin(vault_commitments_supersede(server, call, input)).await
+        }
+        "fetch" => Box::pin(fetch(server, call, input)).await,
+        "crawl" => Box::pin(crawl(server, call, input)).await,
+        "report" => Box::pin(report(server, call, input)).await,
+        "feedback.preview" => Box::pin(feedback_preview(server, call, input)).await,
+        "feedback.send" => Box::pin(feedback_send(server, call, input)).await,
+        "vault.reports.disclosure" => Box::pin(vault_reports_disclosure(server, call, input)).await,
+        "vault.reports.route" => Box::pin(vault_reports_route(server, call, input)).await,
+        "vault.reports.outbound" => Box::pin(vault_reports_outbound(server, call, input)).await,
+        "self.focus.wakes" => Box::pin(self_focus_wakes(server, call, input)).await,
+        "self.focus.scratchpad.recall" => {
+            Box::pin(self_focus_scratchpad_recall(server, call, input)).await
+        }
+        "self.focus.scratchpad.append" => {
+            Box::pin(self_focus_scratchpad_append(server, call, input)).await
+        }
+        "self.focus.scratchpad.seal" => {
+            Box::pin(self_focus_scratchpad_seal(server, call, input)).await
+        }
+        "self.memory.diary" => Box::pin(self_memory_diary(server, call, input)).await,
+        "self.memory.diary.reads" => Box::pin(self_memory_diary_reads(server, call, input)).await,
+        "self.memory.diary.review" => Box::pin(self_memory_diary_review(server, call, input)).await,
+        "self.standing.get" => Box::pin(self_standing_get(server, call, input)).await,
+        "self.standing.list" => Box::pin(self_standing_list(server, call, input)).await,
+        "self.standing.edit" => Box::pin(self_standing_edit(server, call, input)).await,
+        "self.identity.answer" => Box::pin(self_identity_answer(server, call, input)).await,
+        "self.identity.settle" => Box::pin(self_identity_settle(server, call, input)).await,
+        "self.inbox.list" => Box::pin(self_inbox_list(server, call, input)).await,
+        "self.inbox.mark" => Box::pin(self_inbox_mark(server, call, input)).await,
+        "self.inbox.concern" => Box::pin(self_inbox_concern(server, call, input)).await,
+        "self.inbox.concern.outcome" => {
+            Box::pin(self_inbox_concern_outcome(server, call, input)).await
+        }
+        "self.inbox.concern.move" => Box::pin(self_inbox_concern_move(server, call, input)).await,
+        "vault.diagnostics.list" => Box::pin(vault_diagnostics_list(server, call, input)).await,
+        "vault.diagnostics.get" => Box::pin(vault_diagnostics_get(server, call, input)).await,
+        "vault.coach.inspect" => Box::pin(vault_coach_inspect(server, call, input)).await,
+        "vault.people.list" => Box::pin(vault_people_list(server, call, input)).await,
+        "vault.people.get" => Box::pin(vault_people_get(server, call, input)).await,
+        "vault.people.create" => Box::pin(vault_people_create(server, call, input)).await,
         "vault.entities.look_before_mint" => {
-            vault_entities_look_before_mint(server, call, input).await
+            Box::pin(vault_entities_look_before_mint(server, call, input)).await
         }
-        "vault.identity.mention" => vault_identity_mention(server, call, input).await,
-        "vault.shape.read" => vault_shape_read(server, call, input).await,
-        "vault.shape.plan" => vault_shape_plan(server, call, input).await,
-        "vault.shape.apply" => vault_shape_apply(server, call, input).await,
-        "self.message" => self_message(server, call, input).await,
-        "self.grants.ask" => self_grants_ask(server, call, input).await,
+        "vault.identity.mention" => Box::pin(vault_identity_mention(server, call, input)).await,
+        "vault.shape.read" => Box::pin(vault_shape_read(server, call, input)).await,
+        "vault.shape.plan" => Box::pin(vault_shape_plan(server, call, input)).await,
+        "vault.shape.apply" => Box::pin(vault_shape_apply(server, call, input)).await,
+        "vault.shape.plan.card" => Box::pin(vault_shape_plan_card(server, call, input)).await,
+        "vault.shape.items.receipt" => {
+            Box::pin(vault_shape_items_receipt(server, call, input)).await
+        }
+        "vault.shape.groups" => Box::pin(vault_shape_groups(server, call, input)).await,
+        "vault.shape.groups.resolve" => {
+            Box::pin(vault_shape_groups_resolve(server, call, input)).await
+        }
+        "self.message" => Box::pin(self_message(server, call, input)).await,
+        "self.grants.ask" => Box::pin(self_grants_ask(server, call, input)).await,
+        "self.grants.asked" => Box::pin(self_grants_asked(server, call, input)).await,
         "vault.companions.access_requests.answer" => {
-            vault_companions_access_requests_answer(server, call, input).await
+            Box::pin(vault_companions_access_requests_answer(server, call, input)).await
         }
-        "vault.personas.preview" => vault_personas_preview(server, call, input).await,
-        "vault.personas.export" => vault_personas_export(server, call, input).await,
-        "vault.personas.edit" => vault_personas_edit(server, call, input).await,
-        "self.memory.diary.query" => self_memory_diary_query(server, call, input).await,
-        "cancel" => cancel(server, call, input).await,
-        "steer" => steer(server, call, input).await,
-        "describe" => describe(server, call, input).await,
-        "tasks.create" => tasks_create(server, call, input).await,
-        "tasks.wave" => tasks_wave(server, call, input).await,
-        "vault.fanout.spawn" => vault_fanout_spawn(server, call, input).await,
-        "vault.fanout.slots" => vault_fanout_slots(server, call, input).await,
-        "vault.fanout.launch" => vault_fanout_launch(server, call, input).await,
-        "self.budget" => self_budget(server, call, input).await,
-        "self.budget.land" => self_budget_land(server, call, input).await,
-        "vault.budgets.lease.open" => vault_budgets_lease_open(server, call, input).await,
-        "vault.budgets.lease" => vault_budgets_lease(server, call, input).await,
-        "vault.budgets.lease.top_up" => vault_budgets_lease_top_up(server, call, input).await,
-        "vault.budgets.hold" => vault_budgets_hold(server, call, input).await,
-        "vault.budgets.hold.resume" => vault_budgets_hold_resume(server, call, input).await,
-        "vault.budgets.local" => vault_budgets_local(server, call, input).await,
-        "vault.budgets.reservations" => vault_budgets_reservations(server, call, input).await,
-        "vault.budgets.settlements" => vault_budgets_settlements(server, call, input).await,
-        "vault.budgets.rsi.configure" => vault_budgets_rsi_configure(server, call, input).await,
-        "vault.budgets.rsi" => vault_budgets_rsi(server, call, input).await,
-        "vault.budgets.rsi.top_up" => vault_budgets_rsi_top_up(server, call, input).await,
-        "vault.budgets.rsi.hold" => vault_budgets_rsi_hold(server, call, input).await,
-        "vault.budgets.rsi.hold.resume" => vault_budgets_rsi_hold_resume(server, call, input).await,
-        "vault.runners.seats.quotas" => vault_runners_seats_quotas(server, call, input).await,
-        "vault.runners.seats.top_up" => vault_runners_seats_top_up(server, call, input).await,
-        "vault.fanout.resume" => vault_fanout_resume(server, call, input).await,
-        "vault.fanout.resume_as" => vault_fanout_resume_as(server, call, input).await,
-        "vault.fanout.ack" => vault_fanout_ack(server, call, input).await,
-        "tasks.update" => tasks_update(server, call, input).await,
-        "tasks.accept" => tasks_accept(server, call, input).await,
-        "tasks.redo" => tasks_redo(server, call, input).await,
-        "vault.commit_message" => vault_commit_message(server, call, input).await,
-        "vault.begin_message_stream" => vault_begin_message_stream(server, call, input).await,
-        "vault.append_to_stream" => vault_append_to_stream(server, call, input).await,
-        "vault.flush_stream" => vault_flush_stream(server, call, input).await,
-        "vault.finalize_stream" => vault_finalize_stream(server, call, input).await,
-        "vault.cancel_stream" => vault_cancel_stream(server, call, input).await,
-        "vault.message_stream_partial" => vault_message_stream_partial(server, call, input).await,
-        "vault.messages.durability" => vault_messages_durability(server, call, input).await,
-        "vault.witness" => vault_witness(server, call, input).await,
-        "vault.claims.upsert" => vault_claims_upsert(server, call, input).await,
-        "vault.recall" => vault_recall(server, call, input).await,
-        "vault.retrieval.aging.get" => vault_retrieval_aging_get(server, call, input).await,
+        "self.grants.answer" => Box::pin(self_grants_answer(server, call, input)).await,
+        "vault.personas.preview" => Box::pin(vault_personas_preview(server, call, input)).await,
+        "vault.personas.export" => Box::pin(vault_personas_export(server, call, input)).await,
+        "vault.personas.edit" => Box::pin(vault_personas_edit(server, call, input)).await,
+        "self.memory.diary.query" => Box::pin(self_memory_diary_query(server, call, input)).await,
+        "cancel" => Box::pin(cancel(server, call, input)).await,
+        "steer" => Box::pin(steer(server, call, input)).await,
+        "describe" => Box::pin(describe(server, call, input)).await,
+        "tasks.create" => Box::pin(tasks_create(server, call, input)).await,
+        "tasks.wave" => Box::pin(tasks_wave(server, call, input)).await,
+        "vault.fanout.spawn" => Box::pin(vault_fanout_spawn(server, call, input)).await,
+        "vault.fanout.slots" => Box::pin(vault_fanout_slots(server, call, input)).await,
+        "vault.fanout.launch" => Box::pin(vault_fanout_launch(server, call, input)).await,
+        "self.budget" => Box::pin(self_budget(server, call, input)).await,
+        "self.budget.land" => Box::pin(self_budget_land(server, call, input)).await,
+        "self.billing.account.file" => {
+            Box::pin(self_billing_account_file(server, call, input)).await
+        }
+        "vault.budgets.lease.open" => Box::pin(vault_budgets_lease_open(server, call, input)).await,
+        "vault.budgets.lease" => Box::pin(vault_budgets_lease(server, call, input)).await,
+        "vault.budgets.lease.top_up" => {
+            Box::pin(vault_budgets_lease_top_up(server, call, input)).await
+        }
+        "vault.budgets.hold" => Box::pin(vault_budgets_hold(server, call, input)).await,
+        "vault.budgets.hold.resume" => {
+            Box::pin(vault_budgets_hold_resume(server, call, input)).await
+        }
+        "vault.budgets.local" => Box::pin(vault_budgets_local(server, call, input)).await,
+        "vault.budgets.reservations" => {
+            Box::pin(vault_budgets_reservations(server, call, input)).await
+        }
+        "vault.budgets.settlements" => {
+            Box::pin(vault_budgets_settlements(server, call, input)).await
+        }
+        "vault.budgets.rsi.configure" => {
+            Box::pin(vault_budgets_rsi_configure(server, call, input)).await
+        }
+        "vault.budgets.rsi" => Box::pin(vault_budgets_rsi(server, call, input)).await,
+        "vault.budgets.rsi.top_up" => Box::pin(vault_budgets_rsi_top_up(server, call, input)).await,
+        "vault.budgets.rsi.hold" => Box::pin(vault_budgets_rsi_hold(server, call, input)).await,
+        "vault.budgets.rsi.hold.resume" => {
+            Box::pin(vault_budgets_rsi_hold_resume(server, call, input)).await
+        }
+        "vault.budgets.resident_shares" => {
+            Box::pin(vault_budgets_resident_shares(server, call, input)).await
+        }
+        "vault.budgets.resident_shares.set" => {
+            Box::pin(vault_budgets_resident_shares_set(server, call, input)).await
+        }
+        "vault.runners.seats.quotas" => {
+            Box::pin(vault_runners_seats_quotas(server, call, input)).await
+        }
+        "vault.runners.seats.top_up" => {
+            Box::pin(vault_runners_seats_top_up(server, call, input)).await
+        }
+        "vault.runners.seats.resume" => {
+            Box::pin(vault_runners_seats_resume(server, call, input)).await
+        }
+        "vault.fanout.resume" => Box::pin(vault_fanout_resume(server, call, input)).await,
+        "vault.fanout.resume_as" => Box::pin(vault_fanout_resume_as(server, call, input)).await,
+        "vault.fanout.ack" => Box::pin(vault_fanout_ack(server, call, input)).await,
+        "tasks.update" => Box::pin(tasks_update(server, call, input)).await,
+        "tasks.accept" => Box::pin(tasks_accept(server, call, input)).await,
+        "tasks.redo" => Box::pin(tasks_redo(server, call, input)).await,
+        "vault.commit_message" => Box::pin(vault_commit_message(server, call, input)).await,
+        "vault.begin_message_stream" => {
+            Box::pin(vault_begin_message_stream(server, call, input)).await
+        }
+        "vault.append_to_stream" => Box::pin(vault_append_to_stream(server, call, input)).await,
+        "vault.flush_stream" => Box::pin(vault_flush_stream(server, call, input)).await,
+        "vault.finalize_stream" => Box::pin(vault_finalize_stream(server, call, input)).await,
+        "vault.cancel_stream" => Box::pin(vault_cancel_stream(server, call, input)).await,
+        "vault.message_stream_partial" => {
+            Box::pin(vault_message_stream_partial(server, call, input)).await
+        }
+        "vault.message_streams.refused" => {
+            Box::pin(vault_message_streams_refused(server, call, input)).await
+        }
+        "vault.messages.durability" => {
+            Box::pin(vault_messages_durability(server, call, input)).await
+        }
+        "vault.witness" => Box::pin(vault_witness(server, call, input)).await,
+        "vault.claims.upsert" => Box::pin(vault_claims_upsert(server, call, input)).await,
+        "vault.recall" => Box::pin(vault_recall(server, call, input)).await,
+        "vault.retrieval.aging.get" => {
+            Box::pin(vault_retrieval_aging_get(server, call, input)).await
+        }
         "vault.retrieval.aging.configure" => {
-            vault_retrieval_aging_configure(server, call, input).await
+            Box::pin(vault_retrieval_aging_configure(server, call, input)).await
         }
-        "vault.retrieval.weights.get" => vault_retrieval_weights_get(server, call, input).await,
+        "vault.retrieval.weights.get" => {
+            Box::pin(vault_retrieval_weights_get(server, call, input)).await
+        }
         "vault.retrieval.weights.configure" => {
-            vault_retrieval_weights_configure(server, call, input).await
+            Box::pin(vault_retrieval_weights_configure(server, call, input)).await
         }
         "vault.retrieval.hyde.configure" => {
-            vault_retrieval_hyde_configure(server, call, input).await
+            Box::pin(vault_retrieval_hyde_configure(server, call, input)).await
         }
-        "vault.retrieval.hyde.get" => vault_retrieval_hyde_get(server, call, input).await,
-        "vault.retrieval.hyde.pending" => vault_retrieval_hyde_pending(server, call, input).await,
-        "vault.retrieval.hyde.complete" => vault_retrieval_hyde_complete(server, call, input).await,
-        "vault.retrieval.hyde.receipt" => vault_retrieval_hyde_receipt(server, call, input).await,
-        "vault.affect.annotations.put" => vault_affect_annotations_put(server, call, input).await,
-        "vault.tagging.status" => vault_tagging_status(server, call, input).await,
-        "vault.tagging.tags" => vault_tagging_tags(server, call, input).await,
-        "vault.tagging.history" => vault_tagging_history(server, call, input).await,
-        "vault.tagging.mentions" => vault_tagging_mentions(server, call, input).await,
+        "vault.retrieval.hyde.get" => Box::pin(vault_retrieval_hyde_get(server, call, input)).await,
+        "vault.retrieval.hyde.pending" => {
+            Box::pin(vault_retrieval_hyde_pending(server, call, input)).await
+        }
+        "vault.retrieval.hyde.complete" => {
+            Box::pin(vault_retrieval_hyde_complete(server, call, input)).await
+        }
+        "vault.retrieval.hyde.receipt" => {
+            Box::pin(vault_retrieval_hyde_receipt(server, call, input)).await
+        }
+        "vault.affect.annotations.put" => {
+            Box::pin(vault_affect_annotations_put(server, call, input)).await
+        }
+        "vault.tagging.status" => Box::pin(vault_tagging_status(server, call, input)).await,
+        "vault.tagging.tags" => Box::pin(vault_tagging_tags(server, call, input)).await,
+        "vault.tagging.history" => Box::pin(vault_tagging_history(server, call, input)).await,
+        "vault.tagging.mentions" => Box::pin(vault_tagging_mentions(server, call, input)).await,
         "vault.affect.claims.consolidate" => {
-            vault_affect_claims_consolidate(server, call, input).await
+            Box::pin(vault_affect_claims_consolidate(server, call, input)).await
         }
-        "vault.affect.coping.record" => vault_affect_coping_record(server, call, input).await,
-        "vault.affect.coping.update" => vault_affect_coping_update(server, call, input).await,
-        "vault.affect.coping.aggregate" => vault_affect_coping_aggregate(server, call, input).await,
+        "vault.affect.coping.record" => {
+            Box::pin(vault_affect_coping_record(server, call, input)).await
+        }
+        "vault.affect.coping.update" => {
+            Box::pin(vault_affect_coping_update(server, call, input)).await
+        }
+        "vault.affect.coping.aggregate" => {
+            Box::pin(vault_affect_coping_aggregate(server, call, input)).await
+        }
         "vault.affect.wellness.policy.get" => {
-            vault_affect_wellness_policy_get(server, call, input).await
+            Box::pin(vault_affect_wellness_policy_get(server, call, input)).await
         }
         "vault.affect.wellness.policy.configure" => {
-            vault_affect_wellness_policy_configure(server, call, input).await
+            Box::pin(vault_affect_wellness_policy_configure(server, call, input)).await
         }
-        "vault.affect.wellness.derive" => vault_affect_wellness_derive(server, call, input).await,
-        "vault.affect.wellness.get" => vault_affect_wellness_get(server, call, input).await,
-        "vault.cluster" => vault_cluster(server, call, input).await,
-        "vault.cluster.proposal" => vault_cluster_proposal(server, call, input).await,
-        "vault.cluster.propose" => vault_cluster_propose(server, call, input).await,
-        "vault.cluster.merge" => vault_cluster_merge(server, call, input).await,
-        "vault.cluster.split" => vault_cluster_split(server, call, input).await,
+        "vault.affect.wellness.derive" => {
+            Box::pin(vault_affect_wellness_derive(server, call, input)).await
+        }
+        "vault.affect.wellness.get" => {
+            Box::pin(vault_affect_wellness_get(server, call, input)).await
+        }
+        "vault.cluster" => Box::pin(vault_cluster(server, call, input)).await,
+        "vault.cluster.proposal" => Box::pin(vault_cluster_proposal(server, call, input)).await,
+        "vault.cluster.propose" => Box::pin(vault_cluster_propose(server, call, input)).await,
+        "vault.cluster.merge" => Box::pin(vault_cluster_merge(server, call, input)).await,
+        "vault.cluster.split" => Box::pin(vault_cluster_split(server, call, input)).await,
         "vault.cluster.resolve_proposal" => {
-            vault_cluster_resolve_proposal(server, call, input).await
+            Box::pin(vault_cluster_resolve_proposal(server, call, input)).await
         }
-        "vault.retrieval.recall" => vault_retrieval_recall(server, call, input).await,
-        "vault.retrieval.runs" => vault_retrieval_runs(server, call, input).await,
-        "vault.retrieval.run" => vault_retrieval_run(server, call, input).await,
-        "vault.retrieval.turn" => vault_retrieval_turn(server, call, input).await,
-        "vault.retrieval.outcomes.put" => vault_retrieval_outcomes_put(server, call, input).await,
-        "vault.retrieval.outcomes.end" => vault_retrieval_outcomes_end(server, call, input).await,
-        "vault.retrieval.trace" => vault_retrieval_trace(server, call, input).await,
-        "vault.retrieval.export" => vault_retrieval_export(server, call, input).await,
-        "vault.retrieval.replay" => vault_retrieval_replay(server, call, input).await,
-        "vault.retrieval.policy.get" => vault_retrieval_policy_get(server, call, input).await,
-        "vault.retrieval.policy.pin" => vault_retrieval_policy_pin(server, call, input).await,
-        "vault.retrieval.policy.train" => vault_retrieval_policy_train(server, call, input).await,
+        "vault.retrieval.recall" => Box::pin(vault_retrieval_recall(server, call, input)).await,
+        "vault.retrieval.runs" => Box::pin(vault_retrieval_runs(server, call, input)).await,
+        "vault.retrieval.run" => Box::pin(vault_retrieval_run(server, call, input)).await,
+        "vault.retrieval.turn" => Box::pin(vault_retrieval_turn(server, call, input)).await,
+        "vault.retrieval.outcomes.put" => {
+            Box::pin(vault_retrieval_outcomes_put(server, call, input)).await
+        }
+        "vault.retrieval.outcomes.end" => {
+            Box::pin(vault_retrieval_outcomes_end(server, call, input)).await
+        }
+        "vault.retrieval.trace" => Box::pin(vault_retrieval_trace(server, call, input)).await,
+        "vault.retrieval.export" => Box::pin(vault_retrieval_export(server, call, input)).await,
+        "vault.retrieval.replay" => Box::pin(vault_retrieval_replay(server, call, input)).await,
+        "vault.retrieval.policy.get" => {
+            Box::pin(vault_retrieval_policy_get(server, call, input)).await
+        }
+        "vault.retrieval.policy.pin" => {
+            Box::pin(vault_retrieval_policy_pin(server, call, input)).await
+        }
+        "vault.retrieval.policy.train" => {
+            Box::pin(vault_retrieval_policy_train(server, call, input)).await
+        }
         "vault.retrieval.policy.evaluate" => {
-            vault_retrieval_policy_evaluate(server, call, input).await
+            Box::pin(vault_retrieval_policy_evaluate(server, call, input)).await
         }
-        "vault.retrieval.policy.admit" => vault_retrieval_policy_admit(server, call, input).await,
-        "vault.retrieval.policy.update" => vault_retrieval_policy_update(server, call, input).await,
-        "vault.export" => vault_export(server, call, input).await,
-        "self.credential.attenuate" => self_credential_attenuate(server, call, input).await,
-        "vault.scope.position" => vault_scope_position(server, call, input).await,
-        "vault.scope.ceiling" => vault_scope_ceiling(server, call, input).await,
-        "vault.export.scoped" => vault_export_scoped(server, call, input).await,
-        "vault.receipts" => vault_receipts(server, call, input).await,
-        "vault.assets.ingest" => vault_assets_ingest(server, call, input).await,
-        "vault.assets.resolve" => vault_assets_resolve(server, call, input).await,
-        "vault.search.vector" => vault_search_vector(server, call, input).await,
-        "vault.images.view" => vault_images_view(server, call, input).await,
-        "vault.receipts.get" => vault_receipts_get(server, call, input).await,
-        "self.admission.status" => self_admission_status(server, call, input).await,
-        "self.admission.receipts" => self_admission_receipts(server, call, input).await,
-        "vault.explain.memory" => vault_explain_memory(server, call, input).await,
-        "vault.explain.gate" => vault_explain_gate(server, call, input).await,
-        "vault.kv.get" => vault_kv_get(server, call, input).await,
-        "vault.kv.put" => vault_kv_put(server, call, input).await,
-        "vault.kv.delete" => vault_kv_delete(server, call, input).await,
-        "vault.kv.search" => vault_kv_search(server, call, input).await,
-        "vault.kv.namespaces" => vault_kv_namespaces(server, call, input).await,
+        "vault.retrieval.policy.admit" => {
+            Box::pin(vault_retrieval_policy_admit(server, call, input)).await
+        }
+        "vault.retrieval.policy.update" => {
+            Box::pin(vault_retrieval_policy_update(server, call, input)).await
+        }
+        "vault.export" => Box::pin(vault_export(server, call, input)).await,
+        "vault.export.transfer.read" => {
+            Box::pin(vault_export_transfer_read(server, call, input)).await
+        }
+        "vault.export.transfer.release" => {
+            Box::pin(vault_export_transfer_release(server, call, input)).await
+        }
+        "self.credential.attenuate" => {
+            Box::pin(self_credential_attenuate(server, call, input)).await
+        }
+        "self.actor" => Box::pin(self_actor(server, call, input)).await,
+        "vault.scope.position" => Box::pin(vault_scope_position(server, call, input)).await,
+        "vault.scope.ceiling" => Box::pin(vault_scope_ceiling(server, call, input)).await,
+        "vault.export.scoped" => Box::pin(vault_export_scoped(server, call, input)).await,
+        "vault.receipts" => Box::pin(vault_receipts(server, call, input)).await,
+        "vault.assets.ingest" => Box::pin(vault_assets_ingest(server, call, input)).await,
+        "vault.assets.resolve" => Box::pin(vault_assets_resolve(server, call, input)).await,
+        "vault.search.vector" => Box::pin(vault_search_vector(server, call, input)).await,
+        "vault.images.view" => Box::pin(vault_images_view(server, call, input)).await,
+        "vault.receipts.get" => Box::pin(vault_receipts_get(server, call, input)).await,
+        "self.admission.status" => Box::pin(self_admission_status(server, call, input)).await,
+        "self.admission.receipts" => Box::pin(self_admission_receipts(server, call, input)).await,
+        "vault.explain.memory" => Box::pin(vault_explain_memory(server, call, input)).await,
+        "vault.explain.gate" => Box::pin(vault_explain_gate(server, call, input)).await,
+        "vault.kv.get" => Box::pin(vault_kv_get(server, call, input)).await,
+        "vault.kv.put" => Box::pin(vault_kv_put(server, call, input)).await,
+        "vault.kv.delete" => Box::pin(vault_kv_delete(server, call, input)).await,
+        "vault.kv.search" => Box::pin(vault_kv_search(server, call, input)).await,
+        "vault.kv.namespaces" => Box::pin(vault_kv_namespaces(server, call, input)).await,
         "vault.campaign.compliance.install" => {
-            vault_campaign_compliance_install(server, call, input).await
+            Box::pin(vault_campaign_compliance_install(server, call, input)).await
         }
         "vault.campaign.compliance.amend" => {
-            vault_campaign_compliance_amend(server, call, input).await
+            Box::pin(vault_campaign_compliance_amend(server, call, input)).await
         }
         "vault.campaign.compliance.approve" => {
-            vault_campaign_compliance_approve(server, call, input).await
+            Box::pin(vault_campaign_compliance_approve(server, call, input)).await
         }
         "vault.campaign.compliance.reject" => {
-            vault_campaign_compliance_reject(server, call, input).await
+            Box::pin(vault_campaign_compliance_reject(server, call, input)).await
         }
         "vault.campaign.compliance.verify" => {
-            vault_campaign_compliance_verify(server, call, input).await
+            Box::pin(vault_campaign_compliance_verify(server, call, input)).await
         }
         "vault.campaign.compliance.result" => {
-            vault_campaign_compliance_result(server, call, input).await
+            Box::pin(vault_campaign_compliance_result(server, call, input)).await
         }
-        "vault.campaign.enroll" => vault_campaign_enroll(server, call, input).await,
-        "vault.campaign.stage.evidence" => vault_campaign_stage_evidence(server, call, input).await,
-        "vault.campaign.unsubscribe" => vault_campaign_unsubscribe(server, call, input).await,
-        "vault.campaign.program.create" => vault_campaign_program_create(server, call, input).await,
-        "vault.campaign.program.read" => vault_campaign_program_read(server, call, input).await,
-        "vault.campaign.program.update" => vault_campaign_program_update(server, call, input).await,
+        "vault.campaign.enroll" => Box::pin(vault_campaign_enroll(server, call, input)).await,
+        "vault.campaign.stage.evidence" => {
+            Box::pin(vault_campaign_stage_evidence(server, call, input)).await
+        }
+        "vault.campaign.unsubscribe" => {
+            Box::pin(vault_campaign_unsubscribe(server, call, input)).await
+        }
+        "vault.campaign.program.create" => {
+            Box::pin(vault_campaign_program_create(server, call, input)).await
+        }
+        "vault.campaign.program.read" => {
+            Box::pin(vault_campaign_program_read(server, call, input)).await
+        }
+        "vault.campaign.program.update" => {
+            Box::pin(vault_campaign_program_update(server, call, input)).await
+        }
         "vault.campaign.program.archive" => {
-            vault_campaign_program_archive(server, call, input).await
+            Box::pin(vault_campaign_program_archive(server, call, input)).await
         }
-        "vault.turn_programs.arm" => vault_turn_programs_arm(server, call, input).await,
-        "vault.turn_programs.disarm" => vault_turn_programs_disarm(server, call, input).await,
-        "self.saved_query.create" => self_saved_query_create(server, call, input).await,
-        "self.saved_query.read" => self_saved_query_read(server, call, input).await,
-        "self.saved_query.update" => self_saved_query_update(server, call, input).await,
-        "self.saved_query.archive" => self_saved_query_archive(server, call, input).await,
-        "self.saved_query.members" => self_saved_query_members(server, call, input).await,
-        "self.saved_query.evaluate" => self_saved_query_evaluate(server, call, input).await,
-        "vault.weave.report" => vault_weave_report(server, call, input).await,
-        "vault.weave.digest" => vault_weave_digest(server, call, input).await,
-        "vault.weave.lens" => vault_weave_lens(server, call, input).await,
-        "vault.weave.link.wrong" => vault_weave_link_wrong(server, call, input).await,
-        "vault.weave.owner.link.wrong" => vault_weave_owner_link_wrong(server, call, input).await,
-        "vault.weave.item.wrong" => vault_weave_item_wrong(server, call, input).await,
-        "vault.weave.owner.item.wrong" => vault_weave_owner_item_wrong(server, call, input).await,
-        "vault.weave.enqueue" => vault_weave_enqueue(server, call, input).await,
-        "vault.weave.schedules.list" => vault_weave_schedules_list(server, call, input).await,
-        "vault.weave.schedules.put" => vault_weave_schedules_put(server, call, input).await,
-        "vault.weave.schedules.clear" => vault_weave_schedules_clear(server, call, input).await,
+        "vault.turn_programs.arm" => Box::pin(vault_turn_programs_arm(server, call, input)).await,
+        "vault.turn_programs.disarm" => {
+            Box::pin(vault_turn_programs_disarm(server, call, input)).await
+        }
+        "vault.turn_programs.rebind" => {
+            Box::pin(vault_turn_programs_rebind(server, call, input)).await
+        }
+        "self.saved_query.create" => Box::pin(self_saved_query_create(server, call, input)).await,
+        "self.saved_query.read" => Box::pin(self_saved_query_read(server, call, input)).await,
+        "self.saved_query.update" => Box::pin(self_saved_query_update(server, call, input)).await,
+        "self.saved_query.archive" => Box::pin(self_saved_query_archive(server, call, input)).await,
+        "self.saved_query.members" => Box::pin(self_saved_query_members(server, call, input)).await,
+        "self.saved_query.evaluate" => {
+            Box::pin(self_saved_query_evaluate(server, call, input)).await
+        }
+        "vault.weave.report" => Box::pin(vault_weave_report(server, call, input)).await,
+        "vault.weave.digest" => Box::pin(vault_weave_digest(server, call, input)).await,
+        "vault.weave.lens" => Box::pin(vault_weave_lens(server, call, input)).await,
+        "vault.weave.link.wrong" => Box::pin(vault_weave_link_wrong(server, call, input)).await,
+        "vault.weave.owner.link.wrong" => {
+            Box::pin(vault_weave_owner_link_wrong(server, call, input)).await
+        }
+        "vault.weave.item.wrong" => Box::pin(vault_weave_item_wrong(server, call, input)).await,
+        "vault.weave.owner.item.wrong" => {
+            Box::pin(vault_weave_owner_item_wrong(server, call, input)).await
+        }
+        "vault.weave.enqueue" => Box::pin(vault_weave_enqueue(server, call, input)).await,
+        "vault.weave.schedules.list" => {
+            Box::pin(vault_weave_schedules_list(server, call, input)).await
+        }
+        "vault.weave.schedules.put" => {
+            Box::pin(vault_weave_schedules_put(server, call, input)).await
+        }
+        "vault.weave.schedules.clear" => {
+            Box::pin(vault_weave_schedules_clear(server, call, input)).await
+        }
         "vault.weave.setting_changes.list" => {
-            vault_weave_setting_changes_list(server, call, input).await
+            Box::pin(vault_weave_setting_changes_list(server, call, input)).await
         }
         "vault.weave.setting_changes.answer" => {
-            vault_weave_setting_changes_answer(server, call, input).await
+            Box::pin(vault_weave_setting_changes_answer(server, call, input)).await
         }
         "vault.weave.setting_changes.undo" => {
-            vault_weave_setting_changes_undo(server, call, input).await
+            Box::pin(vault_weave_setting_changes_undo(server, call, input)).await
         }
         "vault.weave.digest_feedback.put" => {
-            vault_weave_digest_feedback_put(server, call, input).await
+            Box::pin(vault_weave_digest_feedback_put(server, call, input)).await
         }
         "vault.weave.owner.digest.render" => {
-            vault_weave_owner_digest_render(server, call, input).await
+            Box::pin(vault_weave_owner_digest_render(server, call, input)).await
         }
-        "vault.inbox.concerns.review" => vault_inbox_concerns_review(server, call, input).await,
-        "vault.inbox.lens" => vault_inbox_lens(server, call, input).await,
-        "vault.inbox.groups" => vault_inbox_groups(server, call, input).await,
-        "vault.weave.digest.render" => vault_weave_digest_render(server, call, input).await,
-        "vault.weave.link.corrections" => vault_weave_link_corrections(server, call, input).await,
-        "self.inbox.lens" => self_inbox_lens(server, call, input).await,
-        "vault.skills.bootstrap" => vault_skills_bootstrap(server, call, input).await,
-        "vault.skill_hubs.default.get" => vault_skill_hubs_default_get(server, call, input).await,
-        "vault.skills.restoreDefaults" => vault_skills_restoreDefaults(server, call, input).await,
-        "vault.skill_hubs.put" => vault_skill_hubs_put(server, call, input).await,
-        "vault.skill_hubs.get" => vault_skill_hubs_get(server, call, input).await,
+        "vault.inbox.concerns.review" => {
+            Box::pin(vault_inbox_concerns_review(server, call, input)).await
+        }
+        "vault.inbox.lens" => Box::pin(vault_inbox_lens(server, call, input)).await,
+        "vault.inbox.groups" => Box::pin(vault_inbox_groups(server, call, input)).await,
+        "vault.inbox.groups.resolve" => {
+            Box::pin(vault_inbox_groups_resolve(server, call, input)).await
+        }
+        "vault.weave.digest.render" => {
+            Box::pin(vault_weave_digest_render(server, call, input)).await
+        }
+        "vault.weave.link.corrections" => {
+            Box::pin(vault_weave_link_corrections(server, call, input)).await
+        }
+        "self.inbox.lens" => Box::pin(self_inbox_lens(server, call, input)).await,
+        "vault.skills.bootstrap" => Box::pin(vault_skills_bootstrap(server, call, input)).await,
+        "vault.skill_hubs.default.get" => {
+            Box::pin(vault_skill_hubs_default_get(server, call, input)).await
+        }
+        "vault.skills.restoreDefaults" => {
+            Box::pin(vault_skills_restoreDefaults(server, call, input)).await
+        }
+        "vault.skill_hubs.put" => Box::pin(vault_skill_hubs_put(server, call, input)).await,
+        "vault.skill_hubs.get" => Box::pin(vault_skill_hubs_get(server, call, input)).await,
         "vault.skill_hubs.publishers.admit" => {
-            vault_skill_hubs_publishers_admit(server, call, input).await
+            Box::pin(vault_skill_hubs_publishers_admit(server, call, input)).await
         }
         "vault.skill_hubs.publishers.revoke" => {
-            vault_skill_hubs_publishers_revoke(server, call, input).await
+            Box::pin(vault_skill_hubs_publishers_revoke(server, call, input)).await
         }
-        "vault.skill_hubs.refs.get" => vault_skill_hubs_refs_get(server, call, input).await,
-        "vault.skill_hubs.refs.set" => vault_skill_hubs_refs_set(server, call, input).await,
-        "vault.packs.install" => vault_packs_install(server, call, input).await,
-        "vault.packs.sync" => vault_packs_sync(server, call, input).await,
-        "vault.packs.get" => vault_packs_get(server, call, input).await,
-        "vault.skills.import" => vault_skills_import(server, call, input).await,
-        "vault.skills.sync" => vault_skills_sync(server, call, input).await,
-        "vault.skills.receipts" => vault_skills_receipts(server, call, input).await,
-        "vault.skills.convert" => vault_skills_convert(server, call, input).await,
-        "vault.skills.get" => vault_skills_get(server, call, input).await,
-        "vault.skills.list" => vault_skills_list(server, call, input).await,
-        "vault.skills.archive" => vault_skills_archive(server, call, input).await,
-        "vault.skills.restore" => vault_skills_restore(server, call, input).await,
-        "vault.skills.fork" => vault_skills_fork(server, call, input).await,
-        "vault.skills.rules.set" => vault_skills_rules_set(server, call, input).await,
+        "vault.skill_hubs.refs.get" => {
+            Box::pin(vault_skill_hubs_refs_get(server, call, input)).await
+        }
+        "vault.skill_hubs.refs.set" => {
+            Box::pin(vault_skill_hubs_refs_set(server, call, input)).await
+        }
+        "vault.packs.install" => Box::pin(vault_packs_install(server, call, input)).await,
+        "vault.packs.sync" => Box::pin(vault_packs_sync(server, call, input)).await,
+        "vault.packs.get" => Box::pin(vault_packs_get(server, call, input)).await,
+        "vault.skills.import" => Box::pin(vault_skills_import(server, call, input)).await,
+        "vault.skills.sync" => Box::pin(vault_skills_sync(server, call, input)).await,
+        "vault.skills.receipts" => Box::pin(vault_skills_receipts(server, call, input)).await,
+        "vault.skills.convert" => Box::pin(vault_skills_convert(server, call, input)).await,
+        "vault.skills.get" => Box::pin(vault_skills_get(server, call, input)).await,
+        "vault.skills.list" => Box::pin(vault_skills_list(server, call, input)).await,
+        "vault.skills.archive" => Box::pin(vault_skills_archive(server, call, input)).await,
+        "vault.skills.restore" => Box::pin(vault_skills_restore(server, call, input)).await,
+        "vault.skills.fork" => Box::pin(vault_skills_fork(server, call, input)).await,
+        "vault.skills.rules.set" => Box::pin(vault_skills_rules_set(server, call, input)).await,
         "vault.skills.code_auto_install.set" => {
-            vault_skills_code_auto_install_set(server, call, input).await
+            Box::pin(vault_skills_code_auto_install_set(server, call, input)).await
         }
         "vault.skills.permissions.approve" => {
-            vault_skills_permissions_approve(server, call, input).await
+            Box::pin(vault_skills_permissions_approve(server, call, input)).await
         }
-        "vault.skills.optimize.start" => vault_skills_optimize_start(server, call, input).await,
-        "vault.skills.optimize.result" => vault_skills_optimize_result(server, call, input).await,
+        "vault.skills.optimize.start" => {
+            Box::pin(vault_skills_optimize_start(server, call, input)).await
+        }
+        "vault.skills.optimize.result" => {
+            Box::pin(vault_skills_optimize_result(server, call, input)).await
+        }
         "vault.projects.goal.intake.complete" => {
-            vault_projects_goal_intake_complete(server, call, input).await
+            Box::pin(vault_projects_goal_intake_complete(server, call, input)).await
         }
-        "vault.projects.goal.get" => vault_projects_goal_get(server, call, input).await,
-        "vault.skills.optimize.propose" => vault_skills_optimize_propose(server, call, input).await,
-        "vault.skills.optimize.measure" => vault_skills_optimize_measure(server, call, input).await,
-        "vault.skills.optimize.score" => vault_skills_optimize_score(server, call, input).await,
-        "vault.skills.optimize.admit" => vault_skills_optimize_admit(server, call, input).await,
+        "vault.projects.goal.get" => Box::pin(vault_projects_goal_get(server, call, input)).await,
+        "vault.skills.optimize.propose" => {
+            Box::pin(vault_skills_optimize_propose(server, call, input)).await
+        }
+        "vault.skills.optimize.measure" => {
+            Box::pin(vault_skills_optimize_measure(server, call, input)).await
+        }
+        "vault.skills.optimize.score" => {
+            Box::pin(vault_skills_optimize_score(server, call, input)).await
+        }
+        "vault.skills.optimize.admit" => {
+            Box::pin(vault_skills_optimize_admit(server, call, input)).await
+        }
         "vault.skills.optimize.goal.get" => {
-            vault_skills_optimize_goal_get(server, call, input).await
+            Box::pin(vault_skills_optimize_goal_get(server, call, input)).await
         }
         "vault.skills.optimize.goal.bind" => {
-            vault_skills_optimize_goal_bind(server, call, input).await
+            Box::pin(vault_skills_optimize_goal_bind(server, call, input)).await
         }
         "vault.skills.optimize.preferences.get" => {
-            vault_skills_optimize_preferences_get(server, call, input).await
+            Box::pin(vault_skills_optimize_preferences_get(server, call, input)).await
         }
         "vault.skills.optimize.preferences.set" => {
-            vault_skills_optimize_preferences_set(server, call, input).await
+            Box::pin(vault_skills_optimize_preferences_set(server, call, input)).await
         }
         "vault.skills.optimize.tradeoff_asks" => {
-            vault_skills_optimize_tradeoff_asks(server, call, input).await
+            Box::pin(vault_skills_optimize_tradeoff_asks(server, call, input)).await
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
-            vault_skills_optimize_tradeoff_asks_pick(server, call, input).await
+            Box::pin(vault_skills_optimize_tradeoff_asks_pick(
+                server, call, input,
+            ))
+            .await
         }
-        "vault.skills.governance.get" => vault_skills_governance_get(server, call, input).await,
-        "vault.skills.governance.set" => vault_skills_governance_set(server, call, input).await,
-        "vault.packs.hooks.bind" => vault_packs_hooks_bind(server, call, input).await,
-        "vault.packs.hooks.list" => vault_packs_hooks_list(server, call, input).await,
-        "vault.packs.hooks.grant.set" => vault_packs_hooks_grant_set(server, call, input).await,
-        "vault.packs.hooks.grant.get" => vault_packs_hooks_grant_get(server, call, input).await,
-        "vault.packs.hooks.qualify" => vault_packs_hooks_qualify(server, call, input).await,
-        "vault.packs.put" => vault_packs_put(server, call, input).await,
-        "vault.packs.preview" => vault_packs_preview(server, call, input).await,
-        "vault.packs.connector.prepare" => vault_packs_connector_prepare(server, call, input).await,
-        "vault.packs.connector.get" => vault_packs_connector_get(server, call, input).await,
-        "vault.packs.connector.qualify" => vault_packs_connector_qualify(server, call, input).await,
-        "vault.packs.connector.accept" => vault_packs_connector_accept(server, call, input).await,
-        "vault.packs.connector.update" => vault_packs_connector_update(server, call, input).await,
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
+            Box::pin(vault_skills_optimize_tradeoff_asks_resolve(
+                server, call, input,
+            ))
+            .await
+        }
+        "vault.skills.governance.get" => {
+            Box::pin(vault_skills_governance_get(server, call, input)).await
+        }
+        "vault.skills.governance.set" => {
+            Box::pin(vault_skills_governance_set(server, call, input)).await
+        }
+        "vault.packs.hooks.bind" => Box::pin(vault_packs_hooks_bind(server, call, input)).await,
+        "vault.packs.hooks.list" => Box::pin(vault_packs_hooks_list(server, call, input)).await,
+        "vault.packs.hooks.grant.set" => {
+            Box::pin(vault_packs_hooks_grant_set(server, call, input)).await
+        }
+        "vault.packs.hooks.grant.get" => {
+            Box::pin(vault_packs_hooks_grant_get(server, call, input)).await
+        }
+        "vault.packs.hooks.qualify" => {
+            Box::pin(vault_packs_hooks_qualify(server, call, input)).await
+        }
+        "vault.packs.put" => Box::pin(vault_packs_put(server, call, input)).await,
+        "vault.packs.preview" => Box::pin(vault_packs_preview(server, call, input)).await,
+        "vault.packs.connector.prepare" => {
+            Box::pin(vault_packs_connector_prepare(server, call, input)).await
+        }
+        "vault.packs.connector.get" => {
+            Box::pin(vault_packs_connector_get(server, call, input)).await
+        }
+        "vault.packs.connector.qualify" => {
+            Box::pin(vault_packs_connector_qualify(server, call, input)).await
+        }
+        "vault.packs.connector.accept" => {
+            Box::pin(vault_packs_connector_accept(server, call, input)).await
+        }
+        "vault.packs.connector.update" => {
+            Box::pin(vault_packs_connector_update(server, call, input)).await
+        }
         "vault.packs.connector.grants.get" => {
-            vault_packs_connector_grants_get(server, call, input).await
+            Box::pin(vault_packs_connector_grants_get(server, call, input)).await
         }
         "vault.packs.connector.grants.put" => {
-            vault_packs_connector_grants_put(server, call, input).await
+            Box::pin(vault_packs_connector_grants_put(server, call, input)).await
         }
-        "vault.packs.remove" => vault_packs_remove(server, call, input).await,
-        "vault.packs.sections.propose" => vault_packs_sections_propose(server, call, input).await,
-        "vault.packs.sections.list" => vault_packs_sections_list(server, call, input).await,
-        "vault.packs.sections.grant" => vault_packs_sections_grant(server, call, input).await,
-        "vault.packs.sections.revoke" => vault_packs_sections_revoke(server, call, input).await,
-        "vault.packs.sections.suggest" => vault_packs_sections_suggest(server, call, input).await,
+        "vault.packs.remove" => Box::pin(vault_packs_remove(server, call, input)).await,
+        "vault.packs.sections.propose" => {
+            Box::pin(vault_packs_sections_propose(server, call, input)).await
+        }
+        "vault.packs.sections.list" => {
+            Box::pin(vault_packs_sections_list(server, call, input)).await
+        }
+        "vault.packs.sections.grant" => {
+            Box::pin(vault_packs_sections_grant(server, call, input)).await
+        }
+        "vault.packs.sections.revoke" => {
+            Box::pin(vault_packs_sections_revoke(server, call, input)).await
+        }
+        "vault.packs.sections.suggest" => {
+            Box::pin(vault_packs_sections_suggest(server, call, input)).await
+        }
         "vault.packs.sections.suggestions.get" => {
-            vault_packs_sections_suggestions_get(server, call, input).await
+            Box::pin(vault_packs_sections_suggestions_get(server, call, input)).await
         }
         "vault.packs.sections.suggestions.set" => {
-            vault_packs_sections_suggestions_set(server, call, input).await
+            Box::pin(vault_packs_sections_suggestions_set(server, call, input)).await
         }
-        "ai.chat.completions" => ai_chat_completions(server, call, input).await,
-        "vault.connectors.proxy.admit" => vault_connectors_proxy_admit(server, call, input).await,
+        "ai.chat.completions" => Box::pin(ai_chat_completions(server, call, input)).await,
+        "vault.connectors.proxy.admit" => {
+            Box::pin(vault_connectors_proxy_admit(server, call, input)).await
+        }
         "vault.connectors.proxy.revoke_write" => {
-            vault_connectors_proxy_revoke_write(server, call, input).await
+            Box::pin(vault_connectors_proxy_revoke_write(server, call, input)).await
         }
         "vault.connectors.slates.redraft" => {
-            vault_connectors_slates_redraft(server, call, input).await
+            Box::pin(vault_connectors_slates_redraft(server, call, input)).await
         }
         "vault.connectors.slates.narrow" => {
-            vault_connectors_slates_narrow(server, call, input).await
+            Box::pin(vault_connectors_slates_narrow(server, call, input)).await
         }
         "vault.connectors.slates.scope_outcome" => {
-            vault_connectors_slates_scope_outcome(server, call, input).await
+            Box::pin(vault_connectors_slates_scope_outcome(server, call, input)).await
         }
         "vault.connectors.slates.revision_offers" => {
-            vault_connectors_slates_revision_offers(server, call, input).await
+            Box::pin(vault_connectors_slates_revision_offers(server, call, input)).await
         }
         "vault.connectors.slates.defer_revision" => {
-            vault_connectors_slates_defer_revision(server, call, input).await
+            Box::pin(vault_connectors_slates_defer_revision(server, call, input)).await
         }
         "vault.connectors.slates.accept_revision" => {
-            vault_connectors_slates_accept_revision(server, call, input).await
+            Box::pin(vault_connectors_slates_accept_revision(server, call, input)).await
         }
         "vault.connectors.slates.reask_issuer" => {
-            vault_connectors_slates_reask_issuer(server, call, input).await
+            Box::pin(vault_connectors_slates_reask_issuer(server, call, input)).await
         }
         "vault.connectors.subscriptions.put" => {
-            vault_connectors_subscriptions_put(server, call, input).await
+            Box::pin(vault_connectors_subscriptions_put(server, call, input)).await
         }
         "vault.connectors.subscriptions.list" => {
-            vault_connectors_subscriptions_list(server, call, input).await
+            Box::pin(vault_connectors_subscriptions_list(server, call, input)).await
         }
         "vault.connectors.subscriptions.revoke" => {
-            vault_connectors_subscriptions_revoke(server, call, input).await
+            Box::pin(vault_connectors_subscriptions_revoke(server, call, input)).await
         }
-        "vault.packs.setup.prepare" => vault_packs_setup_prepare(server, call, input).await,
-        "vault.packs.setup.get" => vault_packs_setup_get(server, call, input).await,
-        "vault.packs.setup.answer" => vault_packs_setup_answer(server, call, input).await,
-        "vault.packs.setup.verify" => vault_packs_setup_verify(server, call, input).await,
-        "vault.authority.audit" => vault_authority_audit(server, call, input).await,
+        "vault.packs.setup.prepare" => {
+            Box::pin(vault_packs_setup_prepare(server, call, input)).await
+        }
+        "vault.packs.setup.get" => Box::pin(vault_packs_setup_get(server, call, input)).await,
+        "vault.packs.setup.answer" => Box::pin(vault_packs_setup_answer(server, call, input)).await,
+        "vault.packs.setup.verify" => Box::pin(vault_packs_setup_verify(server, call, input)).await,
+        "vault.authority.audit" => Box::pin(vault_authority_audit(server, call, input)).await,
         "vault.authority.history.export" => {
-            vault_authority_history_export(server, call, input).await
+            Box::pin(vault_authority_history_export(server, call, input)).await
         }
         "vault.authority.history.import" => {
-            vault_authority_history_import(server, call, input).await
+            Box::pin(vault_authority_history_import(server, call, input)).await
+        }
+        "vault.authority.clock.repair" => {
+            Box::pin(vault_authority_clock_repair(server, call, input)).await
         }
         "vault.wire_health.thresholds.get" => {
-            vault_wire_health_thresholds_get(server, call, input).await
+            Box::pin(vault_wire_health_thresholds_get(server, call, input)).await
         }
         "vault.wire_health.thresholds.set" => {
-            vault_wire_health_thresholds_set(server, call, input).await
+            Box::pin(vault_wire_health_thresholds_set(server, call, input)).await
         }
-        "vault.slim.policy" => vault_slim_policy(server, call, input).await,
-        "vault.slim.state" => vault_slim_state(server, call, input).await,
-        "vault.slim.resume_step" => vault_slim_resume_step(server, call, input).await,
-        "vault.slim.drop_heavy" => vault_slim_drop_heavy(server, call, input).await,
-        "vault.slim.resume" => vault_slim_resume(server, call, input).await,
-        "vault.mesh.path_receipts" => vault_mesh_path_receipts(server, call, input).await,
-        "vault.mesh.identity" => vault_mesh_identity(server, call, input).await,
-        "vault.mesh.bind_machine" => vault_mesh_bind_machine(server, call, input).await,
-        "vault.mesh.set_alpn_grant" => vault_mesh_set_alpn_grant(server, call, input).await,
-        "vault.mesh.revoke_machine" => vault_mesh_revoke_machine(server, call, input).await,
-        "vault.mesh.dial" => vault_mesh_dial(server, call, input).await,
-        "vault.inspection.resolve" => vault_inspection_resolve(server, call, input).await,
-        "vault.shared.propose_delete" => vault_shared_propose_delete(server, call, input).await,
-        "vault.shared.propose_transfer" => vault_shared_propose_transfer(server, call, input).await,
+        "vault.slim.policy" => Box::pin(vault_slim_policy(server, call, input)).await,
+        "vault.slim.state" => Box::pin(vault_slim_state(server, call, input)).await,
+        "vault.slim.resume_step" => Box::pin(vault_slim_resume_step(server, call, input)).await,
+        "vault.slim.drop_heavy" => Box::pin(vault_slim_drop_heavy(server, call, input)).await,
+        "vault.slim.resume" => Box::pin(vault_slim_resume(server, call, input)).await,
+        "vault.mesh.path_receipts" => Box::pin(vault_mesh_path_receipts(server, call, input)).await,
+        "vault.mesh.identity" => Box::pin(vault_mesh_identity(server, call, input)).await,
+        "vault.mesh.bind_machine" => Box::pin(vault_mesh_bind_machine(server, call, input)).await,
+        "vault.mesh.set_alpn_grant" => {
+            Box::pin(vault_mesh_set_alpn_grant(server, call, input)).await
+        }
+        "vault.mesh.revoke_machine" => {
+            Box::pin(vault_mesh_revoke_machine(server, call, input)).await
+        }
+        "vault.mesh.dial" => Box::pin(vault_mesh_dial(server, call, input)).await,
+        "vault.outbox.diverged.list" => {
+            Box::pin(vault_outbox_diverged_list(server, call, input)).await
+        }
+        "vault.outbox.diverged.answer" => {
+            Box::pin(vault_outbox_diverged_answer(server, call, input)).await
+        }
+        "vault.inspection.resolve" => Box::pin(vault_inspection_resolve(server, call, input)).await,
+        "vault.shared.propose_delete" => {
+            Box::pin(vault_shared_propose_delete(server, call, input)).await
+        }
+        "vault.shared.propose_transfer" => {
+            Box::pin(vault_shared_propose_transfer(server, call, input)).await
+        }
         "vault.shared.propose_remove_owner" => {
-            vault_shared_propose_remove_owner(server, call, input).await
+            Box::pin(vault_shared_propose_remove_owner(server, call, input)).await
         }
-        "vault.shared.execute" => vault_shared_execute(server, call, input).await,
-        "vault.shared.receipt" => vault_shared_receipt(server, call, input).await,
-        "vault.shared.outcomes" => vault_shared_outcomes(server, call, input).await,
-        "vault.shared.deletion" => vault_shared_deletion(server, call, input).await,
-        "vault.org_admin.configure" => vault_org_admin_configure(server, call, input).await,
-        "vault.org_admin.powers" => vault_org_admin_powers(server, call, input).await,
+        "vault.shared.execute" => Box::pin(vault_shared_execute(server, call, input)).await,
+        "vault.shared.receipt" => Box::pin(vault_shared_receipt(server, call, input)).await,
+        "vault.shared.outcomes" => Box::pin(vault_shared_outcomes(server, call, input)).await,
+        "vault.shared.deletion" => Box::pin(vault_shared_deletion(server, call, input)).await,
+        "vault.org_admin.configure" => {
+            Box::pin(vault_org_admin_configure(server, call, input)).await
+        }
+        "vault.org_admin.powers" => Box::pin(vault_org_admin_powers(server, call, input)).await,
         "vault.members.reset_project_access" => {
-            vault_members_reset_project_access(server, call, input).await
+            Box::pin(vault_members_reset_project_access(server, call, input)).await
         }
-        "vault.members.delegate" => vault_members_delegate(server, call, input).await,
-        "vault.members.projection" => vault_members_projection(server, call, input).await,
-        "vault.members.add" => vault_members_add(server, call, input).await,
-        "vault.members.invitation_slip" => vault_members_invitation_slip(server, call, input).await,
-        "vault.members.change" => vault_members_change(server, call, input).await,
-        "vault.members.remove" => vault_members_remove(server, call, input).await,
-        "vault.members.leave" => vault_members_leave(server, call, input).await,
-        "vault.members.invitations" => vault_members_invitations(server, call, input).await,
-        "vault.members.accept" => vault_members_accept(server, call, input).await,
-        "vault.members.decline" => vault_members_decline(server, call, input).await,
+        "vault.members.delegate" => Box::pin(vault_members_delegate(server, call, input)).await,
+        "vault.members.projection" => Box::pin(vault_members_projection(server, call, input)).await,
+        "vault.members.add" => Box::pin(vault_members_add(server, call, input)).await,
+        "vault.members.invitation_slip" => {
+            Box::pin(vault_members_invitation_slip(server, call, input)).await
+        }
+        "vault.members.change" => Box::pin(vault_members_change(server, call, input)).await,
+        "vault.members.remove" => Box::pin(vault_members_remove(server, call, input)).await,
+        "vault.members.leave" => Box::pin(vault_members_leave(server, call, input)).await,
+        "vault.members.invitations" => {
+            Box::pin(vault_members_invitations(server, call, input)).await
+        }
+        "vault.members.accept" => Box::pin(vault_members_accept(server, call, input)).await,
+        "vault.members.decline" => Box::pin(vault_members_decline(server, call, input)).await,
         "vault.members.withdraw_invitation" => {
-            vault_members_withdraw_invitation(server, call, input).await
+            Box::pin(vault_members_withdraw_invitation(server, call, input)).await
         }
-        "vault.shared.object" => vault_shared_object(server, call, input).await,
+        "vault.shared.object" => Box::pin(vault_shared_object(server, call, input)).await,
         "vault.shared.withdraw_objection" => {
-            vault_shared_withdraw_objection(server, call, input).await
+            Box::pin(vault_shared_withdraw_objection(server, call, input)).await
         }
-        "vault.shared.started" => vault_shared_started(server, call, input).await,
-        "vault.shared.matured" => vault_shared_matured(server, call, input).await,
-        "vault.shared.erase_ask" => vault_shared_erase_ask(server, call, input).await,
-        "vault.shared.erase_asks" => vault_shared_erase_asks(server, call, input).await,
-        "vault.shared.close_erase_ask" => vault_shared_close_erase_ask(server, call, input).await,
-        "vault.shared.policy.get" => vault_shared_policy_get(server, call, input).await,
-        "vault.shared.policy.propose" => vault_shared_policy_propose(server, call, input).await,
-        "vault.shared.policy.answer" => vault_shared_policy_answer(server, call, input).await,
-        "vault.shared.policy.change" => vault_shared_policy_change(server, call, input).await,
+        "vault.shared.started" => Box::pin(vault_shared_started(server, call, input)).await,
+        "vault.shared.matured" => Box::pin(vault_shared_matured(server, call, input)).await,
+        "vault.shared.erase_ask" => Box::pin(vault_shared_erase_ask(server, call, input)).await,
+        "vault.shared.erase_asks" => Box::pin(vault_shared_erase_asks(server, call, input)).await,
+        "vault.shared.close_erase_ask" => {
+            Box::pin(vault_shared_close_erase_ask(server, call, input)).await
+        }
+        "vault.shared.policy.get" => Box::pin(vault_shared_policy_get(server, call, input)).await,
+        "vault.shared.policy.propose" => {
+            Box::pin(vault_shared_policy_propose(server, call, input)).await
+        }
+        "vault.shared.policy.answer" => {
+            Box::pin(vault_shared_policy_answer(server, call, input)).await
+        }
+        "vault.shared.policy.change" => {
+            Box::pin(vault_shared_policy_change(server, call, input)).await
+        }
+        "vault.shared.policy.changes" => {
+            Box::pin(vault_shared_policy_changes(server, call, input)).await
+        }
         "vault.federation.coreference.link" => {
-            vault_federation_coreference_link(server, call, input).await
+            Box::pin(vault_federation_coreference_link(server, call, input)).await
         }
         "vault.federation.coreference.confirm" => {
-            vault_federation_coreference_confirm(server, call, input).await
+            Box::pin(vault_federation_coreference_confirm(server, call, input)).await
         }
         "vault.federation.coreference.share_consent" => {
-            vault_federation_coreference_share_consent(server, call, input).await
+            Box::pin(vault_federation_coreference_share_consent(
+                server, call, input,
+            ))
+            .await
         }
         "vault.federation.coreference.unlink" => {
-            vault_federation_coreference_unlink(server, call, input).await
+            Box::pin(vault_federation_coreference_unlink(server, call, input)).await
         }
         "vault.federation.burst.baseline" => {
-            vault_federation_burst_baseline(server, call, input).await
+            Box::pin(vault_federation_burst_baseline(server, call, input)).await
         }
-        "vault.federation.burst.policy" => vault_federation_burst_policy(server, call, input).await,
+        "vault.federation.burst.policy" => {
+            Box::pin(vault_federation_burst_policy(server, call, input)).await
+        }
         "vault.federation.burst.policy.set" => {
-            vault_federation_burst_policy_set(server, call, input).await
+            Box::pin(vault_federation_burst_policy_set(server, call, input)).await
         }
         "vault.federation.burst.ingress" => {
-            vault_federation_burst_ingress(server, call, input).await
+            Box::pin(vault_federation_burst_ingress(server, call, input)).await
         }
         "vault.federation.burst.disposition" => {
-            vault_federation_burst_disposition(server, call, input).await
+            Box::pin(vault_federation_burst_disposition(server, call, input)).await
         }
-        "vault.federation.burst.review" => vault_federation_burst_review(server, call, input).await,
+        "vault.federation.burst.review" => {
+            Box::pin(vault_federation_burst_review(server, call, input)).await
+        }
         "vault.federation.burst.review.release" => {
-            vault_federation_burst_review_release(server, call, input).await
+            Box::pin(vault_federation_burst_review_release(server, call, input)).await
         }
         "vault.federation.burst.review.reject" => {
-            vault_federation_burst_review_reject(server, call, input).await
+            Box::pin(vault_federation_burst_review_reject(server, call, input)).await
         }
-        "vault.federation.burst.replay" => vault_federation_burst_replay(server, call, input).await,
+        "vault.federation.burst.replay" => {
+            Box::pin(vault_federation_burst_replay(server, call, input)).await
+        }
         "vault.federation.connect.identity" => {
-            vault_federation_connect_identity(server, call, input).await
+            Box::pin(vault_federation_connect_identity(server, call, input)).await
         }
         "vault.federation.connect.grants.mint" => {
-            vault_federation_connect_grants_mint(server, call, input).await
+            Box::pin(vault_federation_connect_grants_mint(server, call, input)).await
         }
         "vault.federation.connect.offer" => {
-            vault_federation_connect_offer(server, call, input).await
+            Box::pin(vault_federation_connect_offer(server, call, input)).await
         }
         "vault.federation.connect.accept" => {
-            vault_federation_connect_accept(server, call, input).await
+            Box::pin(vault_federation_connect_accept(server, call, input)).await
         }
         "vault.federation.connect.narrow" => {
-            vault_federation_connect_narrow(server, call, input).await
+            Box::pin(vault_federation_connect_narrow(server, call, input)).await
         }
         "vault.federation.connect.rescope.offer" => {
-            vault_federation_connect_rescope_offer(server, call, input).await
+            Box::pin(vault_federation_connect_rescope_offer(server, call, input)).await
         }
         "vault.federation.connect.rescope.accept" => {
-            vault_federation_connect_rescope_accept(server, call, input).await
+            Box::pin(vault_federation_connect_rescope_accept(server, call, input)).await
         }
         "vault.federation.connect.disconnect" => {
-            vault_federation_connect_disconnect(server, call, input).await
+            Box::pin(vault_federation_connect_disconnect(server, call, input)).await
         }
         "vault.federation.connect.export" => {
-            vault_federation_connect_export(server, call, input).await
+            Box::pin(vault_federation_connect_export(server, call, input)).await
         }
         "vault.federation.connect.rejoin" => {
-            vault_federation_connect_rejoin(server, call, input).await
+            Box::pin(vault_federation_connect_rejoin(server, call, input)).await
         }
-        "vault.trusted_contacts.name" => vault_trusted_contacts_name(server, call, input).await,
-        "vault.trusted_contacts.list" => vault_trusted_contacts_list(server, call, input).await,
+        "vault.trusted_contacts.name" => {
+            Box::pin(vault_trusted_contacts_name(server, call, input)).await
+        }
+        "vault.trusted_contacts.list" => {
+            Box::pin(vault_trusted_contacts_list(server, call, input)).await
+        }
         "vault.trusted_contacts.consent" => {
-            vault_trusted_contacts_consent(server, call, input).await
+            Box::pin(vault_trusted_contacts_consent(server, call, input)).await
         }
-        "vault.trusted_contacts.revoke" => vault_trusted_contacts_revoke(server, call, input).await,
+        "vault.trusted_contacts.revoke" => {
+            Box::pin(vault_trusted_contacts_revoke(server, call, input)).await
+        }
         "vault.trusted_contacts.dial.set" => {
-            vault_trusted_contacts_dial_set(server, call, input).await
+            Box::pin(vault_trusted_contacts_dial_set(server, call, input)).await
         }
         "vault.trusted_contacts.tier.set" => {
-            vault_trusted_contacts_tier_set(server, call, input).await
+            Box::pin(vault_trusted_contacts_tier_set(server, call, input)).await
         }
         "vault.trusted_contacts.concern.asks" => {
-            vault_trusted_contacts_concern_asks(server, call, input).await
+            Box::pin(vault_trusted_contacts_concern_asks(server, call, input)).await
         }
         "vault.trusted_contacts.concern.authorize" => {
-            vault_trusted_contacts_concern_authorize(server, call, input).await
+            Box::pin(vault_trusted_contacts_concern_authorize(
+                server, call, input,
+            ))
+            .await
         }
         "vault.trusted_contacts.concern.propose" => {
-            vault_trusted_contacts_concern_propose(server, call, input).await
+            Box::pin(vault_trusted_contacts_concern_propose(server, call, input)).await
         }
         "vault.trusted_contacts.concern.deliver" => {
-            vault_trusted_contacts_concern_deliver(server, call, input).await
+            Box::pin(vault_trusted_contacts_concern_deliver(server, call, input)).await
         }
-        "vault.guests.share" => vault_guests_share(server, call, input).await,
-        "vault.guests.export_envelope" => vault_guests_export_envelope(server, call, input).await,
-        "vault.guests.reshare" => vault_guests_reshare(server, call, input).await,
-        "vault.guests.revoke" => vault_guests_revoke(server, call, input).await,
-        "vault.guests.mint_slip" => vault_guests_mint_slip(server, call, input).await,
-        "vault.support_grants.mint" => vault_support_grants_mint(server, call, input).await,
-        "vault.support_grants.list" => vault_support_grants_list(server, call, input).await,
-        "vault.support_grants.revoke" => vault_support_grants_revoke(server, call, input).await,
-        "vault.files.sources.attach" => vault_files_sources_attach(server, call, input).await,
-        "vault.files.sources.rescan" => vault_files_sources_rescan(server, call, input).await,
-        "vault.files.sources.detach" => vault_files_sources_detach(server, call, input).await,
-        "vault.files.sources.list" => vault_files_sources_list(server, call, input).await,
-        "vault.files.sources.files" => vault_files_sources_files(server, call, input).await,
-        "vault.residence.mode" => vault_residence_mode(server, call, input).await,
-        "vault.residence.open" => vault_residence_open(server, call, input).await,
-        "vault.residence.index" => vault_residence_index(server, call, input).await,
-        "vault.residence.prune" => vault_residence_prune(server, call, input).await,
-        "vault.residence.directives" => vault_residence_directives(server, call, input).await,
-        "vault.off_record.start" => vault_off_record_start(server, call, input).await,
-        "vault.off_record.status" => vault_off_record_status(server, call, input).await,
-        "vault.off_record.witness" => vault_off_record_witness(server, call, input).await,
-        "vault.off_record.discard" => vault_off_record_discard(server, call, input).await,
-        "vault.off_record.recall" => vault_off_record_recall(server, call, input).await,
-        "vault.off_record.notes.create" => vault_off_record_notes_create(server, call, input).await,
+        "vault.guests.share" => Box::pin(vault_guests_share(server, call, input)).await,
+        "vault.guests.export_envelope" => {
+            Box::pin(vault_guests_export_envelope(server, call, input)).await
+        }
+        "vault.guests.reshare" => Box::pin(vault_guests_reshare(server, call, input)).await,
+        "vault.guests.revoke" => Box::pin(vault_guests_revoke(server, call, input)).await,
+        "vault.guests.mint_slip" => Box::pin(vault_guests_mint_slip(server, call, input)).await,
+        "vault.support_grants.mint" => {
+            Box::pin(vault_support_grants_mint(server, call, input)).await
+        }
+        "vault.support_grants.list" => {
+            Box::pin(vault_support_grants_list(server, call, input)).await
+        }
+        "vault.support_grants.revoke" => {
+            Box::pin(vault_support_grants_revoke(server, call, input)).await
+        }
+        "vault.files.sources.attach" => {
+            Box::pin(vault_files_sources_attach(server, call, input)).await
+        }
+        "vault.files.sources.rescan" => {
+            Box::pin(vault_files_sources_rescan(server, call, input)).await
+        }
+        "vault.files.sources.detach" => {
+            Box::pin(vault_files_sources_detach(server, call, input)).await
+        }
+        "vault.files.sources.list" => Box::pin(vault_files_sources_list(server, call, input)).await,
+        "vault.files.sources.files" => {
+            Box::pin(vault_files_sources_files(server, call, input)).await
+        }
+        "vault.residence.mode" => Box::pin(vault_residence_mode(server, call, input)).await,
+        "vault.residence.open" => Box::pin(vault_residence_open(server, call, input)).await,
+        "vault.residence.index" => Box::pin(vault_residence_index(server, call, input)).await,
+        "vault.residence.prune" => Box::pin(vault_residence_prune(server, call, input)).await,
+        "vault.residence.directives" => {
+            Box::pin(vault_residence_directives(server, call, input)).await
+        }
+        "vault.off_record.start" => Box::pin(vault_off_record_start(server, call, input)).await,
+        "vault.off_record.status" => Box::pin(vault_off_record_status(server, call, input)).await,
+        "vault.off_record.witness" => Box::pin(vault_off_record_witness(server, call, input)).await,
+        "vault.off_record.discard" => Box::pin(vault_off_record_discard(server, call, input)).await,
+        "vault.off_record.recall" => Box::pin(vault_off_record_recall(server, call, input)).await,
+        "vault.off_record.notes.create" => {
+            Box::pin(vault_off_record_notes_create(server, call, input)).await
+        }
         "vault.off_record.claims.upsert" => {
-            vault_off_record_claims_upsert(server, call, input).await
+            Box::pin(vault_off_record_claims_upsert(server, call, input)).await
         }
-        "self.off_record.execute" => self_off_record_execute(server, call, input).await,
-        "vault.off_record.rooms.status" => vault_off_record_rooms_status(server, call, input).await,
-        "vault.off_record.rooms.start" => vault_off_record_rooms_start(server, call, input).await,
+        "self.off_record.execute" => Box::pin(self_off_record_execute(server, call, input)).await,
+        "self.off_record.results.list" => {
+            Box::pin(self_off_record_results_list(server, call, input)).await
+        }
+        "self.off_record.results.read" => {
+            Box::pin(self_off_record_results_read(server, call, input)).await
+        }
+        "self.off_record.waits.get" => {
+            Box::pin(self_off_record_waits_get(server, call, input)).await
+        }
+        "self.off_record.waits.answer" => {
+            Box::pin(self_off_record_waits_answer(server, call, input)).await
+        }
+        "vault.off_record.rooms.status" => {
+            Box::pin(vault_off_record_rooms_status(server, call, input)).await
+        }
+        "vault.off_record.rooms.start" => {
+            Box::pin(vault_off_record_rooms_start(server, call, input)).await
+        }
         "vault.off_record.rooms.witness" => {
-            vault_off_record_rooms_witness(server, call, input).await
+            Box::pin(vault_off_record_rooms_witness(server, call, input)).await
         }
-        "vault.off_record.rooms.save" => vault_off_record_rooms_save(server, call, input).await,
+        "vault.off_record.rooms.save" => {
+            Box::pin(vault_off_record_rooms_save(server, call, input)).await
+        }
         "vault.off_record.rooms.save_from_here" => {
-            vault_off_record_rooms_save_from_here(server, call, input).await
+            Box::pin(vault_off_record_rooms_save_from_here(server, call, input)).await
         }
-        "vault.off_record.rooms.export" => vault_off_record_rooms_export(server, call, input).await,
+        "vault.off_record.rooms.export" => {
+            Box::pin(vault_off_record_rooms_export(server, call, input)).await
+        }
         "vault.off_record.rooms.suggest_save" => {
-            vault_off_record_rooms_suggest_save(server, call, input).await
+            Box::pin(vault_off_record_rooms_suggest_save(server, call, input)).await
         }
         "vault.off_record.rooms.confirm_save" => {
-            vault_off_record_rooms_confirm_save(server, call, input).await
+            Box::pin(vault_off_record_rooms_confirm_save(server, call, input)).await
         }
         "vault.off_record.rooms.decline_save" => {
-            vault_off_record_rooms_decline_save(server, call, input).await
+            Box::pin(vault_off_record_rooms_decline_save(server, call, input)).await
         }
-        "vault.records.erase_preview" => vault_records_erase_preview(server, call, input).await,
-        "vault.records.erase_confirm" => vault_records_erase_confirm(server, call, input).await,
-        "vault.records.erase_sweep" => vault_records_erase_sweep(server, call, input).await,
-        "vault.research.create_child" => vault_research_create_child(server, call, input).await,
-        "vault.research.archive" => vault_research_archive(server, call, input).await,
+        "vault.records.erase_preview" => {
+            Box::pin(vault_records_erase_preview(server, call, input)).await
+        }
+        "vault.records.erase_confirm" => {
+            Box::pin(vault_records_erase_confirm(server, call, input)).await
+        }
+        "vault.records.erase_sweep" => {
+            Box::pin(vault_records_erase_sweep(server, call, input)).await
+        }
+        "vault.research.create_child" => {
+            Box::pin(vault_research_create_child(server, call, input)).await
+        }
+        "vault.research.archive" => Box::pin(vault_research_archive(server, call, input)).await,
         "vault.research.archive.install" => {
-            vault_research_archive_install(server, call, input).await
+            Box::pin(vault_research_archive_install(server, call, input)).await
         }
-        "vault.research.archive.record" => vault_research_archive_record(server, call, input).await,
-        "vault.research.archive.get" => vault_research_archive_get(server, call, input).await,
-        "vault.research.archive.best" => vault_research_archive_best(server, call, input).await,
+        "vault.research.archive.record" => {
+            Box::pin(vault_research_archive_record(server, call, input)).await
+        }
+        "vault.research.archive.get" => {
+            Box::pin(vault_research_archive_get(server, call, input)).await
+        }
+        "vault.research.archive.best" => {
+            Box::pin(vault_research_archive_best(server, call, input)).await
+        }
         "vault.research.archive.repropose" => {
-            vault_research_archive_repropose(server, call, input).await
+            Box::pin(vault_research_archive_repropose(server, call, input)).await
         }
         "vault.research.archive.coverage" => {
-            vault_research_archive_coverage(server, call, input).await
+            Box::pin(vault_research_archive_coverage(server, call, input)).await
         }
-        "vault.evals.inventory" => vault_evals_inventory(server, call, input).await,
-        "vault.evals.cohorts.setup" => vault_evals_cohorts_setup(server, call, input).await,
-        "vault.evals.author_now" => vault_evals_author_now(server, call, input).await,
-        "vault.evals.authoring.result" => vault_evals_authoring_result(server, call, input).await,
-        "vault.evals.families" => vault_evals_families(server, call, input).await,
-        "vault.evals.families.assign" => vault_evals_families_assign(server, call, input).await,
-        "vault.evals.cases" => vault_evals_cases(server, call, input).await,
-        "vault.evals.cases.record" => vault_evals_cases_record(server, call, input).await,
-        "vault.evals.cohorts" => vault_evals_cohorts(server, call, input).await,
-        "vault.evals.cohorts.open" => vault_evals_cohorts_open(server, call, input).await,
-        "vault.evals.exposure" => vault_evals_exposure(server, call, input).await,
-        "vault.evals.sufficiency" => vault_evals_sufficiency(server, call, input).await,
-        "vault.evals.labels.blocked" => vault_evals_labels_blocked(server, call, input).await,
-        "vault.evals.labels.pick" => vault_evals_labels_pick(server, call, input).await,
-        "vault.coach.training_offers" => vault_coach_training_offers(server, call, input).await,
+        "vault.evals.inventory" => Box::pin(vault_evals_inventory(server, call, input)).await,
+        "vault.evals.cohorts.setup" => {
+            Box::pin(vault_evals_cohorts_setup(server, call, input)).await
+        }
+        "vault.evals.author_now" => Box::pin(vault_evals_author_now(server, call, input)).await,
+        "vault.evals.authoring.result" => {
+            Box::pin(vault_evals_authoring_result(server, call, input)).await
+        }
+        "vault.evals.families" => Box::pin(vault_evals_families(server, call, input)).await,
+        "vault.evals.families.assign" => {
+            Box::pin(vault_evals_families_assign(server, call, input)).await
+        }
+        "vault.evals.cases" => Box::pin(vault_evals_cases(server, call, input)).await,
+        "vault.evals.cases.record" => Box::pin(vault_evals_cases_record(server, call, input)).await,
+        "vault.evals.cohorts" => Box::pin(vault_evals_cohorts(server, call, input)).await,
+        "vault.evals.cohorts.open" => Box::pin(vault_evals_cohorts_open(server, call, input)).await,
+        "vault.evals.exposure" => Box::pin(vault_evals_exposure(server, call, input)).await,
+        "vault.evals.sufficiency" => Box::pin(vault_evals_sufficiency(server, call, input)).await,
+        "vault.evals.labels.blocked" => {
+            Box::pin(vault_evals_labels_blocked(server, call, input)).await
+        }
+        "vault.evals.labels.pick" => Box::pin(vault_evals_labels_pick(server, call, input)).await,
+        "vault.coach.training_offers" => {
+            Box::pin(vault_coach_training_offers(server, call, input)).await
+        }
         "vault.coach.training_offers.get" => {
-            vault_coach_training_offers_get(server, call, input).await
+            Box::pin(vault_coach_training_offers_get(server, call, input)).await
         }
         "vault.coach.training_offers.trigger" => {
-            vault_coach_training_offers_trigger(server, call, input).await
+            Box::pin(vault_coach_training_offers_trigger(server, call, input)).await
         }
         "vault.coach.training_offers.result" => {
-            vault_coach_training_offers_result(server, call, input).await
+            Box::pin(vault_coach_training_offers_result(server, call, input)).await
         }
         "vault.coach.training_offers.answer" => {
-            vault_coach_training_offers_answer(server, call, input).await
+            Box::pin(vault_coach_training_offers_answer(server, call, input)).await
         }
         "vault.coach.training_offers.undo" => {
-            vault_coach_training_offers_undo(server, call, input).await
+            Box::pin(vault_coach_training_offers_undo(server, call, input)).await
         }
         "vault.coach.training_offers.candidates" => {
-            vault_coach_training_offers_candidates(server, call, input).await
+            Box::pin(vault_coach_training_offers_candidates(server, call, input)).await
         }
         "vault.coach.training_offers.candidates.prepare" => {
-            vault_coach_training_offers_candidates_prepare(server, call, input).await
+            Box::pin(vault_coach_training_offers_candidates_prepare(
+                server, call, input,
+            ))
+            .await
         }
         "vault.coach.training_offers.pilots.prepare" => {
-            vault_coach_training_offers_pilots_prepare(server, call, input).await
+            Box::pin(vault_coach_training_offers_pilots_prepare(
+                server, call, input,
+            ))
+            .await
         }
         "vault.coach.training_offers.pilots.complete" => {
-            vault_coach_training_offers_pilots_complete(server, call, input).await
+            Box::pin(vault_coach_training_offers_pilots_complete(
+                server, call, input,
+            ))
+            .await
         }
         "vault.coach.training_offers.pilots.get" => {
-            vault_coach_training_offers_pilots_get(server, call, input).await
+            Box::pin(vault_coach_training_offers_pilots_get(server, call, input)).await
         }
-        "vault.research.bind" => vault_research_bind(server, call, input).await,
-        "vault.research.fork" => vault_research_fork(server, call, input).await,
-        "vault.research.weave" => vault_research_weave(server, call, input).await,
-        "vault.research.measure_search" => vault_research_measure_search(server, call, input).await,
+        "vault.coach.training_offers.sources" => {
+            Box::pin(vault_coach_training_offers_sources(server, call, input)).await
+        }
+        "vault.research.bind" => Box::pin(vault_research_bind(server, call, input)).await,
+        "vault.research.fork" => Box::pin(vault_research_fork(server, call, input)).await,
+        "vault.research.weave" => Box::pin(vault_research_weave(server, call, input)).await,
+        "vault.research.measure_search" => {
+            Box::pin(vault_research_measure_search(server, call, input)).await
+        }
         "vault.research.measure_held_out" => {
-            vault_research_measure_held_out(server, call, input).await
+            Box::pin(vault_research_measure_held_out(server, call, input)).await
         }
-        "vault.research.evaluate_split" => vault_research_evaluate_split(server, call, input).await,
-        "vault.research.mark_invalid" => vault_research_mark_invalid(server, call, input).await,
-        "vault.research.prune" => vault_research_prune(server, call, input).await,
-        "vault.research.select" => vault_research_select(server, call, input).await,
+        "vault.research.evaluate_split" => {
+            Box::pin(vault_research_evaluate_split(server, call, input)).await
+        }
+        "vault.research.mark_invalid" => {
+            Box::pin(vault_research_mark_invalid(server, call, input)).await
+        }
+        "vault.research.prune" => Box::pin(vault_research_prune(server, call, input)).await,
+        "vault.research.select" => Box::pin(vault_research_select(server, call, input)).await,
         "vault.research.promotion_basis" => {
-            vault_research_promotion_basis(server, call, input).await
+            Box::pin(vault_research_promotion_basis(server, call, input)).await
         }
         "vault.research.reserve_confirmation" => {
-            vault_research_reserve_confirmation(server, call, input).await
+            Box::pin(vault_research_reserve_confirmation(server, call, input)).await
         }
-        "vault.research.promote" => vault_research_promote(server, call, input).await,
-        "vault.research.reserve_work" => vault_research_reserve_work(server, call, input).await,
-        "vault.research.settle_work" => vault_research_settle_work(server, call, input).await,
-        "vault.research.refund_work" => vault_research_refund_work(server, call, input).await,
+        "vault.research.promote" => Box::pin(vault_research_promote(server, call, input)).await,
+        "vault.research.reserve_work" => {
+            Box::pin(vault_research_reserve_work(server, call, input)).await
+        }
+        "vault.research.settle_work" => {
+            Box::pin(vault_research_settle_work(server, call, input)).await
+        }
+        "vault.research.refund_work" => {
+            Box::pin(vault_research_refund_work(server, call, input)).await
+        }
         "vault.research.reserve_exploration" => {
-            vault_research_reserve_exploration(server, call, input).await
+            Box::pin(vault_research_reserve_exploration(server, call, input)).await
         }
-        "vault.research.budget" => vault_research_budget(server, call, input).await,
+        "vault.research.budget" => Box::pin(vault_research_budget(server, call, input)).await,
         "vault.research.record_benchmark" => {
-            vault_research_record_benchmark(server, call, input).await
+            Box::pin(vault_research_record_benchmark(server, call, input)).await
         }
         "vault.authority.handoff_alarms" => {
-            vault_authority_handoff_alarms(server, call, input).await
+            Box::pin(vault_authority_handoff_alarms(server, call, input)).await
         }
         "vault.authority.handoff_alarms.acknowledge" => {
-            vault_authority_handoff_alarms_acknowledge(server, call, input).await
+            Box::pin(vault_authority_handoff_alarms_acknowledge(
+                server, call, input,
+            ))
+            .await
         }
-        "vault.roots.requests.cancel" => vault_roots_requests_cancel(server, call, input).await,
-        "vault.cleanup.run" => vault_cleanup_run(server, call, input).await,
-        "vault.cleanup.review" => vault_cleanup_review(server, call, input).await,
-        "vault.cleanup.decide" => vault_cleanup_decide(server, call, input).await,
-        "vault.archive.delete.preview" => vault_archive_delete_preview(server, call, input).await,
-        "vault.archive.delete.confirm" => vault_archive_delete_confirm(server, call, input).await,
+        "vault.roots.requests.cancel" => {
+            Box::pin(vault_roots_requests_cancel(server, call, input)).await
+        }
+        "vault.roots.requests.create" => {
+            Box::pin(vault_roots_requests_create(server, call, input)).await
+        }
+        "vault.roots.requests.list" => {
+            Box::pin(vault_roots_requests_list(server, call, input)).await
+        }
+        "vault.owner_work.get" => Box::pin(vault_owner_work_get(server, call, input)).await,
+        "vault.cleanup.run" => Box::pin(vault_cleanup_run(server, call, input)).await,
+        "vault.cleanup.review" => Box::pin(vault_cleanup_review(server, call, input)).await,
+        "vault.cleanup.decide" => Box::pin(vault_cleanup_decide(server, call, input)).await,
+        "vault.archive.delete.preview" => {
+            Box::pin(vault_archive_delete_preview(server, call, input)).await
+        }
+        "vault.archive.delete.confirm" => {
+            Box::pin(vault_archive_delete_confirm(server, call, input)).await
+        }
         "vault.usage.events.undecodable" => {
-            vault_usage_events_undecodable(server, call, input).await
+            Box::pin(vault_usage_events_undecodable(server, call, input)).await
         }
         "vault.usage.events.remove_undecodable" => {
-            vault_usage_events_remove_undecodable(server, call, input).await
+            Box::pin(vault_usage_events_remove_undecodable(server, call, input)).await
         }
-        "vault.entities.mention" => vault_entities_mention(server, call, input).await,
-        "vault.legal_holds.place" => vault_legal_holds_place(server, call, input).await,
-        "vault.legal_holds.widen" => vault_legal_holds_widen(server, call, input).await,
-        "vault.legal_holds.list" => vault_legal_holds_list(server, call, input).await,
-        "vault.legal_holds.log" => vault_legal_holds_log(server, call, input).await,
+        "vault.usage.repair.receipts" => {
+            Box::pin(vault_usage_repair_receipts(server, call, input)).await
+        }
+        "vault.entities.mention" => Box::pin(vault_entities_mention(server, call, input)).await,
+        "vault.legal_holds.place" => Box::pin(vault_legal_holds_place(server, call, input)).await,
+        "vault.legal_holds.widen" => Box::pin(vault_legal_holds_widen(server, call, input)).await,
+        "vault.legal_holds.list" => Box::pin(vault_legal_holds_list(server, call, input)).await,
+        "vault.legal_holds.log" => Box::pin(vault_legal_holds_log(server, call, input)).await,
         "vault.legal_holds.lift_and_erase" => {
-            vault_legal_holds_lift_and_erase(server, call, input).await
+            Box::pin(vault_legal_holds_lift_and_erase(server, call, input)).await
         }
-        "vault.courtesy_delete.send" => vault_courtesy_delete_send(server, call, input).await,
-        "vault.courtesy_delete.sent" => vault_courtesy_delete_sent(server, call, input).await,
+        "vault.courtesy_delete.send" => {
+            Box::pin(vault_courtesy_delete_send(server, call, input)).await
+        }
+        "vault.courtesy_delete.sent" => {
+            Box::pin(vault_courtesy_delete_sent(server, call, input)).await
+        }
         "vault.courtesy_delete.incoming" => {
-            vault_courtesy_delete_incoming(server, call, input).await
+            Box::pin(vault_courtesy_delete_incoming(server, call, input)).await
         }
-        "vault.courtesy_delete.answer" => vault_courtesy_delete_answer(server, call, input).await,
-        "vault.embedding_spaces.list" => vault_embedding_spaces_list(server, call, input).await,
+        "vault.courtesy_delete.answer" => {
+            Box::pin(vault_courtesy_delete_answer(server, call, input)).await
+        }
+        "vault.embedding_spaces.list" => {
+            Box::pin(vault_embedding_spaces_list(server, call, input)).await
+        }
         "vault.embedding_spaces.declare" => {
-            vault_embedding_spaces_declare(server, call, input).await
+            Box::pin(vault_embedding_spaces_declare(server, call, input)).await
         }
-        "vault.embedding_spaces.bind" => vault_embedding_spaces_bind(server, call, input).await,
+        "vault.embedding_spaces.bind" => {
+            Box::pin(vault_embedding_spaces_bind(server, call, input)).await
+        }
         "vault.embedding_spaces.one_space" => {
-            vault_embedding_spaces_one_space(server, call, input).await
+            Box::pin(vault_embedding_spaces_one_space(server, call, input)).await
         }
-        "vault.embedding_spaces.retire" => vault_embedding_spaces_retire(server, call, input).await,
-        "vault.embedding_spaces.move" => vault_embedding_spaces_move(server, call, input).await,
+        "vault.embedding_spaces.retire" => {
+            Box::pin(vault_embedding_spaces_retire(server, call, input)).await
+        }
+        "vault.embedding_spaces.move" => {
+            Box::pin(vault_embedding_spaces_move(server, call, input)).await
+        }
         "vault.embedding_spaces.move_check" => {
-            vault_embedding_spaces_move_check(server, call, input).await
+            Box::pin(vault_embedding_spaces_move_check(server, call, input)).await
         }
         "vault.embedding_spaces.move_approve" => {
-            vault_embedding_spaces_move_approve(server, call, input).await
+            Box::pin(vault_embedding_spaces_move_approve(server, call, input)).await
         }
         "vault.embedding_spaces.move_undo" => {
-            vault_embedding_spaces_move_undo(server, call, input).await
+            Box::pin(vault_embedding_spaces_move_undo(server, call, input)).await
         }
         "vault.embedding_spaces.move_abandon" => {
-            vault_embedding_spaces_move_abandon(server, call, input).await
+            Box::pin(vault_embedding_spaces_move_abandon(server, call, input)).await
         }
         "vault.embedding_spaces.probes.list" => {
-            vault_embedding_spaces_probes_list(server, call, input).await
+            Box::pin(vault_embedding_spaces_probes_list(server, call, input)).await
         }
         "vault.embedding_spaces.probes.put" => {
-            vault_embedding_spaces_probes_put(server, call, input).await
+            Box::pin(vault_embedding_spaces_probes_put(server, call, input)).await
         }
         "vault.embedding_spaces.probes.delete" => {
-            vault_embedding_spaces_probes_delete(server, call, input).await
+            Box::pin(vault_embedding_spaces_probes_delete(server, call, input)).await
         }
-        "vault.policy.owner.get" => vault_policy_owner_get(server, call, input).await,
-        "vault.policy.owner.configure" => vault_policy_owner_configure(server, call, input).await,
-        "vault.policy.owner.row.change" => vault_policy_owner_row_change(server, call, input).await,
-        "vault.policy.outbound.decide" => vault_policy_outbound_decide(server, call, input).await,
-        "vault.policy.relay.decide" => vault_policy_relay_decide(server, call, input).await,
-        "vault.consent.approve_once" => vault_consent_approve_once(server, call, input).await,
+        "vault.policy.owner.get" => Box::pin(vault_policy_owner_get(server, call, input)).await,
+        "vault.policy.owner.configure" => {
+            Box::pin(vault_policy_owner_configure(server, call, input)).await
+        }
+        "vault.policy.owner.row.change" => {
+            Box::pin(vault_policy_owner_row_change(server, call, input)).await
+        }
+        "vault.policy.outbound.decide" => {
+            Box::pin(vault_policy_outbound_decide(server, call, input)).await
+        }
+        "vault.policy.relay.decide" => {
+            Box::pin(vault_policy_relay_decide(server, call, input)).await
+        }
+        "vault.consent.approve_once" => {
+            Box::pin(vault_consent_approve_once(server, call, input)).await
+        }
         "vault.connectors.calls.approve_once" => {
-            vault_connectors_calls_approve_once(server, call, input).await
+            Box::pin(vault_connectors_calls_approve_once(server, call, input)).await
         }
-        "vault.consent.deny" => vault_consent_deny(server, call, input).await,
+        "vault.consent.deny" => Box::pin(vault_consent_deny(server, call, input)).await,
         "vault.consent.create_standing_grant" => {
-            vault_consent_create_standing_grant(server, call, input).await
+            Box::pin(vault_consent_create_standing_grant(server, call, input)).await
         }
-        "vault.consent.registry" => vault_consent_registry(server, call, input).await,
+        "vault.consent.registry" => Box::pin(vault_consent_registry(server, call, input)).await,
         "vault.consent.failure_signals_held" => {
-            vault_consent_failure_signals_held(server, call, input).await
+            Box::pin(vault_consent_failure_signals_held(server, call, input)).await
         }
-        "vault.consent.revoke" => vault_consent_revoke(server, call, input).await,
+        "vault.consent.revoke" => Box::pin(vault_consent_revoke(server, call, input)).await,
         "vault.consent.bypass_grant_warning" => {
-            vault_consent_bypass_grant_warning(server, call, input).await
+            Box::pin(vault_consent_bypass_grant_warning(server, call, input)).await
         }
         "vault.consent.create_bypass_grant" => {
-            vault_consent_create_bypass_grant(server, call, input).await
+            Box::pin(vault_consent_create_bypass_grant(server, call, input)).await
         }
         "vault.consent.active_bypass_grants" => {
-            vault_consent_active_bypass_grants(server, call, input).await
+            Box::pin(vault_consent_active_bypass_grants(server, call, input)).await
         }
         "vault.consent.bypassed_effect_receipts" => {
-            vault_consent_bypassed_effect_receipts(server, call, input).await
+            Box::pin(vault_consent_bypassed_effect_receipts(server, call, input)).await
         }
         "vault.consent.graduation.policy" => {
-            vault_consent_graduation_policy(server, call, input).await
+            Box::pin(vault_consent_graduation_policy(server, call, input)).await
         }
         "vault.consent.graduation.policy.set" => {
-            vault_consent_graduation_policy_set(server, call, input).await
+            Box::pin(vault_consent_graduation_policy_set(server, call, input)).await
         }
         "vault.consent.graduation.policy.clear" => {
-            vault_consent_graduation_policy_clear(server, call, input).await
+            Box::pin(vault_consent_graduation_policy_clear(server, call, input)).await
         }
         "vault.consent.graduation.stats" => {
-            vault_consent_graduation_stats(server, call, input).await
+            Box::pin(vault_consent_graduation_stats(server, call, input)).await
         }
         "vault.consent.graduation.outcome" => {
-            vault_consent_graduation_outcome(server, call, input).await
+            Box::pin(vault_consent_graduation_outcome(server, call, input)).await
         }
         "vault.consent.graduation.offers" => {
-            vault_consent_graduation_offers(server, call, input).await
+            Box::pin(vault_consent_graduation_offers(server, call, input)).await
         }
         "vault.consent.graduation.answer" => {
-            vault_consent_graduation_answer(server, call, input).await
+            Box::pin(vault_consent_graduation_answer(server, call, input)).await
         }
         "vault.consent.graduation.trust_table" => {
-            vault_consent_graduation_trust_table(server, call, input).await
+            Box::pin(vault_consent_graduation_trust_table(server, call, input)).await
         }
         "vault.consent.graduation.settings.unpin" => {
-            vault_consent_graduation_settings_unpin(server, call, input).await
+            Box::pin(vault_consent_graduation_settings_unpin(server, call, input)).await
         }
         "vault.consent.graduation.demote" => {
-            vault_consent_graduation_demote(server, call, input).await
+            Box::pin(vault_consent_graduation_demote(server, call, input)).await
         }
         "self.consent.graduation.demote" => {
-            self_consent_graduation_demote(server, call, input).await
+            Box::pin(self_consent_graduation_demote(server, call, input)).await
         }
-        "vault.gate.policy.get" => vault_gate_policy_get(server, call, input).await,
-        "vault.gate.policy.put" => vault_gate_policy_put(server, call, input).await,
-        "vault.gate.policy.propose" => vault_gate_policy_propose(server, call, input).await,
-        "vault.gate.checker.get" => vault_gate_checker_get(server, call, input).await,
-        "vault.gate.checker.set" => vault_gate_checker_set(server, call, input).await,
-        "vault.learning.read" => vault_learning_read(server, call, input).await,
-        "vault.learning.projection" => vault_learning_projection(server, call, input).await,
-        "vault.seal.confess" => vault_seal_confess(server, call, input).await,
-        "vault.seal.audit" => vault_seal_audit(server, call, input).await,
-        "vault.seal.receipt" => vault_seal_receipt(server, call, input).await,
-        "vault.seal.pending" => vault_seal_pending(server, call, input).await,
-        "vault.seal.run" => vault_seal_run(server, call, input).await,
-        "vault.seal.complete" => vault_seal_complete(server, call, input).await,
-        "vault.settings.learning" => vault_settings_learning(server, call, input).await,
-        "vault.settings.learning.put" => vault_settings_learning_put(server, call, input).await,
-        "vault.settings.learning.clear" => vault_settings_learning_clear(server, call, input).await,
-        "vault.secrets.lift_history" => vault_secrets_lift_history(server, call, input).await,
-        "vault.widen_proposals" => vault_widen_proposals(server, call, input).await,
-        "vault.widen_proposals.approve" => vault_widen_proposals_approve(server, call, input).await,
-        "vault.widen_proposals.decline" => vault_widen_proposals_decline(server, call, input).await,
-        "vault.claims.review" => vault_claims_review(server, call, input).await,
-        "vault.claims.settle" => vault_claims_settle(server, call, input).await,
-        "vault.craft_candidates" => vault_craft_candidates(server, call, input).await,
-        "vault.craft_candidates.answer" => vault_craft_candidates_answer(server, call, input).await,
+        "vault.gate.policy.get" => Box::pin(vault_gate_policy_get(server, call, input)).await,
+        "vault.gate.policy.put" => Box::pin(vault_gate_policy_put(server, call, input)).await,
+        "vault.gate.policy.propose" => {
+            Box::pin(vault_gate_policy_propose(server, call, input)).await
+        }
+        "vault.gate.checker.get" => Box::pin(vault_gate_checker_get(server, call, input)).await,
+        "vault.gate.checker.set" => Box::pin(vault_gate_checker_set(server, call, input)).await,
+        "vault.learning.read" => Box::pin(vault_learning_read(server, call, input)).await,
+        "vault.learning.projection" => {
+            Box::pin(vault_learning_projection(server, call, input)).await
+        }
+        "vault.seal.confess" => Box::pin(vault_seal_confess(server, call, input)).await,
+        "vault.seal.audit" => Box::pin(vault_seal_audit(server, call, input)).await,
+        "vault.seal.receipt" => Box::pin(vault_seal_receipt(server, call, input)).await,
+        "vault.seal.pending" => Box::pin(vault_seal_pending(server, call, input)).await,
+        "vault.seal.run" => Box::pin(vault_seal_run(server, call, input)).await,
+        "vault.seal.complete" => Box::pin(vault_seal_complete(server, call, input)).await,
+        "vault.settings.learning" => Box::pin(vault_settings_learning(server, call, input)).await,
+        "vault.settings.learning.put" => {
+            Box::pin(vault_settings_learning_put(server, call, input)).await
+        }
+        "vault.settings.learning.clear" => {
+            Box::pin(vault_settings_learning_clear(server, call, input)).await
+        }
+        "vault.secrets.lift_history" => {
+            Box::pin(vault_secrets_lift_history(server, call, input)).await
+        }
+        "vault.secrets.register" => Box::pin(vault_secrets_register(server, call, input)).await,
+        "vault.secrets.rotate" => Box::pin(vault_secrets_rotate(server, call, input)).await,
+        "vault.secrets.rewrap" => Box::pin(vault_secrets_rewrap(server, call, input)).await,
+        "vault.secrets.revoke" => Box::pin(vault_secrets_revoke(server, call, input)).await,
+        "vault.secrets.custody.get" => {
+            Box::pin(vault_secrets_custody_get(server, call, input)).await
+        }
+        "vault.secrets.custody.submit" => {
+            Box::pin(vault_secrets_custody_submit(server, call, input)).await
+        }
+        "vault.widen_proposals" => Box::pin(vault_widen_proposals(server, call, input)).await,
+        "vault.widen_proposals.approve" => {
+            Box::pin(vault_widen_proposals_approve(server, call, input)).await
+        }
+        "vault.widen_proposals.decline" => {
+            Box::pin(vault_widen_proposals_decline(server, call, input)).await
+        }
+        "vault.claims.review" => Box::pin(vault_claims_review(server, call, input)).await,
+        "vault.claims.settle" => Box::pin(vault_claims_settle(server, call, input)).await,
+        "vault.craft_candidates" => Box::pin(vault_craft_candidates(server, call, input)).await,
+        "vault.craft_candidates.answer" => {
+            Box::pin(vault_craft_candidates_answer(server, call, input)).await
+        }
         "vault.settings.wake_policy.set" => {
-            vault_settings_wake_policy_set(server, call, input).await
+            Box::pin(vault_settings_wake_policy_set(server, call, input)).await
         }
         "vault.settings.inference_defaults" => {
-            vault_settings_inference_defaults(server, call, input).await
+            Box::pin(vault_settings_inference_defaults(server, call, input)).await
         }
         "vault.settings.inference_defaults.replace" => {
-            vault_settings_inference_defaults_replace(server, call, input).await
+            Box::pin(vault_settings_inference_defaults_replace(
+                server, call, input,
+            ))
+            .await
         }
-        "vault.lenses.propose" => vault_lenses_propose(server, call, input).await,
-        "vault.lenses.activate" => vault_lenses_activate(server, call, input).await,
-        "vault.lenses.deactivate" => vault_lenses_deactivate(server, call, input).await,
-        "vault.lenses.list" => vault_lenses_list(server, call, input).await,
-        "vault.lenses.select" => vault_lenses_select(server, call, input).await,
-        "vault.lenses.resolve" => vault_lenses_resolve(server, call, input).await,
+        "vault.lenses.propose" => Box::pin(vault_lenses_propose(server, call, input)).await,
+        "vault.lenses.propose_from_pack" => {
+            Box::pin(vault_lenses_propose_from_pack(server, call, input)).await
+        }
+        "vault.lenses.activate" => Box::pin(vault_lenses_activate(server, call, input)).await,
+        "vault.lenses.deactivate" => Box::pin(vault_lenses_deactivate(server, call, input)).await,
+        "vault.lenses.list" => Box::pin(vault_lenses_list(server, call, input)).await,
+        "vault.lenses.export_pack" => Box::pin(vault_lenses_export_pack(server, call, input)).await,
+        "vault.lenses.select" => Box::pin(vault_lenses_select(server, call, input)).await,
+        "vault.lenses.resolve" => Box::pin(vault_lenses_resolve(server, call, input)).await,
         "vault.lenses.result_set.action" => {
-            vault_lenses_result_set_action(server, call, input).await
+            Box::pin(vault_lenses_result_set_action(server, call, input)).await
         }
-        "vault.lenses.default" => vault_lenses_default(server, call, input).await,
-        "vault.disclosure.offer" => vault_disclosure_offer(server, call, input).await,
-        "vault.disclosure.ceiling.get" => vault_disclosure_ceiling_get(server, call, input).await,
-        "vault.disclosure.ceiling.set" => vault_disclosure_ceiling_set(server, call, input).await,
+        "vault.lenses.default" => Box::pin(vault_lenses_default(server, call, input)).await,
+        "vault.disclosure.offer" => Box::pin(vault_disclosure_offer(server, call, input)).await,
+        "vault.disclosure.ceiling.get" => {
+            Box::pin(vault_disclosure_ceiling_get(server, call, input)).await
+        }
+        "vault.disclosure.ceiling.set" => {
+            Box::pin(vault_disclosure_ceiling_set(server, call, input)).await
+        }
         "vault.disclosure.ceiling.clear" => {
-            vault_disclosure_ceiling_clear(server, call, input).await
+            Box::pin(vault_disclosure_ceiling_clear(server, call, input)).await
         }
-        "vault.disclosure.reveals" => vault_disclosure_reveals(server, call, input).await,
+        "vault.disclosure.reveals" => Box::pin(vault_disclosure_reveals(server, call, input)).await,
         "vault.disclosure.reveals.answer" => {
-            vault_disclosure_reveals_answer(server, call, input).await
+            Box::pin(vault_disclosure_reveals_answer(server, call, input)).await
         }
-        "reveal" => reveal(server, call, input).await,
-        "reveal.wait" => reveal_wait(server, call, input).await,
-        "reveal.describe" => reveal_describe(server, call, input).await,
-        "self.use" => self_use(server, call, input).await,
-        "self.secrets.materialize" => self_secrets_materialize(server, call, input).await,
-        "self.secrets.renew" => self_secrets_renew(server, call, input).await,
-        "self.secrets.teardown" => self_secrets_teardown(server, call, input).await,
-        "self.secrets.use" => self_secrets_use(server, call, input).await,
-        "vault.shares.create" => vault_shares_create(server, call, input).await,
-        "vault.shares.revoke" => vault_shares_revoke(server, call, input).await,
-        "vault.shares.view" => vault_shares_view(server, call, input).await,
-        "host.compact" => host_compact(server, call, input).await,
-        "host.wake" => host_wake(server, call, input).await,
-        "host.budget.hit" => host_budget_hit(server, call, input).await,
-        "vault.hooks.replay" => vault_hooks_replay(server, call, input).await,
-        "vault.hooks.regen.due" => vault_hooks_regen_due(server, call, input).await,
-        "vault.hooks.regen.get" => vault_hooks_regen_get(server, call, input).await,
-        "vault.hooks.regen.adopt" => vault_hooks_regen_adopt(server, call, input).await,
+        "reveal" => Box::pin(reveal(server, call, input)).await,
+        "reveal.wait" => Box::pin(reveal_wait(server, call, input)).await,
+        "reveal.describe" => Box::pin(reveal_describe(server, call, input)).await,
+        "self.use" => Box::pin(self_use(server, call, input)).await,
+        "self.secrets.materialize" => Box::pin(self_secrets_materialize(server, call, input)).await,
+        "self.secrets.renew" => Box::pin(self_secrets_renew(server, call, input)).await,
+        "self.secrets.teardown" => Box::pin(self_secrets_teardown(server, call, input)).await,
+        "self.secrets.use" => Box::pin(self_secrets_use(server, call, input)).await,
+        "vault.shares.create" => Box::pin(vault_shares_create(server, call, input)).await,
+        "vault.shares.revoke" => Box::pin(vault_shares_revoke(server, call, input)).await,
+        "vault.shares.view" => Box::pin(vault_shares_view(server, call, input)).await,
+        "host.compact" => Box::pin(host_compact(server, call, input)).await,
+        "host.wake" => Box::pin(host_wake(server, call, input)).await,
+        "host.budget.hit" => Box::pin(host_budget_hit(server, call, input)).await,
+        "vault.hooks.replay" => Box::pin(vault_hooks_replay(server, call, input)).await,
+        "vault.hooks.regen.due" => Box::pin(vault_hooks_regen_due(server, call, input)).await,
+        "vault.hooks.regen.get" => Box::pin(vault_hooks_regen_get(server, call, input)).await,
+        "vault.hooks.regen.adopt" => Box::pin(vault_hooks_regen_adopt(server, call, input)).await,
         "vault.artifacts.publish_approval" => {
-            vault_artifacts_publish_approval(server, call, input).await
+            Box::pin(vault_artifacts_publish_approval(server, call, input)).await
         }
-        "vault.artifacts.publish" => vault_artifacts_publish(server, call, input).await,
-        "vault.artifacts.repoint" => vault_artifacts_repoint(server, call, input).await,
-        "vault.artifacts.pointer" => vault_artifacts_pointer(server, call, input).await,
-        "vault.artifacts.unpublish" => vault_artifacts_unpublish(server, call, input).await,
-        "vault.artifacts.link_token" => vault_artifacts_link_token(server, call, input).await,
+        "vault.artifacts.publish" => Box::pin(vault_artifacts_publish(server, call, input)).await,
+        "vault.artifacts.repoint" => Box::pin(vault_artifacts_repoint(server, call, input)).await,
+        "vault.artifacts.pointer" => Box::pin(vault_artifacts_pointer(server, call, input)).await,
+        "vault.artifacts.unpublish" => {
+            Box::pin(vault_artifacts_unpublish(server, call, input)).await
+        }
+        "vault.artifacts.link_token" => {
+            Box::pin(vault_artifacts_link_token(server, call, input)).await
+        }
         "vault.artifacts.live_preview.register" => {
-            vault_artifacts_live_preview_register(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_register(server, call, input)).await
         }
         "vault.artifacts.live_preview.read" => {
-            vault_artifacts_live_preview_read(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_read(server, call, input)).await
         }
         "vault.artifacts.live_preview.close" => {
-            vault_artifacts_live_preview_close(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_close(server, call, input)).await
         }
         "vault.artifacts.live_preview.invite" => {
-            vault_artifacts_live_preview_invite(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_invite(server, call, input)).await
         }
         "vault.artifacts.live_preview.revoke_invite" => {
-            vault_artifacts_live_preview_revoke_invite(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_revoke_invite(
+                server, call, input,
+            ))
+            .await
         }
         "vault.artifacts.live_preview.share" => {
-            vault_artifacts_live_preview_share(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_share(server, call, input)).await
         }
         "vault.artifacts.live_preview.revoke_share" => {
-            vault_artifacts_live_preview_revoke_share(server, call, input).await
+            Box::pin(vault_artifacts_live_preview_revoke_share(
+                server, call, input,
+            ))
+            .await
         }
-        "vault.artifacts.view" => vault_artifacts_view(server, call, input).await,
-        "vault.artifacts.units" => vault_artifacts_units(server, call, input).await,
-        "vault.artifacts.anchors.pin" => vault_artifacts_anchors_pin(server, call, input).await,
-        "vault.artifacts.threads.open" => vault_artifacts_threads_open(server, call, input).await,
+        "vault.artifacts.view" => Box::pin(vault_artifacts_view(server, call, input)).await,
+        "vault.artifacts.units" => Box::pin(vault_artifacts_units(server, call, input)).await,
+        "vault.artifacts.anchors.pin" => {
+            Box::pin(vault_artifacts_anchors_pin(server, call, input)).await
+        }
+        "vault.artifacts.threads.open" => {
+            Box::pin(vault_artifacts_threads_open(server, call, input)).await
+        }
         "vault.artifacts.threads.comment" => {
-            vault_artifacts_threads_comment(server, call, input).await
+            Box::pin(vault_artifacts_threads_comment(server, call, input)).await
         }
-        "vault.artifacts.threads.read" => vault_artifacts_threads_read(server, call, input).await,
-        "vault.artifacts.threads.list" => vault_artifacts_threads_list(server, call, input).await,
+        "vault.artifacts.threads.read" => {
+            Box::pin(vault_artifacts_threads_read(server, call, input)).await
+        }
+        "vault.artifacts.threads.list" => {
+            Box::pin(vault_artifacts_threads_list(server, call, input)).await
+        }
         "vault.artifacts.threads.assign" => {
-            vault_artifacts_threads_assign(server, call, input).await
+            Box::pin(vault_artifacts_threads_assign(server, call, input)).await
         }
-        "vault.artifacts.threads.state" => vault_artifacts_threads_state(server, call, input).await,
-        "mount" => mount(server, call, input).await,
-        "graph_fs.readdir" => graph_fs_readdir(server, call, input).await,
-        "graph_fs.read_file" => graph_fs_read_file(server, call, input).await,
-        "graph_fs.read_link" => graph_fs_read_link(server, call, input).await,
-        "graph_fs.ls" => graph_fs_ls(server, call, input).await,
-        "graph_fs.find" => graph_fs_find(server, call, input).await,
-        "graph_fs.grep" => graph_fs_grep(server, call, input).await,
-        "graph_fs.cat" => graph_fs_cat(server, call, input).await,
-        "graph_fs.head" => graph_fs_head(server, call, input).await,
-        "graph_fs.wc" => graph_fs_wc(server, call, input).await,
-        "vault.code.diff" => vault_code_diff(server, call, input).await,
-        "vault.code.blame" => vault_code_blame(server, call, input).await,
-        "vault.code.proposal_view" => vault_code_proposal_view(server, call, input).await,
-        "vault.code.symbols.declare" => vault_code_symbols_declare(server, call, input).await,
-        "vault.code.symbols.renew" => vault_code_symbols_renew(server, call, input).await,
-        "vault.code.symbols.release" => vault_code_symbols_release(server, call, input).await,
-        "vault.code.proposal_submit" => vault_code_proposal_submit(server, call, input).await,
-        "vault.code.conflict_record" => vault_code_conflict_record(server, call, input).await,
-        "vault.code.conflict_view" => vault_code_conflict_view(server, call, input).await,
-        "vault.code.proposal_resolve" => vault_code_proposal_resolve(server, call, input).await,
-        "vault.code.proposal_review" => vault_code_proposal_review(server, call, input).await,
-        "vault.code.proposal_settle" => vault_code_proposal_settle(server, call, input).await,
+        "vault.artifacts.threads.state" => {
+            Box::pin(vault_artifacts_threads_state(server, call, input)).await
+        }
+        "mount" => Box::pin(mount(server, call, input)).await,
+        "graph_fs.readdir" => Box::pin(graph_fs_readdir(server, call, input)).await,
+        "graph_fs.read_file" => Box::pin(graph_fs_read_file(server, call, input)).await,
+        "graph_fs.read_link" => Box::pin(graph_fs_read_link(server, call, input)).await,
+        "graph_fs.ls" => Box::pin(graph_fs_ls(server, call, input)).await,
+        "graph_fs.find" => Box::pin(graph_fs_find(server, call, input)).await,
+        "graph_fs.grep" => Box::pin(graph_fs_grep(server, call, input)).await,
+        "graph_fs.cat" => Box::pin(graph_fs_cat(server, call, input)).await,
+        "graph_fs.head" => Box::pin(graph_fs_head(server, call, input)).await,
+        "graph_fs.wc" => Box::pin(graph_fs_wc(server, call, input)).await,
+        "vault.code.diff" => Box::pin(vault_code_diff(server, call, input)).await,
+        "vault.code.blame" => Box::pin(vault_code_blame(server, call, input)).await,
+        "vault.code.proposal_view" => Box::pin(vault_code_proposal_view(server, call, input)).await,
+        "vault.code.symbols.declare" => {
+            Box::pin(vault_code_symbols_declare(server, call, input)).await
+        }
+        "vault.code.symbols.renew" => Box::pin(vault_code_symbols_renew(server, call, input)).await,
+        "vault.code.symbols.release" => {
+            Box::pin(vault_code_symbols_release(server, call, input)).await
+        }
+        "vault.code.proposal_submit" => {
+            Box::pin(vault_code_proposal_submit(server, call, input)).await
+        }
+        "vault.code.conflict_record" => {
+            Box::pin(vault_code_conflict_record(server, call, input)).await
+        }
+        "vault.code.conflict_view" => Box::pin(vault_code_conflict_view(server, call, input)).await,
+        "vault.code.proposal_resolve" => {
+            Box::pin(vault_code_proposal_resolve(server, call, input)).await
+        }
+        "vault.code.proposal_review" => {
+            Box::pin(vault_code_proposal_review(server, call, input)).await
+        }
+        "vault.code.proposal_settle" => {
+            Box::pin(vault_code_proposal_settle(server, call, input)).await
+        }
         "vault.code.proposal_settlement" => {
-            vault_code_proposal_settlement(server, call, input).await
+            Box::pin(vault_code_proposal_settlement(server, call, input)).await
         }
-        "vault.code.oplog" => vault_code_oplog(server, call, input).await,
-        "execute_code" => execute_code(server, call, input).await,
-        "vault.code.model_heal_count" => vault_code_model_heal_count(server, call, input).await,
-        "vault.code.type_diagnostics" => vault_code_type_diagnostics(server, call, input).await,
-        "vault.code.waits.resolve" => vault_code_waits_resolve(server, call, input).await,
-        "vault.code.waits.receipt" => vault_code_waits_receipt(server, call, input).await,
-        "vault.results.status" => vault_results_status(server, call, input).await,
-        "vault.results.recover" => vault_results_recover(server, call, input).await,
-        "vault.results.read" => vault_results_read(server, call, input).await,
-        "vault.results.slice" => vault_results_slice(server, call, input).await,
-        "vault.code.repo_diff" => vault_code_repo_diff(server, call, input).await,
-        "vault.code.export" => vault_code_export(server, call, input).await,
-        "vault.code.export.preview" => vault_code_export_preview(server, call, input).await,
+        "vault.code.oplog" => Box::pin(vault_code_oplog(server, call, input)).await,
+        "execute_code" => Box::pin(execute_code(server, call, input)).await,
+        "vault.code.model_heal_count" => {
+            Box::pin(vault_code_model_heal_count(server, call, input)).await
+        }
+        "vault.code.type_diagnostics" => {
+            Box::pin(vault_code_type_diagnostics(server, call, input)).await
+        }
+        "vault.code.waits.resolve" => Box::pin(vault_code_waits_resolve(server, call, input)).await,
+        "vault.code.waits.receipt" => Box::pin(vault_code_waits_receipt(server, call, input)).await,
+        "vault.results.status" => Box::pin(vault_results_status(server, call, input)).await,
+        "vault.results.recover" => Box::pin(vault_results_recover(server, call, input)).await,
+        "vault.results.read" => Box::pin(vault_results_read(server, call, input)).await,
+        "vault.results.slice" => Box::pin(vault_results_slice(server, call, input)).await,
+        "vault.code.repo_diff" => Box::pin(vault_code_repo_diff(server, call, input)).await,
+        "vault.code.export" => Box::pin(vault_code_export(server, call, input)).await,
+        "vault.code.export.preview" => {
+            Box::pin(vault_code_export_preview(server, call, input)).await
+        }
         "vault.code.export.preview.read" => {
-            vault_code_export_preview_read(server, call, input).await
+            Box::pin(vault_code_export_preview_read(server, call, input)).await
         }
-        "vault.code.import" => vault_code_import(server, call, input).await,
-        "vault.code.repos.get" => vault_code_repos_get(server, call, input).await,
-        "vault.code.forks.get" => vault_code_forks_get(server, call, input).await,
-        "vault.code.imports.create" => vault_code_imports_create(server, call, input).await,
-        "vault.code.imports.get" => vault_code_imports_get(server, call, input).await,
-        "vault.code.ingress.get" => vault_code_ingress_get(server, call, input).await,
-        "vault.code.origin.register" => vault_code_origin_register(server, call, input).await,
-        "vault.code.origin.mirror.get" => vault_code_origin_mirror_get(server, call, input).await,
-        "vault.code.origin.mirror.set" => vault_code_origin_mirror_set(server, call, input).await,
+        "vault.code.import" => Box::pin(vault_code_import(server, call, input)).await,
+        "vault.code.repos.get" => Box::pin(vault_code_repos_get(server, call, input)).await,
+        "vault.code.forks.get" => Box::pin(vault_code_forks_get(server, call, input)).await,
+        "vault.code.imports.create" => {
+            Box::pin(vault_code_imports_create(server, call, input)).await
+        }
+        "vault.code.imports.get" => Box::pin(vault_code_imports_get(server, call, input)).await,
+        "vault.code.ingress.get" => Box::pin(vault_code_ingress_get(server, call, input)).await,
+        "vault.code.origin.register" => {
+            Box::pin(vault_code_origin_register(server, call, input)).await
+        }
+        "vault.code.origin.mirror.get" => {
+            Box::pin(vault_code_origin_mirror_get(server, call, input)).await
+        }
+        "vault.code.origin.mirror.plan" => {
+            Box::pin(vault_code_origin_mirror_plan(server, call, input)).await
+        }
+        "vault.code.origin.mirror.set" => {
+            Box::pin(vault_code_origin_mirror_set(server, call, input)).await
+        }
         "vault.code.origin.mirror.strategy" => {
-            vault_code_origin_mirror_strategy(server, call, input).await
+            Box::pin(vault_code_origin_mirror_strategy(server, call, input)).await
         }
         "vault.code.origin.mirror.clear" => {
-            vault_code_origin_mirror_clear(server, call, input).await
+            Box::pin(vault_code_origin_mirror_clear(server, call, input)).await
         }
-        "vault.code.origin.mirror.push" => vault_code_origin_mirror_push(server, call, input).await,
+        "vault.code.origin.mirror.push" => {
+            Box::pin(vault_code_origin_mirror_push(server, call, input)).await
+        }
         "vault.code.origin.publish.request" => {
-            vault_code_origin_publish_request(server, call, input).await
+            Box::pin(vault_code_origin_publish_request(server, call, input)).await
         }
         "vault.code.origin.publish.review" => {
-            vault_code_origin_publish_review(server, call, input).await
+            Box::pin(vault_code_origin_publish_review(server, call, input)).await
         }
-        "vault.code.origin.publish.get" => vault_code_origin_publish_get(server, call, input).await,
+        "vault.code.origin.publish.get" => {
+            Box::pin(vault_code_origin_publish_get(server, call, input)).await
+        }
         "vault.code.origin.publish.approve" => {
-            vault_code_origin_publish_approve(server, call, input).await
+            Box::pin(vault_code_origin_publish_approve(server, call, input)).await
         }
         "vault.code.origin.publish.execute" => {
-            vault_code_origin_publish_execute(server, call, input).await
+            Box::pin(vault_code_origin_publish_execute(server, call, input)).await
         }
         "vault.code.origin.publish.cancel" => {
-            vault_code_origin_publish_cancel(server, call, input).await
+            Box::pin(vault_code_origin_publish_cancel(server, call, input)).await
         }
         "vault.code.origin.authority.get" => {
-            vault_code_origin_authority_get(server, call, input).await
+            Box::pin(vault_code_origin_authority_get(server, call, input)).await
         }
         "vault.code.origin.authority.set" => {
-            vault_code_origin_authority_set(server, call, input).await
+            Box::pin(vault_code_origin_authority_set(server, call, input)).await
         }
         "vault.code.origin.publications" => {
-            vault_code_origin_publications(server, call, input).await
+            Box::pin(vault_code_origin_publications(server, call, input)).await
         }
-        "vault.code.checkout.bind" => vault_code_checkout_bind(server, call, input).await,
-        "vault.code.checkout.claim" => vault_code_checkout_claim(server, call, input).await,
-        "vault.code.checkout.get" => vault_code_checkout_get(server, call, input).await,
-        "vault.code.checkout.renew" => vault_code_checkout_renew(server, call, input).await,
-        "vault.code.checkout.reclaim" => vault_code_checkout_reclaim(server, call, input).await,
-        "vault.code.checkout.takeover" => vault_code_checkout_takeover(server, call, input).await,
-        "vault.code.checkout.publish" => vault_code_checkout_publish(server, call, input).await,
-        "vault.code.checkout.settle" => vault_code_checkout_settle(server, call, input).await,
-        "vault.code.checkout.teardown" => vault_code_checkout_teardown(server, call, input).await,
-        "vault.code.views.materialize" => vault_code_views_materialize(server, call, input).await,
-        "vault.code.views.get" => vault_code_views_get(server, call, input).await,
-        "vault.code.views.read" => vault_code_views_read(server, call, input).await,
-        "vault.code.views.action" => vault_code_views_action(server, call, input).await,
-        "vault.code.views.build" => vault_code_views_build(server, call, input).await,
-        "vault.code.cache.get" => vault_code_cache_get(server, call, input).await,
-        "vault.code.cache.reuse" => vault_code_cache_reuse(server, call, input).await,
-        "vault.code.snapshots.ingest" => vault_code_snapshots_ingest(server, call, input).await,
-        "vault.code.snapshots.get" => vault_code_snapshots_get(server, call, input).await,
-        "vault.code.snapshots.read" => vault_code_snapshots_read(server, call, input).await,
+        "vault.code.checkout.bind" => Box::pin(vault_code_checkout_bind(server, call, input)).await,
+        "vault.code.checkout.claim" => {
+            Box::pin(vault_code_checkout_claim(server, call, input)).await
+        }
+        "vault.code.checkout.get" => Box::pin(vault_code_checkout_get(server, call, input)).await,
+        "vault.code.checkout.renew" => {
+            Box::pin(vault_code_checkout_renew(server, call, input)).await
+        }
+        "vault.code.checkout.reclaim" => {
+            Box::pin(vault_code_checkout_reclaim(server, call, input)).await
+        }
+        "vault.code.checkout.takeover" => {
+            Box::pin(vault_code_checkout_takeover(server, call, input)).await
+        }
+        "vault.code.checkout.publish" => {
+            Box::pin(vault_code_checkout_publish(server, call, input)).await
+        }
+        "vault.code.checkout.settle" => {
+            Box::pin(vault_code_checkout_settle(server, call, input)).await
+        }
+        "vault.code.checkout.teardown" => {
+            Box::pin(vault_code_checkout_teardown(server, call, input)).await
+        }
+        "vault.code.views.materialize" => {
+            Box::pin(vault_code_views_materialize(server, call, input)).await
+        }
+        "vault.code.views.get" => Box::pin(vault_code_views_get(server, call, input)).await,
+        "vault.code.views.read" => Box::pin(vault_code_views_read(server, call, input)).await,
+        "vault.code.views.action" => Box::pin(vault_code_views_action(server, call, input)).await,
+        "vault.code.views.build" => Box::pin(vault_code_views_build(server, call, input)).await,
+        "vault.code.cache.get" => Box::pin(vault_code_cache_get(server, call, input)).await,
+        "vault.code.cache.reuse" => Box::pin(vault_code_cache_reuse(server, call, input)).await,
+        "vault.code.snapshots.ingest" => {
+            Box::pin(vault_code_snapshots_ingest(server, call, input)).await
+        }
+        "vault.code.snapshots.get" => Box::pin(vault_code_snapshots_get(server, call, input)).await,
+        "vault.code.snapshots.read" => {
+            Box::pin(vault_code_snapshots_read(server, call, input)).await
+        }
         "vault.code.symbols.definitions" => {
-            vault_code_symbols_definitions(server, call, input).await
+            Box::pin(vault_code_symbols_definitions(server, call, input)).await
         }
         "vault.code.merge_queue.enqueue" => {
-            vault_code_merge_queue_enqueue(server, call, input).await
+            Box::pin(vault_code_merge_queue_enqueue(server, call, input)).await
         }
-        "vault.code.merge_queue.stage" => vault_code_merge_queue_stage(server, call, input).await,
+        "vault.code.merge_queue.stage" => {
+            Box::pin(vault_code_merge_queue_stage(server, call, input)).await
+        }
         "vault.code.merge_queue.observe" => {
-            vault_code_merge_queue_observe(server, call, input).await
+            Box::pin(vault_code_merge_queue_observe(server, call, input)).await
         }
         "vault.code.merge_queue.requeue_survivors" => {
-            vault_code_merge_queue_requeue_survivors(server, call, input).await
+            Box::pin(vault_code_merge_queue_requeue_survivors(
+                server, call, input,
+            ))
+            .await
         }
         "vault.code.merge_queue.land_reviewed" => {
-            vault_code_merge_queue_land_reviewed(server, call, input).await
+            Box::pin(vault_code_merge_queue_land_reviewed(server, call, input)).await
         }
         "vault.code.merge_queue.settle_slow" => {
-            vault_code_merge_queue_settle_slow(server, call, input).await
+            Box::pin(vault_code_merge_queue_settle_slow(server, call, input)).await
         }
         "vault.code.merge_queue.recover" => {
-            vault_code_merge_queue_recover(server, call, input).await
+            Box::pin(vault_code_merge_queue_recover(server, call, input)).await
         }
-        "vault.code.merge_queue.init" => vault_code_merge_queue_init(server, call, input).await,
-        "vault.code.merge_queue.check" => vault_code_merge_queue_check(server, call, input).await,
+        "vault.code.merge_queue.init" => {
+            Box::pin(vault_code_merge_queue_init(server, call, input)).await
+        }
+        "vault.code.merge_queue.check" => {
+            Box::pin(vault_code_merge_queue_check(server, call, input)).await
+        }
         "vault.code.merge_queue.diagnose" => {
-            vault_code_merge_queue_diagnose(server, call, input).await
+            Box::pin(vault_code_merge_queue_diagnose(server, call, input)).await
         }
         "vault.code.merge_queue.check_status" => {
-            vault_code_merge_queue_check_status(server, call, input).await
+            Box::pin(vault_code_merge_queue_check_status(server, call, input)).await
         }
-        "vault.code.checks.get" => vault_code_checks_get(server, call, input).await,
+        "vault.code.checks.get" => Box::pin(vault_code_checks_get(server, call, input)).await,
         "vault.code.merge_queue.review_policy.get" => {
-            vault_code_merge_queue_review_policy_get(server, call, input).await
+            Box::pin(vault_code_merge_queue_review_policy_get(
+                server, call, input,
+            ))
+            .await
         }
         "vault.code.merge_queue.review_policy.set" => {
-            vault_code_merge_queue_review_policy_set(server, call, input).await
+            Box::pin(vault_code_merge_queue_review_policy_set(
+                server, call, input,
+            ))
+            .await
         }
         "vault.code.merge_queue.export_green" => {
-            vault_code_merge_queue_export_green(server, call, input).await
+            Box::pin(vault_code_merge_queue_export_green(server, call, input)).await
         }
-        "vault.artifacts.export" => vault_artifacts_export(server, call, input).await,
-        "vault.agents.create" => vault_agents_create(server, call, input).await,
-        "vault.agents.get" => vault_agents_get(server, call, input).await,
-        "vault.agents.update" => vault_agents_update(server, call, input).await,
-        "vault.agents.dreaming.get" => vault_agents_dreaming_get(server, call, input).await,
-        "vault.agents.dreaming.set" => vault_agents_dreaming_set(server, call, input).await,
-        "vault.agents.grants.mint" => vault_agents_grants_mint(server, call, input).await,
-        "vault.agents.grants.revoke" => vault_agents_grants_revoke(server, call, input).await,
-        "vault.repo.git_push.mint" => vault_repo_git_push_mint(server, call, input).await,
-        "vault.repo.git_push.revoke" => vault_repo_git_push_revoke(server, call, input).await,
-        "vault.repo.anchor.bind" => vault_repo_anchor_bind(server, call, input).await,
-        "vault.repo.snapshots.get" => vault_repo_snapshots_get(server, call, input).await,
-        "vault.repo.snapshots.read" => vault_repo_snapshots_read(server, call, input).await,
+        "vault.artifacts.export" => Box::pin(vault_artifacts_export(server, call, input)).await,
+        "vault.agents.create" => Box::pin(vault_agents_create(server, call, input)).await,
+        "vault.agents.get" => Box::pin(vault_agents_get(server, call, input)).await,
+        "vault.agents.update" => Box::pin(vault_agents_update(server, call, input)).await,
+        "vault.agents.dreaming.get" => {
+            Box::pin(vault_agents_dreaming_get(server, call, input)).await
+        }
+        "vault.agents.dreaming.set" => {
+            Box::pin(vault_agents_dreaming_set(server, call, input)).await
+        }
+        "vault.agents.grants.mint" => Box::pin(vault_agents_grants_mint(server, call, input)).await,
+        "vault.agents.grants.revoke" => {
+            Box::pin(vault_agents_grants_revoke(server, call, input)).await
+        }
+        "vault.repo.git_push.mint" => Box::pin(vault_repo_git_push_mint(server, call, input)).await,
+        "vault.repo.git_push.revoke" => {
+            Box::pin(vault_repo_git_push_revoke(server, call, input)).await
+        }
+        "vault.connectors.read_grants.grant" => {
+            Box::pin(vault_connectors_read_grants_grant(server, call, input)).await
+        }
+        "vault.connectors.read_grants.revoke" => {
+            Box::pin(vault_connectors_read_grants_revoke(server, call, input)).await
+        }
+        "vault.repo.anchor.bind" => Box::pin(vault_repo_anchor_bind(server, call, input)).await,
+        "vault.repo.snapshots.get" => Box::pin(vault_repo_snapshots_get(server, call, input)).await,
+        "vault.repo.snapshots.read" => {
+            Box::pin(vault_repo_snapshots_read(server, call, input)).await
+        }
         "vault.repo.symbols.definitions" => {
-            vault_repo_symbols_definitions(server, call, input).await
+            Box::pin(vault_repo_symbols_definitions(server, call, input)).await
         }
-        "vault.repo.views.get" => vault_repo_views_get(server, call, input).await,
-        "vault.repo.views.read" => vault_repo_views_read(server, call, input).await,
+        "vault.repo.views.get" => Box::pin(vault_repo_views_get(server, call, input)).await,
+        "vault.repo.views.read" => Box::pin(vault_repo_views_read(server, call, input)).await,
         "vault.repo.merge_queue.observe" => {
-            vault_repo_merge_queue_observe(server, call, input).await
+            Box::pin(vault_repo_merge_queue_observe(server, call, input)).await
         }
-        "vault.repo.snapshots.ingest" => vault_repo_snapshots_ingest(server, call, input).await,
-        "vault.repo.work.open" => vault_repo_work_open(server, call, input).await,
-        "vault.repo.symbols.declare" => vault_repo_symbols_declare(server, call, input).await,
-        "vault.repo.symbols.renew" => vault_repo_symbols_renew(server, call, input).await,
-        "vault.repo.symbols.release" => vault_repo_symbols_release(server, call, input).await,
-        "vault.repo.proposal_submit" => vault_repo_proposal_submit(server, call, input).await,
+        "vault.repo.snapshots.ingest" => {
+            Box::pin(vault_repo_snapshots_ingest(server, call, input)).await
+        }
+        "vault.repo.work.open" => Box::pin(vault_repo_work_open(server, call, input)).await,
+        "vault.repo.symbols.declare" => {
+            Box::pin(vault_repo_symbols_declare(server, call, input)).await
+        }
+        "vault.repo.symbols.renew" => Box::pin(vault_repo_symbols_renew(server, call, input)).await,
+        "vault.repo.symbols.release" => {
+            Box::pin(vault_repo_symbols_release(server, call, input)).await
+        }
+        "vault.repo.proposal_submit" => {
+            Box::pin(vault_repo_proposal_submit(server, call, input)).await
+        }
         "vault.repo.merge_queue.enqueue" => {
-            vault_repo_merge_queue_enqueue(server, call, input).await
+            Box::pin(vault_repo_merge_queue_enqueue(server, call, input)).await
         }
-        "vault.repo.checkout.bind" => vault_repo_checkout_bind(server, call, input).await,
-        "vault.repo.export" => vault_repo_export(server, call, input).await,
-        "vault.agents.base" => vault_agents_base(server, call, input).await,
+        "vault.repo.checkout.bind" => Box::pin(vault_repo_checkout_bind(server, call, input)).await,
+        "vault.repo.export" => Box::pin(vault_repo_export(server, call, input)).await,
+        "vault.agents.base" => Box::pin(vault_agents_base(server, call, input)).await,
         "vault.standing_blocks.configure" => {
-            vault_standing_blocks_configure(server, call, input).await
+            Box::pin(vault_standing_blocks_configure(server, call, input)).await
         }
         "vault.standing_blocks.reconfigure" => {
-            vault_standing_blocks_reconfigure(server, call, input).await
+            Box::pin(vault_standing_blocks_reconfigure(server, call, input)).await
         }
-        "vault.standing_blocks.get" => vault_standing_blocks_get(server, call, input).await,
-        "vault.standing_blocks.list" => vault_standing_blocks_list(server, call, input).await,
-        "vault.workflows.save" => vault_workflows_save(server, call, input).await,
-        "vault.workflows.get" => vault_workflows_get(server, call, input).await,
-        "vault.workflows.update" => vault_workflows_update(server, call, input).await,
-        "vault.workflows.dispatch" => vault_workflows_dispatch(server, call, input).await,
+        "vault.standing_blocks.get" => {
+            Box::pin(vault_standing_blocks_get(server, call, input)).await
+        }
+        "vault.standing_blocks.list" => {
+            Box::pin(vault_standing_blocks_list(server, call, input)).await
+        }
+        "vault.workflows.save" => Box::pin(vault_workflows_save(server, call, input)).await,
+        "vault.workflows.get" => Box::pin(vault_workflows_get(server, call, input)).await,
+        "vault.workflows.update" => Box::pin(vault_workflows_update(server, call, input)).await,
+        "vault.workflows.dispatch" => Box::pin(vault_workflows_dispatch(server, call, input)).await,
         "vault.workflows.dispatch_bound" => {
-            vault_workflows_dispatch_bound(server, call, input).await
+            Box::pin(vault_workflows_dispatch_bound(server, call, input)).await
         }
-        "vault.workflows.status" => vault_workflows_status(server, call, input).await,
-        "vault.task_types.pin" => vault_task_types_pin(server, call, input).await,
-        "vault.task_types.get" => vault_task_types_get(server, call, input).await,
-        "vault.agents.spawn.get" => vault_agents_spawn_get(server, call, input).await,
-        "vault.agents.spawn" => vault_agents_spawn(server, call, input).await,
-        "vault.tasks.cancel_force" => vault_tasks_cancel_force(server, call, input).await,
-        "vault.runs.branches.get" => vault_runs_branches_get(server, call, input).await,
-        "vault.runs.pause" => vault_runs_pause(server, call, input).await,
-        "vault.runs.resume" => vault_runs_resume(server, call, input).await,
-        "vault.consults.get" => vault_consults_get(server, call, input).await,
-        "vault.workspace.establish" => vault_workspace_establish(server, call, input).await,
+        "vault.workflows.status" => Box::pin(vault_workflows_status(server, call, input)).await,
+        "vault.task_types.pin" => Box::pin(vault_task_types_pin(server, call, input)).await,
+        "vault.task_types.get" => Box::pin(vault_task_types_get(server, call, input)).await,
+        "vault.agents.spawn.get" => Box::pin(vault_agents_spawn_get(server, call, input)).await,
+        "vault.agents.spawn" => Box::pin(vault_agents_spawn(server, call, input)).await,
+        "vault.tasks.cancel.force" => Box::pin(vault_tasks_cancel_force(server, call, input)).await,
+        "vault.tasks.comm_widen.revoke" => {
+            Box::pin(vault_tasks_comm_widen_revoke(server, call, input)).await
+        }
+        "vault.runs.branches.get" => Box::pin(vault_runs_branches_get(server, call, input)).await,
+        "vault.runs.pause" => Box::pin(vault_runs_pause(server, call, input)).await,
+        "vault.runs.resume" => Box::pin(vault_runs_resume(server, call, input)).await,
+        "vault.consults.get" => Box::pin(vault_consults_get(server, call, input)).await,
+        "vault.workspace.establish" => {
+            Box::pin(vault_workspace_establish(server, call, input)).await
+        }
         "vault.workspace.members.onboard" => {
-            vault_workspace_members_onboard(server, call, input).await
+            Box::pin(vault_workspace_members_onboard(server, call, input)).await
         }
-        "vault.workspace.roster" => vault_workspace_roster(server, call, input).await,
-        "vault.agents.export_pack" => vault_agents_export_pack(server, call, input).await,
-        "vault.artifacts.born_from" => vault_artifacts_born_from(server, call, input).await,
-        "vault.artifacts.proposals" => vault_artifacts_proposals(server, call, input).await,
-        "vault.artifacts.waits" => vault_artifacts_waits(server, call, input).await,
-        "vault.artifacts.release_wait" => vault_artifacts_release_wait(server, call, input).await,
-        "vault.artifacts.review_slides" => vault_artifacts_review_slides(server, call, input).await,
-        "vault.artifacts.ask" => vault_artifacts_ask(server, call, input).await,
-        "vault.artifacts.admit" => vault_artifacts_admit(server, call, input).await,
-        "vault.critic.review" => vault_critic_review(server, call, input).await,
+        "vault.workspace.roster" => Box::pin(vault_workspace_roster(server, call, input)).await,
+        "vault.agents.export_pack" => Box::pin(vault_agents_export_pack(server, call, input)).await,
+        "vault.artifacts.born_from" => {
+            Box::pin(vault_artifacts_born_from(server, call, input)).await
+        }
+        "vault.artifacts.proposals" => {
+            Box::pin(vault_artifacts_proposals(server, call, input)).await
+        }
+        "vault.artifacts.waits" => Box::pin(vault_artifacts_waits(server, call, input)).await,
+        "vault.artifacts.release_wait" => {
+            Box::pin(vault_artifacts_release_wait(server, call, input)).await
+        }
+        "vault.artifacts.review_slides" => {
+            Box::pin(vault_artifacts_review_slides(server, call, input)).await
+        }
+        "vault.artifacts.ask" => Box::pin(vault_artifacts_ask(server, call, input)).await,
+        "vault.artifacts.admit" => Box::pin(vault_artifacts_admit(server, call, input)).await,
+        "vault.critic.review" => Box::pin(vault_critic_review(server, call, input)).await,
         "vault.artifacts.propose_outline" => {
-            vault_artifacts_propose_outline(server, call, input).await
+            Box::pin(vault_artifacts_propose_outline(server, call, input)).await
         }
-        "vault.artifacts.outline" => vault_artifacts_outline(server, call, input).await,
-        "vault.artifacts.keep_outline" => vault_artifacts_keep_outline(server, call, input).await,
+        "vault.artifacts.outline" => Box::pin(vault_artifacts_outline(server, call, input)).await,
+        "vault.artifacts.keep_outline" => {
+            Box::pin(vault_artifacts_keep_outline(server, call, input)).await
+        }
         "vault.artifacts.decline_outline" => {
-            vault_artifacts_decline_outline(server, call, input).await
+            Box::pin(vault_artifacts_decline_outline(server, call, input)).await
         }
-        "vault.artifacts.design_deck" => vault_artifacts_design_deck(server, call, input).await,
-        "vault.artifacts.create_deck" => vault_artifacts_create_deck(server, call, input).await,
-        "vault.artifacts.inspect_deck" => vault_artifacts_inspect_deck(server, call, input).await,
-        "vault.artifacts.propose_deck" => vault_artifacts_propose_deck(server, call, input).await,
+        "vault.artifacts.design_deck" => {
+            Box::pin(vault_artifacts_design_deck(server, call, input)).await
+        }
+        "vault.artifacts.create_deck" => {
+            Box::pin(vault_artifacts_create_deck(server, call, input)).await
+        }
+        "vault.artifacts.inspect_deck" => {
+            Box::pin(vault_artifacts_inspect_deck(server, call, input)).await
+        }
+        "vault.artifacts.propose_deck" => {
+            Box::pin(vault_artifacts_propose_deck(server, call, input)).await
+        }
         "vault.artifacts.propose_output" => {
-            vault_artifacts_propose_output(server, call, input).await
+            Box::pin(vault_artifacts_propose_output(server, call, input)).await
         }
-        "vault.artifacts.keep" => vault_artifacts_keep(server, call, input).await,
-        "vault.artifacts.discard" => vault_artifacts_discard(server, call, input).await,
-        "vault.artifacts.undo" => vault_artifacts_undo(server, call, input).await,
-        "can" => can(server, call, input).await,
-        "peek" => peek(server, call, input).await,
-        "ask" => ask(server, call, input).await,
-        "wait" => wait(server, call, input).await,
-        "tasks.answer" => tasks_answer(server, call, input).await,
-        "tasks.outcomes" => tasks_outcomes(server, call, input).await,
-        "vault.rooms.list" => vault_rooms_list(server, call, input).await,
-        "vault.rooms.messages" => vault_rooms_messages(server, call, input).await,
-        "vault.rooms.participants" => vault_rooms_participants(server, call, input).await,
-        "vault.rooms.render" => vault_rooms_render(server, call, input).await,
-        "vault.rooms.find" => vault_rooms_find(server, call, input).await,
-        "vault.rooms.get" => vault_rooms_get(server, call, input).await,
-        "vault.rooms.trunk" => vault_rooms_trunk(server, call, input).await,
-        "vault.rooms.reply_strips" => vault_rooms_reply_strips(server, call, input).await,
-        "vault.rooms.claim" => vault_rooms_claim(server, call, input).await,
-        "vault.rooms.speak" => vault_rooms_speak(server, call, input).await,
+        "vault.artifacts.keep" => Box::pin(vault_artifacts_keep(server, call, input)).await,
+        "vault.artifacts.discard" => Box::pin(vault_artifacts_discard(server, call, input)).await,
+        "vault.artifacts.undo" => Box::pin(vault_artifacts_undo(server, call, input)).await,
+        "can" => Box::pin(can(server, call, input)).await,
+        "peek" => Box::pin(peek(server, call, input)).await,
+        "ask" => Box::pin(ask(server, call, input)).await,
+        "wait" => Box::pin(wait(server, call, input)).await,
+        "tasks.answer" => Box::pin(tasks_answer(server, call, input)).await,
+        "tasks.outcomes" => Box::pin(tasks_outcomes(server, call, input)).await,
+        "vault.rooms.list" => Box::pin(vault_rooms_list(server, call, input)).await,
+        "vault.rooms.messages" => Box::pin(vault_rooms_messages(server, call, input)).await,
+        "vault.rooms.participants" => Box::pin(vault_rooms_participants(server, call, input)).await,
+        "vault.rooms.render" => Box::pin(vault_rooms_render(server, call, input)).await,
+        "vault.rooms.find" => Box::pin(vault_rooms_find(server, call, input)).await,
+        "vault.rooms.get" => Box::pin(vault_rooms_get(server, call, input)).await,
+        "vault.rooms.trunk" => Box::pin(vault_rooms_trunk(server, call, input)).await,
+        "vault.rooms.reply_strips" => Box::pin(vault_rooms_reply_strips(server, call, input)).await,
+        "vault.rooms.claim" => Box::pin(vault_rooms_claim(server, call, input)).await,
+        "vault.rooms.speak" => Box::pin(vault_rooms_speak(server, call, input)).await,
         "vault.rooms.thread_audience.add" => {
-            vault_rooms_thread_audience_add(server, call, input).await
+            Box::pin(vault_rooms_thread_audience_add(server, call, input)).await
         }
         "vault.rooms.thread_audience.open_full_history" => {
-            vault_rooms_thread_audience_open_full_history(server, call, input).await
+            Box::pin(vault_rooms_thread_audience_open_full_history(
+                server, call, input,
+            ))
+            .await
         }
         "vault.rooms.thread_audience.remove" => {
-            vault_rooms_thread_audience_remove(server, call, input).await
+            Box::pin(vault_rooms_thread_audience_remove(server, call, input)).await
         }
-        "vault.rooms.private_threads" => vault_rooms_private_threads(server, call, input).await,
-        "vault.rooms.thread_delete" => vault_rooms_thread_delete(server, call, input).await,
+        "vault.rooms.private_threads" => {
+            Box::pin(vault_rooms_private_threads(server, call, input)).await
+        }
+        "vault.rooms.thread_delete" => {
+            Box::pin(vault_rooms_thread_delete(server, call, input)).await
+        }
         "vault.rooms.thread_join.request" => {
-            vault_rooms_thread_join_request(server, call, input).await
+            Box::pin(vault_rooms_thread_join_request(server, call, input)).await
         }
         "vault.rooms.thread_join.requests" => {
-            vault_rooms_thread_join_requests(server, call, input).await
+            Box::pin(vault_rooms_thread_join_requests(server, call, input)).await
         }
         "vault.rooms.thread_join.approve" => {
-            vault_rooms_thread_join_approve(server, call, input).await
+            Box::pin(vault_rooms_thread_join_approve(server, call, input)).await
         }
-        "vault.rooms.thread_join.deny" => vault_rooms_thread_join_deny(server, call, input).await,
-        "vault.projects.propose" => vault_projects_propose(server, call, input).await,
-        "vault.projects.proposals" => vault_projects_proposals(server, call, input).await,
-        "vault.projects.dismiss_card" => vault_projects_dismiss_card(server, call, input).await,
-        "vault.projects.confirm" => vault_projects_confirm(server, call, input).await,
-        "vault.projects.roster.write" => vault_projects_roster_write(server, call, input).await,
-        "vault.projects.goal.intake" => vault_projects_goal_intake(server, call, input).await,
-        "vault.rooms.join" => vault_rooms_join(server, call, input).await,
-        "vault.rooms.invite" => vault_rooms_invite(server, call, input).await,
-        "vault.rooms.consent" => vault_rooms_consent(server, call, input).await,
-        "vault.rooms.offer" => vault_rooms_offer(server, call, input).await,
-        "vault.rooms.offer.answer" => vault_rooms_offer_answer(server, call, input).await,
-        "vault.rooms.offer.vote" => vault_rooms_offer_vote(server, call, input).await,
-        "vault.rooms.offer.reopen" => vault_rooms_offer_reopen(server, call, input).await,
-        "vault.rooms.offers" => vault_rooms_offers(server, call, input).await,
-        "vault.projects.goal.revisions" => vault_projects_goal_revisions(server, call, input).await,
-        "vault.projects.goal.dismiss" => vault_projects_goal_dismiss(server, call, input).await,
-        "vault.projects.route_tradeoff" => vault_projects_route_tradeoff(server, call, input).await,
+        "vault.rooms.thread_join.deny" => {
+            Box::pin(vault_rooms_thread_join_deny(server, call, input)).await
+        }
+        "vault.projects.propose" => Box::pin(vault_projects_propose(server, call, input)).await,
+        "vault.projects.proposals" => Box::pin(vault_projects_proposals(server, call, input)).await,
+        "vault.projects.dismiss_card" => {
+            Box::pin(vault_projects_dismiss_card(server, call, input)).await
+        }
+        "vault.projects.confirm" => Box::pin(vault_projects_confirm(server, call, input)).await,
+        "vault.projects.roster.write" => {
+            Box::pin(vault_projects_roster_write(server, call, input)).await
+        }
+        "vault.projects.goal.intake" => {
+            Box::pin(vault_projects_goal_intake(server, call, input)).await
+        }
+        "vault.rooms.join" => Box::pin(vault_rooms_join(server, call, input)).await,
+        "vault.rooms.invite" => Box::pin(vault_rooms_invite(server, call, input)).await,
+        "vault.rooms.consent" => Box::pin(vault_rooms_consent(server, call, input)).await,
+        "vault.rooms.offer" => Box::pin(vault_rooms_offer(server, call, input)).await,
+        "vault.rooms.offer.answer" => Box::pin(vault_rooms_offer_answer(server, call, input)).await,
+        "vault.rooms.offer.vote" => Box::pin(vault_rooms_offer_vote(server, call, input)).await,
+        "vault.rooms.offer.reopen" => Box::pin(vault_rooms_offer_reopen(server, call, input)).await,
+        "vault.rooms.offers" => Box::pin(vault_rooms_offers(server, call, input)).await,
+        "vault.projects.goal.revisions" => {
+            Box::pin(vault_projects_goal_revisions(server, call, input)).await
+        }
+        "vault.projects.goal.dismiss" => {
+            Box::pin(vault_projects_goal_dismiss(server, call, input)).await
+        }
+        "vault.projects.route_tradeoff" => {
+            Box::pin(vault_projects_route_tradeoff(server, call, input)).await
+        }
         "vault.conversations.turn.continue" => {
-            vault_conversations_turn_continue(server, call, input).await
+            Box::pin(vault_conversations_turn_continue(server, call, input)).await
         }
         "vault.conversations.turn.retry" => {
-            vault_conversations_turn_retry(server, call, input).await
+            Box::pin(vault_conversations_turn_retry(server, call, input)).await
         }
-        "vault.messages.react" => vault_messages_react(server, call, input).await,
-        "vault.rooms.host" => vault_rooms_host(server, call, input).await,
-        "vault.rooms.host.pin" => vault_rooms_host_pin(server, call, input).await,
-        "vault.rooms.host.hand" => vault_rooms_host_hand(server, call, input).await,
-        "vault.rooms.upkeep.pending" => vault_rooms_upkeep_pending(server, call, input).await,
-        "vault.rooms.upkeep.voice" => vault_rooms_upkeep_voice(server, call, input).await,
-        "vault.rooms.sharing" => vault_rooms_sharing(server, call, input).await,
-        "vault.companions.sharing.get" => vault_companions_sharing_get(server, call, input).await,
-        "vault.companions.sharing.set" => vault_companions_sharing_set(server, call, input).await,
+        "vault.conversations.turn.rebind" => {
+            Box::pin(vault_conversations_turn_rebind(server, call, input)).await
+        }
+        "vault.messages.react" => Box::pin(vault_messages_react(server, call, input)).await,
+        "vault.rooms.host" => Box::pin(vault_rooms_host(server, call, input)).await,
+        "vault.rooms.host.pin" => Box::pin(vault_rooms_host_pin(server, call, input)).await,
+        "vault.rooms.host.hand" => Box::pin(vault_rooms_host_hand(server, call, input)).await,
+        "vault.rooms.upkeep.pending" => {
+            Box::pin(vault_rooms_upkeep_pending(server, call, input)).await
+        }
+        "vault.rooms.upkeep.voice" => Box::pin(vault_rooms_upkeep_voice(server, call, input)).await,
+        "vault.rooms.sharing" => Box::pin(vault_rooms_sharing(server, call, input)).await,
+        "vault.companions.sharing.get" => {
+            Box::pin(vault_companions_sharing_get(server, call, input)).await
+        }
+        "vault.companions.sharing.set" => {
+            Box::pin(vault_companions_sharing_set(server, call, input)).await
+        }
         "vault.workspace.work_companion.get" => {
-            vault_workspace_work_companion_get(server, call, input).await
+            Box::pin(vault_workspace_work_companion_get(server, call, input)).await
         }
         "vault.workspace.work_companion.set" => {
-            vault_workspace_work_companion_set(server, call, input).await
+            Box::pin(vault_workspace_work_companion_set(server, call, input)).await
         }
-        "self.skills.save" => self_skills_save(server, call, input).await,
-        "self.skills.fork" => self_skills_fork(server, call, input).await,
-        "self.skills.callables" => self_skills_callables(server, call, input).await,
-        "vault.skills.pack_receipt" => vault_skills_pack_receipt(server, call, input).await,
-        "vault.skills.outcomes.project" => vault_skills_outcomes_project(server, call, input).await,
-        "vault.skills.outcomes.get" => vault_skills_outcomes_get(server, call, input).await,
-        "vault.models.manifest.read" => vault_models_manifest_read(server, call, input).await,
-        "vault.models.manifest.replace" => vault_models_manifest_replace(server, call, input).await,
-        "vault.models.oneironer.bind" => vault_models_oneironer_bind(server, call, input).await,
-        "vault.models.routes.read" => vault_models_routes_read(server, call, input).await,
-        "vault.models.routes.replace" => vault_models_routes_replace(server, call, input).await,
-        "vault.models.roles.read" => vault_models_roles_read(server, call, input).await,
-        "vault.models.roles.invoke" => vault_models_roles_invoke(server, call, input).await,
+        "self.skills.save" => Box::pin(self_skills_save(server, call, input)).await,
+        "self.skills.fork" => Box::pin(self_skills_fork(server, call, input)).await,
+        "self.skills.callables" => Box::pin(self_skills_callables(server, call, input)).await,
+        "vault.skills.pack_receipt" => {
+            Box::pin(vault_skills_pack_receipt(server, call, input)).await
+        }
+        "vault.skills.outcomes.project" => {
+            Box::pin(vault_skills_outcomes_project(server, call, input)).await
+        }
+        "vault.skills.outcomes.get" => {
+            Box::pin(vault_skills_outcomes_get(server, call, input)).await
+        }
+        "vault.models.manifest.read" => {
+            Box::pin(vault_models_manifest_read(server, call, input)).await
+        }
+        "vault.models.manifest.replace" => {
+            Box::pin(vault_models_manifest_replace(server, call, input)).await
+        }
+        "vault.settings.web_connector" => {
+            Box::pin(vault_settings_web_connector(server, call, input)).await
+        }
+        "vault.settings.web_connector.replace" => {
+            Box::pin(vault_settings_web_connector_replace(server, call, input)).await
+        }
+        "vault.connectors.web.usage" => {
+            Box::pin(vault_connectors_web_usage(server, call, input)).await
+        }
+        "vault.models.oneironer.bind" => {
+            Box::pin(vault_models_oneironer_bind(server, call, input)).await
+        }
+        "vault.models.routes.read" => Box::pin(vault_models_routes_read(server, call, input)).await,
+        "vault.models.routes.replace" => {
+            Box::pin(vault_models_routes_replace(server, call, input)).await
+        }
+        "vault.models.roles.read" => Box::pin(vault_models_roles_read(server, call, input)).await,
+        "vault.models.roles.invoke" => {
+            Box::pin(vault_models_roles_invoke(server, call, input)).await
+        }
         "vault.skills.attribution.settle" => {
-            vault_skills_attribution_settle(server, call, input).await
+            Box::pin(vault_skills_attribution_settle(server, call, input)).await
         }
-        "vault.skills.attribution.read" => vault_skills_attribution_read(server, call, input).await,
+        "vault.skills.attribution.read" => {
+            Box::pin(vault_skills_attribution_read(server, call, input)).await
+        }
         "vault.skills.attribution.evidence.record" => {
-            vault_skills_attribution_evidence_record(server, call, input).await
+            Box::pin(vault_skills_attribution_evidence_record(
+                server, call, input,
+            ))
+            .await
         }
         "vault.skills.attribution.project" => {
-            vault_skills_attribution_project(server, call, input).await
+            Box::pin(vault_skills_attribution_project(server, call, input)).await
         }
         "vault.skills.attribution.judgments" => {
-            vault_skills_attribution_judgments(server, call, input).await
+            Box::pin(vault_skills_attribution_judgments(server, call, input)).await
         }
         "vault.skills.attribution.proposals" => {
-            vault_skills_attribution_proposals(server, call, input).await
+            Box::pin(vault_skills_attribution_proposals(server, call, input)).await
         }
         "vault.skills.attribution.positive.retire" => {
-            vault_skills_attribution_positive_retire(server, call, input).await
+            Box::pin(vault_skills_attribution_positive_retire(
+                server, call, input,
+            ))
+            .await
         }
-        "ai.steps.submit" => ai_steps_submit(server, call, input).await,
-        "ai.steps.receipt" => ai_steps_receipt(server, call, input).await,
-        "ai.streams.open" => ai_streams_open(server, call, input).await,
-        "ai.streams.subscribe" => ai_streams_subscribe(server, call, input).await,
-        "ai.streams.events" => ai_streams_events(server, call, input).await,
-        "ai.streams.detach" => ai_streams_detach(server, call, input).await,
-        "ai.streams.abort" => ai_streams_abort(server, call, input).await,
-        "ai.streams.terminal" => ai_streams_terminal(server, call, input).await,
-        "ai.reply" => ai_reply(server, call, input).await,
-        "vault.receipts.context" => vault_receipts_context(server, call, input).await,
-        "ai.voice.asr.open" => ai_voice_asr_open(server, call, input).await,
-        "ai.voice.asr.hypothesis" => ai_voice_asr_hypothesis(server, call, input).await,
-        "ai.voice.asr.finalize" => ai_voice_asr_finalize(server, call, input).await,
-        "ai.voice.asr.close" => ai_voice_asr_close(server, call, input).await,
-        "ai.voice.start" => ai_voice_start(server, call, input).await,
-        "ai.voice.audio" => ai_voice_audio(server, call, input).await,
-        "ai.voice.events" => ai_voice_events(server, call, input).await,
-        "ai.voice.ack" => ai_voice_ack(server, call, input).await,
-        "ai.voice.usage" => ai_voice_usage(server, call, input).await,
-        "ai.voice.tool" => ai_voice_tool(server, call, input).await,
-        "ai.voice.end" => ai_voice_end(server, call, input).await,
-        "ai.voice.close" => ai_voice_close(server, call, input).await,
-        "ai.anonymous_chat" => ai_anonymous_chat(server, call, input).await,
-        "vault.models.catalog.refresh" => vault_models_catalog_refresh(server, call, input).await,
-        "vault.models.catalog.get" => vault_models_catalog_get(server, call, input).await,
-        "vault.models.catalog.diff" => vault_models_catalog_diff(server, call, input).await,
-        "vault.models.trials.nominate" => vault_models_trials_nominate(server, call, input).await,
-        "vault.models.trials.get" => vault_models_trials_get(server, call, input).await,
-        "vault.models.trials.approve" => vault_models_trials_approve(server, call, input).await,
-        "vault.models.trials.run" => vault_models_trials_run(server, call, input).await,
-        "vault.models.trials.complete" => vault_models_trials_complete(server, call, input).await,
-        "vault.models.bindings.propose" => vault_models_bindings_propose(server, call, input).await,
-        "vault.models.bindings.get" => vault_models_bindings_get(server, call, input).await,
-        "vault.models.bindings.read" => vault_models_bindings_read(server, call, input).await,
-        "vault.models.bindings.accept" => vault_models_bindings_accept(server, call, input).await,
-        "vault.models.bindings.deny" => vault_models_bindings_deny(server, call, input).await,
-        "ai.options" => ai_options(server, call, input).await,
-        "ai.image" => ai_image(server, call, input).await,
-        "ai.speech" => ai_speech(server, call, input).await,
-        "vault.voices.packs.put" => vault_voices_packs_put(server, call, input).await,
-        "vault.voices.render_consent" => vault_voices_render_consent(server, call, input).await,
+        "ai.steps.submit" => Box::pin(ai_steps_submit(server, call, input)).await,
+        "ai.steps.receipt" => Box::pin(ai_steps_receipt(server, call, input)).await,
+        "ai.streams.open" => Box::pin(ai_streams_open(server, call, input)).await,
+        "ai.streams.subscribe" => Box::pin(ai_streams_subscribe(server, call, input)).await,
+        "ai.streams.events" => Box::pin(ai_streams_events(server, call, input)).await,
+        "ai.streams.detach" => Box::pin(ai_streams_detach(server, call, input)).await,
+        "ai.streams.abort" => Box::pin(ai_streams_abort(server, call, input)).await,
+        "ai.streams.terminal" => Box::pin(ai_streams_terminal(server, call, input)).await,
+        "ai.reply" => Box::pin(ai_reply(server, call, input)).await,
+        "vault.receipts.context" => Box::pin(vault_receipts_context(server, call, input)).await,
+        "vault.receipts.craft_reply_manifest" => {
+            Box::pin(vault_receipts_craft_reply_manifest(server, call, input)).await
+        }
+        "ai.voice.asr.open" => Box::pin(ai_voice_asr_open(server, call, input)).await,
+        "ai.voice.asr.hypothesis" => Box::pin(ai_voice_asr_hypothesis(server, call, input)).await,
+        "ai.voice.asr.finalize" => Box::pin(ai_voice_asr_finalize(server, call, input)).await,
+        "ai.voice.asr.close" => Box::pin(ai_voice_asr_close(server, call, input)).await,
+        "ai.voice.start" => Box::pin(ai_voice_start(server, call, input)).await,
+        "ai.voice.audio" => Box::pin(ai_voice_audio(server, call, input)).await,
+        "ai.voice.events" => Box::pin(ai_voice_events(server, call, input)).await,
+        "ai.voice.ack" => Box::pin(ai_voice_ack(server, call, input)).await,
+        "ai.voice.usage" => Box::pin(ai_voice_usage(server, call, input)).await,
+        "ai.voice.tool" => Box::pin(ai_voice_tool(server, call, input)).await,
+        "ai.voice.end" => Box::pin(ai_voice_end(server, call, input)).await,
+        "ai.voice.close" => Box::pin(ai_voice_close(server, call, input)).await,
+        "ai.anonymous_chat" => Box::pin(ai_anonymous_chat(server, call, input)).await,
+        "vault.models.catalog.refresh" => {
+            Box::pin(vault_models_catalog_refresh(server, call, input)).await
+        }
+        "vault.models.catalog.get" => Box::pin(vault_models_catalog_get(server, call, input)).await,
+        "vault.models.catalog.diff" => {
+            Box::pin(vault_models_catalog_diff(server, call, input)).await
+        }
+        "vault.models.trials.nominate" => {
+            Box::pin(vault_models_trials_nominate(server, call, input)).await
+        }
+        "vault.models.trials.get" => Box::pin(vault_models_trials_get(server, call, input)).await,
+        "vault.models.trials.approve" => {
+            Box::pin(vault_models_trials_approve(server, call, input)).await
+        }
+        "vault.models.trials.run" => Box::pin(vault_models_trials_run(server, call, input)).await,
+        "vault.models.trials.resend_arm" => {
+            Box::pin(vault_models_trials_resend_arm(server, call, input)).await
+        }
+        "vault.models.trials.complete" => {
+            Box::pin(vault_models_trials_complete(server, call, input)).await
+        }
+        "vault.models.bindings.propose" => {
+            Box::pin(vault_models_bindings_propose(server, call, input)).await
+        }
+        "vault.models.bindings.get" => {
+            Box::pin(vault_models_bindings_get(server, call, input)).await
+        }
+        "vault.models.bindings.read" => {
+            Box::pin(vault_models_bindings_read(server, call, input)).await
+        }
+        "vault.models.bindings.accept" => {
+            Box::pin(vault_models_bindings_accept(server, call, input)).await
+        }
+        "vault.models.bindings.deny" => {
+            Box::pin(vault_models_bindings_deny(server, call, input)).await
+        }
+        "ai.options" => Box::pin(ai_options(server, call, input)).await,
+        "ai.image" => Box::pin(ai_image(server, call, input)).await,
+        "ai.speech" => Box::pin(ai_speech(server, call, input)).await,
+        "vault.voices.packs.put" => Box::pin(vault_voices_packs_put(server, call, input)).await,
+        "vault.voices.render_consent" => {
+            Box::pin(vault_voices_render_consent(server, call, input)).await
+        }
         "vault.voices.targets.provision" => {
-            vault_voices_targets_provision(server, call, input).await
+            Box::pin(vault_voices_targets_provision(server, call, input)).await
         }
-        "vault.voices.targets.evict" => vault_voices_targets_evict(server, call, input).await,
-        "vault.voices.inspect" => vault_voices_inspect(server, call, input).await,
-        "vault.voices.lineage" => vault_voices_lineage(server, call, input).await,
-        "ai.transcribe" => ai_transcribe(server, call, input).await,
-        "ai.embed" => ai_embed(server, call, input).await,
-        "ai.video" => ai_video(server, call, input).await,
-        "ai.video.poll" => ai_video_poll(server, call, input).await,
-        "ai.video.cancel" => ai_video_cancel(server, call, input).await,
-        "ai.verdict" => ai_verdict(server, call, input).await,
-        "vault.graph.ask" => vault_graph_ask(server, call, input).await,
-        "vault.graph.admit" => vault_graph_admit(server, call, input).await,
-        "vault.questions.create" => vault_questions_create(server, call, input).await,
-        "vault.questions.edit" => vault_questions_edit(server, call, input).await,
-        "vault.questions.pause" => vault_questions_pause(server, call, input).await,
-        "vault.questions.backfill" => vault_questions_backfill(server, call, input).await,
-        "vault.questions.read" => vault_questions_read(server, call, input).await,
-        "vault.questions.answers" => vault_questions_answers(server, call, input).await,
-        "vault.questions.refresh" => vault_questions_refresh(server, call, input).await,
-        "vault.questions.outcomes" => vault_questions_outcomes(server, call, input).await,
+        "vault.voices.targets.evict" => {
+            Box::pin(vault_voices_targets_evict(server, call, input)).await
+        }
+        "vault.voices.inspect" => Box::pin(vault_voices_inspect(server, call, input)).await,
+        "vault.voices.lineage" => Box::pin(vault_voices_lineage(server, call, input)).await,
+        "ai.transcribe" => Box::pin(ai_transcribe(server, call, input)).await,
+        "ai.embed" => Box::pin(ai_embed(server, call, input)).await,
+        "ai.video" => Box::pin(ai_video(server, call, input)).await,
+        "ai.video.poll" => Box::pin(ai_video_poll(server, call, input)).await,
+        "ai.video.cancel" => Box::pin(ai_video_cancel(server, call, input)).await,
+        "ai.ask_image" => Box::pin(ai_ask_image(server, call, input)).await,
+        "ai.verdict" => Box::pin(ai_verdict(server, call, input)).await,
+        "vault.graph.ask" => Box::pin(vault_graph_ask(server, call, input)).await,
+        "vault.graph.admit" => Box::pin(vault_graph_admit(server, call, input)).await,
+        "vault.questions.create" => Box::pin(vault_questions_create(server, call, input)).await,
+        "vault.questions.edit" => Box::pin(vault_questions_edit(server, call, input)).await,
+        "vault.questions.pause" => Box::pin(vault_questions_pause(server, call, input)).await,
+        "vault.questions.backfill" => Box::pin(vault_questions_backfill(server, call, input)).await,
+        "vault.questions.read" => Box::pin(vault_questions_read(server, call, input)).await,
+        "vault.questions.outcome_windows" => {
+            Box::pin(vault_questions_outcome_windows(server, call, input)).await
+        }
+        "vault.questions.answers" => Box::pin(vault_questions_answers(server, call, input)).await,
+        "vault.questions.refresh" => Box::pin(vault_questions_refresh(server, call, input)).await,
+        "vault.questions.outcomes" => Box::pin(vault_questions_outcomes(server, call, input)).await,
         "vault.questions.outcomes.project" => {
-            vault_questions_outcomes_project(server, call, input).await
+            Box::pin(vault_questions_outcomes_project(server, call, input)).await
         }
-        "vault.questions.schedule" => vault_questions_schedule(server, call, input).await,
-        "vault.decisions.bands.read" => vault_decisions_bands_read(server, call, input).await,
-        "vault.decisions.bands.learn" => vault_decisions_bands_learn(server, call, input).await,
-        "vault.decisions.bands.enforce" => vault_decisions_bands_enforce(server, call, input).await,
-        "vault.decisions.asks.answer" => vault_decisions_asks_answer(server, call, input).await,
-        "vault.decisions.asks.climb" => vault_decisions_asks_climb(server, call, input).await,
-        "self.decisions.asks" => self_decisions_asks(server, call, input).await,
-        "connector.list" => connector_list(server, call, input).await,
-        "connector.status" => connector_status(server, call, input).await,
-        "connector.call" => connector_call(server, call, input).await,
-        "connector.schema" => connector_schema(server, call, input).await,
-        "connector.call_status" => connector_call_status(server, call, input).await,
-        "vault.commit" => vault_commit(server, call, input).await,
-        "vault.remember" => vault_remember(server, call, input).await,
-        "vault.claims.retract" => vault_claims_retract(server, call, input).await,
-        "vault.forget" => vault_forget(server, call, input).await,
-        "vault.booking.availability" => vault_booking_availability(server, call, input).await,
-        "vault.booking.book" => vault_booking_book(server, call, input).await,
-        "vault.booking.reschedule" => vault_booking_reschedule(server, call, input).await,
-        "vault.booking.cancel" => vault_booking_cancel(server, call, input).await,
-        "vault.booking.constraint_turn" => vault_booking_constraint_turn(server, call, input).await,
-        "vault.booking.page_token" => vault_booking_page_token(server, call, input).await,
-        "calendar.invite" => calendar_invite(server, call, input).await,
-        "calendar.ics.configure" => calendar_ics_configure(server, call, input).await,
-        "calendar.ics.poll" => calendar_ics_poll(server, call, input).await,
-        "calendar.ics.status" => calendar_ics_status(server, call, input).await,
-        "vault.calendar.passports.read" => vault_calendar_passports_read(server, call, input).await,
+        "vault.questions.schedule" => Box::pin(vault_questions_schedule(server, call, input)).await,
+        "vault.decisions.bands.read" => {
+            Box::pin(vault_decisions_bands_read(server, call, input)).await
+        }
+        "vault.decisions.bands.learn" => {
+            Box::pin(vault_decisions_bands_learn(server, call, input)).await
+        }
+        "vault.decisions.bands.enforce" => {
+            Box::pin(vault_decisions_bands_enforce(server, call, input)).await
+        }
+        "vault.decisions.asks.answer" => {
+            Box::pin(vault_decisions_asks_answer(server, call, input)).await
+        }
+        "vault.decisions.asks.climb" => {
+            Box::pin(vault_decisions_asks_climb(server, call, input)).await
+        }
+        "vault.decisions.asks.confirm_grant" => {
+            Box::pin(vault_decisions_asks_confirm_grant(server, call, input)).await
+        }
+        "self.decisions.asks" => Box::pin(self_decisions_asks(server, call, input)).await,
+        "connector.list" => Box::pin(connector_list(server, call, input)).await,
+        "connector.status" => Box::pin(connector_status(server, call, input)).await,
+        "connector.call" => Box::pin(connector_call(server, call, input)).await,
+        "connector.schema" => Box::pin(connector_schema(server, call, input)).await,
+        "connector.call_status" => Box::pin(connector_call_status(server, call, input)).await,
+        "vault.commit" => Box::pin(vault_commit(server, call, input)).await,
+        "vault.remember" => Box::pin(vault_remember(server, call, input)).await,
+        "vault.claims.retract" => Box::pin(vault_claims_retract(server, call, input)).await,
+        "vault.forget" => Box::pin(vault_forget(server, call, input)).await,
+        "vault.booking.availability" => {
+            Box::pin(vault_booking_availability(server, call, input)).await
+        }
+        "vault.booking.book" => Box::pin(vault_booking_book(server, call, input)).await,
+        "vault.booking.reschedule" => Box::pin(vault_booking_reschedule(server, call, input)).await,
+        "vault.booking.cancel" => Box::pin(vault_booking_cancel(server, call, input)).await,
+        "vault.booking.constraint_turn" => {
+            Box::pin(vault_booking_constraint_turn(server, call, input)).await
+        }
+        "vault.booking.page_token" => Box::pin(vault_booking_page_token(server, call, input)).await,
+        "calendar.invite" => Box::pin(calendar_invite(server, call, input)).await,
+        "calendar.ics.configure" => Box::pin(calendar_ics_configure(server, call, input)).await,
+        "calendar.ics.poll" => Box::pin(calendar_ics_poll(server, call, input)).await,
+        "calendar.ics.status" => Box::pin(calendar_ics_status(server, call, input)).await,
+        "vault.calendar.passports.read" => {
+            Box::pin(vault_calendar_passports_read(server, call, input)).await
+        }
         "vault.calendar.passports.history" => {
-            vault_calendar_passports_history(server, call, input).await
+            Box::pin(vault_calendar_passports_history(server, call, input)).await
         }
-        "calendar.connector.configure" => calendar_connector_configure(server, call, input).await,
-        "calendar.connector.get" => calendar_connector_get(server, call, input).await,
-        "calendar.connector.pull" => calendar_connector_pull(server, call, input).await,
-        "calendar.connector.write" => calendar_connector_write(server, call, input).await,
-        "calendar.connector.kill" => calendar_connector_kill(server, call, input).await,
-        "calendar.imip.configure" => calendar_imip_configure(server, call, input).await,
-        "calendar.imip.get" => calendar_imip_get(server, call, input).await,
-        "vault.calendar.create" => vault_calendar_create(server, call, input).await,
-        "vault.calendar.ics.import" => vault_calendar_ics_import(server, call, input).await,
-        "vault.calendar.occurrences" => vault_calendar_occurrences(server, call, input).await,
-        "vault.calendar.instances.move" => vault_calendar_instances_move(server, call, input).await,
-        "vault.calendar.read" => vault_calendar_read(server, call, input).await,
-        "vault.calendar.search" => vault_calendar_search(server, call, input).await,
-        "vault.calendar.freebusy" => vault_calendar_freebusy(server, call, input).await,
-        "vault.calendar.prep" => vault_calendar_prep(server, call, input).await,
-        "vault.calendar.event_outcome" => vault_calendar_event_outcome(server, call, input).await,
-        "vault.calendar.check_in.due" => vault_calendar_check_in_due(server, call, input).await,
+        "calendar.connector.configure" => {
+            Box::pin(calendar_connector_configure(server, call, input)).await
+        }
+        "calendar.connector.get" => Box::pin(calendar_connector_get(server, call, input)).await,
+        "calendar.connector.pull" => Box::pin(calendar_connector_pull(server, call, input)).await,
+        "calendar.connector.write" => Box::pin(calendar_connector_write(server, call, input)).await,
+        "calendar.connector.kill" => Box::pin(calendar_connector_kill(server, call, input)).await,
+        "calendar.imip.configure" => Box::pin(calendar_imip_configure(server, call, input)).await,
+        "calendar.imip.get" => Box::pin(calendar_imip_get(server, call, input)).await,
+        "vault.calendar.create" => Box::pin(vault_calendar_create(server, call, input)).await,
+        "vault.calendar.ics.import" => {
+            Box::pin(vault_calendar_ics_import(server, call, input)).await
+        }
+        "vault.calendar.occurrences" => {
+            Box::pin(vault_calendar_occurrences(server, call, input)).await
+        }
+        "vault.calendar.instances.move" => {
+            Box::pin(vault_calendar_instances_move(server, call, input)).await
+        }
+        "vault.calendar.read" => Box::pin(vault_calendar_read(server, call, input)).await,
+        "vault.calendar.search" => Box::pin(vault_calendar_search(server, call, input)).await,
+        "vault.calendar.freebusy" => Box::pin(vault_calendar_freebusy(server, call, input)).await,
+        "vault.calendar.prep" => Box::pin(vault_calendar_prep(server, call, input)).await,
+        "vault.calendar.event_outcome" => {
+            Box::pin(vault_calendar_event_outcome(server, call, input)).await
+        }
+        "vault.calendar.check_in.due" => {
+            Box::pin(vault_calendar_check_in_due(server, call, input)).await
+        }
         "vault.calendar.check_in.answer" => {
-            vault_calendar_check_in_answer(server, call, input).await
+            Box::pin(vault_calendar_check_in_answer(server, call, input)).await
         }
         "vault.calendar.outcome_policy.get" => {
-            vault_calendar_outcome_policy_get(server, call, input).await
+            Box::pin(vault_calendar_outcome_policy_get(server, call, input)).await
         }
         "vault.calendar.outcome_policy.set" => {
-            vault_calendar_outcome_policy_set(server, call, input).await
+            Box::pin(vault_calendar_outcome_policy_set(server, call, input)).await
         }
         "vault.calendar.transcript.ingest" => {
-            vault_calendar_transcript_ingest(server, call, input).await
+            Box::pin(vault_calendar_transcript_ingest(server, call, input)).await
         }
-        "vault.claims.list" => vault_claims_list(server, call, input).await,
-        "vault.claims.demote" => vault_claims_demote(server, call, input).await,
-        "vault.claims.list_filtered" => vault_claims_list_filtered(server, call, input).await,
-        "vault.claims.read_filtered" => vault_claims_read_filtered(server, call, input).await,
-        "vault.claims.history" => vault_claims_history(server, call, input).await,
-        "vault.delete" => vault_delete(server, call, input).await,
+        "vault.claims.list" => Box::pin(vault_claims_list(server, call, input)).await,
+        "vault.claims.demote" => Box::pin(vault_claims_demote(server, call, input)).await,
+        "vault.claims.list_filtered" => {
+            Box::pin(vault_claims_list_filtered(server, call, input)).await
+        }
+        "vault.claims.read_filtered" => {
+            Box::pin(vault_claims_read_filtered(server, call, input)).await
+        }
+        "vault.claims.history" => Box::pin(vault_claims_history(server, call, input)).await,
+        "vault.delete" => Box::pin(vault_delete(server, call, input)).await,
         "vault.writes.critical_confirm.pending" => {
-            vault_writes_critical_confirm_pending(server, call, input).await
+            Box::pin(vault_writes_critical_confirm_pending(server, call, input)).await
         }
         "vault.writes.critical_confirm.clear" => {
-            vault_writes_critical_confirm_clear(server, call, input).await
+            Box::pin(vault_writes_critical_confirm_clear(server, call, input)).await
         }
         "vault.writes.critical_confirm.decline" => {
-            vault_writes_critical_confirm_decline(server, call, input).await
+            Box::pin(vault_writes_critical_confirm_decline(server, call, input)).await
         }
         "vault.writes.critical_confirm.receipt" => {
-            vault_writes_critical_confirm_receipt(server, call, input).await
+            Box::pin(vault_writes_critical_confirm_receipt(server, call, input)).await
         }
-        "vault.writes.pending" => vault_writes_pending(server, call, input).await,
-        "vault.hydrate" => vault_hydrate(server, call, input).await,
-        "vault.get" => vault_get(server, call, input).await,
-        "vault.refs.resolve" => vault_refs_resolve(server, call, input).await,
-        "vault.refs.links" => vault_refs_links(server, call, input).await,
-        "vault.search.vector.config" => vault_search_vector_config(server, call, input).await,
-        "vault.vectors.put" => vault_vectors_put(server, call, input).await,
-        "vault.search.hybrid" => vault_search_hybrid(server, call, input).await,
-        "vault.search.temporal" => vault_search_temporal(server, call, input).await,
-        "vault.search.bm25" => vault_search_bm25(server, call, input).await,
-        "vault.neighbors" => vault_neighbors(server, call, input).await,
-        "vault.structural.put" => vault_structural_put(server, call, input).await,
-        "vault.habits.checkin" => vault_habits_checkin(server, call, input).await,
-        "vault.productivity.create" => vault_productivity_create(server, call, input).await,
-        "vault.productivity.tree" => vault_productivity_tree(server, call, input).await,
-        "vault.claims.admit" => vault_claims_admit(server, call, input).await,
-        "vault.artifacts.create" => vault_artifacts_create(server, call, input).await,
-        "vault.esign.create" => vault_esign_create(server, call, input).await,
-        "vault.esign.get" => vault_esign_get(server, call, input).await,
-        "vault.esign.links.issue" => vault_esign_links_issue(server, call, input).await,
+        "vault.writes.pending" => Box::pin(vault_writes_pending(server, call, input)).await,
+        "vault.hydrate" => Box::pin(vault_hydrate(server, call, input)).await,
+        "vault.get" => Box::pin(vault_get(server, call, input)).await,
+        "vault.refs.resolve" => Box::pin(vault_refs_resolve(server, call, input)).await,
+        "vault.refs.links" => Box::pin(vault_refs_links(server, call, input)).await,
+        "vault.search.vector.config" => {
+            Box::pin(vault_search_vector_config(server, call, input)).await
+        }
+        "vault.vectors.put" => Box::pin(vault_vectors_put(server, call, input)).await,
+        "vault.search.hybrid" => Box::pin(vault_search_hybrid(server, call, input)).await,
+        "vault.search.temporal" => Box::pin(vault_search_temporal(server, call, input)).await,
+        "vault.search.bm25" => Box::pin(vault_search_bm25(server, call, input)).await,
+        "vault.neighbors" => Box::pin(vault_neighbors(server, call, input)).await,
+        "vault.structural.put" => Box::pin(vault_structural_put(server, call, input)).await,
+        "vault.habits.checkin" => Box::pin(vault_habits_checkin(server, call, input)).await,
+        "vault.productivity.create" => {
+            Box::pin(vault_productivity_create(server, call, input)).await
+        }
+        "vault.productivity.tree" => Box::pin(vault_productivity_tree(server, call, input)).await,
+        "vault.claims.admit" => Box::pin(vault_claims_admit(server, call, input)).await,
+        "vault.artifacts.create" => Box::pin(vault_artifacts_create(server, call, input)).await,
+        "vault.esign.create" => Box::pin(vault_esign_create(server, call, input)).await,
+        "vault.esign.get" => Box::pin(vault_esign_get(server, call, input)).await,
+        "vault.esign.links.issue" => Box::pin(vault_esign_links_issue(server, call, input)).await,
         "vault.esign.send_for_signature" => {
-            vault_esign_send_for_signature(server, call, input).await
+            Box::pin(vault_esign_send_for_signature(server, call, input)).await
         }
-        "vault.esign.notices.dispatch" => vault_esign_notices_dispatch(server, call, input).await,
-        "vault.esign.remind" => vault_esign_remind(server, call, input).await,
-        "vault.esign.void" => vault_esign_void(server, call, input).await,
-        "vault.esign.signing.act" => vault_esign_signing_act(server, call, input).await,
-        "vault.esign.signing.pdf" => vault_esign_signing_pdf(server, call, input).await,
-        "vault.esign.signing.image" => vault_esign_signing_image(server, call, input).await,
-        "vault.esign.signing.signature" => vault_esign_signing_signature(server, call, input).await,
-        "vault.esign.seal.get" => vault_esign_seal_get(server, call, input).await,
-        "vault.conversations.create" => vault_conversations_create(server, call, input).await,
+        "vault.esign.notices.dispatch" => {
+            Box::pin(vault_esign_notices_dispatch(server, call, input)).await
+        }
+        "vault.esign.remind" => Box::pin(vault_esign_remind(server, call, input)).await,
+        "vault.esign.void" => Box::pin(vault_esign_void(server, call, input)).await,
+        "vault.esign.signing.act" => Box::pin(vault_esign_signing_act(server, call, input)).await,
+        "vault.esign.signing.pdf" => Box::pin(vault_esign_signing_pdf(server, call, input)).await,
+        "vault.esign.signing.image" => {
+            Box::pin(vault_esign_signing_image(server, call, input)).await
+        }
+        "vault.esign.signing.signature" => {
+            Box::pin(vault_esign_signing_signature(server, call, input)).await
+        }
+        "vault.esign.seal.get" => Box::pin(vault_esign_seal_get(server, call, input)).await,
+        "vault.conversations.create" => {
+            Box::pin(vault_conversations_create(server, call, input)).await
+        }
         "vault.conversations.turns.create" => {
-            vault_conversations_turns_create(server, call, input).await
+            Box::pin(vault_conversations_turns_create(server, call, input)).await
         }
         "vault.conversations.records.append" => {
-            vault_conversations_records_append(server, call, input).await
+            Box::pin(vault_conversations_records_append(server, call, input)).await
         }
-        "vault.batch" => vault_batch(server, call, input).await,
-        "vault.artifacts.put" => vault_artifacts_put(server, call, input).await,
-        "vault.artifacts.body.import" => vault_artifacts_body_import(server, call, input).await,
-        "vault.artifacts.body.head" => vault_artifacts_body_head(server, call, input).await,
-        "vault.artifacts.body.read" => vault_artifacts_body_read(server, call, input).await,
-        "vault.artifacts.body.commits" => vault_artifacts_body_commits(server, call, input).await,
-        "vault.artifacts.body.edit" => vault_artifacts_body_edit(server, call, input).await,
+        "vault.batch" => Box::pin(vault_batch(server, call, input)).await,
+        "vault.artifacts.put" => Box::pin(vault_artifacts_put(server, call, input)).await,
+        "vault.artifacts.body.import" => {
+            Box::pin(vault_artifacts_body_import(server, call, input)).await
+        }
+        "vault.artifacts.body.head" => {
+            Box::pin(vault_artifacts_body_head(server, call, input)).await
+        }
+        "vault.artifacts.body.read" => {
+            Box::pin(vault_artifacts_body_read(server, call, input)).await
+        }
+        "vault.artifacts.body.commits" => {
+            Box::pin(vault_artifacts_body_commits(server, call, input)).await
+        }
+        "vault.artifacts.body.edit" => {
+            Box::pin(vault_artifacts_body_edit(server, call, input)).await
+        }
         "vault.artifacts.body.fork.open" => {
-            vault_artifacts_body_fork_open(server, call, input).await
+            Box::pin(vault_artifacts_body_fork_open(server, call, input)).await
         }
         "vault.artifacts.body.fork.edit" => {
-            vault_artifacts_body_fork_edit(server, call, input).await
+            Box::pin(vault_artifacts_body_fork_edit(server, call, input)).await
         }
         "vault.artifacts.body.fork.diff" => {
-            vault_artifacts_body_fork_diff(server, call, input).await
+            Box::pin(vault_artifacts_body_fork_diff(server, call, input)).await
         }
         "vault.artifacts.body.fork.merge" => {
-            vault_artifacts_body_fork_merge(server, call, input).await
+            Box::pin(vault_artifacts_body_fork_merge(server, call, input)).await
         }
         "vault.artifacts.body.fork.discard" => {
-            vault_artifacts_body_fork_discard(server, call, input).await
+            Box::pin(vault_artifacts_body_fork_discard(server, call, input)).await
         }
         "vault.artifacts.body.proposal.read" => {
-            vault_artifacts_body_proposal_read(server, call, input).await
+            Box::pin(vault_artifacts_body_proposal_read(server, call, input)).await
         }
         "vault.artifacts.body.proposal.settle" => {
-            vault_artifacts_body_proposal_settle(server, call, input).await
+            Box::pin(vault_artifacts_body_proposal_settle(server, call, input)).await
         }
-        "vault.artifacts.body.export" => vault_artifacts_body_export(server, call, input).await,
-        "vault.artifacts.body.preview" => vault_artifacts_body_preview(server, call, input).await,
+        "vault.artifacts.body.export" => {
+            Box::pin(vault_artifacts_body_export(server, call, input)).await
+        }
+        "vault.artifacts.body.preview" => {
+            Box::pin(vault_artifacts_body_preview(server, call, input)).await
+        }
         "vault.artifacts.body.deck.review" => {
-            vault_artifacts_body_deck_review(server, call, input).await
+            Box::pin(vault_artifacts_body_deck_review(server, call, input)).await
         }
         "vault.artifacts.body.deck.merge" => {
-            vault_artifacts_body_deck_merge(server, call, input).await
+            Box::pin(vault_artifacts_body_deck_merge(server, call, input)).await
         }
         "vault.artifacts.body.deck.export" => {
-            vault_artifacts_body_deck_export(server, call, input).await
+            Box::pin(vault_artifacts_body_deck_export(server, call, input)).await
         }
         "vault.artifacts.body.deck.gate" => {
-            vault_artifacts_body_deck_gate(server, call, input).await
+            Box::pin(vault_artifacts_body_deck_gate(server, call, input)).await
         }
         "vault.artifacts.body.deck.oracle" => {
-            vault_artifacts_body_deck_oracle(server, call, input).await
+            Box::pin(vault_artifacts_body_deck_oracle(server, call, input)).await
         }
         "vault.artifacts.body.deck.preview" => {
-            vault_artifacts_body_deck_preview(server, call, input).await
+            Box::pin(vault_artifacts_body_deck_preview(server, call, input)).await
         }
-        "vault.artifacts.append" => vault_artifacts_append(server, call, input).await,
-        "vault.artifacts.read" => vault_artifacts_read(server, call, input).await,
-        "vault.consolidation.enqueue" => vault_consolidation_enqueue(server, call, input).await,
-        "vault.consolidation.status" => vault_consolidation_status(server, call, input).await,
+        "vault.artifacts.append" => Box::pin(vault_artifacts_append(server, call, input)).await,
+        "vault.artifacts.read" => Box::pin(vault_artifacts_read(server, call, input)).await,
+        "vault.consolidation.enqueue" => {
+            Box::pin(vault_consolidation_enqueue(server, call, input)).await
+        }
+        "vault.consolidation.status" => {
+            Box::pin(vault_consolidation_status(server, call, input)).await
+        }
         "vault.consolidation.wake.status" => {
-            vault_consolidation_wake_status(server, call, input).await
+            Box::pin(vault_consolidation_wake_status(server, call, input)).await
         }
-        "vault.runs.step" => vault_runs_step(server, call, input).await,
-        "vault.runs.checkpoint" => vault_runs_checkpoint(server, call, input).await,
-        "vault.turn_programs.admission" => vault_turn_programs_admission(server, call, input).await,
-        "vault.runs.program" => vault_runs_program(server, call, input).await,
-        "vault.runs.program_step" => vault_runs_program_step(server, call, input).await,
-        "vault.runs.program_checkpoint" => vault_runs_program_checkpoint(server, call, input).await,
+        "vault.runs.step" => Box::pin(vault_runs_step(server, call, input)).await,
+        "vault.runs.checkpoint" => Box::pin(vault_runs_checkpoint(server, call, input)).await,
+        "vault.turn_programs.admission" => {
+            Box::pin(vault_turn_programs_admission(server, call, input)).await
+        }
+        "vault.runs.program" => Box::pin(vault_runs_program(server, call, input)).await,
+        "vault.runs.program_step" => Box::pin(vault_runs_program_step(server, call, input)).await,
+        "vault.runs.program_checkpoint" => {
+            Box::pin(vault_runs_program_checkpoint(server, call, input)).await
+        }
         "vault.runs.program_hold.release" => {
-            vault_runs_program_hold_release(server, call, input).await
+            Box::pin(vault_runs_program_hold_release(server, call, input)).await
         }
-        "vault.consolidation.home.get" => vault_consolidation_home_get(server, call, input).await,
-        "vault.consolidation.home.pick" => vault_consolidation_home_pick(server, call, input).await,
-        "vault.consolidation.lineage" => vault_consolidation_lineage(server, call, input).await,
-        "vault.consolidation.promote" => vault_consolidation_promote(server, call, input).await,
-        "vault.consolidation.pin" => vault_consolidation_pin(server, call, input).await,
-        "vault.consolidation.frontier" => vault_consolidation_frontier(server, call, input).await,
+        "vault.consolidation.home.get" => {
+            Box::pin(vault_consolidation_home_get(server, call, input)).await
+        }
+        "vault.consolidation.home.pick" => {
+            Box::pin(vault_consolidation_home_pick(server, call, input)).await
+        }
+        "vault.consolidation.lineage" => {
+            Box::pin(vault_consolidation_lineage(server, call, input)).await
+        }
+        "vault.consolidation.candidate_decisions" => {
+            Box::pin(vault_consolidation_candidate_decisions(server, call, input)).await
+        }
+        "vault.consolidation.promote" => {
+            Box::pin(vault_consolidation_promote(server, call, input)).await
+        }
+        "vault.consolidation.pin" => Box::pin(vault_consolidation_pin(server, call, input)).await,
+        "vault.consolidation.frontier" => {
+            Box::pin(vault_consolidation_frontier(server, call, input)).await
+        }
         "vault.consolidation.accounting" => {
-            vault_consolidation_accounting(server, call, input).await
+            Box::pin(vault_consolidation_accounting(server, call, input)).await
         }
-        "vault.consolidation.evidence" => vault_consolidation_evidence(server, call, input).await,
-        "vault.sieve.evidence" => vault_sieve_evidence(server, call, input).await,
-        "vault.sieve.evidence.replay" => vault_sieve_evidence_replay(server, call, input).await,
-        "vault.sieve.cadence" => vault_sieve_cadence(server, call, input).await,
-        "vault.sieve.settlements" => vault_sieve_settlements(server, call, input).await,
-        "vault.sieve.settlements.get" => vault_sieve_settlements_get(server, call, input).await,
-        "vault.sieve.queue" => vault_sieve_queue(server, call, input).await,
-        "vault.sieve.retained" => vault_sieve_retained(server, call, input).await,
-        "vault.sieve.receipts" => vault_sieve_receipts(server, call, input).await,
-        "vault.sieve.policy" => vault_sieve_policy(server, call, input).await,
-        "vault.sieve.policy.set" => vault_sieve_policy_set(server, call, input).await,
-        "vault.sieve.recipe_policy" => vault_sieve_recipe_policy(server, call, input).await,
-        "vault.sieve.recipe_policy.set" => vault_sieve_recipe_policy_set(server, call, input).await,
-        "vault.sieve.lease" => vault_sieve_lease(server, call, input).await,
-        "vault.sieve.lease.refill" => vault_sieve_lease_refill(server, call, input).await,
-        "vault.free_time.policy.get" => vault_free_time_policy_get(server, call, input).await,
-        "vault.free_time.policy.set" => vault_free_time_policy_set(server, call, input).await,
-        "vault.free_time.cycles" => vault_free_time_cycles(server, call, input).await,
-        "vault.free_time.cycle" => vault_free_time_cycle(server, call, input).await,
-        "vault.claims.vet" => vault_claims_vet(server, call, input).await,
-        "vault.claims.vetting" => vault_claims_vetting(server, call, input).await,
+        "vault.consolidation.evidence" => {
+            Box::pin(vault_consolidation_evidence(server, call, input)).await
+        }
+        "vault.sieve.evidence" => Box::pin(vault_sieve_evidence(server, call, input)).await,
+        "vault.sieve.evidence.replay" => {
+            Box::pin(vault_sieve_evidence_replay(server, call, input)).await
+        }
+        "vault.sieve.cadence" => Box::pin(vault_sieve_cadence(server, call, input)).await,
+        "vault.sieve.settlements" => Box::pin(vault_sieve_settlements(server, call, input)).await,
+        "vault.sieve.settlements.get" => {
+            Box::pin(vault_sieve_settlements_get(server, call, input)).await
+        }
+        "vault.sieve.queue" => Box::pin(vault_sieve_queue(server, call, input)).await,
+        "vault.sieve.retained" => Box::pin(vault_sieve_retained(server, call, input)).await,
+        "vault.sieve.receipts" => Box::pin(vault_sieve_receipts(server, call, input)).await,
+        "vault.sieve.policy" => Box::pin(vault_sieve_policy(server, call, input)).await,
+        "vault.sieve.policy.set" => Box::pin(vault_sieve_policy_set(server, call, input)).await,
+        "vault.sieve.recipe_policy" => {
+            Box::pin(vault_sieve_recipe_policy(server, call, input)).await
+        }
+        "vault.sieve.recipe_policy.set" => {
+            Box::pin(vault_sieve_recipe_policy_set(server, call, input)).await
+        }
+        "vault.sieve.lease" => Box::pin(vault_sieve_lease(server, call, input)).await,
+        "vault.sieve.lease.refill" => Box::pin(vault_sieve_lease_refill(server, call, input)).await,
+        "vault.free_time.policy.get" => {
+            Box::pin(vault_free_time_policy_get(server, call, input)).await
+        }
+        "vault.free_time.policy.set" => {
+            Box::pin(vault_free_time_policy_set(server, call, input)).await
+        }
+        "vault.free_time.policy.set_as" => {
+            Box::pin(vault_free_time_policy_set_as(server, call, input)).await
+        }
+        "vault.free_time.cycles" => Box::pin(vault_free_time_cycles(server, call, input)).await,
+        "vault.free_time.cycle" => Box::pin(vault_free_time_cycle(server, call, input)).await,
+        "vault.claims.vet" => Box::pin(vault_claims_vet(server, call, input)).await,
+        "vault.claims.vetting" => Box::pin(vault_claims_vetting(server, call, input)).await,
         "vault.memory.signal_extraction" => {
-            vault_memory_signal_extraction(server, call, input).await
+            Box::pin(vault_memory_signal_extraction(server, call, input)).await
         }
         "vault.memory.signal_extraction.result" => {
-            vault_memory_signal_extraction_result(server, call, input).await
+            Box::pin(vault_memory_signal_extraction_result(server, call, input)).await
         }
-        "vault.claims.seed" => vault_claims_seed(server, call, input).await,
+        "vault.claims.seed" => Box::pin(vault_claims_seed(server, call, input)).await,
         "vault.channel_identities.provision" => {
-            vault_channel_identities_provision(server, call, input).await
+            Box::pin(vault_channel_identities_provision(server, call, input)).await
         }
-        "vault.channel_identities.bind" => vault_channel_identities_bind(server, call, input).await,
+        "vault.channel_identities.bind" => {
+            Box::pin(vault_channel_identities_bind(server, call, input)).await
+        }
         "vault.channel_identities.fulfill" => {
-            vault_channel_identities_fulfill(server, call, input).await
+            Box::pin(vault_channel_identities_fulfill(server, call, input)).await
         }
         "vault.channel_identities.rotate" => {
-            vault_channel_identities_rotate(server, call, input).await
+            Box::pin(vault_channel_identities_rotate(server, call, input)).await
         }
         "vault.channel_identities.release" => {
-            vault_channel_identities_release(server, call, input).await
+            Box::pin(vault_channel_identities_release(server, call, input)).await
         }
         "vault.channel_identities.route_inbound" => {
-            vault_channel_identities_route_inbound(server, call, input).await
+            Box::pin(vault_channel_identities_route_inbound(server, call, input)).await
         }
-        "vault.channel_identities.get" => vault_channel_identities_get(server, call, input).await,
+        "vault.channel_identities.get" => {
+            Box::pin(vault_channel_identities_get(server, call, input)).await
+        }
         "vault.channel_identities.selection.rules" => {
-            vault_channel_identities_selection_rules(server, call, input).await
+            Box::pin(vault_channel_identities_selection_rules(
+                server, call, input,
+            ))
+            .await
         }
         "vault.channel_identities.selection.update" => {
-            vault_channel_identities_selection_update(server, call, input).await
+            Box::pin(vault_channel_identities_selection_update(
+                server, call, input,
+            ))
+            .await
         }
         "vault.channel_identities.select" => {
-            vault_channel_identities_select(server, call, input).await
+            Box::pin(vault_channel_identities_select(server, call, input)).await
         }
         "vault.channel_identities.passports.get" => {
-            vault_channel_identities_passports_get(server, call, input).await
+            Box::pin(vault_channel_identities_passports_get(server, call, input)).await
         }
         "vault.channel_identities.passports.list" => {
-            vault_channel_identities_passports_list(server, call, input).await
+            Box::pin(vault_channel_identities_passports_list(server, call, input)).await
         }
         "vault.delivery_window.policy.put" => {
-            vault_delivery_window_policy_put(server, call, input).await
+            Box::pin(vault_delivery_window_policy_put(server, call, input)).await
         }
         "vault.delivery_window.policy.list" => {
-            vault_delivery_window_policy_list(server, call, input).await
+            Box::pin(vault_delivery_window_policy_list(server, call, input)).await
         }
         "vault.delivery_window.policy.retract" => {
-            vault_delivery_window_policy_retract(server, call, input).await
+            Box::pin(vault_delivery_window_policy_retract(server, call, input)).await
         }
         "vault.delivery_window.evaluate" => {
-            vault_delivery_window_evaluate(server, call, input).await
+            Box::pin(vault_delivery_window_evaluate(server, call, input)).await
         }
-        "connector.outbound.schedule" => connector_outbound_schedule(server, call, input).await,
-        "vault.summaries.create" => vault_summaries_create(server, call, input).await,
-        "vault.summaries.read" => vault_summaries_read(server, call, input).await,
-        "vault.summaries.status" => vault_summaries_status(server, call, input).await,
-        "vault.summaries.keep" => vault_summaries_keep(server, call, input).await,
-        "vault.summaries.edit" => vault_summaries_edit(server, call, input).await,
-        "vault.summaries.patch" => vault_summaries_patch(server, call, input).await,
-        "vault.summaries.regenerate" => vault_summaries_regenerate(server, call, input).await,
+        "connector.outbound.schedule" => {
+            Box::pin(connector_outbound_schedule(server, call, input)).await
+        }
+        "vault.summaries.create" => Box::pin(vault_summaries_create(server, call, input)).await,
+        "vault.summaries.read" => Box::pin(vault_summaries_read(server, call, input)).await,
+        "vault.summaries.status" => Box::pin(vault_summaries_status(server, call, input)).await,
+        "vault.summaries.keep" => Box::pin(vault_summaries_keep(server, call, input)).await,
+        "vault.summaries.edit" => Box::pin(vault_summaries_edit(server, call, input)).await,
+        "vault.summaries.patch" => Box::pin(vault_summaries_patch(server, call, input)).await,
+        "vault.summaries.regenerate" => {
+            Box::pin(vault_summaries_regenerate(server, call, input)).await
+        }
         "vault.summaries.proposals.read" => {
-            vault_summaries_proposals_read(server, call, input).await
+            Box::pin(vault_summaries_proposals_read(server, call, input)).await
         }
         "vault.summaries.proposals.merge" => {
-            vault_summaries_proposals_merge(server, call, input).await
+            Box::pin(vault_summaries_proposals_merge(server, call, input)).await
         }
         "vault.summaries.proposals.switch" => {
-            vault_summaries_proposals_switch(server, call, input).await
+            Box::pin(vault_summaries_proposals_switch(server, call, input)).await
         }
         "vault.summaries.proposals.reject" => {
-            vault_summaries_proposals_reject(server, call, input).await
+            Box::pin(vault_summaries_proposals_reject(server, call, input)).await
         }
-        "vault.notes.bless_brief_kind" => vault_notes_bless_brief_kind(server, call, input).await,
-        "vault.notes.author_brief" => vault_notes_author_brief(server, call, input).await,
-        "vault.notes.follow_citation" => vault_notes_follow_citation(server, call, input).await,
-        "vault.notes.create" => vault_notes_create(server, call, input).await,
-        "vault.notes.author_take" => vault_notes_author_take(server, call, input).await,
-        "vault.notes.from_entity" => vault_notes_from_entity(server, call, input).await,
-        "vault.notes.read" => vault_notes_read(server, call, input).await,
-        "vault.notes.history" => vault_notes_history(server, call, input).await,
-        "vault.notes.fork" => vault_notes_fork(server, call, input).await,
-        "vault.notes.forks.read" => vault_notes_forks_read(server, call, input).await,
-        "vault.notes.proposals.open" => vault_notes_proposals_open(server, call, input).await,
-        "vault.notes.proposals.read" => vault_notes_proposals_read(server, call, input).await,
-        "vault.notes.proposals.merge" => vault_notes_proposals_merge(server, call, input).await,
-        "vault.notes.proposals.switch" => vault_notes_proposals_switch(server, call, input).await,
-        "vault.notes.proposals.reject" => vault_notes_proposals_reject(server, call, input).await,
-        "vault.notes.version_tree" => vault_notes_version_tree(server, call, input).await,
-        "vault.notes.history_purge" => vault_notes_history_purge(server, call, input).await,
+        "vault.notes.bless_brief_kind" => {
+            Box::pin(vault_notes_bless_brief_kind(server, call, input)).await
+        }
+        "vault.notes.author_brief" => Box::pin(vault_notes_author_brief(server, call, input)).await,
+        "vault.notes.follow_citation" => {
+            Box::pin(vault_notes_follow_citation(server, call, input)).await
+        }
+        "vault.notes.create" => Box::pin(vault_notes_create(server, call, input)).await,
+        "vault.notes.author_take" => Box::pin(vault_notes_author_take(server, call, input)).await,
+        "vault.notes.from_entity" => Box::pin(vault_notes_from_entity(server, call, input)).await,
+        "vault.notes.read" => Box::pin(vault_notes_read(server, call, input)).await,
+        "vault.notes.history" => Box::pin(vault_notes_history(server, call, input)).await,
+        "vault.notes.fork" => Box::pin(vault_notes_fork(server, call, input)).await,
+        "vault.notes.forks.read" => Box::pin(vault_notes_forks_read(server, call, input)).await,
+        "vault.notes.proposals.open" => {
+            Box::pin(vault_notes_proposals_open(server, call, input)).await
+        }
+        "vault.notes.proposals.read" => {
+            Box::pin(vault_notes_proposals_read(server, call, input)).await
+        }
+        "vault.notes.proposals.merge" => {
+            Box::pin(vault_notes_proposals_merge(server, call, input)).await
+        }
+        "vault.notes.proposals.switch" => {
+            Box::pin(vault_notes_proposals_switch(server, call, input)).await
+        }
+        "vault.notes.proposals.reject" => {
+            Box::pin(vault_notes_proposals_reject(server, call, input)).await
+        }
+        "vault.notes.version_tree" => Box::pin(vault_notes_version_tree(server, call, input)).await,
+        "vault.notes.history_purge" => {
+            Box::pin(vault_notes_history_purge(server, call, input)).await
+        }
         "vault.notes.history_purge_execute" => {
-            vault_notes_history_purge_execute(server, call, input).await
+            Box::pin(vault_notes_history_purge_execute(server, call, input)).await
         }
         "vault.notes.history_purge_receipts" => {
-            vault_notes_history_purge_receipts(server, call, input).await
+            Box::pin(vault_notes_history_purge_receipts(server, call, input)).await
         }
-        "vault.notes.editor.bind" => vault_notes_editor_bind(server, call, input).await,
-        "vault.notes.editor.close" => vault_notes_editor_close(server, call, input).await,
-        "vault.notes.edit" => vault_notes_edit(server, call, input).await,
-        "vault.notes.seal" => vault_notes_seal(server, call, input).await,
-        "vault.notes.lifecycle" => vault_notes_lifecycle(server, call, input).await,
-        "vault.notes.set_overrides" => vault_notes_set_overrides(server, call, input).await,
-        "vault.notes.defaults" => vault_notes_defaults(server, call, input).await,
-        "vault.tasks.linear.mapping" => vault_tasks_linear_mapping(server, call, input).await,
+        "vault.notes.editor.bind" => Box::pin(vault_notes_editor_bind(server, call, input)).await,
+        "vault.notes.editor.close" => Box::pin(vault_notes_editor_close(server, call, input)).await,
+        "vault.notes.edit" => Box::pin(vault_notes_edit(server, call, input)).await,
+        "vault.notes.seal" => Box::pin(vault_notes_seal(server, call, input)).await,
+        "vault.notes.lifecycle" => Box::pin(vault_notes_lifecycle(server, call, input)).await,
+        "vault.notes.set_overrides" => {
+            Box::pin(vault_notes_set_overrides(server, call, input)).await
+        }
+        "vault.notes.defaults" => Box::pin(vault_notes_defaults(server, call, input)).await,
+        "vault.tasks.linear.mapping" => {
+            Box::pin(vault_tasks_linear_mapping(server, call, input)).await
+        }
         "vault.tasks.linear.mapping.edit" => {
-            vault_tasks_linear_mapping_edit(server, call, input).await
+            Box::pin(vault_tasks_linear_mapping_edit(server, call, input)).await
         }
-        "vault.tasks.linear.provenance" => vault_tasks_linear_provenance(server, call, input).await,
-        "self.run.attach" => self_run_attach(server, call, input).await,
-        "self.folds.describe" => self_folds_describe(server, call, input).await,
-        "self.history" => self_history(server, call, input).await,
-        "vault.runs.review" => vault_runs_review(server, call, input).await,
-        "vault.runs.settle" => vault_runs_settle(server, call, input).await,
-        "vault.runs.settlement" => vault_runs_settlement(server, call, input).await,
-        "vault.revert_run" => vault_revert_run(server, call, input).await,
-        "vault.identity.merge" => vault_identity_merge(server, call, input).await,
-        "vault.identity.split" => vault_identity_split(server, call, input).await,
-        "vault.identity.facet" => vault_identity_facet(server, call, input).await,
+        "vault.tasks.linear.provenance" => {
+            Box::pin(vault_tasks_linear_provenance(server, call, input)).await
+        }
+        "self.run.attach" => Box::pin(self_run_attach(server, call, input)).await,
+        "self.folds.describe" => Box::pin(self_folds_describe(server, call, input)).await,
+        "self.history" => Box::pin(self_history(server, call, input)).await,
+        "vault.runs.review" => Box::pin(vault_runs_review(server, call, input)).await,
+        "vault.runs.settle" => Box::pin(vault_runs_settle(server, call, input)).await,
+        "vault.runs.settlement" => Box::pin(vault_runs_settlement(server, call, input)).await,
+        "vault.revert_run" => Box::pin(vault_revert_run(server, call, input)).await,
+        "vault.identity.merge" => Box::pin(vault_identity_merge(server, call, input)).await,
+        "vault.identity.split" => Box::pin(vault_identity_split(server, call, input)).await,
+        "vault.identity.facet" => Box::pin(vault_identity_facet(server, call, input)).await,
         "vault.identity.assert_distinct" => {
-            vault_identity_assert_distinct(server, call, input).await
+            Box::pin(vault_identity_assert_distinct(server, call, input)).await
         }
-        "vault.identity.propose" => vault_identity_propose(server, call, input).await,
-        "vault.identity.undo" => vault_identity_undo(server, call, input).await,
-        "vault.identity.resolve" => vault_identity_resolve(server, call, input).await,
-        "vault.identity.events.get" => vault_identity_events_get(server, call, input).await,
+        "vault.identity.propose" => Box::pin(vault_identity_propose(server, call, input)).await,
+        "vault.identity.undo" => Box::pin(vault_identity_undo(server, call, input)).await,
+        "vault.identity.resolve" => Box::pin(vault_identity_resolve(server, call, input)).await,
+        "vault.identity.events.get" => {
+            Box::pin(vault_identity_events_get(server, call, input)).await
+        }
         "vault.identity.proposals.resolve" => {
-            vault_identity_proposals_resolve(server, call, input).await
+            Box::pin(vault_identity_proposals_resolve(server, call, input)).await
         }
         "vault.identity.proposals.for_pair" => {
-            vault_identity_proposals_for_pair(server, call, input).await
+            Box::pin(vault_identity_proposals_for_pair(server, call, input)).await
         }
-        "connector.answer" => connector_answer(server, call, input).await,
-        "self.browser.open" => self_browser_open(server, call, input).await,
-        "self.browser.observe" => self_browser_observe(server, call, input).await,
-        "self.browser.find" => self_browser_find(server, call, input).await,
-        "self.browser.click" => self_browser_click(server, call, input).await,
-        "self.browser.click_at" => self_browser_click_at(server, call, input).await,
-        "self.browser.type" => self_browser_type(server, call, input).await,
-        "self.browser.select" => self_browser_select(server, call, input).await,
-        "self.browser.wait_for" => self_browser_wait_for(server, call, input).await,
-        "self.browser.expect" => self_browser_expect(server, call, input).await,
-        "self.browser.screenshot" => self_browser_screenshot(server, call, input).await,
-        "self.browser.view" => self_browser_view(server, call, input).await,
-        "self.browser.crop" => self_browser_crop(server, call, input).await,
-        "self.browser.zoom" => self_browser_zoom(server, call, input).await,
-        "self.browser.batch" => self_browser_batch(server, call, input).await,
-        "self.browser.library.find" => self_browser_library_find(server, call, input).await,
-        "self.browser.library.draft" => self_browser_library_draft(server, call, input).await,
+        "vault.custody.members.drain.begin" => {
+            Box::pin(vault_custody_members_drain_begin(server, call, input)).await
+        }
+        "vault.custody.members.drain.commit" => {
+            Box::pin(vault_custody_members_drain_commit(server, call, input)).await
+        }
+        "vault.custody.members.drain.folder" => {
+            Box::pin(vault_custody_members_drain_folder(server, call, input)).await
+        }
+        "vault.custody.members.reenrol" => {
+            Box::pin(vault_custody_members_reenrol(server, call, input)).await
+        }
+        "connector.answer" => Box::pin(connector_answer(server, call, input)).await,
+        "self.browser.open" => Box::pin(self_browser_open(server, call, input)).await,
+        "self.browser.observe" => Box::pin(self_browser_observe(server, call, input)).await,
+        "self.browser.find" => Box::pin(self_browser_find(server, call, input)).await,
+        "self.browser.click" => Box::pin(self_browser_click(server, call, input)).await,
+        "self.browser.click_at" => Box::pin(self_browser_click_at(server, call, input)).await,
+        "self.browser.type" => Box::pin(self_browser_type(server, call, input)).await,
+        "self.browser.select" => Box::pin(self_browser_select(server, call, input)).await,
+        "self.browser.wait_for" => Box::pin(self_browser_wait_for(server, call, input)).await,
+        "self.browser.expect" => Box::pin(self_browser_expect(server, call, input)).await,
+        "self.browser.screenshot" => Box::pin(self_browser_screenshot(server, call, input)).await,
+        "self.browser.view" => Box::pin(self_browser_view(server, call, input)).await,
+        "self.browser.crop" => Box::pin(self_browser_crop(server, call, input)).await,
+        "self.browser.zoom" => Box::pin(self_browser_zoom(server, call, input)).await,
+        "self.browser.batch" => Box::pin(self_browser_batch(server, call, input)).await,
+        "self.browser.library.find" => {
+            Box::pin(self_browser_library_find(server, call, input)).await
+        }
+        "self.browser.library.draft" => {
+            Box::pin(self_browser_library_draft(server, call, input)).await
+        }
         "self.browser.demonstration.start" => {
-            self_browser_demonstration_start(server, call, input).await
+            Box::pin(self_browser_demonstration_start(server, call, input)).await
         }
         "self.browser.demonstration.stop" => {
-            self_browser_demonstration_stop(server, call, input).await
+            Box::pin(self_browser_demonstration_stop(server, call, input)).await
         }
-        "self.browser.library.propose" => self_browser_library_propose(server, call, input).await,
-        "self.browser.library.retire" => self_browser_library_retire(server, call, input).await,
-        "self.browser.library.retired" => self_browser_library_retired(server, call, input).await,
-        "self.browser.library.run" => self_browser_library_run(server, call, input).await,
-        "self.browser.handover" => self_browser_handover(server, call, input).await,
-        "self.browser.switch_engine" => self_browser_switch_engine(server, call, input).await,
-        "vault.claims.supersede" => vault_claims_supersede(server, call, input).await,
-        "self.fold" => self_fold(server, call, input).await,
-        "self.compact" => self_compact(server, call, input).await,
-        "self.unfold" => self_unfold(server, call, input).await,
-        "self.folds" => self_folds(server, call, input).await,
-        "tasks.refuse" => tasks_refuse(server, call, input).await,
-        "self.report_blocked" => self_report_blocked(server, call, input).await,
-        "self.agents.spawn" => self_agents_spawn(server, call, input).await,
-        "self.leader.split" => self_leader_split(server, call, input).await,
-        "self.skills.call" => self_skills_call(server, call, input).await,
-        "self.focus.refresh" => self_focus_refresh(server, call, input).await,
-        "self.focus.subscribe" => self_focus_subscribe(server, call, input).await,
-        "self.focus.unsubscribe" => self_focus_unsubscribe(server, call, input).await,
+        "self.browser.library.propose" => {
+            Box::pin(self_browser_library_propose(server, call, input)).await
+        }
+        "self.browser.library.retire" => {
+            Box::pin(self_browser_library_retire(server, call, input)).await
+        }
+        "self.browser.library.retired" => {
+            Box::pin(self_browser_library_retired(server, call, input)).await
+        }
+        "self.browser.library.run" => Box::pin(self_browser_library_run(server, call, input)).await,
+        "self.browser.handover" => Box::pin(self_browser_handover(server, call, input)).await,
+        "self.browser.switch_engine" => {
+            Box::pin(self_browser_switch_engine(server, call, input)).await
+        }
+        "vault.claims.supersede" => Box::pin(vault_claims_supersede(server, call, input)).await,
+        "self.fold" => Box::pin(self_fold(server, call, input)).await,
+        "self.compact" => Box::pin(self_compact(server, call, input)).await,
+        "self.unfold" => Box::pin(self_unfold(server, call, input)).await,
+        "self.folds" => Box::pin(self_folds(server, call, input)).await,
+        "tasks.refuse" => Box::pin(tasks_refuse(server, call, input)).await,
+        "self.report_blocked" => Box::pin(self_report_blocked(server, call, input)).await,
+        "self.agents.spawn" => Box::pin(self_agents_spawn(server, call, input)).await,
+        "self.leader.split" => Box::pin(self_leader_split(server, call, input)).await,
+        "self.skills.call" => Box::pin(self_skills_call(server, call, input)).await,
+        "self.focus.refresh" => Box::pin(self_focus_refresh(server, call, input)).await,
+        "self.focus.subscribe" => Box::pin(self_focus_subscribe(server, call, input)).await,
+        "self.focus.unsubscribe" => Box::pin(self_focus_unsubscribe(server, call, input)).await,
         "self.desktop.open"
         | "self.desktop.observe"
         | "self.desktop.find"

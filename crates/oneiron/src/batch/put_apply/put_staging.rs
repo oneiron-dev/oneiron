@@ -416,13 +416,19 @@ pub(super) fn validate_domain_carriers(
 
 /// Replaces claim projection keys while the previous body is still readable.
 /// This must run before staging the replacement entity body, in the same txn.
+/// A local write also pins the typed citations it adds (FIX 904); a
+/// replicated row carries its citations as written.
 pub(super) fn stage_claim_projection(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
     id: EntityId,
     body: Option<&crate::claim::ClaimBody>,
+    replicated: bool,
 ) -> Result<()> {
     if let Some(body) = body {
+        if !replicated {
+            crate::entity_doc::retain_fresh_claim_citations_in_txn(store, wtxn, &id, body)?;
+        }
         crate::claim::maintain_claim_projection_index(store, wtxn, id, body)?;
         crate::claim::history_store::maintain_machine_history_index(store, wtxn, id, body)?;
     }

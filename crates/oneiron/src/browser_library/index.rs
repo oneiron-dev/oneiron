@@ -14,6 +14,8 @@
 //! Reads walk their rows a page at a time ([`SOLVED_PAGE`]) until the
 //! cursor ends: a traversal batch, never a cap on what is read.
 
+pub(crate) mod all_groups;
+
 use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
@@ -44,12 +46,12 @@ const FAILURES: SideTable<EntityId, FailureMark, Named> =
     SideTable::new(&side_table::BROWSER_PROGRAM_FAILURE);
 
 /// Each candidate the Coach proposed. Key: its input fingerprint.
-const SEEN: SideTable<[u8; 32], ProgramSeen, Named> =
+pub(super) const SEEN: SideTable<[u8; 32], ProgramSeen, Named> =
     SideTable::new(&side_table::BROWSER_PROGRAM_SEEN);
 
 /// The live programs filed in a group. Key: the group's digest, then the
 /// program's id.
-const COVERAGE: SideTable<([u8; 32], EntityId), CoverageRef, Named> =
+pub(super) const COVERAGE: SideTable<([u8; 32], EntityId), CoverageRef, Named> =
     SideTable::new(&side_table::BROWSER_SOLVED_COVERAGE);
 
 /// Each group's key and generations. Key: the group's digest.
@@ -72,7 +74,7 @@ struct FailureMark {
 
 /// A live program in a group.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct CoverageRef {
+pub(super) struct CoverageRef {
     filed_at: u64,
 }
 
@@ -173,16 +175,25 @@ fn bump_dirty_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     key: &ScopedSolvedGroupKey,
 ) -> Result<()> {
-    let digest = key.digest();
+    // The row the wall stores holds the key as it masks it: read the key
+    // admitted before its digest is taken, so the digest the row is
+    // keyed by is the stored key's, and a later clean recomputing it from
+    // the stored key finds the row (FIX 10515).
+    let mut admitted = DirtyRow {
+        key: key.clone(),
+        changed: 0,
+        processed: 0,
+    };
+    DIRTY.admit(vault, wtxn, &key.digest(), &mut admitted)?;
+    let digest = admitted.key.digest();
     let row = match DIRTY.get(&vault.store, wtxn, &digest)? {
         Some(mut row) => {
             row.changed = row.changed.saturating_add(1);
             row
         }
         None => DirtyRow {
-            key: key.clone(),
             changed: 1,
-            processed: 0,
+            ..admitted
         },
     };
     DIRTY.put(vault, wtxn, &digest, &row)
@@ -322,6 +333,108 @@ pub(crate) fn invalidate_solved_source_in_txn(
     GROUP.delete(&vault.store, wtxn, &(caller.group, *id))?;
     AUTHORITY.delete(&vault.store, wtxn, id)?;
     touch_dirty_in_txn(vault, wtxn, &caller.group)
+}
+
+/// The source authority evidence `id` was captured under, read in `txn`
+/// (CUA E8b): none once its claim or its actor was erased.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn saved_caller_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<SavedBrowserCaller>> {
+    AUTHORITY.get(&vault.store, txn, id)
+}
+
+/// Drops the signed binding evidence `id`'s source authority kept, in
+/// `wtxn` (CUA E8b): an admission job that used it ended. The reference
+/// and the digest stay.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(super) fn drop_witness_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(mut caller) = AUTHORITY.get(&vault.store, wtxn, id)? else {
+        return Ok(());
+    };
+    if caller.witness.take().is_some() {
+        AUTHORITY.put(vault, wtxn, id, &caller)?;
+    }
+    Ok(())
+}
+
+/// A re-delivered capture's refresh of the binding an ended job dropped
+/// (FIX 10717), in the row's own scope only: witness and digest stand again.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn refresh_witness_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    caller: &SavedBrowserCaller,
+) -> Result<()> {
+    let Some(witness) = caller.witness.clone() else {
+        return Ok(());
+    };
+    let Some(mut kept) = AUTHORITY.get(&vault.store, wtxn, id)? else {
+        return Ok(());
+    };
+    if kept.scope != caller.scope {
+        return Ok(());
+    }
+    kept.witness_digest = caller.witness_digest;
+    kept.witness = Some(witness);
+    AUTHORITY.put(vault, wtxn, id, &kept)
+}
+
+/// A restored evidence claim's re-index (FIX 10514): its group ref and
+/// generation come back; authority only for a credential-less capture.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn reindex_restored_source_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let Some(entity_type) = vault.get_entity_type_in_txn(wtxn, id)? else {
+        return Ok(());
+    };
+    let Some(raw) = vault.get_raw_in(wtxn, id)? else {
+        return Ok(());
+    };
+    let Some(evidence) = evidence_of(entity_type, &raw) else {
+        return Ok(());
+    };
+    let key = evidence.group();
+    let row = GroupRef {
+        run_id: evidence.run_id,
+        captured_at_ms: evidence.captured_at_ms,
+    };
+    GROUP.put(vault, wtxn, &(key.digest(), *id), &row)?;
+    if evidence.scope.authority.is_none() {
+        let caller = SavedBrowserCaller {
+            scope: evidence.scope.clone(),
+            group: key.digest(),
+            run_id: evidence.run_id,
+            call_id: evidence.call_id,
+            credential: None,
+            witness_digest: None,
+            witness: None,
+        };
+        AUTHORITY.put(vault, wtxn, id, &caller)?;
+    }
+    bump_dirty_in_txn(vault, wtxn, &key)
 }
 
 /// Erasing `actor` from the solved-run index (CUA E8a): each evidence it
@@ -494,7 +607,7 @@ pub fn solved_runs_in_group(
 }
 
 /// The evidence a `browser.solved_run` claim's body holds.
-fn evidence_of(entity_type: u8, body: &[u8]) -> Option<SolvedRunEvidence> {
+pub(super) fn evidence_of(entity_type: u8, body: &[u8]) -> Option<SolvedRunEvidence> {
     if entity_type != crate::registry::ENTITY_TYPE_CLAIM {
         return None;
     }
@@ -597,11 +710,7 @@ pub fn mark_group_clean(
 /// Storage errors.
 pub fn solved_group_coverage(vault: &Vault, digest: &[u8; 32]) -> Result<Vec<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    Ok(COVERAGE
-        .scan_keys(&vault.store, &rtxn, digest)?
-        .into_iter()
-        .map(|(_, id)| id)
-        .collect())
+    super::coverage::solved_group_coverage_in(vault, &rtxn, digest)
 }
 
 /// The Coach's mark for the candidate `fingerprint` names (CUA E8), if it
@@ -612,7 +721,7 @@ pub fn solved_group_coverage(vault: &Vault, digest: &[u8; 32]) -> Result<Vec<Ent
 /// Storage errors.
 pub fn program_seen(vault: &Vault, fingerprint: &[u8; 32]) -> Result<Option<ProgramSeen>> {
     let rtxn = vault.store.env.read_txn()?;
-    SEEN.get(&vault.store, &rtxn, fingerprint)
+    super::coverage::program_seen_in(vault, &rtxn, fingerprint)
 }
 
 /// Marks the candidate `fingerprint` names proposed, in the caller's write

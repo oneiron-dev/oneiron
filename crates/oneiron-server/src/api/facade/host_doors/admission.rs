@@ -115,7 +115,6 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.identity.events.get"
         | "vault.identity.proposals.resolve"
         | "vault.identity.proposals.for_pair"
-        | "vault.packs.put"
         | "vault.packs.preview"
         | "vault.packs.connector.prepare"
         | "vault.packs.connector.get"
@@ -185,6 +184,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.authority.audit"
         | "vault.authority.history.export"
         | "vault.authority.history.import"
+        | "vault.authority.clock.repair"
         | "vault.mesh.path_receipts"
         | "vault.mesh.identity"
         | "vault.mesh.bind_machine"
@@ -200,10 +200,6 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.hooks.regen.adopt"
         | "vault.lenses.activate"
         | "vault.lenses.deactivate"
-        | "vault.packs.setup.prepare"
-        | "vault.packs.setup.get"
-        | "vault.packs.setup.answer"
-        | "vault.packs.setup.verify"
         | "vault.authority.handoff_alarms"
         | "vault.authority.handoff_alarms.acknowledge"
         | "vault.records.erase_sweep"
@@ -352,12 +348,13 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.task_types.get"
         | "vault.agents.spawn.get"
         | "vault.agents.spawn"
-        | "vault.tasks.cancel_force"
+        | "vault.tasks.cancel.force"
         | "vault.runs.branches.get"
         | "vault.consults.get"
         | "vault.consolidation.home.get"
         | "vault.consolidation.home.pick"
         | "vault.consolidation.lineage"
+        | "vault.consolidation.candidate_decisions"
         | "vault.workspace.roster"
         | "vault.booking.page_token"
         | "vault.channel_identities.provision"
@@ -481,6 +478,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.budgets.rsi.hold.resume"
         | "vault.runners.seats.quotas"
         | "vault.runners.seats.top_up"
+        | "vault.runners.seats.resume"
         | "vault.research.evaluate_split"
         | "vault.research.create_child"
         | "vault.evals.inventory"
@@ -508,6 +506,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.coach.training_offers.pilots.prepare"
         | "vault.coach.training_offers.pilots.complete"
         | "vault.coach.training_offers.pilots.get"
+        | "vault.coach.training_offers.sources"
         | "vault.code.symbols.declare"
         | "vault.code.symbols.renew"
         | "vault.code.symbols.release"
@@ -534,6 +533,7 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.code.ingress.get"
         | "vault.code.origin.register"
         | "vault.code.origin.mirror.get"
+        | "vault.code.origin.mirror.plan"
         | "vault.code.origin.mirror.set"
         | "vault.code.origin.mirror.strategy"
         | "vault.code.origin.mirror.clear"
@@ -582,6 +582,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.org_admin.configure"
         | "vault.shared.policy.get"
         | "vault.shared.policy.change"
+        | "vault.shared.policy.changes"
+        | "vault.roots.requests.create"
+        | "vault.roots.requests.list"
+        | "vault.owner_work.get"
+        | "vault.tasks.comm_widen.revoke"
         | "vault.notes.history_purge"
         | "vault.notes.history_purge_execute"
         | "vault.notes.history_purge_receipts"
@@ -597,7 +602,17 @@ pub(in crate::api::facade) fn door_admits(
         | "ai.voice.usage"
         | "ai.voice.tool"
         | "ai.voice.end"
-        | "ai.voice.close" => owner_proof(auth, server, verb).map(drop),
+        | "ai.voice.close"
+        | "vault.secrets.register"
+        | "vault.secrets.rotate"
+        | "vault.secrets.rewrap"
+        | "vault.secrets.revoke"
+        | "vault.secrets.custody.get"
+        | "vault.secrets.custody.submit"
+        | "vault.custody.members.drain.begin"
+        | "vault.custody.members.drain.commit"
+        | "vault.custody.members.drain.folder"
+        | "vault.custody.members.reenrol" => owner_proof(auth, server, verb).map(drop),
         "vault.shared.propose_delete"
         | "vault.shared.propose_transfer"
         | "vault.shared.propose_remove_owner"
@@ -683,7 +698,11 @@ pub(in crate::api::facade) fn door_admits(
         | "vault.off_record.recall"
         | "vault.off_record.notes.create"
         | "vault.off_record.claims.upsert"
-        | "self.off_record.execute" => {
+        | "self.off_record.execute"
+        | "self.off_record.results.list"
+        | "self.off_record.results.read"
+        | "self.off_record.waits.get"
+        | "self.off_record.waits.answer" => {
             crate::api::facade::off_record_doors::off_record_admits(server, auth, verb)
         }
         "vault.off_record.rooms.start"
@@ -702,6 +721,9 @@ pub(in crate::api::facade) fn door_admits(
         }
         "execute_code" => crate::api::facade::foreign_code_doors::foreign_code_admits(server, auth),
         "self.saved_query.evaluate" => crate::api::facade::saved_query_doors::admits(server, auth),
+        // The access request answer (FIX 1379): the owner, or the person or
+        // agent a request asks, on their own proof.
+        "self.grants.answer" => crate::api::facade::grants_doors::answer_admits(server, auth, verb),
         "self.credential.attenuate" => crate::api::facade::credential_doors::holder(auth).map(drop),
         "vault.artifacts.review_slides" => slide_reviewer(server, auth).map(drop),
         "vault.artifacts.ask" | "vault.artifacts.admit" => artifact_asker(server, auth).map(drop),
@@ -721,6 +743,13 @@ pub(in crate::api::facade) fn door_admits(
             .map(drop)
             .map_err(crate::api::facade::FacadeApiError::into_memory_error),
         "ai.verdict" => asking(auth, server).map(drop),
+        // The pack setup doors (OF-378) and the pack put: the owner's proof,
+        // or an agent acting for the owner (an agent puts `local` alone).
+        "vault.packs.put"
+        | "vault.packs.setup.prepare"
+        | "vault.packs.setup.get"
+        | "vault.packs.setup.answer"
+        | "vault.packs.setup.verify" => super::packs::setup_admits(server, auth, verb),
         "ai.image" | "ai.speech" | "ai.transcribe" | "ai.embed" | "ai.video" => {
             owner_grade(auth, MEDIA_OWNERS)
         }

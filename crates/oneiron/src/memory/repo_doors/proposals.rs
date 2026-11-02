@@ -266,6 +266,7 @@ impl Memory<'_> {
         let proposed =
             self.vault
                 .propose_repo_mutation_for_run(request, review, base, stamp, |txn| {
+                    let now = self.vault.now_recorded_at();
                     if let Err(refused) =
                         admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)?
                     {
@@ -352,6 +353,7 @@ impl Memory<'_> {
         let manifest = self.vault.get_code_symbol_manifest(&own.stamp.repo)?;
         let accepted: Vec<EntityId> = rows.iter().map(|row| row.id).collect();
         let formed = queue.enqueue_for_run(candidates, |txn| {
+            let now = self.vault.now_recorded_at();
             let declaration =
                 match admission.admit_in_txn(self.vault, txn, binding, &own, &target, now)? {
                     Ok(declaration) => declaration,
@@ -393,7 +395,8 @@ impl Memory<'_> {
             }))
         })?;
         let batch = formed.map_err(refusal_error)?;
-        let (entry, blockers) = self.repo_entry_view(binding, &queue, batch, now)?;
+        let (entry, blockers) =
+            self.repo_entry_view(binding, &queue, batch, self.vault.now_recorded_at())?;
         let mut answer_rows = vec![own.stamp.repo];
         answer_rows.extend(blockers);
         Ok(RepoRunAnswer {

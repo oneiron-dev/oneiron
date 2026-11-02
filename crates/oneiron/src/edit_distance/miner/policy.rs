@@ -97,7 +97,7 @@ fn id(map: &[(Value, Value)], key: &str) -> Option<EntityId> {
     EntityId::from_hex(field(map, key)?.as_str()?).ok()
 }
 impl CompilationPolicy {
-    /// Decode a closed, bounded table. Invalid rows invalidate the manifest,
+    /// Decode a closed table. Invalid rows invalidate the manifest,
     /// never silently turn a bad restriction into a wider one.
     pub(crate) fn decode(value: &Value) -> Option<Self> {
         let Value::Map(map) = value else { return None };
@@ -122,7 +122,7 @@ impl CompilationPolicy {
         let Value::Array(rows) = field(map, "rows")? else {
             return None;
         };
-        if rows.is_empty() || rows.len() > 33 {
+        if rows.is_empty() {
             return None;
         }
         let mut vault = None;
@@ -148,9 +148,6 @@ impl CompilationPolicy {
             let Value::Array(routes) = field(map, "routes")? else {
                 return None;
             };
-            if routes.len() > 4 {
-                return None;
-            }
             let mut parsed = BTreeMap::new();
             for route in routes {
                 let Value::Map(map) = route else { return None };
@@ -178,9 +175,6 @@ impl CompilationPolicy {
                         let Value::Array(values) = field(map, "scope_not_prefixes")? else {
                             return None;
                         };
-                        if values.len() > 8 {
-                            return None;
-                        }
                         let mut prefixes = Vec::new();
                         for value in values {
                             let prefix = value.as_str()?;

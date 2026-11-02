@@ -8,32 +8,58 @@
 //! synchronous success while a holder still has to act. A surface polls the
 //! request at `GET /v1/owner/owner-work/{request}`.
 //!
-//! Where he spoke from is the request's own (`machine_routes::act_surface`):
+//! Where he spoke from is the request's own (`machine_routes::act_surface_admitted`):
 //! audit only, no rule reads it.
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::EffectiveWorldPrivacy;
 use oneiron::policy_model::{WorldPrivacyReceipt, WorldPrivacySetInput};
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, revision_hex};
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::machine_routes::{act_surface_admitted, revision_hex};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/worlds/privacy/settings", get(settings).post(set))
-        .route("/worlds/privacy/reassert", post(reassert))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/worlds/privacy/settings",
+                summary: "A world's settings as this install folds them, and the revision a change names as its seen.",
+                row: None,
+            },
+            get(settings),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/settings",
+                summary: "A holder sets a world's settings as his own act: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+                row: None,
+            },
+            post(set),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/reassert",
+                summary: "The owner re-asserts a world's complete settings at its current revision after a pin change: the settings receipt, with its key work done here or its owner work awaiting a holder, and that work's words.",
+                row: None,
+            },
+            post(reassert),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -54,7 +80,7 @@ struct WorldSettings {
 }
 
 /// What a settings change or re-assertion committed.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct WorldPrivacyWork {
     #[serde(flatten)]
     receipt: WorldPrivacyReceipt,
@@ -71,6 +97,20 @@ impl From<WorldPrivacyReceipt> for WorldPrivacyWork {
             receipt,
         }
     }
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/settings`'s body
+/// (FIX 11611), shared with `/worlds/privacy/reassert`:
+/// [`WorldPrivacySetInput`].
+pub(crate) fn world_privacy_set_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacySetInput>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/settings`'s answer
+/// (FIX 11611), shared with `/worlds/privacy/reassert`:
+/// [`WorldPrivacyWork`].
+pub(crate) fn world_privacy_work_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyWork>()
 }
 
 /// `GET /v1/owner/worlds/privacy/settings?world=<id>`: the world's settings
@@ -108,12 +148,13 @@ async fn settings(
 async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+    payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyWork> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let input = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let input = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         let (world, settings, seen) = input.parse()?;
         Ok(server
@@ -131,12 +172,13 @@ async fn set(
 async fn reassert(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+    payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyWork> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let input = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let input = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         let (world, settings, seen) = input.parse()?;
         let expected = seen.ok_or_else(|| {

@@ -55,6 +55,10 @@ pub(in crate::sync) struct OwedHistory {
     /// Whether a row refused for this history waits in one of the windows:
     /// the record then clears only once the upkeep has drained them.
     pub(in crate::sync) held: bool,
+    /// Whether the home served its whole copy of the history since a row of
+    /// it last landed here: the one proof that the history is another
+    /// vault's (FIX 4901), as the home serves every control of this vault's.
+    pub(in crate::sync) home_whole: bool,
 }
 
 /// What the last try at an owed history found.
@@ -128,6 +132,8 @@ fn owe_in_txn(
     let mut record = OWED.get(&vault.store, wtxn, &key)?.unwrap_or_default();
     record.windows.insert(window_key.to_owned());
     record.held |= held;
+    // A landing may be what the home's copy lacked: it is read whole again.
+    record.home_whole = false;
     if let Some(status) = status {
         record.status = status;
     }
@@ -174,17 +180,36 @@ fn named_vault(blob: &[u8], target: EntityId) -> Option<[u8; 32]> {
     }
 }
 
-/// Whether `target`'s history is proven another vault's: this vault's id is
-/// folded, and each signed control of `target` in view that names a vault,
-/// `blob` (the row in hand) and every resident one, names another, at least
-/// one of them. The exchange adopts only this vault's packets, so no fetch
-/// settles such a history.
+/// Whether `target`'s history is proven another vault's: the target is not
+/// pinned here, the home's whole copy of its history landed since its last
+/// row did, this vault's id is folded, and each signed control of `target`
+/// in view that names a vault, `blob` (the row in hand) and every resident
+/// one, names another, at least one of them. The exchange adopts only this
+/// vault's packets, so no fetch settles such a history.
+///
+/// A control's vault id is its own signer's word, and any tier that may
+/// write a window can land one, so the controls alone prove nothing: an
+/// unpinned target of this vault whose own controls have not landed here
+/// would retire on one naming another vault (FIX 4901). The home serves
+/// every control of this vault's, so its whole copy holding none is the
+/// proof; until it is fetched the debt stays owed.
 fn foreign_history(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
     blob: &[u8],
 ) -> Result<bool> {
+    let home_whole = OWED
+        .get(&vault.store, txn, &HexId(target))?
+        .is_some_and(|record| record.home_whole);
+    let pinned = vault
+        .store
+        .vault_meta
+        .get(txn, &crate::claim::history_projection::pin_key(target))?
+        .is_some();
+    if !home_whole || pinned {
+        return Ok(false);
+    }
     let mut named: Vec<[u8; 32]> = named_vault(blob, target).into_iter().collect();
     for id in
         crate::claim::history_store::machine_history_ids_for_target(&vault.store, txn, target)?
@@ -382,6 +407,12 @@ pub(in crate::sync) fn keep_cursor(vault: &Vault, target: EntityId, cursor: &str
     update(vault, target, |record| {
         record.cursor = Some(cursor.to_owned());
     })
+}
+
+/// Records that the home served `target`'s whole history and each row of it
+/// this machine lacked landed (FIX 4901).
+pub(in crate::sync) fn note_home_whole(vault: &Vault, target: EntityId) -> Result<()> {
+    update(vault, target, |record| record.home_whole = true)
 }
 
 /// Records what the home answered for `target`. A landing marked since

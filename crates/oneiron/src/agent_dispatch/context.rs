@@ -1,9 +1,13 @@
 //! Spawn-context resolution, sibling-lineage admission, ancestor projection fold.
+//!
+//! Every read here comes from one transaction (FIX 9438): the caller's own,
+//! a writer's view included, or the one snapshot the non-transactional door
+//! opens. None opens a snapshot beside a transaction its thread holds.
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::context_projection::{
-    ContextResolutionRequest, ContextSpec, ResolvedContextProjection, resolve_context_spec,
-    validate_spec_narrows,
+    CONTEXT_PROJECTION_ANCESTOR_CHECK, ContextResolutionRequest, ContextSpec,
+    ResolvedContextProjection, resolve_context_spec_in_txn, validate_spec_narrows,
 };
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
 use crate::entity_id::EntityId;
@@ -25,9 +29,32 @@ type AncestorChain = (
 impl AgentDispatcher<'_> {
     /// Resolves the requested descriptor against LIVE state, folding the
     /// ancestor chain root-down so a `Default` projection inherits what its
-    /// parent actually saw rather than the widest default.
+    /// parent actually saw rather than the widest default. Reads in one
+    /// snapshot of its own.
     pub(super) fn resolve_dispatch_context(
         &self,
+        parent_attempt: Option<AttemptId>,
+        context_spec: Option<&ContextSpec>,
+        context_from: &[EntityId],
+        run_id: Option<&str>,
+        world_scope: crate::pipeline::WorldScope,
+    ) -> Result<ResolvedContextProjection> {
+        let txn = self.vault.store.env.read_txn()?;
+        self.resolve_dispatch_context_in_txn(
+            &txn,
+            parent_attempt,
+            context_spec,
+            context_from,
+            run_id,
+            world_scope,
+        )
+    }
+
+    /// [`Self::resolve_dispatch_context`] in the caller's transaction: a
+    /// dispatch writer resolves in its own view.
+    pub(super) fn resolve_dispatch_context_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
         parent_attempt: Option<AttemptId>,
         context_spec: Option<&ContextSpec>,
         context_from: &[EntityId],
@@ -40,18 +67,21 @@ impl AgentDispatcher<'_> {
                 // DECLARED bound: the child's requested scope against the
                 // parent's stored scope, checked before either is resolved.
                 if let (Some(parent_spec), Some(child_spec)) = (
-                    self.parent_dispatch_input(parent_attempt)?
-                        .map(|input| self.effective_context_spec(parent_attempt, &input))
+                    self.parent_dispatch_input_in_txn(txn, parent_attempt)?
+                        .map(|input| {
+                            self.effective_context_spec_in_txn(txn, parent_attempt, &input)
+                        })
                         .transpose()?,
                     context_spec,
                 ) {
                     validate_spec_narrows(&parent_spec, child_spec)?;
                 }
-                self.resolve_ancestor_projection(parent_attempt)?
+                self.resolve_ancestor_projection_in_txn(txn, parent_attempt)?
             }
         };
-        let projection = resolve_context_spec(
+        let projection = resolve_context_spec_in_txn(
             self.vault,
+            txn,
             ContextResolutionRequest {
                 spec: context_spec.cloned().unwrap_or_default(),
                 parent,
@@ -59,7 +89,7 @@ impl AgentDispatcher<'_> {
                 world_scope: Some(world_scope),
             },
         )?;
-        self.require_sibling_result_lineage(parent_attempt, run_id, context_from)?;
+        self.require_sibling_result_lineage_in_txn(txn, parent_attempt, run_id, context_from)?;
         Ok(projection)
     }
 
@@ -70,9 +100,10 @@ impl AgentDispatcher<'_> {
     /// parent attempt's DISPATCHED agent row (its recorded create-owner), and
     /// the spawn must ride the parent attempt's exact run. A root spawn has no
     /// siblings to name; a foreign parent or run rejects with the same typed
-    /// error — never a silent skip.
-    pub(super) fn require_sibling_result_lineage(
+    /// error — never a silent skip. Read in the caller's transaction.
+    pub(super) fn require_sibling_result_lineage_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         parent_attempt: Option<AttemptId>,
         run_id: Option<&str>,
         context_from: &[EntityId],
@@ -80,13 +111,14 @@ impl AgentDispatcher<'_> {
         if context_from.is_empty() {
             return Ok(());
         }
-        let parent_attempt = self.workflow_authority_parent(parent_attempt)?;
+        let parent_attempt = self.workflow_authority_parent_in_txn(txn, parent_attempt)?;
         let Some(parent_attempt) = parent_attempt else {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom names sibling results but there is no parent attempt",
             )));
         };
-        let Some(parent_record) = AttemptQueue::new(self.vault).get(parent_attempt)? else {
+        let Some(parent_record) = AttemptQueue::new(self.vault).get_in_txn(txn, parent_attempt)?
+        else {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                 "contextFrom requires a parent attempt row",
             )));
@@ -103,7 +135,9 @@ impl AgentDispatcher<'_> {
         };
         let parent_row = parent_input.target.agent_definition_ref()?;
         for entity_ref in context_from {
-            if crate::task_verb::task_create_owner(self.vault, *entity_ref)? != Some(parent_row) {
+            if crate::task_verb::task_create_owner_in(self.vault, txn, *entity_ref)?
+                != Some(parent_row)
+            {
                 return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
                     "contextFrom names a settled result from a different parent",
                 )));
@@ -112,8 +146,9 @@ impl AgentDispatcher<'_> {
         Ok(())
     }
 
-    /// Rebuilds what `attempt` projects, by folding its ancestors root-down.
-    /// `None` when no ancestor carries a descriptor at all.
+    /// Rebuilds what `attempt` projects, by folding its ancestors root-down,
+    /// in the caller's transaction. `None` when no ancestor carries a
+    /// descriptor at all.
     ///
     /// The fold is what makes `MemoryProjection::Default` honest: resolving an
     /// ancestor's spec standalone would hand it the widest default, so a
@@ -126,24 +161,32 @@ impl AgentDispatcher<'_> {
     /// or the system's, that binder's own admission too (FIX 6715). Each
     /// comes from the wrapper the fold crosses, which still adds no level;
     /// every level resolves as it does for any run.
-    pub(super) fn resolve_ancestor_projection(
+    pub(super) fn resolve_ancestor_projection_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         attempt: AttemptId,
     ) -> Result<Option<ResolvedContextProjection>> {
         // Every ancestor is read, however many (rule 5): past its threshold
         // row the walk asks whether everything is okay, counted on every way
-        // out. No read transaction is held here; like each ancestor read
-        // below, the threshold read opens its own.
-        let mut walk = ScanCount::start_at(
+        // out. A threshold row that does not read asks at the old check.
+        let scope = attempt.as_bytes();
+        let mut walk = ScanCount::start(
+            &self.vault.store,
+            txn,
             EngineScan::DispatchAncestorRows,
-            attempt.as_bytes(),
-            self.vault
-                .scan_threshold(EngineScan::DispatchAncestorRows)?,
-        );
+            scope,
+        )
+        .unwrap_or_else(|_| {
+            ScanCount::start_at(
+                EngineScan::DispatchAncestorRows,
+                scope,
+                CONTEXT_PROJECTION_ANCESTOR_CHECK,
+            )
+        });
         let mut seen = std::collections::HashSet::new();
-        let walked = self.ancestor_chain(attempt, &mut seen);
+        let walked = self.ancestor_chain_in_txn(txn, attempt, &mut seen);
         walk.rows(seen.len());
-        walk.finish(self.vault);
+        walk.defer(&self.vault.store);
         let Some((chain, member, binders)) = walked? else {
             return Ok(None);
         };
@@ -157,8 +200,9 @@ impl AgentDispatcher<'_> {
             if index > 0 {
                 validate_spec_narrows(&chain[chain.len() - index].0, spec)?;
             }
-            projection = Some(resolve_context_spec(
+            projection = Some(resolve_context_spec_in_txn(
                 self.vault,
+                txn,
                 ContextResolutionRequest {
                     spec: spec.clone(),
                     parent: projection,
@@ -168,20 +212,23 @@ impl AgentDispatcher<'_> {
             )?);
         }
         let projection = match (projection, member) {
-            (Some(projection), Some(member)) => Some(self.member_context(projection, member)?),
+            (Some(projection), Some(member)) => {
+                Some(self.member_context_in_txn(txn, projection, member)?)
+            }
             (projection, _) => projection,
         };
         projection
-            .map(|projection| self.binder_context(projection, &binders))
+            .map(|projection| self.binder_context_in_txn(txn, projection, &binders))
             .transpose()
     }
 
-    /// The walk [`Self::resolve_ancestor_projection`] counts, each attempt it
-    /// reads in `seen`: every dispatch level's spec and scope, the first
-    /// wrapper's member and every wrapper's binder. `None` when `attempt`
-    /// itself is no dispatch lineage.
-    fn ancestor_chain(
+    /// The walk [`Self::resolve_ancestor_projection_in_txn`] counts, each
+    /// attempt it reads in `seen`: every dispatch level's spec and scope, the
+    /// first wrapper's member and every wrapper's binder. `None` when
+    /// `attempt` itself is no dispatch lineage.
+    fn ancestor_chain_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         attempt: AttemptId,
         seen: &mut std::collections::HashSet<AttemptId>,
     ) -> Result<Option<AncestorChain>> {
@@ -194,7 +241,7 @@ impl AgentDispatcher<'_> {
             if !seen.insert(id) {
                 return Err(super::widen_record::invalid("context ancestor cycle"));
             }
-            let Some(record) = queue.get(id)? else {
+            let Some(record) = queue.get_in_txn(txn, id)? else {
                 if chain.is_empty() {
                     return Ok(None);
                 }
@@ -202,10 +249,10 @@ impl AgentDispatcher<'_> {
             };
             if super::workflow_record::is_wrapper(&record) {
                 if member.is_none() {
-                    member = self.workflow_member(&record)?;
+                    member = self.workflow_member_in_txn(txn, &record)?;
                 }
-                binders.extend(self.workflow_binder(&record)?);
-                cursor = self.workflow_authority_parent(Some(id))?;
+                binders.extend(self.workflow_binder_in_txn(txn, &record)?);
+                cursor = self.workflow_authority_parent_in_txn(txn, Some(id))?;
                 continue;
             }
             let Some(input) = record_dispatch_input(&record) else {
@@ -217,8 +264,8 @@ impl AgentDispatcher<'_> {
                 ));
             };
             chain.push((
-                self.effective_context_spec(id, &input)?,
-                self.dispatchable_definition(&input.target)?
+                self.effective_context_spec_in_txn(txn, id, &input)?,
+                self.dispatchable_definition_in_txn(txn, &input.target)?
                     .scope
                     .to_world_scope(),
             ));

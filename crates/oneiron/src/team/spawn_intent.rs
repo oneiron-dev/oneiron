@@ -288,6 +288,33 @@ pub struct PlannedLeaderLaunch {
     /// task is its source run's fork, reuses its source's rather than append
     /// the body again.
     pub exposures: BTreeMap<EntityId, TaskExposure>,
+    /// The span each of those runs' exposures named, by its executor run id,
+    /// once an erase took the pack; empty while the pack stands.
+    pub erased_pack_spans: BTreeMap<EntityId, ErasedPackSpan>,
+}
+
+/// Where a leader run's task held the frozen pack's SKILL.md, as an erased
+/// intent keeps it (FIX 11787): the byte span, separator included, and the
+/// hash of those bytes, with no skill, revision or text. A continuation
+/// claimed after the erase reads no pack, and its task, its source run's
+/// fork, still holds the text there; the span lets it lay a tombstone over
+/// exactly those bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErasedPackSpan {
+    pub start: usize,
+    pub end: usize,
+    /// BLAKE3 of the task bytes in `start..end`.
+    pub content_hash: [u8; 32],
+}
+
+impl From<&TaskExposure> for ErasedPackSpan {
+    fn from(exposure: &TaskExposure) -> Self {
+        Self {
+            start: exposure.start,
+            end: exposure.end,
+            content_hash: exposure.content_hash,
+        }
+    }
 }
 
 /// A frozen pack's body hash: BLAKE3 over its files, each path and its

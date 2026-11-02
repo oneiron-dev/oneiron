@@ -32,6 +32,7 @@ mod byte_line;
 mod calendar_host;
 mod campaign_enrollment;
 pub mod cli;
+mod cloud_registration;
 mod code_consent_host;
 pub mod commands;
 pub mod config;
@@ -63,6 +64,7 @@ mod hook_verdict;
 mod http_listener;
 mod idempotency;
 mod import_audience;
+mod invocation_claims;
 mod ladder_poll;
 mod lens_frames;
 mod linear_host;
@@ -70,12 +72,14 @@ mod livequery;
 pub mod logging;
 mod machine;
 pub mod managed;
+mod managed_owner_check;
 pub mod mcp;
 mod model_artifacts;
 pub mod models;
 mod oauth_relay;
 mod oneironer;
 mod owner;
+mod pipe_proof;
 pub mod projection;
 mod protocol;
 pub mod replay_judge;
@@ -88,6 +92,7 @@ mod slide_render;
 pub mod usage;
 mod wake_adapters;
 pub mod web_client;
+mod web_connector;
 pub mod wire_health;
 pub mod wire_telemetry;
 // Process-local driver attachment only; this adds no HTTP/MCP route.
@@ -113,10 +118,10 @@ pub use crate::projection::View;
 
 /// Builds the complete Axum app (WebSocket + HTTP API routes).
 ///
-/// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. WebSocket
-/// read RPCs run synchronously and leave the worker with `block_in_place`,
-/// which a `LocalSet` forbids; on a current-thread runtime they hold the only
-/// executor thread while they read.
+/// Serve it on a multi-thread Tokio runtime, outside a `LocalSet`. A door that
+/// runs blocking work in line (`server::blocking`) leaves the worker with
+/// `block_in_place`, which a `LocalSet` forbids; on a current-thread runtime
+/// it holds the only executor thread while that work runs.
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     let position = if server.managed_issuer.is_some() || server.vault().is_host_readable() {
         // A cloud node's provider requests skip gzip (ARCH-0081 §6, OF-603).
@@ -135,9 +140,13 @@ pub fn build_app_for_position(
     server: Arc<SyncServer>,
     position: web_client::DeploymentPosition,
 ) -> Router {
-    // The owner's Responses `store` switch (OF-602); unreadable leaves it off.
-    models::set_responses_store(server.vault().responses_store().unwrap_or(false));
-    models::set_responses_chain_vault(server.vault());
+    // This server's Responses state (FIX 9516): its vault keeps its stored
+    // chains, and its owner's `store` switch (OF-602) is read now;
+    // unreadable leaves it off.
+    server.ai.models().responses_context().bind(
+        server.vault(),
+        server.vault().responses_store().unwrap_or(false),
+    );
     let mode = if server.managed_issuer.is_some() {
         oneiron::HostingPrivacyPosture::Hosted
     } else {

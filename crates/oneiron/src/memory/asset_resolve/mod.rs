@@ -1,7 +1,8 @@
 //! Generated images and the form each consumer reads (OF-328, OF-329).
 //!
-//! A generated image lands as one ASSET holding its bytes, with its ASSET_TEXT
-//! written in the same commit, so every form is ready before anyone reads it.
+//! A generated image lands as one ASSET, its metadata, holding its bytes as a
+//! blob by reference (FIX 9949, `blob`), with its ASSET_TEXT written in the
+//! same commit, so every form is ready before anyone reads it.
 //! The resolver then serves each image lazily, down a ladder, per read: the
 //! full image to a reader that takes images in, when it fits the read's room;
 //! else a thumbnail beside the ASSET_TEXT and the image's view handle; else
@@ -29,10 +30,10 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedRead, ScopedReadReceipt, Sc
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::limit_ask::EngineLimit;
-use crate::llm::decision::catalogue::QuestionFamily;
+use crate::llm::decision::catalogue::IMAGE_FULL;
 use crate::llm::decision::{
-    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionClass, DecisionDial,
-    DecisionLadder, EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
+    AnswerContract, AudioRef, DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionLadder,
+    EvidenceVersion, ImageRef, ResolvedMedia, Reversibility, cut_text, fit_state,
 };
 use crate::llm::image::{ImageBytes, ImageCatalog, ImageIntent, ImageResponse};
 use crate::llm::media::{AiMediaDoor, AiOperation, MediaPart, MediaRequest};
@@ -43,11 +44,13 @@ use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_ASSET_TEXT};
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::temporal::TimeRange;
 
+mod blob;
 mod generation;
 mod hydrated;
 mod reads;
 mod serving;
 mod types;
+pub(crate) use blob::{asset_media_in, release_asset_blob_in_txn};
 pub(super) use generation::asset_body;
 #[cfg(test)]
 pub(crate) use generation::generated_asset_body;
@@ -59,8 +62,6 @@ pub use types::{
     ResolvedAsset, ServedAssetForm,
 };
 
-/// The ASSET body field that holds the bytes.
-const BODY_BYTES: &str = "bytes";
 /// The ASSET body field that holds the bytes' media type.
 const BODY_MEDIA_TYPE: &str = "mime_type";
 /// The ASSET body field that holds the bytes' BLAKE3 content hash.
@@ -74,15 +75,6 @@ const THUMBNAIL_QUALITY: u8 = 70;
 const HANDLE_HASH_HEX: usize = 16;
 /// The longest edge, in pixels, a zoom scales a region to.
 const MAX_ZOOM_EDGE: u32 = 4096;
-
-/// The family of the host's per-image pick (OF-329): does the task this
-/// read serves need this image in full? Keyed by the read's purpose; the
-/// wording is the host's.
-pub const IMAGE_FULL: QuestionFamily = QuestionFamily {
-    name: "memory.image_full",
-    version: 1,
-    class: DecisionClass::Triage,
-};
 
 impl AssetConsumer {
     /// A consumer that declared no capability: it is served text.
@@ -119,6 +111,7 @@ impl AssetConsumer {
 /// anytime budget. A provider reads the task and the image's description as
 /// the call's bounded state. Only an in-band "no" steps an image down from
 /// full; an abstain, an answer outside the band or a failed ladder sends it.
+#[derive(Clone)]
 pub struct ImagePick<'a> {
     pub ladder: DecisionLadder<'a>,
     pub principal: EntityId,
@@ -220,32 +213,11 @@ impl std::fmt::Display for ImageHandle {
     }
 }
 
-/// The audio bytes and type an ASSET body holds.
-fn audio_of(body: &[u8]) -> MemoryResult<Option<(Vec<u8>, String)>> {
-    let Some(Value::Map(entries)) = decode_whole(body) else {
-        return Ok(None);
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(BODY_BYTES),
-        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return Ok(None);
-    };
-    if bytes.is_empty() || !media_type.starts_with("audio/") {
-        return Ok(None);
-    }
-    if let Some(recorded) = field(BODY_BLAKE3)
-        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
-    {
-        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
-    }
-    Ok(Some((bytes.clone(), media_type.to_owned())))
+/// The audio bytes and type an ASSET's blob holds, as
+/// [`blob::resolve_asset_blob_in_lane`] read and checked them.
+fn audio_of((media_type, bytes): &(String, Vec<u8>)) -> Option<(Vec<u8>, String)> {
+    (!bytes.is_empty() && media_type.starts_with("audio/"))
+        .then(|| (bytes.clone(), media_type.clone()))
 }
 
 fn no_form(asset_ref: &str) -> MemoryError {
@@ -268,8 +240,7 @@ struct ImageFormBody<'a> {
     height: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     asset_text_ref: Option<String>,
-    /// The description beside a thumbnail; the full image names its
-    /// caption by ref alone.
+    /// The admitted caption beside the pixels.
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<&'a str>,
     handle: &'a str,
@@ -365,7 +336,7 @@ impl AssetForms {
                     width: None,
                     height: None,
                     asset_text_ref: caption.clone(),
-                    text: None,
+                    text: self.text.as_ref().map(|(_, text)| text.as_str()),
                     handle: &handle,
                 })?;
                 if admits(body.len()) {
@@ -432,13 +403,16 @@ impl AssetForms {
 
     /// What [`hydrated_asset`] serves of an asset that holds an image: the
     /// rung its ladder reaches within `admits`, the ask raised on `lane`'s
-    /// vault when nothing fit, and with no form the stored body.
+    /// vault when nothing fit, bounded by what the door's room has `left`
+    /// (the vault's `limits.image_room_bytes` when it names none), and with
+    /// no form the stored body.
     fn hydrated(
         self,
         lane: &ScopedRead<'_>,
         consumer: &AssetConsumer,
         pick: Option<&ImagePick<'_>>,
         admits: &mut dyn FnMut(usize) -> bool,
+        left: &dyn Fn() -> Option<u64>,
     ) -> MemoryResult<HydratedAsset> {
         let Some(image) = &self.image else {
             return Ok(HydratedAsset::Stored);
@@ -454,11 +428,8 @@ impl AssetForms {
             }
             Rung::Ask(needed) => {
                 let watch = lane.vault().limit_watch();
-                watch.crossed(
-                    EngineLimit::ImageRoomBytes,
-                    watch.bound(EngineLimit::ImageRoomBytes),
-                    needed,
-                );
+                let bound = left().unwrap_or_else(|| watch.bound(EngineLimit::ImageRoomBytes));
+                watch.crossed(EngineLimit::ImageRoomBytes, bound, needed);
                 HydratedAsset::Omitted { form }
             }
         })
@@ -646,36 +617,14 @@ fn region_pixels(
     ))
 }
 
-/// The image an ASSET body holds, checked against its recorded content hash.
-/// `None` is an ASSET that holds no image: a document, or bytes of no image type.
-fn image_of(body: &[u8]) -> MemoryResult<Option<ImageBytes>> {
-    let Some(Value::Map(entries)) = decode_whole(body) else {
-        return Ok(None);
-    };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(BODY_BYTES),
-        field(BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return Ok(None);
-    };
-    if bytes.is_empty() || !media_type.starts_with("image/") {
-        return Ok(None);
-    }
-    if let Some(recorded) = field(BODY_BLAKE3)
-        && recorded.as_str() != Some(blake3::hash(bytes).to_hex().as_str())
-    {
-        return Err(crate::error::Error::CorruptedIndex("asset content hash").into());
-    }
-    Ok(Some(ImageBytes {
+/// The image an ASSET's blob holds, as [`blob::resolve_asset_blob_in_lane`]
+/// read and checked it against the hash the ASSET names. `None` is an ASSET
+/// that holds no image: a document, or bytes of no image type.
+fn image_of((media_type, bytes): &(String, Vec<u8>)) -> Option<ImageBytes> {
+    (!bytes.is_empty() && media_type.starts_with("image/")).then(|| ImageBytes {
         bytes: bytes.clone(),
-        media_type: media_type.to_owned(),
-    }))
+        media_type: media_type.clone(),
+    })
 }
 
 /// An ASSET_TEXT's text as a memory read releases it: a map body's `text`

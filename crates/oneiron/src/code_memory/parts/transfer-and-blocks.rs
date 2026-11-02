@@ -6,7 +6,9 @@
 // Section 3 — explicit rename/copy anchor transfer
 // ---------------------------------------------------------------------------
 
-/// Rename re-points; Copy clones. Nothing else transfers an attachment.
+/// Between two distinct symbols, Rename re-points and Copy clones. A file
+/// rename needs neither: its symbols keep their document-based ids and
+/// their notes (FIX 7810).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnchorTransferKind {
     Rename,
@@ -129,8 +131,8 @@ pub fn transfer_code_memory_anchor(
         }));
     }
 
-    // Step 4 — plan every destination write, enforcing both bounds before a
-    // single durable byte moves. Each plan carries the payload set that
+    // Step 4 — plan every destination write, under the encoded slot bound,
+    // before a single durable byte moves. Each plan carries the payload set that
     // ORIGINATES IN THE SOURCE: those payloads, and only those, take this
     // transfer's `to_locator` at the destination.
     let mut planned_slots = Vec::with_capacity(source_slots.len());
@@ -149,6 +151,7 @@ pub fn transfer_code_memory_anchor(
     // from the incoming source stream.
     for (slot, moved_payloads) in &planned_slots {
         write_slot(store, txn, &transfer.to_symbol_id, slot)?;
+        observe_slot_values(store, txn, &transfer.to_symbol_id, slot);
         derive_attachment_rows(
             store,
             txn,
@@ -203,8 +206,8 @@ pub fn transfer_code_memory_anchor(
 /// the destination is dropped from the plan. Contract collisions resolve
 /// exactly like slot collisions do: the destination registration stands, its
 /// kind/actor/time/provenance are never overwritten with the source's, and
-/// there is no last-writer-wins path. The per-symbol bound therefore counts
-/// only the keys this transfer genuinely adds.
+/// there is no last-writer-wins path. The destination's keys after the
+/// transfer are observed, never refused (FIX 8562).
 fn plan_transferred_contracts(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -223,13 +226,10 @@ fn plan_transferred_contracts(
         if !keys.insert(always_on_key(to_symbol_id, &moved.slot, moved.payload)) {
             continue;
         }
-        if keys.len() > CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS {
-            return Err(Error::Code(CodeError::CodeMemoryLimitExceeded {
-                kind: "always-on contracts per symbol",
-                limit: CODE_MEMORY_MAX_ALWAYS_ON_CONTRACTS,
-            }));
-        }
         planned.push(moved);
+    }
+    if !planned.is_empty() {
+        observe_always_on_contracts(store, txn, to_symbol_id, keys.len());
     }
     Ok(planned)
 }
@@ -309,19 +309,22 @@ fn authorize_blocks_write(
 
 /// Is `target` reachable from `start` over `Blocks` edges ONLY?
 ///
-/// Kind-local by construction: the walk rides the landed kind-filtered,
-/// cap-bounded peer scan, so a `child_of` / `derived_from` path between the
-/// same endpoints can never fabricate a readiness cycle. Overflow is the
-/// typed [`Error::IndexOverflow`], never a partial acyclicity proof.
+/// Kind-local by construction: the walk rides the landed kind-filtered
+/// peer scan, so a `child_of` / `derived_from` path between the same
+/// endpoints can never fabricate a readiness cycle. The walk reads whole,
+/// however many readiness edges the vault holds: past its row it raises
+/// one advisory check and reads on, and `false` answers only a complete
+/// walk that never reached `target`.
 pub(crate) fn blocks_path_exists(
     vault: &Vault,
     txn: &RoTxn<'_>,
     start: EntityId,
     target: EntityId,
 ) -> Result<bool> {
+    let scope = [start.as_bytes().as_slice(), target.as_bytes().as_slice()].concat();
+    let mut count = ScanCount::start(&vault.store, txn, EngineScan::AudienceEdgeRows, &scope)?;
     let mut visited: HashSet<EntityId> = HashSet::from([start]);
     let mut frontier: VecDeque<EntityId> = VecDeque::from([start]);
-    let mut traversed_steps = 0usize;
 
     while let Some(current) = frontier.pop_front() {
         let peers = vault.filtered_edge_peers(
@@ -332,11 +335,9 @@ pub(crate) fn blocks_path_exists(
             None,
         )?;
         for peer in peers {
-            if traversed_steps >= MAX_EDGE_QUERY_RESULTS {
-                return Err(Error::IndexOverflow("blocks readiness walk"));
-            }
-            traversed_steps += 1;
+            count.row();
             if peer == target {
+                count.defer(&vault.store);
                 return Ok(true);
             }
             if visited.insert(peer) {
@@ -345,6 +346,7 @@ pub(crate) fn blocks_path_exists(
         }
     }
 
+    count.defer(&vault.store);
     Ok(false)
 }
 

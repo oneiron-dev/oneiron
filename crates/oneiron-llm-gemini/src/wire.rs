@@ -190,6 +190,7 @@ pub(super) fn parse_response(body: Value) -> LlmResult<LlmResponse> {
                 usage,
                 finish_reason,
                 reply_assertions,
+                token_scores: None,
             }),
             _ => None,
         })

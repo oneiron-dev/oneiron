@@ -74,22 +74,31 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             &memo,
             &params_hash,
         ) {
-            Ok(true) => return Ok(DreamerAttemptExecution::Completed { completed_units: 0 }),
+            Ok(true) => {
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
+            }
             Ok(false) => {}
             Err(error) if waits_on_residency(&error) => {
-                return Ok(residency_deferral(ctx.now_ms, 0));
+                return Ok(residency_deferral(ctx.now_ms, 0, Vec::new()));
             }
             Err(error) => return Err(error),
         }
         let sources = blake3::Hash::from_bytes(evidence.fingerprint()?).to_hex();
+        // The sitting shows under its call-local label, as its records do
+        // (FIX 9170): each page's request binds the map that names it.
+        let mut labels = evidence.labels.clone();
+        let sitting = labels.assign(LabelKind::Conversation, session).to_string();
         // A page's frame is counted at the widest numbers it can carry.
         let frame = framed_tokens(
             instruction,
-            &page_input(plan, "", u64::MAX, u64::MAX, &session, sources.as_str())?,
+            &page_input(plan, "", u64::MAX, u64::MAX, &sitting, sources.as_str())?,
             &schema,
         )?;
         let framed = |records: &str, index: u64, count: u64| {
-            let user = page_input(plan, records, index, count, &session, sources.as_str())?;
+            let user = page_input(plan, records, index, count, &sitting, sources.as_str())?;
             framed_tokens(instruction, &user, &schema)
         };
         let pages = match window.checked_sub(frame) {
@@ -112,11 +121,12 @@ impl<E> ScopeSummaryExecutor<'_, E> {
                 &page.records,
                 index,
                 count,
-                &session,
+                &sitting,
                 sources.as_str(),
             )?;
-            let request =
+            let mut request =
                 self.summary_request(ctx.vault, evidence, schema.clone(), instruction, user)?;
+            labels.bind_request(&mut request, None);
             let step_hash = request
                 .canonical_hash()
                 .map_err(|_| invalid_consolidation("summary request did not hash"))?;
@@ -154,10 +164,15 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             let outcome =
                 call_as_step_checked(&step_ctx, self.backend, self.guard, request, &check).await;
             let response = match outcome {
-                Ok(StepOutcome::Finished { response, .. }) => {
+                Ok(StepOutcome::Finished {
+                    response, memoized, ..
+                }) => {
                     if let Err(error) =
                         charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
                     {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
                         return Ok(charges.park_on_error(&error));
                     }
                     response
@@ -203,16 +218,23 @@ impl<E> ScopeSummaryExecutor<'_, E> {
             Ok(composition) => composition,
             Err(reason) => return Ok(charges.park_for(reason, DreamerParkCause::Retry)),
         };
+        // The text lands in durable names, never its pages' labels (FIX 10359).
+        let (text, keep, line_sources) = super::durable_labels::durable_summary(
+            composition.text,
+            &composition.keep,
+            Some(composition.line_sources),
+            &super::durable_labels::label_names(&labels, None),
+        );
         let composed = ComposedSummary {
-            text: &composition.text,
-            keep: &composition.keep,
+            text: &text,
+            keep: &keep,
             params_hash,
             instruction,
             model: self.model.as_str(),
             covers: evidence.covers.clone(),
             messages: evidence.messages.clone(),
             memo,
-            line_sources: Some(composition.line_sources),
+            line_sources,
             arc_work: None,
         };
         // The landing fence reads the whole evidence again, every page's
@@ -223,11 +245,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
         {
             Ok(_) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             Err(Error::ConcurrentWrite(_)) => Ok(compose_again(&charges, ctx.now_ms)),
-            Err(error) if waits_on_residency(&error) => {
-                Ok(residency_deferral(ctx.now_ms, charges.units))
-            }
+            Err(error) if waits_on_residency(&error) => Ok(residency_deferral(
+                ctx.now_ms,
+                charges.units,
+                charges.step_hashes.clone(),
+            )),
             Err(error) => Ok(charges.park(&format!("summary landing refused: {error}"))),
         }
     }
@@ -235,14 +260,14 @@ impl<E> ScopeSummaryExecutor<'_, E> {
 
 /// The input one page's call reads: the declaration's purpose and `keep`,
 /// no editor text, the page's records, and where the page sits: its 1-based
-/// `index` of `count`, its sitting and its sources' digest, so a changed
-/// pin is a new step.
+/// `index` of `count`, its sitting by its call-local label and its sources'
+/// digest, so a changed pin is a new step.
 fn page_input(
     plan: &ScopeSummaryPlan,
     records: &str,
     index: u64,
     count: u64,
-    session: &EntityId,
+    session: &str,
     sources: &str,
 ) -> Result<String> {
     serde_json::to_string(&serde_json::json!({
@@ -253,7 +278,7 @@ fn page_input(
         "page": {
             "index": index,
             "count": count,
-            "session": session.to_hex(),
+            "session": session,
             "sources": sources,
         },
     }))

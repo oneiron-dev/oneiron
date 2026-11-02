@@ -41,8 +41,8 @@ pub fn activated_communities(
         return Ok(active);
     }
     let membership = |s: &ScoredEntity| cache.nodes.get(&s.id).map(|m| m.fine);
-    if (seeds.len() == 1
-        || (seeds[0].score > 0.0 && f64::from(seeds[0].score) >= 1.5 * f64::from(seeds[1].score)))
+    if seeds[0].score > 0.0
+        && (seeds.len() == 1 || f64::from(seeds[0].score) >= 1.5 * f64::from(seeds[1].score))
         && let Some(id) = membership(&seeds[0])
     {
         active.insert(id);

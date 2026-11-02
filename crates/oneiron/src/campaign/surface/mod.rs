@@ -49,12 +49,14 @@ pub use self::campaign::{
     CreateCampaignRequest, UpdateCampaignRequest, archive_campaign, create_campaign, read_campaign,
     update_campaign,
 };
-pub(crate) use self::campaign::{campaign_type_byte, load_campaign_in_txn, owned_campaign_in_txn};
+pub(crate) use self::campaign::{
+    campaign_type_byte, load_campaign_in_txn, load_registered_campaign, owned_campaign_in_txn,
+};
 pub use self::codec_json::{campaign_record_to_json, saved_query_record_to_json};
-pub(crate) use self::membership::read_saved_query_members_scoped;
 pub use self::membership::{
-    MEMBERSHIP_PAGE_DEFAULT_LIMIT, MEMBERSHIP_PAGE_MAX_LIMIT, MembershipPage,
-    MembershipReadRequest, MembershipRow, read_campaign_members, read_saved_query_members,
+    MANUAL_MEMBERSHIP_EPOCH_POLICY, MEMBERSHIP_PAGE_DEFAULT_LIMIT, MEMBERSHIP_PAGE_MAX_LIMIT,
+    ManualEpochPolicy, MembershipPage, MembershipReadRequest, MembershipRow, MembershipRowSource,
+    read_campaign_members, read_saved_query_members,
 };
 pub use self::program::{
     ArchiveCampaignProgramRequest, CampaignProgramAudienceSpec, CampaignProgramDefinitionView,

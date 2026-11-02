@@ -3,8 +3,9 @@
 //! revoked its slips. `POST /v1/shared/removal-export` (OF-150) answers that
 //! person, under the same proof, the archive an export-first removal kept
 //! for them, and `POST /v1/shared/removal-export/{receipt_id}` the one archive
-//! one removal receipt delivered (FIX 1300). Delivery is pull-only: a removed
-//! device holds no live slip, so no host push reaches it. The request carries that slip in `x-oneiron-left-slip`
+//! one removal receipt delivered (FIX 1300). Beside those pulls, a removed
+//! device holds delivery sessions under the same proof, and the host sends it
+//! each archive owed and records its ack ([`delivery`], FIX 3396). The request carries that slip in `x-oneiron-left-slip`
 //! (never as a bearer token, which the network door would refuse) and the
 //! usual holder proof in `x-oneiron-binding`; the engine checks the slip is
 //! one this vault minted and the device holds its key, spends the nonce, and
@@ -29,6 +30,8 @@ use super::{BindingProof, parse_signature};
 use crate::error::{ApiError, ApiErrorDetails, EnvelopedApiError};
 use crate::server::SyncServer;
 
+mod delivery;
+
 /// The header that carries the revoked slip; managed ingress forwards the
 /// holder proof beside it (FIX 5452).
 pub(super) const LEFT_SLIP_HEADER: &str = "x-oneiron-left-slip";
@@ -40,6 +43,14 @@ pub(crate) fn left_notice_routes() -> Router<Arc<SyncServer>> {
         .route(
             "/v1/shared/removal-export/{receipt_id}",
             post(removal_export),
+        )
+        .route(
+            "/v1/shared/removal-delivery",
+            post(delivery::removal_delivery),
+        )
+        .route(
+            "/v1/shared/removal-delivery/ack",
+            post(delivery::removal_delivery_ack),
         )
 }
 
@@ -180,24 +191,15 @@ fn no_notice_signing_key() -> ApiError {
     )
 }
 
-/// Runs `sign` with this host's root key: the managed issuer, else the one
-/// the configured retained secret derives. Neither refuses before the
-/// engine is asked, so no nonce is spent.
+/// Runs `sign` with this host's root key: the managed issuer, else this
+/// install's own self-host root issuer (FIX-LIST 3018). Neither refuses
+/// before the engine is asked, so no nonce is spent.
 fn with_notice_issuer<T>(
     server: &SyncServer,
     sign: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> Result<T, ApiError> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return sign(issuer).map_err(|_| ApiError::unauthorized());
-    }
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .ok_or_else(no_notice_signing_key)?;
-    let issuer =
-        HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| no_notice_signing_key())?;
-    sign(&issuer).map_err(|_| ApiError::unauthorized())
+    let issuer = server.host_issuer().ok_or_else(no_notice_signing_key)?;
+    sign(issuer).map_err(|_| ApiError::unauthorized())
 }
 
 async fn left_notices(

@@ -57,6 +57,9 @@ fn spawn_intent_digest(input: &DispatchAgent, spawn: &AgentSpawnContext) -> Resu
 pub struct AgentDispatcher<'a> {
     pub(super) vault: &'a Vault,
     pub(super) runner: DreamerRunnerStore<'a>,
+    /// The host's observer of each AGENT_DEF a dispatch resolves (FIX 9180),
+    /// when a code run's spawn binds one: told, never asked.
+    seats: Option<&'a (dyn Fn(EntityId) + Sync)>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -66,6 +69,25 @@ impl<'a> AgentDispatcher<'a> {
         Self {
             vault,
             runner: DreamerRunnerStore::new(vault),
+            seats: None,
+        }
+    }
+
+    /// This dispatcher with `observer` told each AGENT_DEF its dispatch
+    /// resolves as a seat (FIX 9180): a plan's, each planned member's, a
+    /// workflow's leaves, a dispatch's source and the attenuated fork in its
+    /// place, each before the next step that can fail. Observation only: it
+    /// returns nothing, so it neither vetoes nor changes a dispatch.
+    #[must_use]
+    pub(crate) fn observing_seats(mut self, observer: &'a (dyn Fn(EntityId) + Sync)) -> Self {
+        self.seats = Some(observer);
+        self
+    }
+
+    /// Tells the bound observer, if any, of `seat`.
+    pub(super) fn observe_seat(&self, seat: EntityId) {
+        if let Some(observe) = self.seats {
+            observe(seat);
         }
     }
 
@@ -297,7 +319,7 @@ impl<'a> AgentDispatcher<'a> {
                     input.now,
                 )?;
                 if let Some(case) = &dispatch_input.healer_case {
-                    crate::failure_ladder::oversight::proposed_in_txn(
+                    crate::failure_ladder::oversight::opened_in_txn(
                         self.vault,
                         wtxn,
                         &case.case_ref,
@@ -377,7 +399,11 @@ impl<'a> AgentDispatcher<'a> {
     ) -> Result<AgentDispatchInput> {
         let requested_parent = input.parent_attempt;
         let spawn_intent = spawn_intent_digest(&input, &spawn)?;
+        // FIX 11592: the requester the host's door named, or the parent's.
+        let requester =
+            self.inherited_requester_in_txn(wtxn, spawn.requester.clone(), requested_parent)?;
         let requested_target = input.target.agent_definition_ref()?;
+        self.observe_seat(requested_target);
 
         // 1. STRUCTURAL BOUND FIRST. Zero rejects here, before any fork
         //    registration, context resolution, or enqueue — so an exhausted
@@ -441,6 +467,9 @@ impl<'a> AgentDispatcher<'a> {
                 (attenuated.target, definition)
             }
         };
+        if let AgentDispatchTarget::Custom(seat) = &target {
+            self.observe_seat(*seat);
+        }
 
         // OF-543/OF-541: placed once, here at spawn, against the tree in
         // force for the spawn's project (the team-shape skill's data). A
@@ -484,13 +513,17 @@ impl<'a> AgentDispatcher<'a> {
                 plan.asked.type_ref.clone()
             }
             // Inside the write transaction no model call may run: the
-            // placement skill's rule rung reads alone. A host that wants its
-            // rungs to place does so before dispatch (`place_spawn_type`).
+            // placement skill's rule rung reads alone, on a direct spawn's
+            // need text (FIX 2107). A host that wants its rungs to place
+            // does so before dispatch (`place_spawn_type`).
             None => super::task_type_tree::place_in_tree(
                 &tree,
                 spawn.type_ref.as_ref(),
                 None,
-                None,
+                spawn
+                    .direct_spawn
+                    .as_ref()
+                    .map(|receipt| receipt.ask.need.clone()),
                 Some(project_ref),
                 None,
             ),
@@ -521,6 +554,16 @@ impl<'a> AgentDispatcher<'a> {
             Some(project_ref),
         )?;
 
+        // FIX 9181: a receipt prepared before its asker's hard erase carries
+        // that asker's ask; it rides no payload, as the erase took it out of
+        // every row it found.
+        let plan = spawn
+            .plan
+            .filter(|plan| !asker_hard_erased_in(self.vault, &*wtxn, plan.asker_ref));
+        let direct_spawn = spawn
+            .direct_spawn
+            .filter(|receipt| !asker_hard_erased_in(self.vault, &*wtxn, receipt.asker_ref));
+
         // 3. The descriptor rides the payload UNRESOLVED. It was validated
         //    against live parent state in `dispatch_with_context`; the executor
         //    resolves it again at read time, which is what keeps it fresh.
@@ -540,11 +583,12 @@ impl<'a> AgentDispatcher<'a> {
             room: spawn.room,
             join: None,
             team,
-            plan: spawn.plan,
+            plan,
             objectives: spawn.objectives,
             comm,
             // OF-541: carried as asked; `spawn_intent` above never reads it.
-            direct_spawn: spawn.direct_spawn,
+            direct_spawn,
+            requester,
         })
     }
 
@@ -613,12 +657,14 @@ impl<'a> AgentDispatcher<'a> {
         Ok(row.and_then(|record| record_dispatch_input(&record)))
     }
 
+    /// [`Self::parent_dispatch_input`] in the caller's transaction, a
+    /// writer's view or a snapshot it holds.
     pub(super) fn parent_dispatch_input_in_txn(
         &self,
-        wtxn: &heed::RwTxn<'_>,
+        txn: &heed::RoTxn<'_>,
         parent_attempt: AttemptId,
     ) -> Result<Option<AgentDispatchInput>> {
-        let row = AttemptQueue::new(self.vault).get_in_write_txn(wtxn, parent_attempt)?;
+        let row = AttemptQueue::new(self.vault).get_in_txn(txn, parent_attempt)?;
         if let Some(row) = &row {
             super::workflow_record::reject_wrapper_parent(row)?;
         }
@@ -649,4 +695,24 @@ impl<'a> AgentDispatcher<'a> {
             now,
         })
     }
+}
+
+/// Whether a hard erase took `asker`, read in `txn` (FIX 9181): the fence a
+/// spawn's receipts meet as they enqueue. A marker that does not read is
+/// logged without content and reads as none, so the fence never fails the
+/// enqueue it stands in.
+fn asker_hard_erased_in(vault: &Vault, txn: &heed::RoTxn<'_>, asker: Option<EntityId>) -> bool {
+    let Some(asker) = asker else {
+        return false;
+    };
+    crate::ports::TombstoneStoreRead::port_deletion_marked(
+        &vault.store,
+        txn,
+        crate::ports::DeletionMarker::HardDelete,
+        &asker,
+    )
+    .unwrap_or_else(|_| {
+        tracing::warn!("spawn receipt fence: a hard-delete marker could not be read");
+        false
+    })
 }

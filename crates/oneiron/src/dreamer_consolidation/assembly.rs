@@ -2,13 +2,14 @@
 use super::ConflictSet;
 #[cfg(test)]
 use super::PromotionCandidate;
-use super::conflict::candidate_facts;
+use super::conflict::{candidate_facts, candidate_probe_body};
 #[cfg(test)]
 use super::evidence::EvidenceLocator;
 use super::evidence::{ExtractedCandidate, VerifiedCandidate};
 use super::resources::BranchResources;
 use super::routing::{candidate_keys, judge_queue};
 use super::selection::{SelectionCandidate, SelectionConfig, StrengthSignals, select_candidates};
+use crate::dreamer_runner::{DreamerClaimEvidenceState, DreamerTournamentClaim};
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -71,6 +72,10 @@ pub(super) fn assemble_extracted(
                     .get()
                     .corrects()
                     .filter(|head| extracted.corrects() == Some(*head));
+                let merged_sources = crate::skill_optimize::union_source_rows([
+                    slot.get().sources(),
+                    extracted.sources(),
+                ]);
                 let (incoming, refs) = extracted.into_parts();
                 let (mut kept, mut old_refs) = slot.get().clone().into_parts();
                 old_refs.extend(refs);
@@ -95,7 +100,7 @@ pub(super) fn assemble_extracted(
                 kept.evidence_meet =
                     super::provenance::source_meet(kept.evidence_meet, incoming.evidence_meet);
                 kept.learned_at = kept.learned_at.min(incoming.learned_at);
-                let merged = ExtractedCandidate::new(kept, old_refs)?;
+                let merged = ExtractedCandidate::new(kept, old_refs)?.with_sources(merged_sources);
                 *slot.get_mut() = match corrects {
                     Some(head) => merged.correcting(head),
                     None => merged,
@@ -176,6 +181,27 @@ pub(super) fn assemble_extracted(
         corrections,
         held: !plan.held.is_empty(),
         retry_at_ms,
+    })
+}
+
+/// The tournament admission claim for one verified survivor (FIX 9008): its
+/// predicate, verified evidence count, incumbent confidence and whether it
+/// resolved a conflict. Built only on the tournament strategy, never on
+/// single-pass.
+pub(super) fn tournament_claim_of_verified(
+    candidate: &VerifiedCandidate,
+    contested: bool,
+) -> Result<DreamerTournamentClaim> {
+    let confidence = candidate_probe_body(&candidate.candidate)?.confidence;
+    Ok(DreamerTournamentClaim {
+        predicate: candidate.candidate.predicate().to_owned(),
+        sample_count: u32::try_from(candidate.evidence.count()).unwrap_or(u32::MAX),
+        incumbent_confidence: confidence,
+        evidence_state: if contested {
+            DreamerClaimEvidenceState::Contested
+        } else {
+            DreamerClaimEvidenceState::Uncontested
+        },
     })
 }
 

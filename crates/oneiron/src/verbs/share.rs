@@ -18,14 +18,14 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use crate::EntityId;
 use crate::access_grant::AccessGrantStatus;
 use crate::claim::ScopedReadResult;
-use crate::error::RecordError;
+use crate::error::ErrorKind;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::receipt::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 use crate::share::{Share, ShareViewerScope};
 use crate::share_travel::{TravelChoice, TravelKind};
-use crate::{EntityId, Error, WriteActor};
 
 /// `vault.shares.create`'s input: the brief, its recipient, the most the view
 /// may show, and what born-with text travels.
@@ -108,7 +108,8 @@ pub fn create_share_as_caller(
         mention: input.mention,
     };
     let travel = TravelChoice::or_default(input.travel.as_ref(), TravelKind::Brief);
-    let issuer = WriteActor::new(memory.actor(), memory.actor_class());
+    // FIX 11921: the issuer carries the run it writes for, if any.
+    let issuer = memory.write_actor();
     memory
         .vault()
         .create_share_travelling(&share_id, &issuer, &share, &travel)?;
@@ -171,8 +172,8 @@ pub struct BriefCitationFollowRequest {
     pub narrowing: Option<ShareViewNarrowing>,
 }
 
-/// The engine's refusal of a revoker who is neither the issuer nor the live
-/// owner ([`crate::Vault::revoke_share`]).
+/// What `vault.shares.revoke` answers for a revoke the engine refuses
+/// ([`crate::Vault::revoke_share`]'s typed `AuthorityRefused`).
 const SHARE_REVOKE_REFUSAL: &str = "share revocation requires issuer or owner";
 
 /// `vault.shares.revoke` on a handle: the handle's actor stops the share, at
@@ -182,23 +183,23 @@ pub fn revoke_share_as_caller(
     input: ShareRevokeRequest,
 ) -> MemoryResult<ShareRevokeReceipt> {
     let share_id = share_ref(&input.share_ref)?;
-    let actor = WriteActor::new(memory.actor(), memory.actor_class());
+    let actor = memory.write_actor();
     let revoked_at = memory.vault().store.clock.now_recorded_at();
     let share = memory
         .vault()
         .revoke_share(&share_id, &actor, revoked_at)
-        .map_err(|error| match error {
-            // A caller who may not stop the share and one who names none
-            // hear the same refusal, so a revoke never proves a share exists.
-            Error::Record(RecordError::InvalidAccessGrantBody(SHARE_REVOKE_REFUSAL))
-            | Error::EntityNotFound => MemoryError::new(
+        .map_err(|error| match error.kind() {
+            // The engine refuses a caller who may not stop the share and one
+            // who names none with the same typed kind, so a revoke never
+            // proves a share exists.
+            ErrorKind::AuthorityRefused => MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 format!("vault.shares.revoke: {SHARE_REVOKE_REFUSAL}"),
                 &[
                     "Revoke as the share's issuer, or as the vault's live owner, naming the share_id vault.shares.create answered.",
                 ],
             ),
-            error => MemoryError::from(error),
+            _ => MemoryError::from(error),
         })?;
     Ok(ShareRevokeReceipt {
         share_ref: share_id.to_hex(),

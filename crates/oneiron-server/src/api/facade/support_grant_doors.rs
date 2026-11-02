@@ -22,6 +22,7 @@ use oneiron::task_verb::sdk::{
     SupportGrantMintRequest, SupportGrantRevokeAnswer, SupportGrantRevokeRequest,
 };
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -39,7 +40,7 @@ pub(crate) async fn vault_support_grants_mint(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || -> MemoryResult<SupportGrantMintAnswer> {
+    let answer = clock_ingress::run_blocking(move || -> MemoryResult<SupportGrantMintAnswer> {
         crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(sdk::mint_support_grant_as(
                 server.vault(),
@@ -70,7 +71,7 @@ pub(crate) async fn vault_support_grants_list(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = clock_ingress::run_blocking(move || {
         sdk::list_support_grants_as(server.vault(), &owner, input)
     })
     .await
@@ -95,7 +96,7 @@ pub(crate) async fn vault_support_grants_revoke(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || -> MemoryResult<SupportGrantRevokeAnswer> {
+    let answer = clock_ingress::run_blocking(move || -> MemoryResult<SupportGrantRevokeAnswer> {
         crate::api::pairing::with_issuer(&server, |issuer| {
             Ok(sdk::revoke_support_grant_as(
                 server.vault(),

@@ -118,6 +118,7 @@ pub const MAX_ATTESTATION_EVIDENCE_BYTES: usize = 4096;
 pub const OP_KIND_SLIP_MINT: &str = "slip_mint";
 pub const OP_KIND_SLIP_REVOKE: &str = "slip_revoke";
 pub const OP_KIND_SLIP_CONSUME: &str = "slip_consume";
+pub const OP_KIND_SLIP_GRANT_REVOKE: &str = "slip_grant_revoke";
 pub const SLIP_KEY_SLIP_ID: &str = "slip_id";
 pub const SLIP_KEY_VAULT_ID: &str = "vault_id";
 pub const SLIP_KEY_PARENT_ID: &str = "parent_id";
@@ -150,6 +151,9 @@ pub const DELEGATION_KEY_TICKET_REF: &str = "ticket_ref";
 pub const DELEGATION_KEY_OWNER_REF: &str = "owner_ref";
 pub const DELEGATION_KEY_APPROVED_AT: &str = "approved_at";
 pub const DELEGATION_KEY_WALL_EXPIRES_AT: &str = "wall_expires_at";
+/// The repairs a support delegation names (FIX 4407): an optional key, present
+/// only when the customer selected one.
+pub const DELEGATION_KEY_REPAIRS: &str = "repairs";
 pub const SLIP_DELEGATION_KEYS: [&str; 5] = [
     DELEGATION_KEY_PURPOSE,
     DELEGATION_KEY_TICKET_REF,

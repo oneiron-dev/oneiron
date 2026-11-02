@@ -67,6 +67,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
                 | "room_thread"
                 | POLICY_PPTX_COMMENT_LIMITS_KEY
                 | "booking_conversion"
+                | crate::booking::anti_abuse::BOOKING_ANTI_ABUSE_RULES_KEY
                 | POLICY_DREAMER_FAILURE_RULES_KEY
                 | POLICY_DREAMER_FAILURE_PRECEDENCE_KEY
                 | POLICY_HOSTED_TTS_KEY
@@ -453,9 +454,9 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
     let diagnostic_bounds = match single_map_value(&entries, "diagnostic_bounds") {
         MapValue::Missing => None,
         MapValue::Duplicate => return None,
-        MapValue::Present(value) => {
-            Some(crate::self_heal::tripwires::TripwireBounds::decode(value)?)
-        }
+        MapValue::Present(value) => Some(
+            crate::self_heal::tripwires::ManifestTripwireBounds::decode(value)?,
+        ),
     };
 
     let (project_depth_default, project_depth_max) = parse_project_depth_rows(&entries)?;
@@ -750,6 +751,7 @@ pub(in crate::gate) fn decode_policy_manifest(data: &[u8]) -> Option<DecodedPoli
         room_thread,
         pptx_comment_limits,
         booking_conversion_rows,
+        booking_anti_abuse_rows: crate::booking::anti_abuse::decode_manifest_rule_field(&entries)?,
         dreamer_failure_rules,
         dreamer_failure_precedence,
         hosted_tts,

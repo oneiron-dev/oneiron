@@ -41,6 +41,15 @@ pub(crate) struct Backups {
     /// backups (KS-4A1): `custody_anchor_pending` while no anchor root is
     /// set up. `None` when the vault could not be read.
     pub(crate) custody: Option<oneiron::recovery::checkpoint::CustodyStatus>,
+    /// The backups a managed handoff pin keeps pending for a stage ack
+    /// (FIX 6335): retention's excess past `keep`, oldest first, with their
+    /// count and bytes. Empty with no handoff policy; the
+    /// `backup_handoff_backlog` check still raises past its rows.
+    pub(crate) handoff_pending: Vec<BackupRecord>,
+    /// How many `handoff_pending` holds.
+    pub(crate) handoff_pending_count: usize,
+    /// Their bytes.
+    pub(crate) handoff_pending_bytes: u64,
 }
 
 /// One restore the vault came from.
@@ -88,7 +97,9 @@ pub(crate) fn locate(
     every_hours: Option<u64>,
 ) -> anyhow::Result<Location> {
     let disk_bytes = disk_usage(vault_path)?;
-    let backups = backup::list(plan)?;
+    // FIX 6335: the listing, and the backups a managed handoff pin keeps
+    // pending for a stage ack.
+    let (backups, handoff_pending) = backup::list_with_pending(plan)?;
     let (last_export, secret_scan, restores, custody) = match vault {
         Some(vault) => (
             // The audit also keeps off-record room copies; this is the
@@ -129,6 +140,11 @@ pub(crate) fn locate(
             keep: plan.keep,
             restores,
             custody,
+            handoff_pending_count: handoff_pending.len(),
+            handoff_pending_bytes: handoff_pending
+                .iter()
+                .fold(0u64, |sum, record| sum.saturating_add(record.bytes)),
+            handoff_pending,
         },
         last_export,
         secret_scan,

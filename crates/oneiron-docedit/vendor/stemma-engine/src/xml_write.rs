@@ -1,6 +1,6 @@
 //! Streaming XML writer for OOXML document parts.
 //!
-//! Provides `XmlWriter`, a thin wrapper around `Vec<u8>` that supports:
+//! Provides `XmlWriter`, a thin wrapper around a growing byte buffer that supports:
 //! - Writing the XML declaration and OOXML root element with all known namespaces
 //! - Writing raw start/end tags for structural elements like `<w:body>`
 //! - Streaming individual `xmltree::Element` nodes (paragraphs, tables, bookmarks)
@@ -9,26 +9,39 @@
 //! immediately, then dropped — avoiding the need to hold the entire body tree in
 //! memory or perform a double pass (build tree -> walk tree for bytes).
 
-use std::io;
+use std::io::{self, Write};
 
 use xmltree::{Element, EmitterConfig};
 
+use crate::admission::{HeldBuffer, Hold};
 use crate::word_xml::{CORE_NAMESPACE_URIS, KNOWN_OOXML_NAMESPACES};
 
-/// A streaming XML writer that writes OOXML content to a `Vec<u8>` buffer.
+/// A streaming XML writer that writes OOXML content to a byte buffer.
 ///
 /// Elements are serialized using xmltree's `write_with_config` (no XML declaration),
 /// which may redundantly re-declare namespaces on individual elements. This is valid
 /// XML and accepted by Word — the root element's namespace declarations are
 /// authoritative and the redundant ones are harmless.
+///
+/// The buffer takes each growth from its hold before it allocates (FIX 10657):
+/// a writer [`Self::held`] under an operation's hold reserves the part it
+/// streams as it is written, and a refused growth fails that write with the
+/// refusal ([`crate::admission::Refusal::from_io`]).
 pub(crate) struct XmlWriter {
-    buf: Vec<u8>,
+    buf: HeldBuffer,
 }
 
 impl XmlWriter {
-    /// Creates a new writer with an empty buffer.
+    /// Creates a new writer with an empty buffer that reserves nothing.
     pub fn new() -> Self {
-        Self { buf: Vec::new() }
+        Self::held(Hold::default())
+    }
+
+    /// Creates a new writer with an empty buffer growing under `hold`.
+    pub fn held(hold: Hold) -> Self {
+        Self {
+            buf: HeldBuffer::new(hold),
+        }
     }
 
     /// Writes a raw `<tag>` opening tag (no attributes, no namespace declarations).
@@ -36,18 +49,16 @@ impl XmlWriter {
     /// Used for structural elements like `<w:body>` that appear inside the root
     /// and don't need their own namespace declarations.
     pub fn start_tag(&mut self, tag: &str) -> io::Result<()> {
-        self.buf.extend_from_slice(b"<");
-        self.buf.extend_from_slice(tag.as_bytes());
-        self.buf.extend_from_slice(b">");
-        Ok(())
+        self.buf.write_all(b"<")?;
+        self.buf.write_all(tag.as_bytes())?;
+        self.buf.write_all(b">")
     }
 
     /// Writes a raw `</tag>` closing tag.
     pub fn end_tag(&mut self, tag: &str) -> io::Result<()> {
-        self.buf.extend_from_slice(b"</");
-        self.buf.extend_from_slice(tag.as_bytes());
-        self.buf.extend_from_slice(b">");
-        Ok(())
+        self.buf.write_all(b"</")?;
+        self.buf.write_all(tag.as_bytes())?;
+        self.buf.write_all(b">")
     }
 
     /// Writes an `xmltree::Element` as a complete XML fragment (no declaration).
@@ -59,7 +70,7 @@ impl XmlWriter {
         let config = EmitterConfig::new().write_document_declaration(false);
         element
             .write_with_config(&mut self.buf, config)
-            .map_err(|e| io::Error::other(e.to_string()))
+            .map_err(emitter_error)
     }
 
     /// Writes a raw `xmltree::XMLNode`. Elements are written via `write_element`;
@@ -67,31 +78,25 @@ impl XmlWriter {
     pub fn write_xml_node(&mut self, node: &xmltree::XMLNode) -> io::Result<()> {
         match node {
             xmltree::XMLNode::Element(el) => self.write_element(el),
-            xmltree::XMLNode::Text(text) => {
-                xml_escape_into(&mut self.buf, text);
-                Ok(())
-            }
+            xmltree::XMLNode::Text(text) => xml_escape_into(&mut self.buf, text),
             xmltree::XMLNode::Comment(text) => {
-                self.buf.extend_from_slice(b"<!--");
-                self.buf.extend_from_slice(text.as_bytes());
-                self.buf.extend_from_slice(b"-->");
-                Ok(())
+                self.buf.write_all(b"<!--")?;
+                self.buf.write_all(text.as_bytes())?;
+                self.buf.write_all(b"-->")
             }
             xmltree::XMLNode::CData(text) => {
-                self.buf.extend_from_slice(b"<![CDATA[");
-                self.buf.extend_from_slice(text.as_bytes());
-                self.buf.extend_from_slice(b"]]>");
-                Ok(())
+                self.buf.write_all(b"<![CDATA[")?;
+                self.buf.write_all(text.as_bytes())?;
+                self.buf.write_all(b"]]>")
             }
             xmltree::XMLNode::ProcessingInstruction(name, data) => {
-                self.buf.extend_from_slice(b"<?");
-                self.buf.extend_from_slice(name.as_bytes());
+                self.buf.write_all(b"<?")?;
+                self.buf.write_all(name.as_bytes())?;
                 if let Some(d) = data {
-                    self.buf.push(b' ');
-                    self.buf.extend_from_slice(d.as_bytes());
+                    self.buf.write_all(b" ")?;
+                    self.buf.write_all(d.as_bytes())?;
                 }
-                self.buf.extend_from_slice(b"?>");
-                Ok(())
+                self.buf.write_all(b"?>")
             }
         }
     }
@@ -103,7 +108,7 @@ impl XmlWriter {
     /// at import (xmltree re-declares the namespaces they use on the child node),
     /// so they are self-contained fragments and are written byte-for-byte.
     pub fn write_background(&mut self, bg: &crate::domain::DocumentBackground) -> io::Result<()> {
-        self.buf.extend_from_slice(b"<w:background");
+        self.buf.write_all(b"<w:background")?;
         for (attr, value) in [
             ("w:color", &bg.color),
             ("w:themeColor", &bg.theme_color),
@@ -111,28 +116,39 @@ impl XmlWriter {
             ("w:themeShade", &bg.theme_shade),
         ] {
             if let Some(v) = value {
-                self.buf.push(b' ');
-                self.buf.extend_from_slice(attr.as_bytes());
-                self.buf.extend_from_slice(b"=\"");
-                xml_escape_into(&mut self.buf, v);
-                self.buf.push(b'"');
+                self.buf.write_all(b" ")?;
+                self.buf.write_all(attr.as_bytes())?;
+                self.buf.write_all(b"=\"")?;
+                xml_escape_into(&mut self.buf, v)?;
+                self.buf.write_all(b"\"")?;
             }
         }
         if bg.drawing_xml.is_empty() {
-            self.buf.extend_from_slice(b"/>");
+            self.buf.write_all(b"/>")?;
         } else {
-            self.buf.push(b'>');
+            self.buf.write_all(b">")?;
             for fragment in &bg.drawing_xml {
-                self.buf.extend_from_slice(fragment.as_bytes());
+                self.buf.write_all(fragment.as_bytes())?;
             }
-            self.buf.extend_from_slice(b"</w:background>");
+            self.buf.write_all(b"</w:background>")?;
         }
         Ok(())
     }
 
-    /// Consumes the writer and returns the accumulated byte buffer.
+    /// Consumes the writer and returns the accumulated byte buffer. A refused
+    /// write already returned its refusal to the caller, which stopped there;
+    /// a refused writer returns no bytes.
     pub fn into_inner(self) -> Vec<u8> {
-        self.buf
+        self.buf.into_inner().unwrap_or_default()
+    }
+}
+
+/// An emitter's error as I/O: its own I/O error as it is, so a refused
+/// growth keeps its refusal.
+fn emitter_error(error: xmltree::Error) -> io::Error {
+    match error {
+        xmltree::Error::Io(error) => error,
+        error => io::Error::other(error.to_string()),
     }
 }
 
@@ -154,7 +170,7 @@ pub(crate) fn write_ooxml_root_start(
 ) -> io::Result<()> {
     // XML declaration
     w.buf
-        .extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
+        .write_all(b"<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>")?;
 
     // Collect all namespace declarations: known + base_root's extras.
     // Use an ordered collection to produce deterministic output.
@@ -191,28 +207,28 @@ pub(crate) fn write_ooxml_root_start(
     }
 
     // Write the root element opening tag.
-    w.buf.extend_from_slice(b"<");
-    w.buf.extend_from_slice(root_tag.as_bytes());
+    w.buf.write_all(b"<")?;
+    w.buf.write_all(root_tag.as_bytes())?;
 
     // Write namespace declarations (known set, then preserved vendor extras).
     for &(prefix, uri) in ns_map.iter().chain(vendor_ns.iter()) {
-        w.buf.extend_from_slice(b" xmlns:");
-        w.buf.extend_from_slice(prefix.as_bytes());
-        w.buf.extend_from_slice(b"=\"");
-        xml_escape_attr_into(&mut w.buf, uri);
-        w.buf.extend_from_slice(b"\"");
+        w.buf.write_all(b" xmlns:")?;
+        w.buf.write_all(prefix.as_bytes())?;
+        w.buf.write_all(b"=\"")?;
+        xml_escape_attr_into(&mut w.buf, uri)?;
+        w.buf.write_all(b"\"")?;
     }
 
     // Write mc:Ignorable attribute.
     if !ignorable_prefixes.is_empty() {
-        w.buf.extend_from_slice(b" mc:Ignorable=\"");
+        w.buf.write_all(b" mc:Ignorable=\"")?;
         for (i, prefix) in ignorable_prefixes.iter().enumerate() {
             if i > 0 {
-                w.buf.push(b' ');
+                w.buf.write_all(b" ")?;
             }
-            w.buf.extend_from_slice(prefix.as_bytes());
+            w.buf.write_all(prefix.as_bytes())?;
         }
-        w.buf.extend_from_slice(b"\"");
+        w.buf.write_all(b"\"")?;
     }
 
     // Carry the root element's `xml:space` (ECMA-376 permits it on any element,
@@ -227,38 +243,51 @@ pub(crate) fn write_ooxml_root_start(
     // run without indentation), so inheriting root preservation is a no-op for
     // it; only genuine text content is affected, exactly as the source intended.
     if let Some(space) = crate::xml_attrs::attr_get(base_root, "xml:space") {
-        w.buf.extend_from_slice(b" xml:space=\"");
-        xml_escape_attr_into(&mut w.buf, space);
-        w.buf.extend_from_slice(b"\"");
+        w.buf.write_all(b" xml:space=\"")?;
+        xml_escape_attr_into(&mut w.buf, space)?;
+        w.buf.write_all(b"\"")?;
     }
 
-    w.buf.extend_from_slice(b">");
-
-    Ok(())
+    w.buf.write_all(b">")
 }
 
 /// Escape XML special characters in a double-quoted attribute value.
-fn xml_escape_attr_into(buf: &mut Vec<u8>, text: &str) {
-    for ch in text.bytes() {
-        match ch {
-            b'&' => buf.extend_from_slice(b"&amp;"),
-            b'<' => buf.extend_from_slice(b"&lt;"),
-            b'"' => buf.extend_from_slice(b"&quot;"),
-            other => buf.push(other),
-        }
-    }
+fn xml_escape_attr_into(buf: &mut impl Write, text: &str) -> io::Result<()> {
+    write_escaped(buf, text, |byte| match byte {
+        b'&' => Some("&amp;"),
+        b'<' => Some("&lt;"),
+        b'"' => Some("&quot;"),
+        _ => None,
+    })
 }
 
 /// Escape XML special characters in text content.
-fn xml_escape_into(buf: &mut Vec<u8>, text: &str) {
-    for ch in text.bytes() {
-        match ch {
-            b'&' => buf.extend_from_slice(b"&amp;"),
-            b'<' => buf.extend_from_slice(b"&lt;"),
-            b'>' => buf.extend_from_slice(b"&gt;"),
-            other => buf.push(other),
+fn xml_escape_into(buf: &mut impl Write, text: &str) -> io::Result<()> {
+    write_escaped(buf, text, |byte| match byte {
+        b'&' => Some("&amp;"),
+        b'<' => Some("&lt;"),
+        b'>' => Some("&gt;"),
+        _ => None,
+    })
+}
+
+/// Write `text` with each byte `escape` names replaced by its entity, the
+/// runs between them written whole.
+fn write_escaped(
+    buf: &mut impl Write,
+    text: &str,
+    escape: impl Fn(u8) -> Option<&'static str>,
+) -> io::Result<()> {
+    let bytes = text.as_bytes();
+    let mut run = 0;
+    for (index, &byte) in bytes.iter().enumerate() {
+        if let Some(entity) = escape(byte) {
+            buf.write_all(&bytes[run..index])?;
+            buf.write_all(entity.as_bytes())?;
+            run = index + 1;
         }
     }
+    buf.write_all(&bytes[run..])
 }
 
 #[cfg(test)]

@@ -264,6 +264,8 @@ pub(crate) fn record_unclear_floor_fit_in_txn(
     };
     let check = SettingCheck {
         subject: global_setting_subject(ATTRIBUTION_UNCLEAR_FLOOR.key)?,
+        // Intentionally global: the floor is the vault's (FIX 6038).
+        project: None,
         key: ATTRIBUTION_UNCLEAR_FLOOR.key.to_owned(),
         // The vault-wide fit, whichever tree version the audit ran under.
         type_ref: TypeRef::root(0),

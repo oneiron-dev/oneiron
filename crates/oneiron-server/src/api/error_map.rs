@@ -122,16 +122,11 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
-        // FIX 2222: a host credential where no host acts as a person.
-        ErrorKind::HostActionRequiresSupportGrant => ApiError::new(
-            error.to_string(),
-            ApiErrorDetails::Forbidden {
-                required_scope: Some("support_grant".to_owned()),
-            },
-            [
-                "Ask the customer for a support grant; the operator's own admin commands (status, backup, restore, repair, move) need none.",
-            ],
-        ),
+        // FIX 2222: a host credential where no host acts as a person, under
+        // the engine's own code (FIX 6032).
+        ErrorKind::HostActionRequiresSupportGrant => {
+            ApiError::host_action_requires_support_grant(error.to_string())
+        }
         ErrorKind::WorkCompanionRequired => ApiError::new(
             error.to_string(),
             ApiErrorDetails::Forbidden {
@@ -172,6 +167,15 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Restart policy review from the current diff and read frontier."],
         ),
+        // FIX 10011: the owner's model pin stands and no offered seat
+        // serves it; no other model is put in its place.
+        ErrorKind::ModelPinUnavailable => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some("model_pin_unavailable".to_owned()),
+            },
+            ["Offer a seat for the pinned model, or clear or change the owner's model pin."],
+        ),
         // A refusal that names its bound answers as the facade does (FIX
         // 4618): the message is the whole answer.
         ErrorKind::Refused => ApiError::new(
@@ -182,17 +186,21 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         // A legal order binding the host keeps the record (WILL-PLAN L01
         // rows 01 and 03): its state, and the message naming its bound.
         ErrorKind::LegalHold => {
-            let state = match &error {
-                oneiron::Error::LegalHold(notice) => notice.state.as_str(),
-                _ => "legal_hold",
+            let (state, legal_hold) = match &error {
+                oneiron::Error::LegalHold(notice) => (notice.state.as_str(), Some(notice.clone())),
+                _ => ("legal_hold", None),
             };
-            ApiError::new(
+            let refusal = ApiError::new(
                 error.to_string(),
                 ApiErrorDetails::InvalidState {
                     state: Some(state.to_owned()),
                 },
                 [oneiron::error::LEGAL_HOLD_SUGGESTION],
-            )
+            );
+            match legal_hold {
+                Some(notice) => refusal.with_legal_hold(notice),
+                None => refusal,
+            }
         }
         // KS-6: a credential's custody key does not open, or custody could
         // not take a new one: the vault's state, as the facade answers it;
@@ -210,6 +218,24 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
                 ["Do what the message names: retry, or re-enter or reissue that credential."],
             )
         }
+        // A hold named a gate-decision partition an erase or a key
+        // retirement took (FIX 2923): its typed state, as the facade answers
+        // it, never a bad request.
+        ErrorKind::HoldTargetErased => {
+            let state = match &error {
+                oneiron::Error::Record(oneiron::error::RecordError::HoldTargetErased(target)) => {
+                    target.as_str()
+                }
+                _ => oneiron::error::ErasedHoldTarget::Erased.as_str(),
+            };
+            ApiError::new(
+                error.to_string(),
+                ApiErrorDetails::InvalidState {
+                    state: Some(state.to_owned()),
+                },
+                [oneiron::error::HOLD_TARGET_ERASED_SUGGESTION],
+            )
+        }
         // An erase took the reply this read names (FIX 5718): the record's
         // state, as the facade answers it, never this plane's 500.
         ErrorKind::ResponseErased => ApiError::new(
@@ -223,17 +249,40 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
     }
 }
 
+/// The typed 403 refusal `error` already carries, as [`core_engine_error`]
+/// answers it: the support-grant refusal, or a carried owner refusal that is
+/// a 403. `None` for any other error, which keeps its door's own refusal, so
+/// a door that answers every failure with one 403 keeps that status and
+/// still says nothing of a credential that did not verify (FIX 6032).
+pub(super) fn carried_refusal(error: &oneiron::Error) -> Option<ApiError> {
+    if matches!(error.kind(), ErrorKind::HostActionRequiresSupportGrant) {
+        return Some(ApiError::host_action_requires_support_grant(
+            error.to_string(),
+        ));
+    }
+    match error {
+        oneiron::Error::Claim(oneiron::error::ClaimError::ScopedReadOwnerNotLive(refusal)) => {
+            owner_refusal(refusal)
+                .filter(|answer| answer.status() == axum::http::StatusCode::FORBIDDEN)
+        }
+        _ => None,
+    }
+}
+
 /// The carried owner refusal's answer: `OWNER_BINDING_REQUIRED` and
-/// `FORBIDDEN` are the 403 refusal shape the support-grant refusal uses,
-/// naming the owner as what the act requires; `INVALID_STATE` is a 409. Any
-/// other code stays the caller's 500.
+/// `FORBIDDEN` are 403s under their own codes, naming the owner as what the
+/// act requires; `INVALID_STATE` is a 409. Any other code stays the caller's
+/// 500.
 fn owner_refusal(refusal: &oneiron::MemoryError) -> Option<ApiError> {
     let details = match refusal.code.as_str() {
-        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED | oneiron::MEMORY_CODE_FORBIDDEN => {
-            ApiErrorDetails::Forbidden {
+        oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiErrorDetails::OwnerBindingRequired {
                 required_scope: Some("owner".to_owned()),
             }
         }
+        oneiron::MEMORY_CODE_FORBIDDEN => ApiErrorDetails::Forbidden {
+            required_scope: Some("owner".to_owned()),
+        },
         oneiron::MEMORY_CODE_INVALID_STATE => ApiErrorDetails::InvalidState {
             state: Some("owner_check".to_owned()),
         },

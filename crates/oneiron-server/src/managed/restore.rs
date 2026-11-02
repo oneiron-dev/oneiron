@@ -30,6 +30,8 @@ use oneiron::recovery::checkpoint::{
     RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase,
     RestoreReport,
 };
+#[cfg(target_os = "linux")]
+use oneiron_vault_contract::restore::FreshRecipient;
 use oneiron_vault_contract::restore::plan::RestoreCustodyPlan;
 use oneiron_vault_contract::restore::{
     ManagedRestoreDestination as Destination, ManagedRestoreIdentity, ManagedRestorePhase as Phase,
@@ -38,8 +40,14 @@ use oneiron_vault_contract::restore::{
 use zeroize::Zeroizing;
 
 // A vault VM host proves and takes over its own restore pipes the same way.
+use self::host_holds::AdmittedHostOrderHolds;
 #[cfg(target_os = "linux")]
-pub(super) use self::input::{adopt, pipe_end};
+pub(super) use self::input::adopt;
+// The carrier watch's first look runs the begin-check's plan check again.
+#[cfg(target_os = "linux")]
+pub(super) use self::input::fresh_authorizes;
+// The start seals the argv recipient bytes the begin-check verified (FIX 11988).
+pub(super) use self::input::CheckedRecipients;
 use self::receipt::ReceiptContext;
 pub(super) use self::receipt::RestoreOutcome;
 use self::result::ResultSink;
@@ -48,6 +56,7 @@ use super::isolation::{RestoreDestination, RestoreDestinationRefusal};
 use super::vault_gates::{DekMac, check_dek_mac};
 use crate::config::ServeConfig;
 use crate::owner::backup::CustodyAnchorCredentials;
+use crate::pipe_proof::pipe_end;
 
 /// Where a restore stands, which names the failure its drop reports.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -71,9 +80,12 @@ pub(super) struct ManagedRestore {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
-    /// The source's host-order family the input pipe carried, admitted;
-    /// `None` without one. Its job takes it.
-    host_holds: Option<HostOrderHolds>,
+    /// The argv escrow recipient bytes the begin-check read and verified,
+    /// for the start to seal rather than the files again (FIX 11988).
+    checked: CheckedRecipients,
+    /// The host-order family the input pipe carried, admitted by where it
+    /// came from; none without one. Its job takes it.
+    host_holds: AdmittedHostOrderHolds,
     destination: Arc<RestoreDestination>,
     stage: Stage,
     kept: Option<Kept>,
@@ -112,10 +124,10 @@ impl ManagedRestore {
         else {
             return Ok(None);
         };
-        input::pipe_end(result_fd, true).map_err(|reason| {
+        pipe_end(result_fd, true).map_err(|reason| {
             anyhow::anyhow!("--restore-result-fd {result_fd} refused: {reason}")
         })?;
-        let input_pipe = input::pipe_end(input_fd, false);
+        let input_pipe = pipe_end(input_fd, false);
         let sink = Arc::new(ResultSink::new(input::adopt(result_fd)));
         let unparsed = |reason: &str| {
             sink.failed(
@@ -145,7 +157,7 @@ impl ManagedRestore {
                 why.to_owned(),
             )
         };
-        input::check(&plan, managed, config.maximum_tier).map_err(invalid)?;
+        let checked = input::check(&plan, managed, config.maximum_tier).map_err(invalid)?;
         let host_holds = host_holds::admit(input.host_holds, &plan).map_err(invalid)?;
         let destination = RestoreDestination::probe(&managed.data_dir, &managed.vault_name)
             .map_err(|refusal| {
@@ -162,6 +174,7 @@ impl ManagedRestore {
             sink,
             identity,
             plan,
+            checked,
             host_holds,
             destination: Arc::new(destination),
             stage: Stage::Credentials,
@@ -187,7 +200,7 @@ impl ManagedRestore {
             sink: Arc::clone(&self.sink),
             identity: self.identity.clone(),
             plan: self.plan.clone(),
-            host_holds: self.host_holds.take(),
+            host_holds: std::mem::take(&mut self.host_holds),
             destination: Arc::clone(&self.destination),
             data_dir: managed.data_dir.clone(),
             owner: managed.derivation_owner,
@@ -224,6 +237,20 @@ impl ManagedRestore {
                 ))
             }
         }
+    }
+
+    /// The plan's fresh escrow recipients, for the carrier watch's first
+    /// look (FIX 11851): it seals only to those the begin-check accepted.
+    /// Read before [`Self::verified`] spends the restore.
+    #[cfg(target_os = "linux")]
+    pub(super) fn fresh_recipients(&self) -> &[FreshRecipient] {
+        &self.plan.request.fresh
+    }
+
+    /// The argv escrow recipient bytes the begin-check read and verified,
+    /// for the start to seal (FIX 11988).
+    pub(super) fn checked_recipients(&self) -> &CheckedRecipients {
+        &self.checked
     }
 
     /// Seals the kept restore's receipt once the start spooled its escrow
@@ -341,7 +368,7 @@ struct Job {
     sink: Arc<ResultSink>,
     identity: ManagedRestoreIdentity,
     plan: ManagedRestorePlan,
-    host_holds: Option<HostOrderHolds>,
+    host_holds: AdmittedHostOrderHolds,
     destination: Arc<RestoreDestination>,
     data_dir: std::path::PathBuf,
     owner: DerivationOwner,
@@ -433,6 +460,34 @@ impl Job {
             Some(floor) => key.with_wake_sequence_floor(floor),
             None => key,
         };
+        // So does the vault's mode-root policy, beside the plan's pins (FIX
+        // 968); one that does not read delegates no signer.
+        let key = match plan
+            .backup_mode_roots
+            .as_ref()
+            .map(|bytes| oneiron::authority::BackupModeRoots::from_bytes(&bytes.0))
+        {
+            Some(Ok(roots)) => key.trusting_mode_roots(&roots.policy, &roots.delegations),
+            Some(Err(_)) => {
+                tracing::warn!(
+                    reason = "backup_mode_roots_invalid",
+                    "the plan's backup mode roots did not read; they delegate no signer"
+                );
+                key
+            }
+            None => key,
+        };
+        // The family the artifact's member held rides the key with its tag:
+        // the restore passes it on only when the tag names that member (FIX
+        // 6817). The pipe's live family stays here and wins.
+        let AdmittedHostOrderHolds {
+            pipe: host_holds,
+            artifact,
+        } = host_holds;
+        let key = match artifact {
+            Some(artifact) => key.with_artifact_host_holds(artifact),
+            None => key,
+        };
         let seal = if plan.maximum_tier {
             key.restored_page_seal()
         } else {
@@ -455,7 +510,9 @@ impl Job {
         vault_config.page_seal = seal;
         let recovery = crate::owner::backup::custody_recovery(&plan.artifact, &backup, anchor);
         let observed = Observed::default();
-        let finish = |vault: &oneiron::Vault| -> Result<(), RestoreAdmissionError> {
+        let finish = |vault: &oneiron::Vault,
+                      artifact: Option<&HostOrderHolds>|
+         -> Result<(), RestoreAdmissionError> {
             managed_checks(
                 vault,
                 &destination,
@@ -464,9 +521,9 @@ impl Job {
                 &dek,
                 &observed,
             )?;
-            // The image carries no host-order family until L04's member
-            // lands (FIX 6598): only the pipe's, or none.
-            let installed = host_holds::install(vault, host_holds.as_ref(), None)?;
+            // The pipe's, else the one the artifact's member held, else none
+            // (FIX 6598, FIX 6817).
+            let installed = host_holds::install(vault, host_holds.as_ref(), artifact)?;
             observed.host_holds.set(Some(installed));
             Ok(())
         };

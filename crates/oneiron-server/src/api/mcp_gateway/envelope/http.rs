@@ -17,15 +17,17 @@ pub(crate) async fn mcp_gateway(
     body: Bytes,
 ) -> impl IntoResponse {
     // What a tool's answer holds (a deck preview's renderer) is kept until
-    // the reply is encoded (FIX 8238).
-    crate::api::answer_hold::until_encoded(mcp_endpoint(
+    // the reply is encoded (FIX 8238). The endpoint's future lives on the
+    // heap, so the route's handler future holds a pointer through every
+    // layer, not the whole dispatch (FIX 12072).
+    crate::api::answer_hold::until_encoded(Box::pin(mcp_endpoint(
         McpSurfaceMode::Primary,
         headers,
         locality,
         connection,
         server,
         body,
-    ))
+    )))
     .await
 }
 
@@ -41,15 +43,16 @@ pub(crate) async fn mcp_tool_first_gateway(
     body: Bytes,
 ) -> impl IntoResponse {
     // What a tool's answer holds (a deck preview's renderer) is kept until
-    // the reply is encoded (FIX 8238).
-    crate::api::answer_hold::until_encoded(mcp_endpoint(
+    // the reply is encoded (FIX 8238); the endpoint's future on the heap
+    // (FIX 12072).
+    crate::api::answer_hold::until_encoded(Box::pin(mcp_endpoint(
         McpSurfaceMode::ToolFirst,
         headers,
         locality,
         connection,
         server,
         body,
-    ))
+    )))
     .await
 }
 
@@ -193,7 +196,17 @@ pub(super) async fn mcp_endpoint(
     // request (OF-580): a second call naming it for the same call waits for
     // this one's reply and gets it, under its own id; one naming it for
     // another call is refused at once.
-    let claim = match mcp_named_invocation(&request) {
+    // The owner's clock repair whose caller its own writer judges claims no
+    // invocation: resolving the claim's owner reads the clock it repairs
+    // (FIX 11202).
+    let deferred_repair = super::clock_repair_call::deferred_caller(
+        &server,
+        &headers,
+        &connection,
+        request.params.as_ref(),
+    )
+    .is_some();
+    let claim = match mcp_named_invocation(&request).filter(|_| !deferred_repair) {
         None => None,
         Some(invocation) => {
             // A held socket's owner is judged before anything is claimed or
@@ -224,7 +237,14 @@ pub(super) async fn mcp_endpoint(
                 &request,
                 raw_arguments.as_deref(),
             );
-            match facade::claim_door_invocation(&server, invocation, call).await {
+            match facade::claim_door_invocation(
+                &server,
+                invocation,
+                call,
+                oneiron::EntityId::from_hex(&owner).ok(),
+            )
+            .await
+            {
                 DoorClaim::Run(claim) => Some(claim),
                 DoorClaim::Answered(outcome) => {
                     // And again once the wait is over, before a reply is his.
@@ -315,11 +335,57 @@ pub(super) async fn mcp_endpoint(
                         ),
                     );
                 }
+                DoorClaim::ReplyNotKept { committed_writes } => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        McpGatewayError::new(
+                            -32020,
+                            crate::idempotency::REPLY_NOT_KEPT_STATE,
+                            format!(
+                                "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+                            ),
+                        ),
+                    );
+                }
+                DoorClaim::Erased => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        McpGatewayError::new(
+                            -32020,
+                            facade::INVOCATION_RESPONSE_ERASED,
+                            "the first response with this invocation was erased",
+                        ),
+                    );
+                }
+                DoorClaim::StoreFailed => {
+                    return mcp_connection_refusal(
+                        &server,
+                        &headers,
+                        &request.method,
+                        &body,
+                        id,
+                        McpGatewayError::new(
+                            -32603,
+                            facade::INVOCATION_STORE_FAILED,
+                            "the invocation claim could not be stored",
+                        ),
+                    );
+                }
             }
         }
     };
     let method = request.method.clone();
-    let call = handle_mcp_request(
+    // The method dispatch, `tools/call` and every verb under it, on the heap
+    // (FIX 12072).
+    let call = Box::pin(handle_mcp_request(
         mode,
         &headers,
         locality,
@@ -327,7 +393,7 @@ pub(super) async fn mcp_endpoint(
         &server,
         request,
         raw_arguments.as_deref(),
-    );
+    ));
     // A claimed call keeps the answer its release judged, for the calls
     // waiting on it (FIX 7914).
     let (mut result, judged) = if claim.is_some() {
@@ -343,6 +409,7 @@ pub(super) async fn mcp_endpoint(
     };
     let stamp =
         (!covered).then(|| mcp_connection_stamp(&server, &headers, &method, &body, &mut result));
+    let failed = result.is_err();
     let reply = mcp_envelope(id, result);
     if let Some(claim) = claim {
         let mut saved = reply.clone();
@@ -351,11 +418,16 @@ pub(super) async fn mcp_endpoint(
         }
         let peer = crate::auth::proved_peer(&headers, &connection);
         let release = super::super::claimed_release::kept(peer, &saved, judged);
-        claim.finish(InvocationOutcome {
+        let outcome = InvocationOutcome {
             status: 200,
             body: saved,
             release,
-        });
+        };
+        if failed {
+            claim.finish_failed(outcome);
+        } else {
+            claim.finish(outcome);
+        }
     }
     mcp_http_reply(reply, stamp.as_ref())
 }

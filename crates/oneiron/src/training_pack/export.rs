@@ -5,7 +5,9 @@ use serde_json::Value;
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
-use crate::edit_distance::reservoir::{ReservoirScope, amendment_receipt_id, export_reservoir};
+use crate::edit_distance::reservoir::{
+    CorpusUse, ReservoirScope, amendment_receipt_id, export_reservoir,
+};
 use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -125,6 +127,9 @@ impl Vault {
     /// Inputs are not recovered by joining a receipt to unconsented prompt text.
     /// The reservoir's chosen and rejected pairs train a role; a question
     /// head's per-target rows come from its own detector ingress, not here.
+    /// The door's source check holds each source with other people to the
+    /// owner's tick in the draft before the split, and the spec pins both the
+    /// ticks and what was left out (ARCH-0053 #training-inputs, FIX 10194).
     pub fn prepare_training_pack(
         &self,
         owner: &AuthenticatedOwner,
@@ -156,8 +161,14 @@ impl Vault {
             .into_iter()
             .find(|row| row.id == draft.split.held_out_cohort && row.retired_at.is_none())
             .ok_or_else(|| invalid("training split needs a live sealed cohort for its seat"))?;
+        let mut consented = draft.consented_sources.clone();
+        consented.sort_unstable();
+        consented.dedup();
         let mut body = Vec::new();
-        let manifest = export_reservoir(self, scope, &mut body)?;
+        let corpus_use = CorpusUse::TrainingRun {
+            consented_sources: &consented,
+        };
+        let manifest = export_reservoir(self, owner, scope, corpus_use, &mut body)?;
         let mut split = split_bytes(self, draft, &body, &cohort)?;
         // The export's pairs, the pinned files and the held-out cohort's
         // cases and labels (FIX 5760); a lineage read that fails leaves them
@@ -187,6 +198,8 @@ impl Vault {
                 cohort: cohort.clone(),
                 rows: split.rows,
                 exact_hash_overlaps: split.overlaps,
+                consented_sources: consented,
+                excluded: manifest.excluded,
                 detector: None,
             };
             let compute = ComputePin {

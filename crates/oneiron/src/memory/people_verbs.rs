@@ -9,15 +9,16 @@ use serde::{Deserialize, Serialize};
 use super::{
     Memory, MemoryError, MemoryResult, WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
 };
-use crate::access_grant::{AccessGrant, AccessGrantScope, AccessGrantStatus};
 use crate::agent_dispatch::{
     AddressDecision, AddressRefusal, AgentDispatchInput, CommReach, SenderDispatch,
 };
 use crate::attempt_queue::AttemptId;
 use crate::claim::ClaimReadStatus;
-use crate::context_board::{People, PersonKind, PersonRow};
+use crate::context_board::{People, PersonRow};
 use crate::conversation::{ConversationBody, ConversationKind};
-use crate::{EdgeActorClass, EntityId, WriteActor};
+use crate::{EdgeActorClass, EntityId};
+
+mod grants;
 
 /// Rows on one `vault.people.list` page.
 pub const PEOPLE_PAGE_SIZE: usize = 50;
@@ -197,13 +198,52 @@ pub struct GrantAskRequest {
     pub scope: GrantAskScope,
 }
 
-/// The pending access request. Asking grants nothing; the vault owner
-/// answers it.
+/// The pending access request. Asking grants nothing; the vault owner, or
+/// the person asked, answers it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrantAskReceipt {
     pub request: String,
     pub asked: String,
     pub status: String,
+}
+
+/// `self.grants.asked`'s input (FIX 11147): one page of the pending access
+/// requests that ask the caller.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GrantAskedRequest {
+    /// Exclusive request-id cursor (32-hex) from a prior page.
+    #[serde(default)]
+    pub after: Option<String>,
+    /// Page size, clamped to 1..=100; 50 when absent.
+    #[serde(default)]
+    pub limit: Option<u32>,
+}
+
+/// One pending access request that asks the caller.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantAskedRow {
+    /// 32-hex request id, as `self.grants.answer` takes it.
+    pub request: String,
+    /// 32-hex id of the actor who asked; the grant would be theirs.
+    pub asker: String,
+    pub capability: String,
+    pub scope: crate::task_verb::sdk::GrantRequestedScope,
+    /// When the request was filed, in unix seconds.
+    pub created_at: u64,
+    /// When the requested grant would end, in unix seconds; none when it
+    /// would not.
+    pub expires_at: Option<u64>,
+}
+
+/// One page of the pending access requests that ask the caller, in request
+/// id order.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GrantAskedPage {
+    pub requests: Vec<GrantAskedRow>,
+    /// The cursor of the next page; none when no more requests ask the
+    /// caller.
+    pub next_after: Option<String>,
 }
 
 fn unix_ms() -> u64 {
@@ -287,6 +327,21 @@ impl Memory<'_> {
         &self,
         input: &MessagePersonRequest,
     ) -> MemoryResult<MessagePersonReceipt> {
+        self.message_person_linked(input, |_| Ok(()), |_, _| Ok(()))
+    }
+
+    /// [`Self::message_person`], under every rule of that door, for a caller
+    /// that commits its own record in the message's write (FIX 8533):
+    /// `check` runs there before the message lands, `record` after it, given
+    /// the room and the TURN and MESSAGE ids the message actually stored.
+    /// Either refusing rolls the message back, so neither commits without
+    /// the other.
+    pub(crate) fn message_person_linked(
+        &self,
+        input: &MessagePersonRequest,
+        check: impl FnOnce(&mut heed::RwTxn<'_>) -> MemoryResult<()>,
+        record: impl FnOnce(&mut heed::RwTxn<'_>, &MessagePersonReceipt) -> MemoryResult<()>,
+    ) -> MemoryResult<MessagePersonReceipt> {
         let text = input.text.trim();
         if text.is_empty() {
             return Err(MemoryError::bad_request("message text is empty"));
@@ -342,7 +397,7 @@ impl Memory<'_> {
             WitnessAuthor::User
         };
         let refused_in_write = std::cell::Cell::new(None);
-        let landed = self.witness_with_room_birth(
+        let landed = self.witness_linked_with_room_birth(
             &WitnessTurn {
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
@@ -361,6 +416,7 @@ impl Memory<'_> {
                 assertions: Default::default(),
             },
             |wtxn| {
+                check(wtxn)?;
                 if let Some(mention) = input.mention.as_ref()
                     && let Some(name) =
                         crate::dreamer_runner::maintenance::identity::mention_unsettled_in_txn(
@@ -387,7 +443,7 @@ impl Memory<'_> {
                             wtxn,
                             room,
                             projects,
-                            WriteActor::new(self.actor, self.actor_class),
+                            self.write_actor(),
                             now_ms / 1_000,
                         )?;
                         Ok(())
@@ -407,7 +463,7 @@ impl Memory<'_> {
                                     member_ids: pair.to_vec(),
                                     ..Default::default()
                                 },
-                                WriteActor::new(self.actor, self.actor_class),
+                                self.write_actor(),
                                 crate::TimeRange { start: at, end: at },
                                 at,
                                 &[],
@@ -416,6 +472,15 @@ impl Memory<'_> {
                         Ok(())
                     }
                 }
+            },
+            |wtxn, receipt| {
+                record(
+                    wtxn,
+                    &MessagePersonReceipt {
+                        room: room.to_hex(),
+                        receipt: receipt.clone(),
+                    },
+                )
             },
         );
         // A refusal the write found is answered once the write has unwound.
@@ -684,58 +749,5 @@ impl Memory<'_> {
             }
         }
         error
-    }
-
-    /// `self.grants.ask`: asks a person for access, on behalf of the caller.
-    /// The request grants nothing until the vault owner approves it.
-    pub fn grants_ask(&self, input: &GrantAskRequest) -> MemoryResult<GrantAskReceipt> {
-        super::verify_actor_binding(self.vault, self.actor, self.actor_class)?;
-        let people = self.people_roster()?;
-        let asked = Self::person_by_handle(&people, &input.pr)?;
-        if asked.kind != PersonKind::Human {
-            return Err(MemoryError::bad_request(format!(
-                "{} is an agent; only a human grants access",
-                asked.handle
-            )));
-        }
-        let scope = match &input.scope {
-            GrantAskScope::Messages { space_ref } => AccessGrantScope::Messages {
-                space_ref: hex_ref("space_ref", space_ref)?,
-            },
-            GrantAskScope::Summaries { space_ref } => AccessGrantScope::Summaries {
-                space_ref: hex_ref("space_ref", space_ref)?,
-            },
-            GrantAskScope::RelationshipClaims { space_ref } => {
-                AccessGrantScope::RelationshipClaims {
-                    space_ref: hex_ref("space_ref", space_ref)?,
-                }
-            }
-            GrantAskScope::CompanionProfile { facet_ref } => AccessGrantScope::CompanionProfile {
-                person_ref: asked.person,
-                facet_ref: facet_ref
-                    .as_deref()
-                    .map(|facet| hex_ref("facet_ref", facet))
-                    .transpose()?,
-            },
-        };
-        let request = self.vault.new_entity_id()?;
-        self.vault.request_access(
-            request,
-            AccessGrant {
-                authority_scope: crate::federation::Scope::top(),
-                principal_ref: self.actor,
-                capability: scope.required_capability(),
-                scope,
-                status: AccessGrantStatus::Active,
-                created_at: unix_ms() / 1_000,
-                revoked_at: None,
-                expires_at: None,
-            },
-        )?;
-        Ok(GrantAskReceipt {
-            request: request.to_hex(),
-            asked: asked.handle.clone(),
-            status: "pending".to_owned(),
-        })
     }
 }

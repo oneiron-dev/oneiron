@@ -69,7 +69,8 @@ impl NightlyLinkVerdict {
 
 /// One judged pair as its continuation's result keeps it, whatever the
 /// verdict: the two proposals, the children each came from, the verdict, the
-/// proposal claim a same-as wrote, and the ladder's kept decision.
+/// proposal claim a same-as wrote, the ladder's kept decision, and the grant
+/// a same-as's edge was applied under (FIX 8363).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::dreamer_consolidation) struct NightlyLinkProposal {
@@ -82,6 +83,19 @@ pub(in crate::dreamer_consolidation) struct NightlyLinkProposal {
     /// The proposed SameAs status claim a same-as wrote; none otherwise.
     pub(in crate::dreamer_consolidation) claim: Option<EntityId>,
     pub(in crate::dreamer_consolidation) decision: KeptDecision,
+    /// Why the same-as's SameAs edge stands, when it was applied; none
+    /// while the link stays proposed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::dreamer_consolidation) applied: Option<AppliedSameAs>,
+}
+
+/// An applied same-as's record (FIX 8363, L02 02:15): the owner's standing
+/// grant its edge was applied under, and the reason it names.
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::dreamer_consolidation) struct AppliedSameAs {
+    pub(in crate::dreamer_consolidation) grant_ref: String,
+    pub(in crate::dreamer_consolidation) reason: String,
 }
 
 /// A proposal that leads pairs, with each partner it leads one with, in

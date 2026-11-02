@@ -81,8 +81,10 @@ pub fn seat_login_plan(args: SeatLoginPlanArgs) -> anyhow::Result<()> {
             .map(|elapsed| elapsed.as_secs())
             .unwrap_or(0)
     };
-    let surface =
-        seat_login_surface(args.mode, &settings, now, siwc.as_ref()).map_err(anyhow::Error::msg)?;
+    // The runtime's actual hosting posture judges the login, apart from its
+    // inference mode (FIX 9533).
+    let surface = seat_login_surface(args.hosting_posture(), &settings, now, siwc.as_ref())
+        .map_err(anyhow::Error::msg)?;
     print_json(&surface)
 }
 

@@ -20,6 +20,7 @@ use super::super::custody::{
 use super::super::lifecycle::{SealedTrainingOffer, TrainingScope, TrainingSubmissionId};
 use super::super::link;
 use super::super::source::TrainingSelection;
+use super::super::withdraw;
 use super::{Placed, Prepared, Setting};
 
 impl Vault {
@@ -30,8 +31,13 @@ impl Vault {
     /// a retry of one still held under its own id, order, month, generation,
     /// ordinal, first preparation time, C, transport and anonymous standing.
     /// A held one it supersedes is withheld in the same write, an anonymous
-    /// one taking its withdrawal intent. `None` while a purge stands:
-    /// nothing is held.
+    /// one taking its withdrawal intent. The source code its offer names is
+    /// made here, under the key of its generation, and kept on its row
+    /// (FIX 9855). `None` while a purge stands, and when this writer reads
+    /// the selection overtaken (its room or a message gone, a person whose
+    /// words it carries erased) or the row to retry no longer held: nothing
+    /// is held, so a selection read before an erase never brings back what
+    /// the erase removed.
     pub(super) fn hold_submission(
         &self,
         (reuse, superseded): (
@@ -45,33 +51,60 @@ impl Vault {
     ) -> Result<Option<Placed>> {
         self.with_write_txn_grouped(|txn| {
             let state = custody::state(self, txn)?;
-            if state.purge.is_some() {
+            if state.purge.is_some() || withdraw::selection_overtaken_in(self, txn, selection)? {
+                return Ok(None);
+            }
+            // A retry rereads its row here: one an erase or a withdrawal
+            // settled since it was read is never held again.
+            if let Some((id, _)) = reuse
+                && custody::submission(self, txn, id)?
+                    .is_none_or(|row| row.state != SubmissionState::Held)
+            {
                 return Ok(None);
             }
             if let Some(old) = superseded
                 && let Some(mut row) = custody::submission(self, txn, old)?
                 && row.state == SubmissionState::Held
             {
+                // A held row may have published before a crash kept it from
+                // its mark: a forget names it, as every other withdrawal of
+                // one that may be at the intake does (FIX 10834).
+                let forget = withdraw::may_reach_intake(&row);
                 row.state = SubmissionState::Withheld;
                 anonymous::withdraw(&mut row);
-                put_submission_in(self, txn, old, &row)?;
+                if forget {
+                    withdraw::forget_hosted_in(self, txn, vec![(old, row)], now)?;
+                } else {
+                    put_submission_in(self, txn, old, &row)?;
+                }
             }
             let (local_seq, placed, piece, (transport, standing)) = match reuse {
-                // A retry keeps its C as it was made, never made again, and
-                // its transport.
-                Some((id, held)) => (
-                    held.local_seq,
-                    Placed {
-                        id,
-                        scope: state.scope_of(&held.month, held.generation)?,
-                        month: held.month.clone(),
-                        generation: held.generation,
-                        scope_seq: held.scope_seq,
-                        prepared_at: held.prepared_at,
-                    },
-                    held.piece,
-                    (held.transport, held.anonymous.clone()),
-                ),
+                // A retry keeps its C as it was made, never made again, its
+                // transport and its source code; a row held before the code
+                // was kept takes it now, under its own generation's key.
+                Some((id, held)) => {
+                    let source_code = match held.source_code {
+                        Some(code) => code,
+                        None => {
+                            let key = link::training_link_key(self, txn, held.generation)?;
+                            link::code(&key, link::SOURCE, &selection.source, &held.month)
+                        }
+                    };
+                    (
+                        held.local_seq,
+                        Placed {
+                            id,
+                            scope: state.scope_of(&held.month, held.generation)?,
+                            month: held.month.clone(),
+                            generation: held.generation,
+                            scope_seq: held.scope_seq,
+                            prepared_at: held.prepared_at,
+                            source_code,
+                        },
+                        held.piece,
+                        (held.transport, held.anonymous.clone()),
+                    )
+                }
                 None => {
                     let local_seq = custody::next_local_seq_in(self, txn)?;
                     let generation = custody::link_generation_in(self, txn)?;
@@ -79,11 +112,15 @@ impl Vault {
                     let (scope, scope_seq) =
                         custody::next_scope_seq_in(self, txn, &month, generation)?;
                     let id = TrainingSubmissionId(random_id());
-                    // C, made once here under K at the generation it was
-                    // placed in; the zeroized K drops with this arm.
-                    let piece = {
+                    // C and the source code, made once here under K at the
+                    // generation it was placed in; the zeroized K drops with
+                    // this arm.
+                    let (piece, source_code) = {
                         let key = link::training_link_key(self, txn, generation)?;
-                        link::piece_code(&key, &id.0, &month)
+                        (
+                            link::piece_code(&key, &id.0, &month),
+                            link::code(&key, link::SOURCE, &selection.source, &month),
+                        )
                     };
                     let placed = Placed {
                         id,
@@ -92,6 +129,7 @@ impl Vault {
                         scope,
                         scope_seq,
                         prepared_at: now,
+                        source_code,
                     };
                     (
                         local_seq,
@@ -116,9 +154,11 @@ impl Vault {
                 scope_seq: placed.scope_seq,
                 prepared_at: placed.prepared_at,
                 piece,
+                source_code: Some(placed.source_code),
                 transport,
                 anonymous: standing,
                 published_at: None,
+                forget: None,
                 state: SubmissionState::Held,
                 files: true,
                 receipt: None,
@@ -171,7 +211,9 @@ impl Vault {
             submission_id: submission.clone(),
             scope: oneiron_vault_contract::hex(&placed.scope),
             event_seq: placed.scope_seq,
-            source: link::code_hex(&key, link::SOURCE, &selection.source, month),
+            // The code kept on its row at its hold (FIX 9855): a forget of
+            // it names exactly this.
+            source: oneiron_vault_contract::hex(&placed.source_code),
             persons: link::code_set(&key, link::PERSON, &selection.persons, month),
             worlds: link::code_set(&key, link::WORLD, &selection.worlds, month),
             training: TrainingSettingV2 {

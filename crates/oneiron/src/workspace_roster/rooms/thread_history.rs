@@ -19,7 +19,8 @@ pub struct RoomMessagesRequest {
     /// The `next_after` of the page before.
     #[serde(default)]
     pub after: Option<String>,
-    /// Rows per page, 1 to 256; 256 when unset.
+    /// Rows per page, positive; 256 when unset. A page holds at most 256;
+    /// the rest follow through `next_after`.
     #[serde(default)]
     pub limit: Option<usize>,
     /// A thread of the room, by its root turn; `None` reads the room itself.
@@ -57,9 +58,16 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 || limit > PAGE_LIMIT {
+        if limit == 0 {
             return Err(MemoryError::from(invalid()));
         }
+        let limit = super::history::served_page_size(
+            self.vault(),
+            crate::scan_check::EngineScan::RoomRequestedPageRows,
+            room,
+            limit,
+            PAGE_LIMIT,
+        )?;
         let (scope, rows) = self.thread_rows(room, root)?;
         page_after(rows, after, limit, scope)
     }
@@ -78,9 +86,16 @@ impl Memory<'_> {
         after: Option<EntityId>,
         limit: usize,
     ) -> MemoryResult<RoomPage> {
-        if limit == 0 || limit > PAGE_LIMIT {
+        if limit == 0 {
             return Err(MemoryError::from(invalid()));
         }
+        let limit = super::history::served_page_size(
+            self.vault(),
+            crate::scan_check::EngineScan::RoomRequestedPageRows,
+            room,
+            limit,
+            PAGE_LIMIT,
+        )?;
         let mut scope: Option<crate::federation::Scope> = None;
         let mut rows = Vec::new();
         for root in self.privileged_private_roots(room)? {

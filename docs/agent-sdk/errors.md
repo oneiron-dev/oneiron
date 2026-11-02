@@ -1,6 +1,10 @@
 # Memory Wire typed errors
 
 Every SDK failure carries `code`, `message`, and nonempty `suggestions`.
+A refusal whose producer named stable reason codes also carries them, in that
+producer's order (FIX 7398): `reasonCodes` on a JS `MemoryError` and in an HTTP
+error body, `reason_codes` on a Python `MemoryError` and in an MCP error's
+`data.reason_codes`. Read them there, never out of `message`.
 Use the returned suggestions; do not parse message prose. No adapter swallows
 or downgrades the engine's refusal. Future remote codes pass through verbatim.
 
@@ -15,9 +19,11 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `IDENTITY_UNSETTLED` | The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act. |
 | `BUDGET_SPENT` | The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line. |
 | `MODEL_UNAVAILABLE` | The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route. |
+| `MODEL_PIN_UNAVAILABLE` | The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin. |
 | `OFF_RECORD_SESSION_DOOR` | Use the owning off-record session handle. The canonical witness door is not that handle. |
 | `OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE` | No record holds a room's consent to one caller managing its whole off-record stretch, on any host. Act as a member instead: status and witness, and save or export your own copy through the room's routes. |
 | `OWNER_BINDING_REQUIRED` | An owner device must bind this human actor in the authority log. Scope changes do not grant ownership. |
+| `AUTHORITY_CLOCK_CORRUPT` | The vault's authority clock floor is damaged, so no authority reading stands on it. The owner runs `vault.authority.clock.repair`, then retries. |
 | `VAULT_LOCKED_SINGLE_WRITER` | Connect to the process that owns this vault. Do not remove lock files or open a second writer. |
 | `WRONG_ROOT` | The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries. |
 | `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation. |

@@ -3,7 +3,6 @@
 //! The canonical open sequence lives in [`super::open_gates`]; see the
 //! module doc on [`crate::store`] for the gate order.
 
-use std::cell::Cell;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock, Weak};
 
@@ -20,32 +19,9 @@ use crate::registry::{ENTITY_TYPE_POLICY_MANIFEST, StructuralKindRegistration};
 
 use super::*;
 
-thread_local! {
-    static ACTIVE_WRITE_TXN_DEPTH: Cell<usize> = const { Cell::new(0) };
-}
+mod policy_fold;
 
 pub(crate) type MachineWriteSigner = Arc<dyn Fn(&[u8]) -> Result<[u8; 64]> + Send + Sync>;
-
-pub(crate) struct ActiveWriteTxnGuard;
-
-impl Drop for ActiveWriteTxnGuard {
-    fn drop(&mut self) {
-        ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
-            depth.set(depth.get().saturating_sub(1));
-        });
-    }
-}
-
-pub(crate) fn active_write_txn_guard() -> ActiveWriteTxnGuard {
-    ACTIVE_WRITE_TXN_DEPTH.with(|depth| {
-        depth.set(depth.get().saturating_add(1));
-    });
-    ActiveWriteTxnGuard
-}
-
-pub(crate) fn active_write_txn_depth() -> usize {
-    ACTIVE_WRITE_TXN_DEPTH.with(Cell::get)
-}
 
 pub struct RawDatabases {
     pub(crate) entities: Database<Bytes, Bytes>,
@@ -266,6 +242,8 @@ pub struct StoreCore {
     /// Policy manifest decodes kept between resolutions: the shipped
     /// manifest's rows, and each stored manifest body by its hash.
     pub(crate) manifest_memo: crate::gate::ManifestDecodeMemo,
+    /// The policy manifest's fold of the last committed snapshot. Never persisted.
+    pub(crate) policy_fold_cache: policy_fold::PolicyFoldCache,
     /// Opt-in host root for signing scoped MACHINE history. Never populated
     /// from a transport key, peer assertion, or relay-mode vault.
     pub(crate) machine_history_issuer: Mutex<Option<crate::authority::HostSlipIssuer>>,
@@ -298,6 +276,11 @@ pub struct StoreCore {
     /// vault's own until the host installs the process's
     /// ([`crate::Vault::set_result_memory`]).
     pub(crate) result_memory: RwLock<Arc<crate::result_memory::ResultMemoryPool>>,
+    /// The inference snapshot admission generation, closing gate, disk line
+    /// and host runtime port every handle on this vault shares (V2-R3). A
+    /// lock closes the gate and waits for the runtime's release before the
+    /// key goes. Never persisted.
+    pub(crate) inference_snapshots: crate::inference_snapshot::SnapshotLifecycle,
     pub(crate) clock: crate::ports::StoreClock,
     /// The single writer's group commit (ARCH-0019, OF-536): concurrent
     /// logical writes share one write transaction and one fsync.
@@ -320,10 +303,18 @@ pub struct StoreCore {
     /// A failed digest lane stays quiet until a committed relevant change.
     /// This is per-vault, content-free and never gates unrelated deadlines.
     pub(crate) proactivity_suspended: Mutex<Option<u64>>,
+    /// Content-free, per-vault: bumped after each commit that may have
+    /// changed an admitted policy manifest (FIX 11402). Never persisted.
+    pub(crate) policy_manifest_updates: tokio::sync::watch::Sender<u64>,
     /// The one decision-answer signal every ask door and waiter on this open
     /// vault shares (FIX 4706): content-free, the last ask number answered
     /// or withdrawn, sent only after that commit.
     pub(crate) decision_answers: tokio::sync::watch::Sender<u64>,
+    /// The committed-notification signal live queries wake on (FIX 3084).
+    pub(crate) notification_updates: tokio::sync::watch::Sender<u64>,
+    /// Content-free, per-vault: bumped after each commit that revoked a
+    /// capability slip (FIX 10381). Never persisted.
+    pub(crate) credential_revocations: tokio::sync::watch::Sender<u64>,
     /// The container output guard: each container's last attendee-entry
     /// mark (OF-365 P5). Per vault, in memory, never persisted.
     pub(crate) container_output: crate::conversation::ContainerOutputGuard,
@@ -651,7 +642,7 @@ macro_rules! manifest_dbs {
                       attempt_ready, attempt_dedupe) have no write-target-parameterized caller \
                       after P4a and are on the ONE-1728 seg-4 post-merge delete-list"
         )]
-        pub(crate) trait ManifestDbs {
+        pub(crate) trait ManifestDbs: policy_fold::PolicyFoldSource {
             $(fn $name(&self) -> &$ty;)+
 
             /// The diagnostic counters of the vault this write target belongs
@@ -743,6 +734,16 @@ impl std::ops::Deref for Store {
 
     fn deref(&self) -> &StoreCore {
         &self.core
+    }
+}
+
+/// The deferred-commit leader holds a clone of the core (Engine ruling 10-30
+/// 23:09): it ends first, after the group it leads commits, so a clean close
+/// keeps every write it answered and no `Arc<StoreCore>` outlives the owner
+/// when `core` and then `owner` drop in their declared order.
+impl Drop for Store {
+    fn drop(&mut self) {
+        self.core.group_commit.stop_deferred_commit_leader();
     }
 }
 

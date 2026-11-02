@@ -253,6 +253,8 @@ pub struct ManagedArgs {
     pub voice_socket: Option<PathBuf>,
     /// This vault's e-sign seal key file (`--seal-key-file`).
     pub seal_key: Option<PathBuf>,
+    /// Its seal key in secret custody, by handle (`--seal-key-handle`).
+    pub seal_key_handle: Option<String>,
     /// Its certificate chain file (`--seal-chain-file`).
     pub seal_chain: Option<PathBuf>,
     /// The seal's trust anchors file (`--seal-trust-file`).

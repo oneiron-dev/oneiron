@@ -100,7 +100,10 @@ fn encode(member: &VerifiedCandidate, attempt: AttemptId) -> Result<Value> {
         ),
         ("valid_to", body.valid_to.map_or(Value::Nil, Value::from)),
         ("world", body.world.map_or(Value::Nil, binary)),
-        ("rel", body.rel.map_or(Value::Nil, binary)),
+        (
+            "rel",
+            crate::claim::encode_relationship_scope(body.rel.as_ref()),
+        ),
         ("scope", body.scope.unwrap_or(Value::Nil)),
         (
             "hints",
@@ -328,9 +331,9 @@ impl RetainedAlternative {
         if let Some(world) = optional_id(entry, "world")? {
             candidate = candidate.with_world(world);
         }
-        if let Some(rel) = optional_id(entry, "rel")? {
-            candidate = candidate.with_relationship(rel);
-        }
+        candidate = candidate.with_relationships(crate::claim::decode_relationship_scope(field(
+            entry, "rel",
+        )?)?);
         if let Some(evidence) = optional_value(entry, "candidate_evidence")? {
             candidate = candidate.with_evidence(evidence);
         }

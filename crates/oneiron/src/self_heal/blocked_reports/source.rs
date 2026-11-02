@@ -33,10 +33,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::store::Store;
 use crate::{EntityId, LlmRequest, Result, Vault};
 
 // FIX 6708: both row kinds in checkpoint images, as row-held responses.
-pub(crate) use self::response::{blocked_capture_owners, blocked_capture_stub};
+pub(crate) use self::response::{blocked_capture_owners, blocked_capture_scan};
 
 /// Receipt rows. Key: the receipt.
 const SOURCE: SideTable<EntityId, BlockedReplaySource, Named> =
@@ -344,21 +345,34 @@ fn put_kept_in_txn(
     SOURCE.put(vault, txn, receipt, &source)
 }
 
-/// The replay source the report `receipt` was filed with, if any.
+/// The replay source the report `receipt` was filed with, if any. A row
+/// its owner's erase retired from an image is gone, and reads as none; an
+/// erased marker reads as `ResponseErased`, never a replay source (FIX
+/// 9390).
 pub(crate) fn blocked_source_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     receipt: &EntityId,
 ) -> Result<Option<BlockedReplaySource>> {
-    SOURCE.get(&vault.store, txn, receipt)
+    let Some(raw) = SOURCE.get_bytes(&vault.store, txn, receipt)? else {
+        return Ok(None);
+    };
+    let family = crate::store::ResponseFamily::BlockedCapture;
+    let raw = crate::store::ResponseRead::of(family, &SOURCE.key_bytes(receipt), &raw).present()?;
+    SOURCE.decode_value(raw).map(Some)
 }
 
 /// Keeps the request a durable step is about to send (FIX 1662), before the
-/// call, under the attempt's lease generation, for the replay of a failure on
-/// a deployment that exports (the only one a code fix runs on). The row
-/// stamps the owners the step's Started row stamps, its `actor` and its
-/// `subject` (FIX 6659). Best effort: a capture that fails is logged by kind
-/// and never fails the step, whose replay is then not exact.
+/// call, under the attempt's lease generation and the call's index within the
+/// step (0 for the step's own request, then each corrective call's, FIX 6145),
+/// for the replay of a failure on a deployment that exports (the only one a
+/// code fix runs on). The row stamps the owners the step's Started row stamps,
+/// its `actor` and its `subject` (FIX 6659). Best effort: a capture that fails
+/// is logged by kind and never fails the step, whose replay is then not exact.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the step's identity, owners, call index and clock join the request"
+)]
 pub(crate) fn capture_durable_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -366,12 +380,14 @@ pub(crate) fn capture_durable_step(
     actor: EntityId,
     subject: EntityId,
     request: &LlmRequest,
+    call: u32,
     now_ms: u64,
 ) {
     if !vault.config.failure_signals.exports() {
         return;
     }
-    if let Err(error) = keep_durable_step(vault, attempt, step, actor, subject, request, now_ms) {
+    let kept = keep_durable_step(vault, attempt, step, actor, subject, request, call, now_ms);
+    if let Err(error) = kept {
         tracing::warn!(
             kind = ?error.kind(),
             "a step's request was not kept; its replay is not exact"
@@ -379,6 +395,10 @@ pub(crate) fn capture_durable_step(
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "capture_durable_step's inputs, kept whole"
+)]
 fn keep_durable_step(
     vault: &Vault,
     attempt: AttemptId,
@@ -386,6 +406,7 @@ fn keep_durable_step(
     actor: EntityId,
     subject: EntityId,
     request: &LlmRequest,
+    call: u32,
     now_ms: u64,
 ) -> Result<()> {
     let lease = AttemptQueue::new(vault)
@@ -395,7 +416,7 @@ fn keep_durable_step(
         attempt,
         step,
         lease,
-        call: 0,
+        call,
     };
     let row = StepReplaySource {
         request: KeptRequest {
@@ -422,8 +443,10 @@ fn keep_durable_step(
     })
 }
 
-/// Every durable step request kept for `attempt`, oldest first (FIX 1662).
-/// A row that does not read is not a request to replay.
+/// Every durable step request kept for `attempt`, oldest first (FIX 1662):
+/// by capture time, then lease generation, then call index, so the last row
+/// of a step is the last call it sent and an exact replay takes that call
+/// (FIX 6145). A row that does not read is not a request to replay.
 pub(crate) fn step_sources_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -440,7 +463,7 @@ pub(crate) fn step_sources_in(
             rows.push((key, source));
         }
     }
-    rows.sort_by_key(|(_, source)| source.captured_at_ms);
+    rows.sort_by_key(|(key, source)| (source.captured_at_ms, key.lease, key.call));
     Ok(rows)
 }
 
@@ -534,12 +557,26 @@ pub(crate) fn remove_step_sources_in_txn(
 /// An erase of `actor` takes, in the erase's own writer, each receipt row of
 /// a report witnessed for it (its request is that actor's run's) and each
 /// step row that stamps it as an owner (FIX 6659): a call it made, a step
-/// about it, or one its terminal claim logged, with the request each keeps.
-/// A row that does not decode names no owner and stays as it is.
+/// about it, or one its terminal claim logged, with the request each keeps,
+/// and revokes each custody record the side-row wall minted from a row it
+/// takes (FIX 6710). A row that does not decode names no owner and stays as
+/// it is.
 pub(crate) fn erase_blocked_source_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
+) -> Result<()> {
+    erase_blocked_source_actor_as_in_txn(vault, wtxn, actor, None)
+}
+
+/// [`erase_blocked_source_actor_in_txn`] under `act`, the owner act the
+/// erase carries out, when its door bound one: each custody record it
+/// revokes is carried to his other machines too (FIX 11883).
+pub(crate) fn erase_blocked_source_actor_as_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
 ) -> Result<()> {
     let mut receipts = Vec::new();
     let mut steps = Vec::new();
@@ -559,10 +596,53 @@ pub(crate) fn erase_blocked_source_actor_in_txn(
         }
     }
     for receipt in &receipts {
+        revoke_lifted_in_txn(vault, wtxn, &SOURCE.key_bytes(receipt), act)?;
         SOURCE.delete(&vault.store, wtxn, receipt)?;
     }
     for step in &steps {
+        revoke_lifted_in_txn(vault, wtxn, &STEPS.key_bytes(step), act)?;
         STEPS.delete(&vault.store, wtxn, step)?;
+    }
+    Ok(())
+}
+
+/// Revokes each custody record the side-row wall minted from the row this
+/// table stores under `key`, its full stored key, in `wtxn` (FIX 6710): the
+/// wall names the row by the table's place and that key. Under `act` each
+/// revoke is carried to the owner's other machines (FIX 11883).
+fn revoke_lifted_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
+) -> Result<()> {
+    let place = format!("side:{}", SOURCE.decl().name);
+    let origin = crate::batch::secret_scan::side_row_origin(&place, key)?;
+    crate::secret_custody::revoke_side_row_custody_in_txn(vault, wtxn, &origin, act)
+}
+
+/// A hard non-erase delete of `entity` takes the requests kept for it (FIX
+/// 6711), each step row that stamps it as an owner, in `wtxn`: the rows a
+/// soft delete keeps for a restore. The receipt rows stay, as does the
+/// actor scrub, with erase. A row that does not decode names no owner and
+/// stays as it is.
+pub(crate) fn drop_blocked_source_steps_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    entity: &EntityId,
+) -> Result<()> {
+    let mut steps = Vec::new();
+    for row in STEPS.iter_raw_from(store, &*wtxn, &[])? {
+        let (key, bytes) = row?;
+        if let Some(step) = StepSourceKey::decode_key(&key)
+            && let Ok(source) = STEPS.decode_value(&bytes)
+            && source.owners().contains(entity)
+        {
+            steps.push(step);
+        }
+    }
+    for step in &steps {
+        STEPS.delete(store, wtxn, step)?;
     }
     Ok(())
 }

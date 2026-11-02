@@ -141,11 +141,7 @@ pub fn resume_fanout_launch_holder(
     memory: &Memory<'_>,
     input: FanoutResumeRequest,
 ) -> MemoryResult<FanoutLaunchView> {
-    resume_fanout_launch_as_holder(
-        memory,
-        &crate::WriteActor::new(memory.actor(), memory.actor_class()),
-        input,
-    )
+    resume_fanout_launch_as_holder(memory, &memory.write_actor(), input)
 }
 
 /// `vault.fanout.resume_as` as `holder`, a live holder of the launch's bound

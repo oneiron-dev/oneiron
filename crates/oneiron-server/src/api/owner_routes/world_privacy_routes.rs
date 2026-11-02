@@ -19,10 +19,9 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::authority::ActAuthority;
@@ -34,8 +33,9 @@ use oneiron::policy_model::{
 use oneiron::store::GateDecisionId;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::ApiError;
 use crate::owner::{OwnerResult, entity_id};
@@ -48,31 +48,117 @@ const HOLDER_READS: CoreScope = CoreScope::Read;
 /// slip scope").
 const HOLDER_ACTS: CoreScope = CoreScope::Write;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/worlds/privacy/requests", get(list))
-        .route("/worlds/privacy/set", post(set))
-        .route("/worlds/privacy/proposals/accept", post(accept))
-        .route("/worlds/privacy/proposals/decline", post(decline))
-        .route("/worlds/privacy/asks/confirm", post(accept))
-        .route("/worlds/privacy/asks/decline", post(decline))
-        .route("/worlds/privacy/undo", post(undo))
-        .route(
-            "/worlds/privacy/widen-unanimity",
-            get(unanimity).post(set_unanimity),
-        )
-        .route(
-            "/worlds/privacy/widen-unanimity/requests",
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/worlds/privacy/requests",
+                summary: "The world-privacy requests agents raised, newest first (pending=true for those still waiting): every one for a vault owner, those on the worlds whose settings right he holds for another live holder on his own human slip.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/set",
+                summary: "A holder of the world's settings right changes them as his own act, in either direction: applied, with the receipt, or asked, when his widen falls under \"widen needs every owner\". The body is vault.worlds.privacy.set's input; a stale seen is a conflict.",
+                row: None,
+            },
+            post(set),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/proposals/accept",
+                summary: "A holder of the world's settings right accepts an agent's proposal of stricter settings (request: 32 hex): they land as his own act.",
+                row: None,
+            },
+            post(accept),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/proposals/decline",
+                summary: "A holder of the world's settings right declines an agent's proposal, or cancels it from its notice (request: 32 hex).",
+                row: None,
+            },
+            post(decline),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/asks/confirm",
+                summary: "A holder of the world's settings right says yes to an agent's widen ask (request: 32 hex): the frozen settings land as his own act, or, under \"widen needs every owner\", his yes counts until every owner's is in.",
+                row: None,
+            },
+            post(accept),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/asks/decline",
+                summary: "A holder of the world's settings right declines an agent's widen ask (request: 32 hex); the settings stay as they are.",
+                row: None,
+            },
+            post(decline),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/undo",
+                summary: "The notice's one tap: restores the settings before an agent's tighten (receipt: the settings receipt the notice carried), as the holder's own act.",
+                row: None,
+            },
+            post(undo),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/worlds/privacy/widen-unanimity",
+                summary: "The vault's \"widen needs every owner\" setting and its per-world overrides.",
+                row: None,
+            },
+            get(unanimity),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/widen-unanimity",
+                summary: "An owner sets the vault's setting, or a world's override (world: 32 hex; on: true, false or none to clear it). It lands at once (set), unless it turns the setting off somewhere while it is on: then it waits for every owner's yes (pending).",
+                row: None,
+            },
+            post(set_unanimity),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/worlds/privacy/widen-unanimity/requests",
+                summary: "The turn-offs of \"widen needs every owner\", newest first (pending=true for those still waiting).",
+                row: None,
+            },
             get(unanimity_requests),
-        )
-        .route(
-            "/worlds/privacy/widen-unanimity/off/confirm",
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/widen-unanimity/off/confirm",
+                summary: "An owner's yes to a pending turn-off of \"widen needs every owner\" (request: 32 hex); the yes that completes every owner's lands it.",
+                row: None,
+            },
             post(confirm_off),
-        )
-        .route(
-            "/worlds/privacy/widen-unanimity/off/decline",
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/worlds/privacy/widen-unanimity/off/decline",
+                summary: "An owner declines a pending turn-off (request: 32 hex); the setting stays as it is.",
+                row: None,
+            },
             post(decline_off),
-        )
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -83,21 +169,21 @@ struct RequestPage {
     pending: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerRequest {
     /// The request, 32 hex characters.
     request: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct UndoChange {
     /// The settings receipt the notice carried.
     receipt: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetUnanimity {
     /// The world whose override this sets, 32 hex; none sets the vault's.
@@ -106,6 +192,58 @@ struct SetUnanimity {
     /// On or off; none clears a world's override.
     #[serde(default)]
     on: Option<bool>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/set`'s body
+/// (FIX 11611): [`WorldPrivacySetInput`].
+pub(crate) fn set_world_privacy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacySetInput>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/set`'s answer
+/// (FIX 11611): [`WorldPrivacyOutcome`].
+pub(crate) fn world_privacy_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyOutcome>()
+}
+
+/// The OpenAPI schema of the world-privacy answer routes' bodies
+/// (FIX 11611: `proposals/accept`, `proposals/decline`, `asks/confirm`,
+/// `asks/decline`, `widen-unanimity/off/confirm`,
+/// `widen-unanimity/off/decline`): [`AnswerRequest`].
+pub(crate) fn world_privacy_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/proposals/accept`'s
+/// answer (FIX 11611), shared with `proposals/decline`, `asks/confirm` and
+/// `asks/decline`: [`WorldPrivacyAnswer`].
+pub(crate) fn world_privacy_answer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/undo`'s body
+/// (FIX 11611): [`UndoChange`].
+pub(crate) fn undo_world_privacy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<UndoChange>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/undo`'s answer
+/// (FIX 11611): [`WorldPrivacyReceipt`].
+pub(crate) fn world_privacy_receipt_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WorldPrivacyReceipt>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/widen-unanimity`'s
+/// body (FIX 11611): [`SetUnanimity`].
+pub(crate) fn set_widen_unanimity_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetUnanimity>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/worlds/privacy/widen-unanimity`'s
+/// answer (FIX 11611), shared with `widen-unanimity/off/confirm` and
+/// `widen-unanimity/off/decline`: [`WidenUnanimityOutcome`].
+pub(crate) fn widen_unanimity_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<WidenUnanimityOutcome>()
 }
 
 /// The world-settings door (FIX 4707): the vault's owner as [`owner`] admits
@@ -184,12 +322,14 @@ async fn list(
 async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<WorldPrivacySetInput>, JsonRejection>,
+    payload: OwnerJsonBody<WorldPrivacySetInput>,
 ) -> OwnerReply<WorldPrivacyOutcome> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<WorldPrivacyOutcome> {
         let (world, settings, seen) = body.parse()?;
         Ok(server.vault().set_world_privacy_by(
@@ -209,10 +349,11 @@ async fn set(
 async fn accept(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WorldPrivacyAnswer> {
-    answer(auth, headers, server, payload, true).await
+    answer(auth, headers, &extensions, server, payload, true).await
 }
 
 /// `POST /v1/owner/worlds/privacy/{proposals/decline,asks/decline}`: the
@@ -220,22 +361,24 @@ async fn accept(
 async fn decline(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WorldPrivacyAnswer> {
-    answer(auth, headers, server, payload, false).await
+    answer(auth, headers, &extensions, server, payload, false).await
 }
 
 async fn answer(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: &Extensions,
     server: Arc<SyncServer>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
     yes: bool,
 ) -> OwnerReply<WorldPrivacyAnswer> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface = super::machine_routes::act_surface_admitted(&server, &auth, &headers, extensions);
+    let body = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WorldPrivacyAnswer> {
         let request = entity_id("request", &body.request)?;
         Ok(server
@@ -251,12 +394,14 @@ async fn answer(
 async fn undo(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<UndoChange>, JsonRejection>,
+    payload: OwnerJsonBody<UndoChange>,
 ) -> OwnerReply<WorldPrivacyReceipt> {
     let holder = holder(&auth, &server, HOLDER_ACTS)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<WorldPrivacyReceipt> {
         Ok(server
             .vault()
@@ -286,10 +431,10 @@ async fn unanimity(
 async fn set_unanimity(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetUnanimity>, JsonRejection>,
+    payload: OwnerJsonBody<SetUnanimity>,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let outcome = blocking(move || -> OwnerResult<WidenUnanimityOutcome> {
         let world = body
             .world
@@ -327,7 +472,7 @@ async fn unanimity_requests(
 async fn confirm_off(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     answer_off(auth, server, payload, true).await
 }
@@ -337,7 +482,7 @@ async fn confirm_off(
 async fn decline_off(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     answer_off(auth, server, payload, false).await
 }
@@ -345,11 +490,11 @@ async fn decline_off(
 async fn answer_off(
     auth: CoreAuth,
     server: Arc<SyncServer>,
-    payload: Result<Json<AnswerRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerRequest>,
     yes: bool,
 ) -> OwnerReply<WidenUnanimityOutcome> {
     let owner = owner(&auth, &server)?;
-    let body = json_payload(payload)?;
+    let body = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<WidenUnanimityOutcome> {
         let request = entity_id("request", &body.request)?;
         Ok(server

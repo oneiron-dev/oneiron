@@ -81,12 +81,28 @@ pub struct VerifiedSource {
     pub created_at: u64,
     /// The pinned signer that signed it.
     pub signer_install: [u8; 16],
-    /// BLAKE3 over the canonical external pin set the signature was checked
-    /// against.
+    /// BLAKE3 over the canonical external pin set the plan pinned, whether
+    /// or not it admitted the signer.
     pub pin_set_digest: [u8; 32],
+    /// What admitted the signer: the plan's pins, or a delegation from the
+    /// vault's mode roots (FIX 968).
+    pub signer_trust: SignerTrust,
+    /// The mode-root policy's digest, where its delegation admitted the
+    /// signer; `None` for a pinned one.
+    pub policy_digest: Option<[u8; 32]>,
     /// The artifact carried a registry binding, and it is the plan's;
     /// `false` where it carried none.
     pub registry_bound: bool,
+}
+
+/// What admitted a restore's checkpoint signer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignerTrust {
+    /// One of the plan's external pins.
+    Pinned,
+    /// A signer the vault's mode roots delegated, not pinned.
+    ModeRootDelegated,
 }
 
 /// One custody log position: public structure, never a key.

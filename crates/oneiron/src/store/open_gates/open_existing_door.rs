@@ -125,13 +125,24 @@ impl Store {
                 clock.observe_id_floor(floor)?;
             }
             if let Some(bytes) = vault_meta_view.get(&txn, crate::ports::CLOCK_FLOOR)? {
-                let floor = u64::from_be_bytes(
+                // The floor alone, or the floor and its authorization lease
+                // (FIX 11664): a reopen reads both shapes the writer stores.
+                let half = |at: usize| -> Result<u64> {
                     bytes
-                        .as_ref()
-                        .try_into()
-                        .map_err(|_| Error::CorruptedIndex("recorded clock floor"))?,
-                );
-                clock.observe_floor(floor)?;
+                        .get(at..at + 8)
+                        .and_then(|part| part.try_into().ok())
+                        .map(u64::from_be_bytes)
+                        .ok_or(Error::CorruptedIndex("recorded clock floor"))
+                };
+                match bytes.len() {
+                    8 => {
+                        clock.observe_floor(half(0)?)?;
+                    }
+                    16 => {
+                        clock.observe_leased_floor(half(0)?, half(8)?)?;
+                    }
+                    _ => return Err(Error::CorruptedIndex("recorded clock floor")),
+                }
             }
         }
         let key_custody = {
@@ -174,6 +185,7 @@ impl Store {
             authority_handoff_equivocations: crate::authority::HandoffEquivocations::default(),
             project_forks: crate::workspace_roster::ProjectForks::default(),
             manifest_memo: crate::gate::ManifestDecodeMemo::default(),
+            policy_fold_cache: Default::default(),
             machine_history_issuer: Mutex::new(None),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::scan_check::PendingScanChecks::default(),
@@ -190,6 +202,7 @@ impl Store {
                         .bound(crate::limit_ask::EngineLimit::CodeResultMemoryBytes),
                 ),
             )),
+            inference_snapshots: crate::inference_snapshot::SnapshotLifecycle::default(),
             l2_base_cache: Mutex::new(crate::context_pack::L2BaseCache::default()),
             legal_hold_refusals: crate::store::legal_hold::LegalHoldRefusals::default(),
             backup_hold_rechecks: tokio::sync::watch::channel(0).0,
@@ -198,7 +211,10 @@ impl Store {
             diagnostics: Diagnostics::default(),
             proactivity_updates: tokio::sync::watch::channel(0).0,
             proactivity_suspended: Mutex::new(None),
+            policy_manifest_updates: tokio::sync::watch::channel(0).0,
             decision_answers: tokio::sync::watch::channel(0).0,
+            notification_updates: tokio::sync::watch::channel(0).0,
+            credential_revocations: tokio::sync::watch::channel(0).0,
             container_output: Default::default(),
             live_speakers: Default::default(),
             #[cfg(feature = "sync")]
@@ -323,6 +339,7 @@ impl Store {
             grant_ref: None,
             diff_handle: id.as_bytes().to_vec(),
             read_frontier_hash,
+            context: Default::default(),
             redacted_at: None,
         };
         self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;

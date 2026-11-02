@@ -21,11 +21,15 @@ use crate::{
 use rmpv::Value;
 use std::collections::HashSet;
 
+use self::validation::validate;
+
+mod validation;
+
 const PREDICATE: &str = "agent.resident";
-/// A completed resident run's result TURN. Parts: attempt.
-const RUN_RESULT: &[u8] = b"oneiron:resident-run-result:v1";
+/// A completed agent run's result TURN. Parts: attempt.
+const RUN_RESULT: &[u8] = b"oneiron:agent-run-result:v1";
 /// The run's answer body, as the result TURN holds it. Parts: result TURN.
-const RUN_RESULT_BODY: &[u8] = b"oneiron:resident-run-result-body:v1";
+const RUN_RESULT_BODY: &[u8] = b"oneiron:agent-run-result-body:v1";
 
 /// Wake policy changes scheduling only. It conveys no scope or approval.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -279,10 +283,11 @@ impl AgentDispatcher<'_> {
         }
         // The inbox lens actor_ref is the RECEIVER. Classify the sender from
         // the durable identity-stamped event, never from receiver identity.
-        let rows = crate::attempt_queue::AttemptQueue::new(self.vault).list_kind_bounded(
-            crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        )?;
+        let rows = {
+            let txn = self.vault.store.env.read_txn()?;
+            crate::attempt_queue::AttemptQueue::new(self.vault)
+                .kind_rows_in_txn(&txn, crate::surface_event::SURFACE_EVENT_ATTEMPT_KIND)?
+        };
         for row in rows {
             let payload = crate::surface_event::decode_surface_event_attempt_payload(&row.payload)?;
             let event = &payload.event;
@@ -399,13 +404,14 @@ impl AgentDispatcher<'_> {
         residents: &[EntityId],
         now: u64,
     ) -> Result<Vec<(AttemptId, EntityId)>> {
-        let rows = AttemptQueue::new(self.vault).list_kind_bounded(
-            crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        )?;
+        let rows = {
+            let txn = self.vault.store.env.read_txn()?;
+            AttemptQueue::new(self.vault).ready_rows_in_txn(&txn)?
+        };
         let mut ready = Vec::new();
         for row in rows {
-            if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+            if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND
+                || !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
                 || row
                     .scheduled_at
                     .or(row.backoff_until)
@@ -448,6 +454,13 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         };
         self.dispatchable_definition_in_txn(&txn, &input.target)?;
+        // FIX 11592: a requester whose authority was withdrawn ends the try
+        // unrun, on the TASK runner's turn; this pump claims nothing.
+        if self.requester_withdrawn_in_txn(&txn, &input).is_some() {
+            drop(txn);
+            self.end_withdrawn(id, lease_owner, now)?;
+            return Ok(None);
+        }
         let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(
             self.vault,
             &mut txn,
@@ -472,13 +485,20 @@ impl AgentDispatcher<'_> {
 }
 
 impl AgentDispatcher<'_> {
-    /// Gives a completed resident run its durable result before the runner
+    /// Resumes parked attempts whose durable-wait signal already landed. The
+    /// agent-run pump and Dreamer wake pass share this idempotent sweep; a
+    /// consumed signal resumes only the attempt named by its private binding.
+    pub fn resume_signalled_runs(&self, now_ms: u64) -> Result<usize> {
+        crate::llm::resume_signalled_steps(self.vault, now_ms)
+    }
+
+    /// Gives a completed agent run its durable result before the runner
     /// completes the attempt: one TURN naming the answer of the run's
     /// finished step, which holds that body for as long as the TURN lives
     /// (OF-597), set as the attempt's result so the task highway's Done
     /// resolves it. The TURN's id derives from the attempt, so a replayed
     /// completion finds the TURN it made.
-    pub fn attach_resident_run_result(
+    pub fn attach_agent_run_result(
         &self,
         attempt: &AttemptRecord,
         lease_owner: &str,
@@ -496,7 +516,7 @@ impl AgentDispatcher<'_> {
             .find(|output| output.complete && output.path.ends_with(".observation.txt"));
         let field = |key: &str, value: Value| (Value::from(key), value);
         let artifact = Value::Map(vec![
-            field("kind", Value::from("resident.run_result")),
+            field("kind", Value::from("agent.run_result")),
             field(
                 "attempt_ref",
                 Value::from(crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())),
@@ -585,9 +605,9 @@ impl AgentDispatcher<'_> {
         Ok(result_ref)
     }
 
-    /// The answer a completed resident run's result names, for a reader that
+    /// The answer a completed agent run's result names, for a reader that
     /// must see exactly what the run produced (a seal check, OF-544):
-    /// `result_ref` is the TURN [`Self::attach_resident_run_result`] made for
+    /// `result_ref` is the TURN [`Self::attach_agent_run_result`] made for
     /// `attempt`, and the answer is that run's own complete output, as its
     /// digest and length. `None` for any other result, a TURN with no answer,
     /// or a run that no longer holds that output. The TURN's id is never read
@@ -596,24 +616,24 @@ impl AgentDispatcher<'_> {
     /// # Errors
     ///
     /// Storage errors.
-    pub fn resident_run_answer(
+    pub fn agent_run_answer(
         &self,
         attempt: AttemptId,
         result_ref: &str,
     ) -> Result<Option<crate::compaction::output::OutputRef>> {
         Ok(self
-            .resident_run_answer_with_turn(attempt, result_ref)?
+            .agent_run_answer_with_turn(attempt, result_ref)?
             .map(|(answer, _)| answer))
     }
 
-    /// [`Self::resident_run_answer`] with the result TURN it read the answer
+    /// [`Self::agent_run_answer`] with the result TURN it read the answer
     /// from (FIX 7103): one source of a seal check's prompt, never the whole
     /// set, since the answer's bytes and the check's objectives have their own.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub fn resident_run_answer_with_turn(
+    pub fn agent_run_answer_with_turn(
         &self,
         attempt: AttemptId,
         result_ref: &str,
@@ -634,7 +654,7 @@ impl AgentDispatcher<'_> {
         let attempt_ref = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
         let kind = result_field(root, "kind").and_then(Value::as_str);
         let of = result_field(root, "attempt_ref").and_then(Value::as_str);
-        if kind != Some("resident.run_result") || of != Some(attempt_ref.as_str()) {
+        if kind != Some("agent.run_result") || of != Some(attempt_ref.as_str()) {
             return Ok(None);
         }
         let answer = result_field(root, "answer");
@@ -693,39 +713,6 @@ pub(super) fn resident_run_input(
         return Ok(None);
     }
     Ok(Some((agent, input)))
-}
-
-fn validate(vault: &Vault, spec: &ResidentAgentSpec) -> Result<()> {
-    if vault.get_entity_type(&spec.agent_def_ref)? != Some(crate::registry::ENTITY_TYPE_AGENT_DEF)
-        || vault.get_entity_type(&spec.home_conversation_ref)?
-            != Some(crate::registry::ENTITY_TYPE_CONVERSATION)
-        || vault.get_entity_type(&spec.home_message_ref)?
-            != Some(crate::registry::ENTITY_TYPE_MESSAGE)
-        || spec.goal.axes.len() > 32
-    {
-        return Err(invalid());
-    }
-    let facts = vault
-        .channel_identity_facts(&spec.inbox_identity_ref)?
-        .ok_or_else(invalid)?;
-    if facts.binding.actor_ref() != Some(spec.agent_def_ref) {
-        return Err(invalid());
-    }
-    let parents: Vec<_> = vault
-        .edges_out(&spec.home_message_ref)?
-        .into_iter()
-        .filter(|edge| edge.kind == crate::edge::EdgeKind::BelongsTo)
-        .collect();
-    if parents.len() != 1 || parents[0].target != spec.home_conversation_ref {
-        return Err(invalid());
-    }
-    for reference in std::iter::once(spec.goal.goal)
-        .chain(std::iter::once(spec.goal.why))
-        .chain(spec.goal.axes.iter().copied())
-    {
-        ConsultPayloadRef::parse(vault, &reference.short_ref())?;
-    }
-    Ok(())
 }
 
 fn encode(spec: &ResidentAgentSpec) -> Value {

@@ -7,11 +7,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::connector_key::{
     ConnectorConsentTarget, ConnectorConsentView, ConnectorToolConsent, ConnectorToolConsentRow,
     ConnectorToolGrant,
@@ -19,15 +18,35 @@ use oneiron::connector_key::{
 use oneiron::outbound_consent::DataClass;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::config::connectors::normalize_name;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/connectors/consent", get(read).post(consent))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/connectors/consent",
+                summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/connectors/consent",
+                summary: "Grants the named tool rows to one actor (a held call's, a named one, else the owner's) at the installed endpoint.",
+                row: None,
+            },
+            post(consent),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +58,7 @@ struct ConsentQuery {
     actor: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConsentRequest {
     connector: String,
@@ -54,7 +73,7 @@ struct ConsentRequest {
     rows: Vec<ConsentRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ConsentRow {
     tool: String,
@@ -79,11 +98,23 @@ struct ConsentRead {
     endpoint: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Consented {
     connector: String,
     endpoint: String,
     grants: Vec<ConnectorToolGrant>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/consent`'s body (FIX 11611):
+/// [`ConsentRequest`].
+pub(crate) fn consent_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ConsentRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/connectors/consent`'s answer (FIX 11611):
+/// [`Consented`].
+pub(crate) fn consented_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Consented>()
 }
 
 /// The endpoint this host installed under the connector's name.
@@ -131,10 +162,10 @@ async fn read(
 async fn consent(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ConsentRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ConsentRequest>,
 ) -> OwnerReply<Consented> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<Consented> {
         let installed = installed_endpoint(&server, &request.connector).ok_or_else(|| {
             OwnerError::Invalid("this host installed no transport for the connector".to_owned())

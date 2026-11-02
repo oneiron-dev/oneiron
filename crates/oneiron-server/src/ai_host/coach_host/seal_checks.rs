@@ -95,18 +95,18 @@ impl SealChecker for HostChecker<'_> {
         }) else {
             return Ok(SealCheck::Unavailable);
         };
-        // An output handle names its bytes; a resident run's result TURN names
+        // An output handle names its bytes; an agent run's result TURN names
         // the answer its own run recorded, read back by that output's digest
         // and length, never by the TURN's id. Any other result is unavailable.
         let source = match OutputRef::from_handle(&request.result_ref) {
             Ok(source) => source,
             Err(_) => match AgentDispatcher::new(self.server.vault())
-                .resident_run_answer(request.attempt, &request.result_ref)
+                .agent_run_answer(request.attempt, &request.result_ref)
             {
                 Ok(Some(source)) => source,
                 Ok(None) => return Ok(SealCheck::Unavailable),
                 Err(error) => {
-                    tracing::debug!(kind = ?error.kind(), "a resident result could not be read");
+                    tracing::debug!(kind = ?error.kind(), "an agent run result could not be read");
                     return Ok(SealCheck::Unavailable);
                 }
             },

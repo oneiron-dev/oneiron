@@ -64,6 +64,15 @@ pub const COMMITMENT_PROJECTION_ACTOR: &[u8] = b"oneiron.commitment.projection.a
 /// start, window end (u64 big-endian each), ordinal (u32 big-endian).
 pub const COMMITMENT_INSTANCE: &[u8] = b"oneiron.commitment.instance.v1\0";
 
+/// The successor claim that carries one commitment's batched lapse
+/// (`commitment::lapse_claim_id`, FIX 9726). Parts: the commitment (16 bytes).
+pub const COMMITMENT_LAPSE_SUCCESSOR: &[u8] = b"oneiron.commitment.lapse_successor.v1\0";
+
+/// The proposal claim one commitment wake attempt writes
+/// (`commitment_wake::commitment_wake_proposal_claim_id`, FIX 9731). Parts: the
+/// attempt id (16 bytes).
+pub const COMMITMENT_WAKE_PROPOSAL: &[u8] = b"oneiron.commitment.wake_proposal.v1\0";
+
 /// A person or company bound to an external lead source (`linkedin_lead_preload`).
 /// Parts: source ref.
 pub const LINKEDIN_ENTITY: &[u8] = b"oneiron.linkedin.entity.v1";
@@ -91,6 +100,10 @@ pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor
 /// feed dedupe key.
 pub const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
 
+/// The archived remote copy of one calendar connector resource
+/// (`calendar::connectors::resource`). Parts: system, calendar ref, UID.
+pub const CALENDAR_CONNECTOR_SOURCE_BLOB: &[u8] = b"oneiron:calendar-connector-source-blob:v1:";
+
 /// The BLOB artifact holding one verified provider event's body
 /// (`surface_event::provider_payload`). Parts: channel, provider event id.
 pub const SURFACE_PROVIDER_EVENT_BLOB: &[u8] = b"oneiron:surface-provider-event-blob:v1:";
@@ -102,6 +115,11 @@ pub const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inb
 /// The BLOB artifact holding one agent's reply body to one connector event
 /// (`outbound::reply_content`). Parts: event id, agent, reply ref.
 pub const CONNECTOR_REPLY_BODY_BLOB: &[u8] = b"oneiron:connector-reply-body-blob:v1:";
+
+/// The BLOB artifact holding one campaign program step's filed outbound body
+/// (`campaign::step_body`, FIX 11513). Parts: program ref, step ref, call_seq
+/// (u64 big-endian).
+pub const CAMPAIGN_STEP_BODY_BLOB: &[u8] = b"oneiron:campaign-step-body-blob:v1:";
 
 /// An asking actor's origin (`task_verb::ask_record`). Parts: vault ask origin, actor.
 pub const TASK_ASK_ORIGIN: &[u8] = b"oneiron.tasks.ask.origin.v1";
@@ -249,9 +267,23 @@ pub const FILES_WORLD: &[u8] = b"oneiron.files.world.v1";
 /// source install's MACHINE id, its Files world, the canonical folder.
 pub const FILES_SOURCE: &[u8] = b"oneiron.files.source.v1";
 
+/// A turn or message VAD annotation claim (`affect::vad_annotation_claim_id`,
+/// FIX 9554). Parts: the annotated row's entity type, its id.
+pub const VAD_ANNOTATION_CLAIM: &[u8] = b"oneiron:vad-annotation-claim:v1";
+
+/// A channel-identity autonomy handle (`channel_identity_autonomy::codec::address`,
+/// FIX 9675): a read or action envelope, a read or action grant, an autonomy
+/// mode, a graduation scope or evidence row, a space-posting envelope. Parts:
+/// the row kind, the MessagePack bytes of the row's value.
+pub const CHANNEL_IDENTITY_AUTONOMY: &[u8] = b"oneiron/channel-identity-autonomy/v1";
+
+/// The source-bearing ASSET of one pack source (`skill_hub::pack_catalog::codec`,
+/// FIX 10125). Parts: the source's canonical tree content hash (32 bytes).
+pub const PACK_SOURCE_ASSET: &[u8] = b"oneiron.pack-source.asset.v1\0";
+
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 55] = [
+pub(crate) const ALL: [&[u8]; 57] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -275,6 +307,7 @@ pub(crate) const ALL: [&[u8]; 55] = [
     SURFACE_PROVIDER_EVENT_BLOB,
     SURFACE_PROVIDER_INBOUND_ACTOR,
     CONNECTOR_REPLY_BODY_BLOB,
+    CAMPAIGN_STEP_BODY_BLOB,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,
     TASK_ASK_MEMBER,
@@ -307,4 +340,5 @@ pub(crate) const ALL: [&[u8]; 55] = [
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
     REPO_SECRET_MARK,
+    VAD_ANNOTATION_CLAIM,
 ];

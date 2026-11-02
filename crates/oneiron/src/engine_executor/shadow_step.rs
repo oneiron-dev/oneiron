@@ -12,8 +12,17 @@
 //! carried after the program is a proposed intent in the effect trace, never
 //! said. The arm ends after the step: its status is the step's, never a
 //! whole run's.
+//!
+//! The arm's program is type-checked as a run's step's is, beside the arm,
+//! under the arm's own identity (FIX 10389, fork d): its feedback rides with
+//! the arm's run and is read later under the arm's lease alone, never as its
+//! source run's step. Nothing waits on the check; its status is never the
+//! arm's.
+
+use std::sync::Arc;
 
 use super::cancel::StepCancellation;
+use super::code_check::{CheckedDoor, ProgramAdmission, ProgramCheck, TypeFeedback};
 use super::host::executor_boundary_contract;
 use super::store::{
     RECOVERABLE_OUTPUT_CHUNK_BYTES, executed_output_path, is_result_output_path,
@@ -27,9 +36,22 @@ use crate::code_run::shadow_runner::{
     ShadowBridgeWindow, ShadowStatus, ShadowStepRun, ShadowTraceEntry, ShadowTraceKind,
     ShadowUnavailable, ShadowUnavailableReason,
 };
-use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord};
-use crate::code_sandbox::source::prepare_source;
-use crate::{Error, LlmResponse, Result};
+use crate::code_run::{CodeRunRawOutput, CodeRunReplayRecord, FeedbackRoute};
+use crate::code_sandbox::source::{PreparedSource, prepare_source};
+use crate::{EntityId, Error, LlmResponse, Result};
+
+/// What an arm's program is type-checked with (FIX 10389, fork d): the
+/// host's service as it is, never loaded or waited on for the arm, under
+/// the arm's own identity, its check run only while the arm's lease holds
+/// the arm.
+pub struct ArmTypeFeedback<'f> {
+    /// The host's service; `None` answers that no checker is attached.
+    pub service: Option<&'f TypeFeedback>,
+    /// The arm the program runs in.
+    pub arm: EntityId,
+    /// Whether the arm's lease still holds the arm.
+    pub live: Arc<dyn Fn() -> bool + Send + Sync>,
+}
 
 /// The outputs of `prefix`, a run's row as a step starts, that the step's
 /// program may read back: the run's results, and the observation of each
@@ -54,7 +76,9 @@ pub(crate) fn shadow_readable_outputs(prefix: &CodeRunReplayRecord) -> Vec<CodeR
 /// on `answer`, the pinned model's answer to the step's request, with a
 /// fresh `runtime` under `cancel`. A reply that does not heal fails the step
 /// as it fails a run's; a call the record cannot answer leaves the arm
-/// unavailable, its evidence so far kept.
+/// unavailable, its evidence so far kept. Its program is checked on
+/// `feedback`, its feedback kept in `store` for the reads under the arm's
+/// lease (FIX 10389, fork d).
 ///
 /// # Errors
 ///
@@ -65,6 +89,7 @@ pub fn run_shadow_step(
     runtime: &mut dyn JsCodeModeRuntime,
     store: &ShadowBodyStore,
     cancel: &StepCancellation,
+    feedback: &ArmTypeFeedback<'_>,
 ) -> Result<ShadowStepRun> {
     let seq = prepared.step().step;
     let (start, end) = prepared.bridge_window();
@@ -93,11 +118,15 @@ pub fn run_shadow_step(
         };
         return finish_run(store, seq, status, outputs, &[], &[], bridge);
     };
-    outputs.push(store.put(script_output_path(seq), healed.code.as_bytes())?);
     // Prepared once, as a run's step is (FIX 8276): a TypeScript program's
     // executed JavaScript and its preparation record stay in the arm's own
     // store beside the program.
     let source = prepare_source(&healed.code);
+    // Checked once, as its author wrote it, before anything of it is
+    // written (FIX 10389, fork d).
+    let mut check = start_arm_check(feedback, prepared, &healed.code, &source);
+    store.hold_feedback(check.latest());
+    outputs.push(store.put(script_output_path(seq), healed.code.as_bytes())?);
     if let Some(transpiled) = source.transpiled() {
         let executed = transpiled.executed_js().as_bytes();
         outputs.push(store.put(executed_output_path(seq), executed)?);
@@ -148,7 +177,10 @@ pub fn run_shadow_step(
         end,
         consumed: host.consumed(),
     };
-    finish_run(
+    if matches!(status, ShadowStatus::StepComplete { .. }) {
+        check.completed();
+    }
+    let mut run = finish_run(
         store,
         seq,
         status,
@@ -156,7 +188,27 @@ pub fn run_shadow_step(
         &proposed,
         &host.matched,
         bridge,
-    )
+    )?;
+    run.type_feedback = Some(check.feedback());
+    Ok(run)
+}
+
+/// Starts the check of `program`, the arm's program, as `source` (its
+/// preparation) found it: under the arm's identity at its step, as the
+/// actor whose step it runs, on the arm's own route.
+fn start_arm_check(
+    feedback: &ArmTypeFeedback<'_>,
+    prepared: &PreparedShadowStep,
+    program: &str,
+    source: &PreparedSource<'_>,
+) -> ProgramCheck {
+    let admission = ProgramAdmission {
+        key: (feedback.arm, prepared.step().step, 0),
+        actor: Some(prepared.source_actor()),
+        door: CheckedDoor::ShadowArm,
+        route: FeedbackRoute::Arm(Arc::clone(&feedback.live)),
+    };
+    ProgramCheck::start(feedback.service, admission, program, source)
 }
 
 /// The arm's store, holding each body frozen clean for the step.
@@ -318,6 +370,7 @@ fn finish_run(
         effect_trace,
         bridge_trace,
         bridge,
+        type_feedback: None,
     })
 }
 

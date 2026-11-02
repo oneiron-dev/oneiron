@@ -121,7 +121,7 @@ impl<'a> BranchResources<'a> {
         let mut granted = Scope {
             world: branch.world_ref,
             facet: branch.facet_ref,
-            relationship: requested.and_then(|scope| scope.relationship),
+            relationship: requested.and_then(|scope| scope.relationship.clone()),
             project: requested.and_then(|scope| scope.project),
             readable,
             writable: BTreeSet::from([output.clone()]),

@@ -23,14 +23,14 @@ use crate::memory::Memory;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 use rmpv::Value;
 
+mod editor_sources;
+mod requester_lane;
+
 pub(super) const REQUEST_VERSION: u64 = 2;
 /// The declaration key an explicit source set rides under (FIX 3198).
 pub(super) const SOURCES_KEY: &str = "sources";
 const SUMMARY_ID_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary:v1";
 const MEMO_DOMAIN: &[u8] = b"oneiron:dreamer-scope-summary-memo:v2";
-/// The purpose a NOTE set's summary takes unless its caller names another
-/// (FIX 5757): never a session recap.
-const NOTE_SET_PURPOSE: &str = "note_summary";
 
 /// What the caller asks the Dreamer to summarize; never caller-authored prose.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,11 +144,22 @@ impl ScopeSummaryPlan {
         if let Some(arc) = &self.arc {
             return crate::dreamer_consolidation::arc_evidence_in_txn(vault, txn, arc);
         }
-        scope_summary_evidence_in_txn(vault, txn, &self.sources, self.session.is_some())
+        let mut evidence =
+            scope_summary_evidence_in_txn(vault, txn, &self.sources, self.session.is_some())?;
+        // An edited predecessor's text is model input: the rows it was
+        // written from are read and pinned with the evidence (FIX 10092).
+        if self.editor_text.is_some()
+            && let Some(previous) = self.previous
+        {
+            evidence.editor_sources =
+                editor_sources::editor_sources_in_txn(vault, txn, &previous, &evidence)?;
+        }
+        Ok(evidence)
     }
 
     /// The requester's surface a landing's reply is checked and receipted on
-    /// (OF-063), bound from the declaration's admitted byline.
+    /// (OF-063), bound from the declaration's admitted byline; its reply lane
+    /// is narrowed by the lane the declaration froze (FIX 2194).
     fn requester_surface<'v>(&self, vault: &'v Vault) -> Memory<'v> {
         vault.memory(self.requester.entity_ref(), self.requester.actor_class())
     }
@@ -352,23 +363,14 @@ impl Vault {
         run_id: Option<&str>,
         now: u64,
     ) -> Result<ScopeSummaryQueued> {
-        let purpose = match &request.target {
-            ScopeSummaryTarget::Scope {
-                scope:
-                    ScopeSelector {
-                        path: ScopePath::SubSession(_),
-                        ..
-                    },
-                ..
-            } => "sub_agent_merge_artifact",
-            ScopeSummaryTarget::Sources { scope: None, .. } => NOTE_SET_PURPOSE,
-            ScopeSummaryTarget::Arc { .. } => super::arc::ARC_PURPOSE,
-            _ => "session_recap",
-        };
+        let purpose = requester_lane::default_purpose(&request.target);
         let previous = derivation::current_in_txn(self, txn, request, purpose)?;
         let input = derivation::declaration(request, purpose, previous);
         plan_in_txn(self, txn, &input)?;
-        enqueue_with_lineage_in_txn(self, txn, input, parent_attempt, run_id, now)
+        let queued = enqueue_with_lineage_in_txn(self, txn, input, parent_attempt, run_id, now)?;
+        // FIX 3103: the asking run, as its request is queued.
+        crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
+        Ok(queued)
     }
 
     /// Declares the descriptor row as well as the scope. Only approved rows
@@ -382,7 +384,9 @@ impl Vault {
             let previous = derivation::current_in_txn(self, txn, request, purpose)?;
             let input = derivation::declaration(request, purpose, previous);
             plan_in_txn(self, txn, &input)?;
-            enqueue_in_txn(self, txn, input)
+            let queued = enqueue_in_txn(self, txn, input)?;
+            crate::skill_attribution::note_summary_request_in_txn(&self.store, txn, queued.attempt);
+            Ok(queued)
         })
     }
 
@@ -438,6 +442,7 @@ impl Vault {
     ) -> Result<bool> {
         let requester = plan.requester_surface(self);
         let lane = reply_lane(&requester, plan.asks_reply())?;
+        let lane = requester_lane::narrowed_reply_lane(self, plan, lane)?;
         let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if plan_in_txn(self, txn, &derivation::decode(&plan.input)?)? != *plan
                 || plan.evidence_in_txn(self, txn)? != *evidence
@@ -485,6 +490,7 @@ impl Vault {
                 (None, None)
             };
             super::status::record_result_in_txn(self, txn, attempt, summary, landed.as_ref())?;
+            crate::skill_attribution::note_summary_landing_in_txn(self, txn, attempt, summary);
             derivation::register_in_txn(self, txn, &derivation::decode(&plan.input)?, summary)?;
             super::arc::landed_in_txn(self, txn, plan, evidence, summary)?;
             Ok((true, reply))
@@ -510,6 +516,7 @@ impl Vault {
         let id = composed_summary_id(attempt);
         let requester = plan.requester_surface(self);
         let lane = reply_lane(&requester, plan.asks_reply())?;
+        let lane = requester_lane::narrowed_reply_lane(self, plan, lane)?;
         let outcome = self.try_with_write_txn_grouped::<_, _, AppendFailure>(|txn| {
             if let Some(result) = super::status::result_in_txn(self, txn, attempt)? {
                 return Ok(((EntityId::from_hex(&result.summary)?, None), None));
@@ -541,6 +548,7 @@ impl Vault {
                     notes: evidence.notes.clone(),
                 },
             )?;
+            editor_sources::register_in_txn(self, txn, &id, evidence)?;
             let metadata = ScopeSummaryMetadata {
                 purpose: plan.purpose.clone(),
                 keep: composed.keep.to_owned(),
@@ -552,7 +560,12 @@ impl Vault {
                     instruction: composed.instruction.to_owned(),
                     model: composed.model.to_owned(),
                     policy_frontier: plan.policy_frontier,
-                    sources: evidence.source_versions.clone(),
+                    sources: evidence
+                        .source_versions
+                        .iter()
+                        .chain(&evidence.editor_sources)
+                        .cloned()
+                        .collect(),
                     previous: plan.previous.map(|id| id.to_hex()),
                     recorded_at: now,
                     generated_text_hash: *blake3::hash(composed.text.as_bytes()).as_bytes(),
@@ -571,6 +584,7 @@ impl Vault {
                 .transpose()?
                 .unzip();
             super::status::record_result_in_txn(self, txn, attempt, id, landed.as_ref())?;
+            crate::skill_attribution::note_summary_landing_in_txn(self, txn, attempt, id);
             derivation::register_in_txn(self, txn, &input, id)?;
             super::arc::landed_in_txn(self, txn, plan, evidence, id)?;
             Ok(((id, landed), reply.flatten()))
@@ -728,7 +742,7 @@ pub(super) fn decode_request(
 
 /// A declaration's target alone, its requester unread. Each target is named
 /// by its own keys, and a sitting's declaration names no requester.
-pub(super) fn decode_target(input: &Value) -> Result<ScopeSummaryTarget> {
+pub(crate) fn decode_target(input: &Value) -> Result<ScopeSummaryTarget> {
     let entries = declared_fields(input)?;
     let field = |name: &str| declared(entries, name);
     let session = field(super::session::SESSION_KEY);

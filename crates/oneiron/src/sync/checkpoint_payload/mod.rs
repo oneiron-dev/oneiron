@@ -36,6 +36,7 @@
     reason = "KS7-5 drives these; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
+mod documents;
 mod frame;
 mod operations;
 mod owners;
@@ -43,6 +44,9 @@ mod parts;
 mod restore;
 mod rows;
 
+use std::collections::BTreeSet;
+
+use heed::RoTxn;
 use loro::IdSpan;
 use loro::checkpoint::Skeleton;
 
@@ -52,8 +56,9 @@ pub(crate) use self::owners::root_entry;
 pub(crate) use self::parts::PartHolders;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::rows::{
-    ActorPart, OtherClient, OwnerRef, RoundTripPolicy, RowDb, RowLocator,
+    ActorPart, OpenedOwnerRows, OtherClient, OwnerRef, RoundTripPolicy, RowDb, RowLocator,
 };
 use crate::sync::carrier_parts::Parts;
 
@@ -103,6 +108,16 @@ impl<'a> CapturedSyncRows<'a> {
     pub(crate) fn new(rows: Vec<CapturedSyncRow<'a>>) -> Self {
         Self { rows }
     }
+}
+
+/// A document's basis as the capture's one view holds it (FIX 10932): the
+/// full snapshot and the pending rows, in replay order, of the slot its
+/// text plane appends to. Empty when the view holds no snapshot there, or
+/// the image leaves a row of it out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct DocumentBasis {
+    pub(crate) snapshot: Option<Vec<u8>>,
+    pub(crate) pending: Vec<Vec<u8>>,
 }
 
 /// Why a sync row or value is not compartmented: it stays under the image's
@@ -243,6 +258,14 @@ pub(crate) enum KindPlacement {
 pub(crate) trait SyncPayloadOwners {
     /// Where an entity row of the kind tagged `entity_type` goes.
     fn entity_kind(&self, entity_type: u8) -> KindPlacement;
+
+    /// The entity a row kept under `id` belongs to: a masked repo copy's
+    /// rows are its source's, so an erased source's copy goes with it (FIX
+    /// 7608, KEY STORE = A, FIX 10799). `id` itself unless the capture read
+    /// its copy aliases.
+    fn owner_entity(&self, id: EntityId) -> EntityId {
+        id
+    }
 }
 
 /// One atom a holder holds: the whole native row, exact, or one copy of a
@@ -489,6 +512,46 @@ pub(crate) fn restore_checkpoint_sync(
         }
     }
     Ok(restored)
+}
+
+/// `entity`'s document basis in the capture's one view `txn` (FIX 10932),
+/// each row only as the image takes it (`takes`): never a live load or
+/// another txn.
+pub(crate) fn read_document_basis(
+    dbs: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    entity: EntityId,
+    takes: &dyn Fn(RowDb, &[u8], &[u8]) -> bool,
+) -> Result<DocumentBasis> {
+    self::documents::read_basis(dbs, txn, entity, takes)
+}
+
+/// Groups the native document rows of `rows` (FIX 10932), each pending
+/// edit and cached item document with its entity's document history: the
+/// basis `basis` reads for that entity, or a cached full-history STATE
+/// alone. A group's parts go to `emit` under the owner `owners` names for
+/// its entity, each actor split out beside them, only once the group's
+/// all-open rebuild gave every native row back; a group that does not
+/// emits nothing, and its rows stay for [`project_checkpoint_sync`].
+/// Answers the indexes of the rows grouped.
+pub(crate) fn project_checkpoint_documents(
+    rows: &CapturedSyncRows<'_>,
+    owners: &dyn SyncPayloadOwners,
+    basis: &mut dyn FnMut(EntityId) -> Result<DocumentBasis>,
+    emit: &mut dyn FnMut(OwnerRef, SyncAtom) -> Result<()>,
+) -> Result<BTreeSet<usize>> {
+    self::documents::project(&rows.rows, owners, basis, emit)
+}
+
+/// Puts back the native rows of `opened`'s document groups of `carrier`
+/// (FIX 10932): each group joined from all its parts in group order, each
+/// row's own slice rewrapped in its native frame and checked against its
+/// locator. An opened part that does not read as its group's refuses.
+pub(crate) fn restore_checkpoint_documents(
+    carrier: SyncCarrier,
+    opened: &OpenedOwnerRows,
+) -> Result<Vec<(RowLocator, Vec<u8>)>> {
+    self::documents::restore(carrier, opened)
 }
 
 /// Splits the Loro rows of `rows` (KS7-3b) a window at a time: a window's

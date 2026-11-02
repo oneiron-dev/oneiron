@@ -31,7 +31,7 @@ where
         let (writer, run, held) = hold_live_run(server, auth, session, &input.live_run).await?;
         let (server, auth) = (Arc::clone(server), auth.clone());
         let runtime = tokio::runtime::Handle::current();
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             let binding = held.proof();
             let dispatcher = HostSelfDispatcher::for_live_run(server.vault(), writer, &binding)?;
             let origin = dispatcher.browser_origin_from_host(verb)?;

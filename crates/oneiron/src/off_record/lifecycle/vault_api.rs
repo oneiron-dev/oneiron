@@ -480,6 +480,9 @@ impl Vault {
         self.store
             .off_record_sessions
             .remove_if_same(session_ref, entry)?;
+        // Unpublished: the closed overlay drops the membership it kept for
+        // classification and its host charge (FIX 10103).
+        entry.overlay.release_closed_state()?;
 
         Ok(OffRecordCloseOutcome {
             turns_deleted,

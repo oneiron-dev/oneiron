@@ -291,9 +291,6 @@ fn decode_judgments(
     let Value::Array(items) = value else {
         return Err(corrupt());
     };
-    if items.len() > crate::edit_roundtrip::slides_review::MAX_JUDGMENTS {
-        return Err(corrupt());
-    }
     let rows: Vec<_> = items
         .iter()
         .map(|item| {

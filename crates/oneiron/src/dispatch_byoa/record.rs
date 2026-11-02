@@ -21,15 +21,32 @@ use crate::temporal::TimeRange;
 use super::error::{ByoaResult, ERR_ARTIFACT_COLLISION, ERR_RUNNER_RECORD, invalid};
 use super::exhaust::ensure_byoa_runtime_actor;
 
-/// The record `id`'s head version holds, if `id` holds one.
+/// The record `id`'s head version holds, if `id` holds one. A head that does
+/// not decode as `T` reads as absent, under a key-only WARN, never a failed
+/// read.
 ///
 /// # Errors
-/// A store failure, or a head that does not decode as `T`.
+/// A store failure.
 pub(super) fn head_record<T: DeserializeOwned>(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> ByoaResult<Option<T>> {
+    Ok(head_record_checked(vault, rtxn, id)?.and_then(Result::ok))
+}
+
+/// The record `id`'s head version holds, if `id` holds one, with a corrupt
+/// head told apart from a missing one (FIX 11651): truly absent reads
+/// `None`; a head that does not decode as `T` reads `Some(Err(_))`, under
+/// the same key-only WARN as [`head_record`], never a failed read.
+///
+/// # Errors
+/// A store failure.
+pub(super) fn head_record_checked<T: DeserializeOwned>(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> ByoaResult<Option<ByoaResult<T>>> {
     if vault.get_entity_type_in_txn(rtxn, id)?.is_none() {
         return Ok(None);
     }
@@ -39,9 +56,16 @@ pub(super) fn head_record<T: DeserializeOwned>(
     let Some(bytes) = vault.read_blob_artifact_version_in_txn(rtxn, id, head.version)? else {
         return Ok(None);
     };
-    rmp_serde::from_slice(&bytes)
-        .map(Some)
-        .map_err(|_| invalid(ERR_RUNNER_RECORD))
+    match rmp_serde::from_slice(&bytes) {
+        Ok(record) => Ok(Some(Ok(record))),
+        Err(_) => {
+            tracing::warn!(
+                record = %id.to_hex(),
+                "byoa runner seat record head does not decode: read as absent"
+            );
+            Ok(Some(Err(invalid(ERR_RUNNER_RECORD))))
+        }
+    }
 }
 
 /// Appends `record` as the head of `id`, made on first use as the artifact

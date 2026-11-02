@@ -6,9 +6,11 @@ use super::*;
 
 /// A row a sequence floor refuses only to restriction (Astra #1430): a world
 /// edit, a grant travel choice, a checkpoint policy choice, a home pick, a
-/// person's conversation training choice, or a machine revision. The roster rule reads each as a replica with no floor
+/// person's conversation training choice, a setting's act, or a machine
+/// revision. The roster rule reads each as a replica with no floor
 /// does; this install never counts what it grants. A frontier join, which
-/// grants nothing, lands so too, so such an act above it keeps its effect.
+/// grants nothing, lands so too, so such an act above it keeps its effect;
+/// so does a custody permit piece, which has no effect alone (FIX 11866).
 pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
     matches!(
         op,
@@ -18,8 +20,10 @@ pub(super) fn lands_restriction_only(op: &AuthorityOp) -> bool {
             | AuthorityOp::HomeNodePick(_)
             | AuthorityOp::ConversationTrainingSet(_)
             | AuthorityOp::ConversationTrainingVaultSet(_)
+            | AuthorityOp::PolicySettingSet(_)
             | AuthorityOp::MachineProfile(_)
             | AuthorityOp::FrontierJoin(_)
+            | AuthorityOp::CustodyPermitPiece(_)
     )
 }
 

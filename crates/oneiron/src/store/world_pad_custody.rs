@@ -21,6 +21,7 @@
 mod census;
 #[cfg(feature = "sync")]
 mod current;
+mod install;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -128,9 +129,11 @@ impl Store {
         let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
         let id = pad_subject(custody.binding(), item)?.at(0);
         let secret = CustodySecret::from_bytes(Zeroizing::new(pad.to_vec()));
+        // A live entry must hold the same bytes, and its Mint is journaled
+        // all the same (FIX 6781): the mirror never stands on an unjournaled
+        // pad.
         match custody.state(&id)? {
-            EntryState::Missing => custody.publish_minted(&id, &secret),
-            EntryState::Live => custody.publish(&id, &secret),
+            EntryState::Missing | EntryState::Live => custody.publish_minted(&id, &secret),
             EntryState::Retired => Err(CustodyKind::WorldPad.corrupt()),
         }
     }
@@ -328,6 +331,35 @@ impl Store {
             cause: RetireCause::Erase,
         };
         stage_retirement_in_txn(self, wtxn, &intent)
+    }
+
+    /// The key item of the one pad custody names whose key derives the pad
+    /// row `row`, found by its subjects' names alone, as
+    /// [`Self::stage_world_pad_row_erase_in_txn`] finds it: what a peer's
+    /// hard tombstone of a pad row this replica never held takes out of
+    /// custody and out of the home's kept pad objects (FIX 7294). `None` when
+    /// custody names none.
+    ///
+    /// # Errors
+    ///
+    /// Custody faults.
+    pub(crate) fn world_pad_item_of_row(&self, row: &EntityId) -> Result<Option<WorldPadItem>> {
+        if self.core.gate_custody_archived() {
+            return Ok(None);
+        }
+        let Some(custody) = self.core.key_custody.local() else {
+            return Ok(None);
+        };
+        if !custody_present(custody.binding().root())? {
+            return Ok(None);
+        }
+        for subject in custody.subjects_with_prefix(CustodyKind::WorldPad, &[])? {
+            let derived = crate::world_keys::pad_row_of_item(subject.item());
+            if matches!(derived, Ok(Some(found)) if found == *row) {
+                return Ok(WorldPadItem::try_from(subject.item()).ok());
+            }
+        }
+        Ok(None)
     }
 
     /// [`Self::stage_world_pad_key_retirement_in_txn`] for the pad row `row`

@@ -45,7 +45,9 @@ impl LadderDecider {
                 }));
             }
             VerdictAsker::Credential(auth, _) => {
-                self.runtime.spawn(HELD_IMAGE.scope(held, async move {
+                // The verdict is the run's (FIX 10748), as the connector's
+                // is: its handles carry the run's origin and lease.
+                let asked = async move {
                     let id = InvocationId::mint().to_hex();
                     let call = crate::api::facade::FacadeCall::bound(&auth, None, Some(&id), None);
                     let answer =
@@ -54,7 +56,11 @@ impl LadderDecider {
                             .map(|answer| (answer.value, answer.rows.unwrap_or_default()))
                             .map_err(|error| super::mcp_facade_error(error.into_memory_error()));
                     let _ = sender.send(answer);
-                }));
+                };
+                self.runtime.spawn(HELD_IMAGE.scope(
+                    held,
+                    crate::api::facade::host_doors::support::with_calling_origin(origin, asked),
+                ));
             }
             VerdictAsker::Agent(actor, line) => {
                 self.runtime.spawn_blocking(move || {
@@ -67,6 +73,7 @@ impl LadderDecider {
                         input,
                         held,
                         line.as_ref(),
+                        None,
                     );
                     // Only the verdict is read here; its rows are not.
                     let answered =

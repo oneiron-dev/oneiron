@@ -235,6 +235,11 @@ pub struct WorkflowRunView {
     /// settles it when the run ends. `None` for a TASK-less run (FIX 5295).
     #[serde(default)]
     pub task_ref: Option<EntityId>,
+    /// Why the next step's release was refused (FIX 10602): its agent
+    /// definition is missing, inactive or unapproved now. `None` while
+    /// nothing refuses.
+    #[serde(default)]
+    pub release_refusal: Option<String>,
 }
 
 fn attempt_ref(id: AttemptId) -> MemoryResult<EntityId> {
@@ -281,6 +286,7 @@ fn run_view(status: &WorkflowDispatchStatus) -> MemoryResult<WorkflowRunView> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?,
+        release_refusal: status.release_refusal.clone(),
     })
 }
 

@@ -2,7 +2,7 @@
 //! its proposed craft notes, its landing marker and the progress it read,
 //! in one grouped write.
 
-use super::{DreamCut, LANDED, PADS, PROGRESS, advance, invalid};
+use super::{DreamCut, LANDED, PADS, PROGRESS, READ, ResidentDreamRead, advance, invalid};
 use crate::actor_claims::ResidentCraftCandidate;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_runner::FreeTimeItemBinding;
@@ -11,12 +11,14 @@ use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::{EntityId, Vault, WriteActor};
 
-/// What one dreaming's reply lands: its entry, its craft notes, and the
-/// free-time item it ran as, if any.
+/// What one dreaming's reply lands: its entry, its craft notes, the
+/// free-time item it ran as, if any, and whether it asks for another round
+/// of its own time (FIX 7763).
 pub(super) struct DreamWrite<'a> {
     pub(super) entry: &'a str,
     pub(super) craft: &'a [ResidentCraftCandidate],
     pub(super) free_time: &'a Option<FreeTimeItemBinding>,
+    pub(super) another_round: bool,
 }
 
 /// Lands one dreaming in one grouped write; a replay after it landed
@@ -34,6 +36,7 @@ pub(super) fn commit_dream(
         entry,
         craft,
         free_time,
+        another_round,
     } = write;
     ctx.vault.with_write_txn_grouped(|txn| {
         if LANDED.contains(&ctx.vault.store, txn, &attempt_id)? {
@@ -44,8 +47,23 @@ pub(super) fn commit_dream(
             .map_err(|error| invalid(&format!("diary entry: {error}")))?;
         propose_craft_notes_in_txn(ctx.vault, txn, resident_id, attempt_id, craft, at)?;
         LANDED.put(&ctx.vault.store, txn, &attempt_id, &entry_id)?;
+        READ.put(
+            &ctx.vault.store,
+            txn,
+            &entry_id,
+            &ResidentDreamRead {
+                attempt: attempt_id,
+                sources: cut.read.clone(),
+            },
+        )?;
         if let Some(binding) = free_time {
-            crate::dreamer_runner::record_own_time_landed_in_txn(ctx.vault, txn, binding, at)?;
+            crate::dreamer_runner::record_own_time_landed_in_txn(
+                ctx.vault,
+                txn,
+                binding,
+                another_round,
+                at,
+            )?;
         }
         for pad in &cut.pads {
             PADS.put(&ctx.vault.store, txn, &(resident_id, *pad), &[1])?;

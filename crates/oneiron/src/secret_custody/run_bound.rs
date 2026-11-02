@@ -21,6 +21,12 @@
 //! record. Each mint writes one value-free Gate record of where the secret
 //! was found.
 //!
+//! A `self.use` of the run's own leased try reaches the run's records too
+//! (FIX 8334): every operation, a connector call's send included, presents
+//! one through the seat's existing binding ([`Vault::with_run_secret_for`])
+//! under the operation effector's own door policy. No other binding is
+//! added, and a record another run found stays refused.
+//!
 //! The model reads a run-bound value only through `reveal`, its one check
 //! and its receipt, as any found secret's: the record is active, device-bound
 //! (the floor's default band reaches T1) and its one binding reaches T1. A
@@ -28,21 +34,25 @@
 //! ([`reveal_run_admission`]): an asker another run binds is refused before
 //! the check; one no run binds takes the check alone.
 
+use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use super::doors::{
     CustodyWrite, NAME_INDEX, read_secret_custody_admission_in_txn, register_custody_in_txn,
 };
+use super::reveal::{SecretRevealCause, close_secret_reveals_in_txn, parse_secret_handle};
 use super::types::{
     CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SECRET_SCOPE_READ, SecretBinding,
     SecretCustodyFloor, SecretCustodyRecord, SecretCustodyStatus,
 };
 use super::use_handle::{SECRET_USE_REASON, handle_record_in_txn};
 use crate::AttemptId;
+use crate::credential_door::admit_materialization_in_txn;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::ShortIdStoreRead;
+use crate::secret_lease::DoorInjectionReceipt;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::vault::Vault;
 
@@ -63,7 +73,8 @@ const RUN_DIFF_DOMAIN: &[u8] = b"oneiron.secret_run.v1";
 const RUN_SEATS: [RunSecretSeat; 2] = [RunSecretSeat::Browser, RunSecretSeat::Desktop];
 
 /// The seat of a run that found a secret: its browser or its desktop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RunSecretSeat {
     Browser,
     Desktop,
@@ -91,13 +102,71 @@ impl RunSecretSeat {
 }
 
 /// Who holds a run-bound secret: the run whose seat found it, that seat,
-/// and the verified actor the run's call acts for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// and the verified actor the run's call acts for. Ids only, so a held
+/// connector call's row keeps it (FIX 2822).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct RunSecretHolder {
     pub run: EntityId,
     pub seat: RunSecretSeat,
     pub actor: EntityId,
+    #[serde(with = "actor_class_byte")]
     pub actor_class: EdgeActorClass,
+}
+
+/// An actor class kept in a row as its byte, as the edge codecs keep it.
+pub(crate) mod actor_class_byte {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    use crate::edge::EdgeActorClass;
+
+    pub(crate) fn serialize<S: Serializer>(
+        class: &EdgeActorClass,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_u8(*class as u8)
+    }
+
+    pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<EdgeActorClass, D::Error> {
+        let byte = u8::deserialize(deserializer)?;
+        EdgeActorClass::try_from_u8(byte)
+            .ok_or_else(|| serde::de::Error::custom("an unknown actor class byte"))
+    }
+}
+
+impl RunSecretHolder {
+    /// The holder of run-bound `name` for `actor` in `run`: the seat of
+    /// `run` that found it (FIX 8334). `None` for a name no seat of `run`
+    /// found, another run's included.
+    pub(crate) fn of_found(
+        name: &str,
+        run: EntityId,
+        actor: EntityId,
+        actor_class: EdgeActorClass,
+    ) -> Option<Self> {
+        run_secret_seat(name, &run).map(|seat| Self {
+            run,
+            seat,
+            actor,
+            actor_class,
+        })
+    }
+}
+
+/// The seat of `run` that found run-bound `name`, if one did.
+fn run_secret_seat(name: &str, run: &EntityId) -> Option<RunSecretSeat> {
+    RUN_SEATS
+        .into_iter()
+        .find(|seat| name.starts_with(&seat.names(run)))
+}
+
+/// The seat effector run-bound `name` of `run` is bound to: its one
+/// binding, `browser-run:<run>` or `desktop-run:<run>` (FIX 8334). `None`
+/// for a name no seat of `run` found.
+pub(crate) fn run_secret_effector(name: &str, run: &EntityId) -> Option<String> {
+    run_secret_seat(name, run).map(|seat| seat.effector(run))
 }
 
 /// Whether `name` is a run-bound record's: the known-value index never
@@ -275,6 +344,93 @@ impl Vault {
         used.map(drop)
     }
 
+    /// Lends the bytes run-bound `handle` holds to `use_`, a `self.use`
+    /// operation's send for `effector` (FIX 8334): only a live record
+    /// `holder`'s run's seat found, through that seat's existing binding,
+    /// and only while `effector`'s own door policy admits it, with no
+    /// transaction held while `use_` runs. No binding is added. The use that
+    /// calls it writes the use's records.
+    ///
+    /// # Errors
+    /// [`SecretError::SecretBindingDenied`] for a record not this run's
+    /// seat's; a handle that names no record; the door policy's, the
+    /// floor's and the bound door's refusals; `use_`'s own error; storage
+    /// faults.
+    pub fn with_run_secret_for(
+        &self,
+        holder: &RunSecretHolder,
+        handle: &str,
+        effector: &str,
+        use_: &mut dyn FnMut(&[u8]) -> Result<()>,
+    ) -> Result<DoorInjectionReceipt> {
+        let id = {
+            let txn = self.store.env.read_txn()?;
+            let (short, id) = handle_record_in_txn(&self.store, &txn, handle)?;
+            let held = read_secret_custody_admission_in_txn(&self.store, &txn, &id)?;
+            let owned = held
+                .as_ref()
+                .is_some_and(|held| held.name.starts_with(&holder.seat.names(&holder.run)));
+            if !owned {
+                return Err(Error::Secret(SecretError::SecretBindingDenied {
+                    effector: effector.to_owned(),
+                    secret_ref: short,
+                }));
+            }
+            admit_materialization_in_txn(&self.store, &txn, effector, None)?;
+            id
+        };
+        self.inject_secret_record_at_door(&id, &holder.seat.effector(&holder.run), use_)
+    }
+
+    /// Whether a `self.use` for `effector` of run-bound `name`, which
+    /// `holder`'s run found, is admitted (FIX 8334): the seat's own binding
+    /// at the door, and `effector`'s door policy. Value-free.
+    ///
+    /// # Errors
+    /// The door's refusals, as [`Vault::check_secret_at_door`]'s.
+    pub(crate) fn check_run_secret_at_door(
+        &self,
+        holder: &RunSecretHolder,
+        name: &str,
+        effector: &str,
+    ) -> Result<()> {
+        let txn = self.store.env.read_txn()?;
+        self.check_secret_at_door_in_txn(&txn, name, &holder.seat.effector(&holder.run))?;
+        admit_materialization_in_txn(&self.store, &txn, effector, None)
+    }
+
+    /// Whether `holder`'s run holds run-bound `handle` for its own seat's
+    /// use now (FIX 10424): a record that run's seat found, live, whose seat
+    /// binding the floor, the door policy and revocation admit, all read
+    /// from the value-free admission projection, as
+    /// [`Vault::with_run_secret`] would admit it. A refusal, or a handle that
+    /// names no record, is `false`. It reads no value, takes no lease,
+    /// writes no use record and stamps no clock.
+    ///
+    /// # Errors
+    /// Storage faults.
+    pub fn holds_run_secret(&self, holder: &RunSecretHolder, handle: &str) -> Result<bool> {
+        if parse_secret_handle(handle).is_err() {
+            return Ok(false);
+        }
+        let txn = self.store.env.read_txn()?;
+        let id = match handle_record_in_txn(&self.store, &txn, handle) {
+            Ok((_, id)) => id,
+            Err(error) => return not_held(error),
+        };
+        let Some(held) = read_secret_custody_admission_in_txn(&self.store, &txn, &id)? else {
+            return Ok(false);
+        };
+        if !held.name.starts_with(&holder.seat.names(&holder.run)) {
+            return Ok(false);
+        }
+        let effector = holder.seat.effector(&holder.run);
+        match self.check_secret_at_door_in_txn(&txn, &held.name, &effector) {
+            Ok(()) => Ok(true),
+            Err(error) => not_held(error),
+        }
+    }
+
     /// Hard-erases every run-bound record `run`'s `seat` found, as the seat
     /// ends: each record and its sealed value, its short id and its name,
     /// in one transaction, each fenced and every key its id names staged to
@@ -289,6 +445,14 @@ impl Vault {
             let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
             for (name, entry) in &held {
                 self.fence_credential_in_txn(wtxn, &entry.id);
+                // Its asks close with a named cause, in this same writer
+                // (FIX 8350).
+                close_secret_reveals_in_txn(
+                    self,
+                    wtxn,
+                    &entry.id,
+                    SecretRevealCause::RunSeatEnded,
+                )?;
                 crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
                 // A run-bound name names its one record and is never
                 // reclaimed: its high-water goes with it.
@@ -300,6 +464,56 @@ impl Vault {
             self.finish_credential_retirements_after_commit();
         }
         Ok(erased)
+    }
+
+    /// Hard-erases every run-bound record every run's seat left behind, as
+    /// the host starts: no run guest outlives a restart, so a host that
+    /// stopped mid-run leaves its `browser-run/` and `desktop-run/` names
+    /// behind (FIX 8335). Each record and its sealed value, its short id
+    /// and its name, in one transaction, each fenced and every key its id
+    /// names staged to retire before its row goes, then retired after the
+    /// commit. The count erased.
+    ///
+    /// # Errors
+    /// A legal hold on a record; storage faults. Nothing is erased then.
+    pub fn erase_all_run_secrets(&self) -> Result<usize> {
+        let erased = self.with_write_txn(|wtxn| {
+            let mut erased = 0;
+            for seat in RUN_SEATS {
+                let prefix = format!("{}/", seat.word());
+                let held = NAME_INDEX.scan_from(&self.store, &*wtxn, prefix.as_bytes())?;
+                for (name, entry) in &held {
+                    self.fence_credential_in_txn(wtxn, &entry.id);
+                    // Its asks close with a named cause, in this same writer
+                    // (FIX 8350).
+                    close_secret_reveals_in_txn(
+                        self,
+                        wtxn,
+                        &entry.id,
+                        SecretRevealCause::RunSeatEnded,
+                    )?;
+                    crate::batch::deindex_entity(&self.store, wtxn, &entry.id)?;
+                    // A run-bound name names its one record and is never
+                    // reclaimed: its high-water goes with it.
+                    NAME_INDEX.delete(&self.store, wtxn, name)?;
+                }
+                erased += held.len();
+            }
+            Ok(erased)
+        })?;
+        if erased > 0 {
+            self.finish_credential_retirements_after_commit();
+        }
+        Ok(erased)
+    }
+}
+
+/// A custody refusal as "not held"; any other error, a storage fault,
+/// goes on.
+fn not_held(error: Error) -> Result<bool> {
+    match error {
+        Error::Secret(_) => Ok(false),
+        error => Err(error),
     }
 }
 
@@ -382,6 +596,7 @@ impl RunRecord<'_> {
             grant_ref: None,
             diff_handle: digest.finalize().as_bytes().to_vec(),
             read_frontier_hash: [0; 32],
+            context: Default::default(),
             redacted_at: None,
         };
         store.append_gate_decision_in_txn(wtxn, &record)

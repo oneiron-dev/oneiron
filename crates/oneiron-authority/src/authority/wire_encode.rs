@@ -54,6 +54,17 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             (Value::from(OP_KEY_KIND), Value::from(OP_KIND_SLIP_CONSUME)),
             (Value::from(SLIP_KEY_SLIP_ID), binary_value(*slip_id)),
         ]),
+        // `grant_ref` rides as 32-hex, as a slip's claims name it.
+        AuthorityOp::SlipGrantRevoke { grant_ref } => Value::Map(vec![
+            (
+                Value::from(OP_KEY_KIND),
+                Value::from(OP_KIND_SLIP_GRANT_REVOKE),
+            ),
+            (
+                Value::from(SLIP_KEY_GRANT_REF),
+                Value::from(grant_ref.to_hex()),
+            ),
+        ]),
         AuthorityOp::Genesis {
             device,
             genesis_nonce,
@@ -250,6 +261,9 @@ pub fn op_value(op: &AuthorityOp) -> Value {
         }
         AuthorityOp::OwnerWorkResult(result) => super::owner_work::owner_work_result_value(result),
         AuthorityOp::OwnerWorkCancel(cancel) => super::owner_work::owner_work_cancel_value(cancel),
+        AuthorityOp::CustodyPermitPiece(piece) => {
+            super::owner_work::custody_permit_piece_value(piece)
+        }
         AuthorityOp::CheckpointPolicySet(set) => {
             super::checkpoint_policy::checkpoint_policy_value(set)
         }
@@ -264,6 +278,8 @@ pub fn op_value(op: &AuthorityOp) -> Value {
             super::home_candidacy::home_candidacy_value(declaration)
         }
         AuthorityOp::AgentGrantAct(record) => super::agent_grant_act::agent_grant_act_value(record),
+        AuthorityOp::PolicySettingSet(set) => super::policy_setting::policy_setting_value(set),
+        AuthorityOp::ExportAct(record) => super::export_act::export_act_value(record),
         AuthorityOp::OwnerKeyEnroll(enroll) => {
             super::owner_key_enrollment::owner_key_enroll_value(enroll)
         }

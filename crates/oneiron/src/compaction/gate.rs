@@ -420,6 +420,10 @@ pub enum CompactionSuppression {
     TurnScoped { check: Option<CompactionCheck> },
     /// Compaction is off for this session, for the stated reason.
     Sticky { why: CompactionOff },
+    /// The pass bills a room payer the vault's owners must first approve
+    /// (FIX 3740): it waits on their ask, across turns, and the run's next
+    /// breakpoint after their yes tries again. Nothing was spent.
+    PayerNeeded,
 }
 
 impl CompactionSuppression {
@@ -431,6 +435,7 @@ impl CompactionSuppression {
             Self::NoCredit => "no_credit",
             Self::TurnScoped { .. } => "turn_scoped",
             Self::Sticky { .. } => "sticky",
+            Self::PayerNeeded => "payer_needed",
         }
     }
 }

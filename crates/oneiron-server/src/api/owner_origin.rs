@@ -23,40 +23,129 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use oneiron::origin::mirror::{OriginMirrorRun, OriginMirrorTarget, OriginMirrorTargetInput};
 use oneiron::origin::mirror_strategy::OriginMirrorSyncStrategy;
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
+use oneiron::origin::secret_publication::RepoDestinationVisibility;
 use serde::{Deserialize, Serialize};
 
-use super::owner_routes::{blocking, owner};
-use super::{json_payload, query_params};
+use super::openapi::OwnerRoute;
+use super::owner_routes::{OwnerTable, blocking, owner};
+use super::query_params;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route(
-            "/origin-authority",
-            get(origin_authority).post(cut_origin_authority),
-        )
-        .route(
-            "/origin-mirror",
-            get(origin_mirror)
-                .post(set_origin_mirror)
-                .delete(clear_origin_mirror),
-        )
-        .route("/origin-mirror/push", post(push_origin_mirror))
-        .route("/origin-mirror/strategy", post(set_origin_mirror_strategy))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/origin-authority",
+                summary: "Origin authority.",
+                row: None,
+            },
+            get(origin_authority),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-authority",
+                summary: "Cut origin authority.",
+                row: None,
+            },
+            post(cut_origin_authority),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/origin-mirror",
+                summary: "Origin mirror.",
+                row: None,
+            },
+            get(origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-mirror",
+                summary: "Set origin mirror.",
+                row: None,
+            },
+            post(set_origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "delete",
+                path: "/origin-mirror",
+                summary: "Clear origin mirror.",
+                row: None,
+            },
+            delete(clear_origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-mirror/push",
+                summary: "Push origin mirror.",
+                row: None,
+            },
+            post(push_origin_mirror),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/origin-mirror/strategy",
+                summary: "Set one origin mirror's sync strategy (FIX 6866): `repo` and `sync_strategy`, `ask_me` (nothing goes out until an exact publish request is approved; push refuses publish_request_required) or `schedule` (the cadenced push of every published ref). Changes the strategy and its revision only; answers the mirror target.",
+                row: None,
+            },
+            post(set_origin_mirror_strategy),
+        ),
+    ]
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/origin-authority`'s body (FIX 11617): [`CutOriginAuthority`].
+pub(crate) fn cut_origin_authority_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<CutOriginAuthority>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-authority`'s answer (FIX 11617): [`OriginAuthority`].
+pub(crate) fn origin_authority_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OriginAuthority>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror`'s body (FIX 11617): [`SetOriginMirror`].
+pub(crate) fn set_origin_mirror_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetOriginMirror>()
+}
+
+/// The OpenAPI schema of the origin-mirror answers (FIX 11617): [`OriginMirrorTarget`].
+pub(crate) fn origin_mirror_target_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OriginMirrorTarget>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror/push`'s body (FIX 11617): [`RepoQuery`].
+pub(crate) fn push_origin_mirror_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RepoQuery>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror/push`'s answer (FIX 11617): [`OriginMirrorRun`].
+pub(crate) fn origin_mirror_run_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OriginMirrorRun>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/origin-mirror/strategy`'s body (FIX 11617): [`SetOriginMirrorStrategy`].
+pub(crate) fn set_origin_mirror_strategy_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetOriginMirrorStrategy>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RepoQuery {
     /// The repository's served name, as `/git/{repo}` names it.
@@ -93,7 +182,7 @@ async fn origin_authority(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct CutOriginAuthority {
     repo: String,
@@ -111,10 +200,10 @@ struct CutOriginAuthority {
 async fn cut_origin_authority(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<CutOriginAuthority>, JsonRejection>,
+    payload: OwnerJsonBody<CutOriginAuthority>,
 ) -> Result<Json<OriginAuthority>, EnvelopedApiError> {
-    owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
         let vault = server.vault();
         let writer = match request.writer.as_deref() {
@@ -130,7 +219,9 @@ async fn cut_origin_authority(
                     .id
             }
         };
-        Ok(vault.set_served_origin_authority(
+        // The proof is revalidated where the row commits (FIX 8214).
+        Ok(vault.set_served_origin_authority_as_owner(
+            &owner,
             &request.repo,
             request.expected_epoch,
             request.residence,
@@ -166,7 +257,7 @@ async fn origin_mirror(
     Ok(Json(state))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetOriginMirror {
     repo: String,
@@ -182,17 +273,22 @@ struct SetOriginMirror {
     /// strategy and a new one asks first.
     #[serde(default)]
     sync_strategy: Option<OriginMirrorSyncStrategy>,
+    /// `public`, `private` or `unknown`; absent, the same URL keeps its own
+    /// and a new one is `unknown`, held as public.
+    #[serde(default)]
+    visibility: Option<RepoDestinationVisibility>,
 }
 
 async fn set_origin_mirror(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetOriginMirror>, JsonRejection>,
+    payload: OwnerJsonBody<SetOriginMirror>,
 ) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
-    owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
-        Ok(server.vault().set_served_origin_mirror(
+        Ok(server.vault().set_served_origin_mirror_as_owner(
+            &owner,
             &request.repo,
             OriginMirrorTargetInput {
                 url: request.url,
@@ -200,6 +296,7 @@ async fn set_origin_mirror(
                 user: request.user,
                 every_secs: request.every_secs,
                 sync_strategy: request.sync_strategy,
+                visibility: request.visibility,
             },
         )?)
     })
@@ -207,7 +304,7 @@ async fn set_origin_mirror(
     Ok(Json(row))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetOriginMirrorStrategy {
     repo: String,
@@ -219,14 +316,16 @@ struct SetOriginMirrorStrategy {
 async fn set_origin_mirror_strategy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetOriginMirrorStrategy>, JsonRejection>,
+    payload: OwnerJsonBody<SetOriginMirrorStrategy>,
 ) -> Result<Json<OriginMirrorTarget>, EnvelopedApiError> {
-    owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
     let row = blocking(move || {
-        Ok(server
-            .vault()
-            .set_served_origin_mirror_strategy(&request.repo, request.sync_strategy)?)
+        Ok(server.vault().set_served_origin_mirror_strategy_as_owner(
+            &owner,
+            &request.repo,
+            request.sync_strategy,
+        )?)
     })
     .await?;
     Ok(Json(row))
@@ -244,11 +343,13 @@ async fn clear_origin_mirror(
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<RepoQuery>, QueryRejection>,
 ) -> Result<Json<ClearedOriginMirror>, EnvelopedApiError> {
-    owner(&auth, &server)?;
+    let owner = owner(&auth, &server)?;
     let RepoQuery { repo } = query_params(query)?;
     let cleared = blocking(move || {
         Ok(ClearedOriginMirror {
-            cleared: server.vault().clear_served_origin_mirror(&repo)?,
+            cleared: server
+                .vault()
+                .clear_served_origin_mirror_as_owner(&owner, &repo)?,
             repo,
         })
     })
@@ -259,10 +360,15 @@ async fn clear_origin_mirror(
 async fn push_origin_mirror(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RepoQuery>, JsonRejection>,
+    payload: OwnerJsonBody<RepoQuery>,
 ) -> Result<Json<OriginMirrorRun>, EnvelopedApiError> {
-    owner(&auth, &server)?;
-    let RepoQuery { repo } = json_payload(payload)?;
-    let run = blocking(move || Ok(server.vault().push_served_origin_mirror(&repo)?)).await?;
+    let owner = owner(&auth, &server)?;
+    let RepoQuery { repo } = payload.read(&server).await?;
+    let run = blocking(move || {
+        Ok(server
+            .vault()
+            .push_served_origin_mirror_as_owner(&owner, &repo)?)
+    })
+    .await?;
     Ok(Json(run))
 }

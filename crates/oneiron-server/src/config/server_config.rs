@@ -1,11 +1,11 @@
 //! Resolved server configuration: `SyncServerConfig` and `ServeConfig`.
 
-use std::fmt;
 use std::path::PathBuf;
 
 use oneiron::{HostingPrivacyPosture, VaultDataKeyCustody, VaultPrivacyConfig};
 
 use super::backup::BackupConfig;
+use super::channel_endpoints::ChannelEndpointsConfig;
 use super::embedder::EmbedderConfig;
 use super::failure_signals::FailureSignalsConfig;
 use super::feedback::{FeedbackConfig, FeedbackInboxConfig};
@@ -13,7 +13,7 @@ use super::keystore::KeystoreConfig;
 use super::limits::LimitsConfig;
 use super::line::LineConfig;
 use super::linear::LinearConfig;
-use super::lookup::{LEGACY_DEFAULT_VAULT_PATH, redacted_secret};
+use super::lookup::LEGACY_DEFAULT_VAULT_PATH;
 use super::oneironer::OneironerConfig;
 use super::recall::RecallConfig;
 use super::self_heal::SelfHealConfig;
@@ -22,12 +22,28 @@ use super::trusted_proxy::TrustedProxy;
 use crate::runtime::RuntimeConfig;
 use crate::usage::UsageMode;
 
+/// The default inbound WebSocket frame bound (Engine 10:44 for parked L14):
+/// the sync protocol's frame floor as base64 carries it, plus a window pad
+/// envelope's header allowance and a window frame's lead (tag, key length,
+/// key, sub-tag), so no frame the protocol sends within its floor is refused
+/// at the socket.
+const DEFAULT_MAX_FRAME_SIZE: usize =
+    oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES.div_ceil(3) * 4
+        + oneiron::sync::transport::WINDOW_PAD_HEADER_BYTES
+        + 3
+        + oneiron::sync::transport::MAX_WINDOW_KEY_LEN;
+
+/// The two configs' redacting `Debug`.
+mod debug;
+
 /// Oneiron sync server configuration.
 ///
 /// Server-side enforcement status of the per-client limits (ONE-1129
 /// OWNER-DECISION, recorded in the PR body):
-/// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint
-///   (oversized updates close the connection before any state mutates).
+/// - `max_update_payload` — ENFORCED at the WindowSync UPDATE chokepoint on
+///   each frame or part a peer sends (an oversized frame closes the
+///   connection before any state mutates); a payload joined from parts is
+///   bounded by its envelope (FIX 8247, L14 s45 10:34).
 /// - `max_frame_size` — ENFORCED on the WebSocket frame size.
 /// - `max_messages_per_sec` — retained for configuration compatibility only.
 ///   RC42 counters ask typed questions and never refuse calls for rate.
@@ -64,6 +80,9 @@ pub struct SyncServerConfig {
     /// Every public URL a kit fetch may be signed for, as for a home behind
     /// several tunnel aliases (FIX 4404). Empty: `oauth_resource_indicator`.
     pub kit_bundle_public_urls: Vec<String>,
+    /// The operator's cloud registration pins file (G7), as on
+    /// [`ServeConfig`]: the server's client reads it once at start.
+    pub cloud_registration_pins: Option<PathBuf>,
     /// The `[native_mail]` server the native mail pack's check reaches.
     pub native_mail: Option<super::NativeMailConfig>,
     /// The `[connectors.<name>]` transports the generic connector call
@@ -93,9 +112,11 @@ pub struct SyncServerConfig {
     /// Hosted deployments must set a distinct value per tenant/vault; `0`
     /// preserves the legacy local single-vault scope.
     pub lease_vault_id: u64,
-    /// Maximum WebSocket frame size in bytes.
+    /// Maximum inbound WebSocket frame size in bytes; the default holds the
+    /// sync protocol's frame floor with its framing (`DEFAULT_MAX_FRAME_SIZE`).
     pub max_frame_size: usize,
-    /// Maximum CRDT update payload in bytes (enforced on WindowSync UPDATE).
+    /// Maximum CRDT update bytes in one received frame or part (enforced on
+    /// WindowSync UPDATE); the default is the frame floor.
     pub max_update_payload: usize,
     /// Window subscriptions one v13 connection keeps before it forgets the least recently
     /// requested, and the count past which a connection's windows or documents ask the row's
@@ -131,6 +152,9 @@ pub struct SyncServerConfig {
     /// `[line]`: the plan of the LINE Official Account the built-in LINE
     /// pack serves, and the pushes it includes each month.
     pub line: LineConfig,
+    /// `[channel_endpoints]`: where the served sinks reach each provider's
+    /// API; the public APIs unless the file names others.
+    pub channel_endpoints: ChannelEndpointsConfig,
     /// `[linear]`: the Linear mirror this server runs and its webhook's
     /// tracker mapping, nonsecret. A plain serve with no section reads its
     /// `ONEIRON_LINEAR_*` environment into this before the server starts
@@ -186,6 +210,7 @@ impl Default for SyncServerConfig {
             oauth_jwks_uri: None,
             oauth_resource_indicator: None,
             kit_bundle_public_urls: Vec::new(),
+            cloud_registration_pins: None,
             native_mail: None,
             connectors: std::collections::BTreeMap::new(),
             allow_unauthenticated: false,
@@ -195,8 +220,9 @@ impl Default for SyncServerConfig {
             artifact_internal_vault_id: None,
             trusted_proxies: Vec::new(),
             lease_vault_id: 0,
-            max_frame_size: 4 * 1024 * 1024,     // 4 MB
-            max_update_payload: 2 * 1024 * 1024, // 2 MB
+            max_frame_size: DEFAULT_MAX_FRAME_SIZE,
+            // The frame floor (L14 s45 10:34).
+            max_update_payload: oneiron::sync::transport::MAX_DECODED_PAYLOAD_BYTES,
             max_windows_per_connection: 65_536,
             max_messages_per_sec: 200,
             ephemeral_timeout_ms: 30_000,
@@ -210,6 +236,7 @@ impl Default for SyncServerConfig {
             runtime: RuntimeConfig::default(),
             skills: SkillsConfig::default(),
             line: LineConfig::default(),
+            channel_endpoints: ChannelEndpointsConfig::default(),
             linear: None,
             ingress: IngressAuth::Configured,
             merge_queue: None,
@@ -251,60 +278,6 @@ impl SyncServerConfig {
     }
 }
 
-impl fmt::Debug for SyncServerConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SyncServerConfig")
-            .field("default_window_count", &self.default_window_count)
-            .field(
-                "compaction_threshold_bytes",
-                &self.compaction_threshold_bytes,
-            )
-            .field("compaction_throttle_secs", &self.compaction_throttle_secs)
-            .field("bulk_chunk_size", &self.bulk_chunk_size)
-            .field("auth_secret", &redacted_secret(&self.auth_secret))
-            .field("allow_unauthenticated", &self.allow_unauthenticated)
-            .field("allowed_origins", &self.allowed_origins)
-            .field("artifact_domains", &self.artifact_domains)
-            .field("artifact_vault_name", &self.artifact_vault_name)
-            .field(
-                "artifact_internal_vault_id",
-                &self.artifact_internal_vault_id,
-            )
-            .field("trusted_proxies", &self.trusted_proxies)
-            .field("lease_vault_id", &self.lease_vault_id)
-            .field("max_frame_size", &self.max_frame_size)
-            .field("max_update_payload", &self.max_update_payload)
-            .field(
-                "max_windows_per_connection",
-                &self.max_windows_per_connection,
-            )
-            .field("max_messages_per_sec", &self.max_messages_per_sec)
-            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
-            .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
-                "max_ephemeral_snapshot_bytes",
-                &self.max_ephemeral_snapshot_bytes,
-            )
-            .field("max_entity_blob", &self.max_entity_blob)
-            .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
-            .field("max_bulk_decompressed", &self.max_bulk_decompressed)
-            .field("limits", &self.limits)
-            .field("feedback_inbox", &self.feedback_inbox)
-            .field("runtime", &self.runtime)
-            .field("skills", &self.skills)
-            .field("line", &self.line)
-            .field("linear", &self.linear)
-            .field("ingress", &self.ingress)
-            .field("merge_queue", &self.merge_queue)
-            .field("trusted_organ_builds", &self.trusted_organ_builds)
-            .field("hosted_private_origins", &self.hosted_private_origins)
-            .finish()
-    }
-}
-
 /// Fully resolved serve configuration after defaults, config file, env vars,
 /// and flags have been merged.
 ///
@@ -323,6 +296,10 @@ pub struct ServeConfig {
     pub oauth_jwks_uri: Option<String>,
     pub oauth_resource_indicator: Option<String>,
     pub kit_bundle_public_urls: Vec<String>,
+    /// `--cloud-registration-pins`, argv only, plain or managed: the public
+    /// pins the native cloud registration client trusts (G7). Unset, that
+    /// feature alone is not configured.
+    pub cloud_registration_pins: Option<PathBuf>,
     pub allow_unauthenticated: bool,
     pub allowed_origins: Vec<String>,
     pub artifact_domains: Vec<String>,
@@ -375,6 +352,9 @@ pub struct ServeConfig {
     pub self_heal: SelfHealConfig,
     /// The `[recall]` section: call mode's deadline.
     pub recall: RecallConfig,
+    /// The `[policy]` section: the owner plane's notice wording and settings,
+    /// each absent key the engine's default (FIX 5042).
+    pub policy: super::PolicyConfig,
     /// The `[skills]` section: the skill-edit gate's live pull budget.
     pub skills: SkillsConfig,
     /// The `[keystore]` section: this install's this-device-only key slots.
@@ -415,6 +395,9 @@ pub struct ServeConfig {
     /// The `[line]` section: the LINE Official Account's plan, a free
     /// account unless the config file names one.
     pub line: LineConfig,
+    /// The `[channel_endpoints]` section: the provider APIs the served sinks
+    /// reach, the public ones unless the config file names others.
+    pub channel_endpoints: ChannelEndpointsConfig,
     /// The `[linear]` section: the Linear mirror and its webhook's tracker
     /// mapping, absent until the config file names it.
     pub linear: Option<LinearConfig>,
@@ -485,6 +468,7 @@ impl Default for ServeConfig {
             oauth_jwks_uri: server.oauth_jwks_uri,
             oauth_resource_indicator: server.oauth_resource_indicator,
             kit_bundle_public_urls: server.kit_bundle_public_urls,
+            cloud_registration_pins: server.cloud_registration_pins,
             allow_unauthenticated: server.allow_unauthenticated,
             allowed_origins: server.allowed_origins,
             artifact_domains: server.artifact_domains,
@@ -520,6 +504,7 @@ impl Default for ServeConfig {
             failure_signals: FailureSignalsConfig::default(),
             self_heal: SelfHealConfig::default(),
             recall: RecallConfig::default(),
+            policy: super::PolicyConfig::default(),
             skills: SkillsConfig::default(),
             keystore: KeystoreConfig::default(),
             limits: LimitsConfig::default(),
@@ -534,6 +519,7 @@ impl Default for ServeConfig {
             connectors: std::collections::BTreeMap::new(),
             embedding: None,
             line: server.line,
+            channel_endpoints: server.channel_endpoints.clone(),
             linear: None,
             // Hosting is opt-in: an operator must name the posture AND supply
             // its host-managed key reference before a vault is host-readable.
@@ -555,106 +541,6 @@ impl Default for ServeConfig {
     }
 }
 
-impl fmt::Debug for ServeConfig {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("ServeConfig")
-            .field("vault_path", &self.vault_path)
-            .field("host", &self.host)
-            .field("port", &self.port)
-            .field("artifact_port", &self.artifact_port)
-            .field("auth_secret", &redacted_secret(&self.auth_secret))
-            .field("allow_unauthenticated", &self.allow_unauthenticated)
-            .field("allowed_origins", &self.allowed_origins)
-            .field("artifact_domains", &self.artifact_domains)
-            .field("artifact_vault_name", &self.artifact_vault_name)
-            .field(
-                "artifact_internal_vault_id",
-                &self.artifact_internal_vault_id,
-            )
-            .field("trusted_proxies", &self.trusted_proxies)
-            .field("lease_vault_id", &self.lease_vault_id)
-            .field("dimensions", &self.dimensions)
-            .field("fast_dims", &self.fast_dims)
-            .field("map_size", &self.map_size)
-            .field("log_level", &self.log_level)
-            .field("dict_search_paths", &self.dict_search_paths)
-            .field("assistant_display_names", &self.assistant_display_names)
-            .field("default_window_count", &self.default_window_count)
-            .field(
-                "compaction_threshold_bytes",
-                &self.compaction_threshold_bytes,
-            )
-            .field("compaction_throttle_secs", &self.compaction_throttle_secs)
-            .field("bulk_chunk_size", &self.bulk_chunk_size)
-            .field("max_frame_size", &self.max_frame_size)
-            .field("max_update_payload", &self.max_update_payload)
-            .field(
-                "max_windows_per_connection",
-                &self.max_windows_per_connection,
-            )
-            .field("max_messages_per_sec", &self.max_messages_per_sec)
-            .field("ephemeral_timeout_ms", &self.ephemeral_timeout_ms)
-            .field(
-                "max_ephemeral_payload_bytes",
-                &self.max_ephemeral_payload_bytes,
-            )
-            .field(
-                "max_ephemeral_snapshot_bytes",
-                &self.max_ephemeral_snapshot_bytes,
-            )
-            .field("max_entity_blob", &self.max_entity_blob)
-            .field("max_lfs_object_bytes", &self.max_lfs_object_bytes)
-            .field("max_bulk_decompressed", &self.max_bulk_decompressed)
-            .field("runtime", &self.runtime)
-            .field("embedder", &self.embedder)
-            .field("oneironer", &self.oneironer)
-            .field("backup", &self.backup)
-            .field("feedback", &self.feedback)
-            .field("failure_signals", &self.failure_signals)
-            .field("self_heal", &self.self_heal)
-            .field("recall", &self.recall)
-            .field("skills", &self.skills)
-            .field("keystore", &self.keystore)
-            .field("limits", &self.limits)
-            .field("import", &self.import)
-            .field("models", &self.models)
-            .field("browser", &self.browser)
-            .field("desktop", &self.desktop)
-            .field("merge_queue", &self.merge_queue)
-            .field("gpu", &self.gpu)
-            .field("native_mail", &self.native_mail)
-            .field("device_sync", &self.device_sync)
-            .field("connectors", &self.connectors)
-            .field("embedding", &self.embedding)
-            .field("line", &self.line)
-            .field("linear", &self.linear)
-            .field("privacy_posture", &self.privacy_posture)
-            .field(
-                "hosted_kms_key_ref",
-                &redacted_secret(&self.hosted_kms_key_ref),
-            )
-            .field("hooks", &self.hooks)
-            .field("maximum_tier", &self.maximum_tier)
-            .field("device_class", &self.device_class)
-            .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
-            .field(
-                "publisher_training_outbox_dir",
-                &self.publisher_training_outbox_dir,
-            )
-            .field(
-                "publisher_training_self_host_shipper",
-                &self.publisher_training_self_host_shipper,
-            )
-            .field(
-                "publisher_training_intake_origin",
-                &self.publisher_training_intake_origin,
-            )
-            .field("shared_model_root", &self.shared_model_root)
-            .field("trusted_organ_builds", &self.trusted_organ_builds)
-            .finish()
-    }
-}
-
 impl ServeConfig {
     pub fn sync_server_config(&self) -> SyncServerConfig {
         let sync = SyncServerConfig {
@@ -667,6 +553,7 @@ impl ServeConfig {
             oauth_jwks_uri: self.oauth_jwks_uri.clone(),
             oauth_resource_indicator: self.oauth_resource_indicator.clone(),
             kit_bundle_public_urls: self.kit_bundle_public_urls.clone(),
+            cloud_registration_pins: self.cloud_registration_pins.clone(),
             native_mail: self.native_mail.clone(),
             connectors: self
                 .connectors
@@ -697,6 +584,7 @@ impl ServeConfig {
             runtime: self.runtime.clone(),
             skills: self.skills.clone(),
             line: self.line,
+            channel_endpoints: self.channel_endpoints.clone(),
             linear: self.linear.clone(),
             // A plain serve's own auth config; a managed vault declares its
             // supervisor's.

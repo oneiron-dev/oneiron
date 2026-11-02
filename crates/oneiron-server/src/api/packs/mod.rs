@@ -1,13 +1,9 @@
 //! Served pack operations, including explicit default skill imports.
 
-use std::sync::Arc;
+use super::owner_routes::OwnerTable;
 
-use axum::Router;
+pub(super) mod defaults;
 
-use crate::server::SyncServer;
-
-mod defaults;
-
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    defaults::routes()
+pub(super) fn owner_table() -> OwnerTable {
+    defaults::owner_table()
 }

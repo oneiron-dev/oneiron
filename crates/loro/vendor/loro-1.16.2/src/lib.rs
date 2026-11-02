@@ -76,6 +76,8 @@ pub use loro_internal::kv_store::{KvStore, MemKvStore};
 pub use loro_internal::loro::CommitOptions;
 pub use loro_internal::loro::DocAnalysis;
 pub use loro_internal::oplog::FrontiersNotIncluded;
+/// Loro SnapshotAt exports this process has made; a fork_at is one (Oneiron vendor patch).
+pub use loro_internal::snapshot_at_exports;
 pub use loro_internal::undo;
 pub use loro_internal::version::{Frontiers, VersionRange, VersionVector, VersionVectorDiff};
 pub use loro_internal::ApplyDiff;

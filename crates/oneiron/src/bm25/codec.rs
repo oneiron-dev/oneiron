@@ -11,7 +11,7 @@ use crate::store::ManifestDbs;
 use super::diagnostics::{Bm25DiagnosticKind, Bm25Diagnostics};
 use super::{
     ENTITY_ID_LEN, FIELD_LENGTH_LEN, FIELD_STATS_LEN, FIELD_TF_LEN, FORWARD_FIELD_ID_LEN,
-    TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY,
+    FORWARD_TERM_LEN_LEN, TOTAL_DOCS_KEY, TOTAL_LENGTH_KEY,
 };
 
 // === Posting keys ===
@@ -203,14 +203,14 @@ pub(super) struct ForwardRecord {
     pub(super) field_id: u16,
 }
 
-/// Encodes the forward row as `[(term_len_u16_le | term_bytes |
-/// field_id_u16_be)*]`. The per-field `tf` u32 that v1 carried was dead on
-/// the read side (deindex only needs the term/field set) and was dropped
-/// in storage ABI v4 (ONE-299).
+/// Encodes the forward row as `[(term_len_u64_le | term_bytes |
+/// field_id_u16_be)*]`, each term's full UTF-8 bytes whatever its length.
+/// The per-field `tf` u32 that v1 carried was dead on the read side (deindex
+/// only needs the term/field set) and was dropped in storage ABI v4 (ONE-299).
 pub(super) fn encode_forward(per_term: &BTreeMap<String, BTreeMap<u16, u32>>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
     for (term, fields) in per_term {
-        let len = u16::try_from(term.len())
+        let len = u64::try_from(term.len())
             .map_err(|_| Error::ArithmeticOverflow("bm25 forward term length"))?;
         for fid in fields.keys() {
             out.extend_from_slice(&len.to_le_bytes());
@@ -228,10 +228,12 @@ pub(super) fn decode_forward(raw: &[u8]) -> Result<Vec<ForwardRecord>> {
     let mut records = Vec::new();
     let mut rest = raw;
     while !rest.is_empty() {
-        let Some((term_len_bytes, after_len)) = rest.split_at_checked(2) else {
+        let Some((term_len_bytes, after_len)) = rest.split_first_chunk::<FORWARD_TERM_LEN_LEN>()
+        else {
             return Err(corrupted("forward index truncated at term-len"));
         };
-        let term_len = u16::from_le_bytes([term_len_bytes[0], term_len_bytes[1]]) as usize;
+        let term_len = usize::try_from(u64::from_le_bytes(*term_len_bytes))
+            .map_err(|_| corrupted("forward index truncated at term body"))?;
         if term_len == 0 {
             return Err(corrupted("forward index has zero-length term"));
         }

@@ -5,29 +5,52 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/settings/models", get(read).post(put))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/models",
+                summary: "The connector's tool rows, the actor's live grant per row, and the installed endpoint.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/models",
+                summary: "Sets the switch; the next Responses turn reads it.",
+                row: None,
+            },
+            post(put),
+        ),
+    ]
 }
 
 /// The owner's model settings.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ModelSettings {
     /// Whether a provider keeps each Responses turn (`store`).
     responses_store: bool,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/models`'s body and answer (FIX
+/// 11103): [`ModelSettings`].
+pub(crate) fn model_settings_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ModelSettings>()
 }
 
 /// `GET /v1/owner/settings/models`.
@@ -47,17 +70,23 @@ async fn read(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ModelSettings>, JsonRejection>,
+    payload: OwnerJsonBody<ModelSettings>,
 ) -> OwnerReply<ModelSettings> {
     let owner = owner(&auth, &server)?;
-    let settings = json_payload(payload)?;
+    let settings = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<ModelSettings> {
         server
             .vault()
             .set_responses_store(&owner, settings.responses_store)?;
+        // Only this server's providers read it (FIX 9516), once its vault
+        // kept it.
+        server
+            .ai
+            .models()
+            .responses_context()
+            .set_store(settings.responses_store);
         Ok(settings)
     })
     .await?;
-    crate::models::set_responses_store(settings.responses_store);
     Ok(Json(settings))
 }

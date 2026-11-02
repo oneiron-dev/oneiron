@@ -23,6 +23,7 @@ mod call;
 mod defaults;
 mod inference;
 mod inference_observation;
+mod inference_publisher;
 pub use defaults::{
     ExtractionEgressPredicate, PurposeDefault, PurposeDefaultTable, SelfCompactionDefault,
     SelfCompactionSource, ValidatedPurposeDefaults, VoiceBackendBinding, VoiceLane,
@@ -58,6 +59,7 @@ mod model_id;
 mod protocol;
 mod reply_assertions;
 mod safeguard;
+mod scheduling;
 mod segments;
 mod session;
 
@@ -86,10 +88,12 @@ pub use self::cache::{
 // FIX 8314 (INFERENCE R1): model workers and the receipt of each physical call.
 pub use self::inference::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
-    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
+    WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerKind, WorkerMode, WorkerPhase,
+    WorkerReadiness, WorkerStatus,
 };
 // FIX 9065: what each physical request measured, published on its lease while it runs.
 pub use self::inference_observation::{InferenceCallObservation, InferenceObservationId};
+pub use self::inference_publisher::InferencePublisher;
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use self::backend_identity::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 
@@ -106,8 +110,8 @@ pub use self::catalog::{
     ReasoningEffort,
 };
 pub use self::error::{
-    BudgetDenied, FatalLlmError, LabelReadFailure, LlmError, RetryableLlmError, SpentKind,
-    UnsupportedCapability,
+    BudgetDenied, FatalLlmError, InterruptedMediaCall, LabelReadFailure, LlmError,
+    RetryableLlmError, SpentKind, UnsupportedCapability,
 };
 // Public so `oneiron`'s auto-checker names a dynamic model the same way the safeguard
 // binding does, across the crate line.
@@ -141,4 +145,16 @@ pub use self::session::{
     SessionHandle, SessionInvalidation, SessionKey, SessionOp, SessionOpStamp, SessionReleased,
     SessionResidency, SessionRestore, SessionRestored, SessionSuffixCommit, SessionSuffixStaged,
     SessionTarget, TokenDigest, VaultRef,
+};
+// DESIGN-V2 R3: the snapshot ops of the worker session wire.
+pub use self::session::{
+    RegionDescriptor, SNAPSHOT_ENCODING, SNAPSHOT_HASH, SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA_MINOR,
+    SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
+    SnapshotDigest, SnapshotMiss,
+};
+// DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
+pub use self::scheduling::{
+    AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
+    SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
+    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
 };

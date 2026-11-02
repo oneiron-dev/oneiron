@@ -50,6 +50,7 @@ mod checkpoint_fact;
 mod custody;
 pub(crate) mod finalize;
 mod handoff;
+mod payload_retention;
 mod rehearse;
 mod relay_hold;
 mod restore;
@@ -57,7 +58,7 @@ mod scratch;
 pub(crate) mod write_budget;
 
 pub(crate) use self::custody::{
-    CustodyAnchorCredentials, custody_recovery, custody_status, take_publishing,
+    CustodyAnchorCredentials, custody_from_home, custody_recovery, custody_status, take_publishing,
 };
 #[cfg(test)]
 use self::rehearse::Owned;
@@ -99,6 +100,9 @@ pub(crate) struct BackupPlan {
     pub(crate) registry: Option<String>,
     /// When this label's handoff backlog last raised its check (`handoff`).
     backlog_checked: handoff::BacklogChecked,
+    /// Pruning past `keep` is held and every backup is kept: a managed
+    /// vault whose backup handoff policy could not be installed (FIX 6705).
+    pub(crate) prune_held: bool,
 }
 
 impl BackupPlan {
@@ -111,6 +115,7 @@ impl BackupPlan {
             floor: None,
             registry: None,
             backlog_checked: handoff::BacklogChecked::default(),
+            prune_held: false,
         }
     }
 }
@@ -146,7 +151,7 @@ fn vault_label(vault_path: &Path) -> String {
 }
 
 /// One backup file.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, schemars::JsonSchema)]
 pub(crate) struct BackupRecord {
     pub(crate) file: String,
     pub(crate) path: PathBuf,
@@ -160,13 +165,18 @@ pub(crate) struct BackupRecord {
 }
 
 /// What `backup` did.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct BackupOutcome {
     pub(crate) backup: BackupRecord,
     /// BLAKE3 of the checkpoint image; a rehearsal reports the same id.
     pub(crate) checkpoint_id: String,
     /// Older backups deleted to honour `keep`; none while a legal hold stands.
     pub(crate) pruned: Vec<String>,
+    /// Why a hosted vault's backup carries none of its host-order legal
+    /// holds, for its host to alert on (FIX 6598); absent where it carries
+    /// them or the vault is self-hosted. Nothing of any hold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) host_holds_unavailable: Option<oneiron::recovery::checkpoint::HostHoldsUnavailable>,
 }
 
 /// Takes one backup of `vault` and prunes older ones beyond `plan.keep`. The
@@ -196,6 +206,8 @@ pub(crate) fn take_as(
             "the backup landed; what it covered was not recorded, so the next check reads changed"
         );
     }
+    // FIX 9522: with an HTTP anchor this stages custody locally and returns; the
+    // background publisher does the anchor reads and advances.
     custody::publish_after_take(vault, plan);
     let bytes = std::fs::metadata(&produced.path)?.len();
     let pruned = prune(vault, plan, Some(&produced.file))?;
@@ -249,6 +261,17 @@ pub(crate) fn list(plan: &BackupPlan) -> anyhow::Result<Vec<BackupRecord>> {
     Ok(records)
 }
 
+/// [`list`], and the backups among them a managed handoff pin keeps pending
+/// for a stage ack (FIX 6335), oldest first: retention's excess past `keep`
+/// whose ack does not name the file held here. The pin still keeps every one.
+pub(crate) fn list_with_pending(
+    plan: &BackupPlan,
+) -> anyhow::Result<(Vec<BackupRecord>, Vec<BackupRecord>)> {
+    let records = list(plan)?;
+    let pending = handoff::handoff_pending(plan, &records);
+    Ok((records, pending))
+}
+
 /// Digits a sequence number is padded to, so names also sort in order.
 const SEQUENCE_WIDTH: usize = 10;
 
@@ -275,11 +298,17 @@ pub(crate) fn prune(
     plan: &BackupPlan,
     spared: Option<&str>,
 ) -> anyhow::Result<Vec<String>> {
-    // A standing hold keeps them all; the exclusion below reads it again.
-    if vault.legal_hold_keeps_backups()? {
+    // A standing hold keeps them all; the exclusion below reads it again. So
+    // does a held prune (FIX 6705).
+    if plan.prune_held || vault.legal_hold_keeps_backups()? {
         return Ok(Vec::new());
     }
     checkpoint_fact::sweep(vault, plan);
+    // So do payload inventories no backup names (KS7-5).
+    payload_retention::sweep(vault, plan);
+    // FIX 7607: stage acks whose artifact is gone go with the prune; pinned
+    // acks whose artifact exists stay.
+    handoff::sweep_orphan_stage_acks(plan);
     let records: Vec<_> = list(plan)?
         .into_iter()
         .filter(|record| Some(record.file.as_str()) != spared)
@@ -287,6 +316,9 @@ pub(crate) fn prune(
     let keep = plan.keep.max(1) - usize::from(spared.is_some());
     let excess = records.len().saturating_sub(keep);
     let excess: Vec<_> = records.into_iter().take(excess).collect();
+    // Where each payload inventory sits, read while its backup is there
+    // (KS7-5).
+    let inventories = payload_retention::inventories_of(&excess);
     let Some(handoff) = handoff::pinned(&plan.dir, &plan.label) else {
         let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
             let mut pruned = Vec::new();
@@ -319,6 +351,8 @@ pub(crate) fn prune(
                 );
             }
         }
+        // A payload leaf the kept backups no longer name may retire now.
+        payload_retention::settle(vault, plan, &gone, inventories);
         return Ok(gone);
     };
     let (released, mut pending) = handoff::released(&handoff, &plan.label, excess);
@@ -349,7 +383,69 @@ pub(crate) fn prune(
         return Ok(Vec::new());
     };
     handoff::check_backlog(vault, &plan.backlog_checked, &pending);
+    payload_retention::settle(vault, plan, &pruned, inventories);
     Ok(pruned)
+}
+
+/// Deletes every backup of a vault its Owners deleted once the marker's
+/// `backup_retain_until` has passed on the vault's clock (OF-163, FIX 1931);
+/// returns their names. `None` while that has not happened: no marker, or a
+/// deadline still ahead, when the schedule backs up and prunes as before.
+/// A standing legal hold defers the drop as it holds [`prune`]: the holds
+/// are read again and each unlink and directory sync runs while the vault's
+/// writer is held. Neither `keep`, a held prune nor a handoff pin keeps one:
+/// the Owners' deletion let them go, and their stage acks go with them. The
+/// caller holds the backup lock.
+pub(crate) fn prune_deleted_vault_backups(
+    vault: &oneiron::Vault,
+    plan: &BackupPlan,
+) -> anyhow::Result<Option<Vec<String>>> {
+    let Some(deletion) = vault.shared_vault_deletion()? else {
+        return Ok(None);
+    };
+    if vault.now_recorded_at() < deletion.backup_retain_until {
+        return Ok(None);
+    }
+    if vault.legal_hold_keeps_backups()? {
+        return Ok(Some(Vec::new()));
+    }
+    let records = list(plan)?;
+    // Where each payload inventory sits, read while its backup is there.
+    let inventories = payload_retention::inventories_of(&records);
+    let gone = vault.with_backup_hold_exclusion(|holds| -> anyhow::Result<Vec<String>> {
+        let mut dropped = Vec::new();
+        if holds.keeps_backups() {
+            return Ok(dropped);
+        }
+        for record in records {
+            match std::fs::remove_file(&record.path) {
+                Ok(()) => {
+                    checkpoint_fact::remove(&plan.dir, &record.file);
+                    dropped.push(record.file);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+        if !dropped.is_empty() {
+            sync_dir(&plan.dir)?;
+        }
+        Ok(dropped)
+    })??;
+    for file in &gone {
+        if let Err(error) = vault.release_backup_copy(&plan.dir.join(file)) {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a deleted vault's backup body holder was not released; its bodies stay kept"
+            );
+        }
+    }
+    // Their inventories go, and the payload leaves no backup keeps now may
+    // retire, as after any prune; then any inventory no backup names.
+    payload_retention::settle(vault, plan, &gone, inventories);
+    payload_retention::sweep(vault, plan);
+    handoff::sweep_orphan_stage_acks(plan);
+    Ok(Some(gone))
 }
 
 /// Live entity counts by registered kind, zero kinds omitted.

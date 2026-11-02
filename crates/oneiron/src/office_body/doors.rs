@@ -164,7 +164,7 @@ impl Vault {
                 return Ok(());
             };
             let (_, doc) = self.loro_body(&txn, artifact, source.kind, Some(at))?;
-            self.typed_body_unmarked_in_txn(&txn, &doc)?
+            self.typed_body_unmarked_in_txn(&txn, artifact, &doc)?
         };
         if !unmarked {
             return Ok(());
@@ -289,20 +289,41 @@ impl Vault {
         run_root: Option<&EntityId>,
         proposal: Option<&EntityId>,
     ) -> Result<OfficeBodyFork> {
-        self.with_write_txn_grouped(|wtxn| match source(&self.store, wtxn, artifact)?.kind {
+        self.with_write_txn_grouped(|wtxn| {
+            self.open_office_body_fork_in_txn(wtxn, artifact, actor, run_root, None, proposal)
+        })
+    }
+
+    /// [`Self::open_office_body_fork`] in `wtxn`, the writer that commits
+    /// the fork, from `origin`: the try a host bound the opening surface to,
+    /// proved in this same writer (FIX 3551). A run-and-children scope, a
+    /// DOCX or XLSX member's or a deck merge's, matches that try alone;
+    /// `run_root`, the run the caller names, is kept as its label. With no
+    /// origin the fork belongs to no run.
+    pub(crate) fn open_office_body_fork_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &EntityId,
+        actor: WriteActor,
+        run_root: Option<&EntityId>,
+        origin: Option<crate::attempt_queue::AttemptId>,
+        proposal: Option<&EntityId>,
+    ) -> Result<OfficeBodyFork> {
+        match source(&self.store, wtxn, artifact)?.kind {
             OfficeBodyKind::Pptx if proposal.is_some() => Err(invalid(
                 "a deck fork joins no proposal; its run's approve scope covers it",
             )),
-            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, run_root),
+            OfficeBodyKind::Pptx => self.open_deck_fork(wtxn, artifact, actor, run_root, origin),
             kind => {
                 let record =
                     open_typed_body_fork_in_txn(self, wtxn, artifact, kind.schema(), actor)?;
-                consent::join_in_txn(&self.store, wtxn, &record, run_root, proposal)?;
+                consent::join_in_txn(&self.store, wtxn, &record, run_root, origin, proposal)?;
                 let mut fork = fork_view(record);
                 fork.run_root = run_root.copied();
+                fork.origin = origin;
                 Ok(fork)
             }
-        })
+        }
     }
 
     pub fn office_body_fork(
@@ -318,7 +339,10 @@ impl Vault {
             return Ok(None);
         };
         let mut view = fork_view(record);
-        view.run_root = consent::member_run_root(&self.store, &txn, artifact, fork)?;
+        if let Some(member) = consent::member_of(&self.store, &txn, artifact, fork)? {
+            view.run_root = member.run_root;
+            view.origin = member.origin;
+        }
         Ok(Some(view))
     }
 
@@ -540,6 +564,7 @@ impl Vault {
                 recalc: recalc
                     .as_ref()
                     .map(|stamp| recalc_label(stamp, request.zone)),
+                recalc_zone: Some(request.zone.clone()),
                 effects,
             };
             EXPORTS.put(
@@ -653,25 +678,14 @@ impl Vault {
                 })?;
             return Ok(Some((bytes, changes.len(), None, Vec::new())));
         }
-        let changes = xlsx::changes(&xlsx::read(&base)?, &xlsx::read(&live)?)?;
-        if changes.is_empty() {
-            return Ok(None);
-        }
-        let limits = self.docedit_package_limits()?;
-        let projected = project_xlsx(
-            &self.body_source(artifact, head)?,
-            &changes,
-            limits,
-            &crate::office_body::document_resources(),
+        self.project_xlsx_body(
+            artifact,
+            head,
+            &xlsx::read(&base)?,
+            &xlsx::read(&live)?,
+            at,
+            zone,
         )
-        .map_err(|error| {
-            super::document_error(
-                error.resource(),
-                "the body could not be projected onto its package",
-            )
-        })?;
-        let (bytes, recalc) = recalc_xlsx(&projected.bytes, limits, at, zone)?;
-        Ok(Some((bytes, changes.len(), recalc, projected.effects)))
     }
 
     /// The imported version, checked against the hash the import recorded.

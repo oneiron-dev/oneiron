@@ -13,7 +13,6 @@ use super::{Budget, Walked, encode_failed, over_budget, unreadable};
 use crate::secret_custody::MemberStep;
 
 fn payload(bytes: &[u8], budget: &mut Budget) -> Walked<Vec<u8>> {
-    budget.member()?;
     let limit = budget.limit();
     let mut payload = Vec::new();
     // One byte past the limit is enough to tell a payload past it.

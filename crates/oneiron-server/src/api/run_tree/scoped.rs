@@ -6,15 +6,20 @@
 //! credential no record list narrows, still live now, whose read lane its
 //! credential still builds where its connection sits. A caller that acts
 //! without it keeps its act: the reply then carries no tree. The observe
-//! stream judges it again before each snapshot it sends, and ends, with no
-//! final snapshot, once it no longer holds.
+//! stream judges it again before each snapshot it sends, at each
+//! credential revoke this vault commits (FIX 10381), and when the vault's
+//! authority-log head has moved, as a revoke another process wrote on the
+//! same vault moves it (FIX 11743), and ends, with no final snapshot, once
+//! it no longer holds.
 
 use std::convert::Infallible;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::response::sse::Event;
 use futures_util::{Stream, stream};
 use tokio::sync::broadcast::{Receiver, error::RecvError};
+use tokio::sync::watch;
 
 use super::encode;
 use crate::auth::{CoreAuth, CoreScope};
@@ -53,11 +58,23 @@ pub(super) fn intervention_tree(
     }
 }
 
+/// How often an idle observe stream reads the vault's authority-log head
+/// (FIX 11743): a revoke another process writes sends no notice to this
+/// one, and the head's move is judged as a notice is. A read, never a
+/// deadline: the stream ends only when its credential no longer holds.
+const AUTHORITY_HEAD_POLL: Duration = Duration::from_secs(2);
+
 /// The observe stream's state between emissions.
 struct Observe {
     server: Arc<SyncServer>,
     auth: CoreAuth,
     receiver: Receiver<()>,
+    /// The vault's credential revocation notice: an idle stream judges its
+    /// credential again at each revoke, not only at its next change.
+    revocations: watch::Receiver<u64>,
+    /// The vault's authority-log head as the stream last read it; `None`
+    /// when the read failed.
+    authority_head: Option<u64>,
     run_id: String,
     previous: String,
     first: bool,
@@ -67,18 +84,23 @@ struct Observe {
 /// The observe stream for `run_id`: `initial`, then each changed snapshot,
 /// each sent only while `auth` still reads run trees (FIX 8221). The check
 /// runs before the first emission and again after every wait, before the
-/// tree is read for it; once it fails the stream ends.
+/// tree is read for it, and at each revoke notice `revocations` hears (FIX
+/// 10381); once it fails the stream ends.
 pub(super) fn observe(
     server: Arc<SyncServer>,
     auth: CoreAuth,
     receiver: Receiver<()>,
+    revocations: watch::Receiver<u64>,
     run_id: String,
     initial: String,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
+    let authority_head = server.vault.authority_log_head().ok();
     let state = Observe {
         server,
         auth,
         receiver,
+        revocations,
+        authority_head,
         run_id,
         previous: initial,
         first: true,
@@ -99,9 +121,31 @@ pub(super) fn observe(
             return Some((Ok(event), state));
         }
         loop {
-            match state.receiver.recv().await {
-                Ok(()) | Err(RecvError::Lagged(_)) => {}
-                Err(RecvError::Closed) => return None,
+            tokio::select! {
+                changed = state.receiver.recv() => match changed {
+                    Ok(()) | Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return None,
+                },
+                revoked = state.revocations.changed() => {
+                    // A revoke changes no tree: judge the credential and
+                    // keep waiting while it still holds.
+                    if revoked.is_err() || !reads_run_tree(&state.server, &state.auth) {
+                        return None;
+                    }
+                    continue;
+                }
+                () = tokio::time::sleep(AUTHORITY_HEAD_POLL) => {
+                    // FIX 11743: another process's revoke moves the head and
+                    // sends no notice here; a moved head is judged as one.
+                    let head = state.server.vault.authority_log_head().ok();
+                    if head != state.authority_head {
+                        state.authority_head = head;
+                        if !reads_run_tree(&state.server, &state.auth) {
+                            return None;
+                        }
+                    }
+                    continue;
+                }
             }
             if !reads_run_tree(&state.server, &state.auth) {
                 return None;

@@ -9,6 +9,10 @@ side_tables! {
     IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN: VaultMeta b"m:identity_topology_zero_head_seen" Raw;
     /// Idle publication delay. Key: ().
     ENTITY_TEXT_INDEXED_IDLE_DELAY_MS: VaultMeta b"manifest:entity_text:indexed_idle_delay_ms" Raw;
+    /// FIX 9970: a TURN whose landing could not record its program wake, and why, written in
+    /// that landing's commit and cleared when a later landing of the turn evaluates its wake.
+    /// Key: id16(turn).
+    MEMORY_TURN_WAKE_UNPERSISTED: VaultMeta b"memory:turn_wake_unpersisted:v1:" Named Engine;
     /// One merge batch's proposals, worktree paths, and lifecycle state. Key: hex(repo identity) ":"
     /// hex64(batch id).
     MERGE_QUEUE_BATCH: VaultMeta b"merge_queue:batch:v1:" Named Authored;
@@ -24,8 +28,14 @@ side_tables! {
     /// Repo-scoped merge-queue pointers, workspace graph, and in-flight intent state. Key: hex(repo
     /// identity).
     MERGE_QUEUE_STATE: VaultMeta b"merge_queue:state:v1:" Named;
-    /// In-flight streamed message recovery seed. Key: id16.
-    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named;
+    /// The reply assertions a MESSAGE born whole (not streamed) kept from its witness write
+    /// (FIX 10260): its turn, conversation and writer, and the ids and types its turn asserted.
+    /// Key: id16(message).
+    MESSAGE_REPLY_ASSERTIONS: VaultMeta b"message_reply_assertions:v1:" Named Engine;
+    /// In-flight streamed message recovery seed. Key: id16. FIX 10668: this entry's scrub takes
+    /// the signed slip out of a Retry seed's action its erased requester asked.
+    MESSAGE_STREAM_ACTIVE: VaultMeta b"message_stream:v1:" Named
+        => crate::memory::scrub_stream_seed_actor_in_txn;
     /// Vault default message-streaming policy. Key: ().
     MESSAGE_STREAM_POLICY: VaultMeta b"message_stream_policy:v1" Named;
     /// Latest terminal stream receipt of a message. Key: id16.
@@ -255,8 +265,17 @@ side_tables! {
     /// Key: ().
     OUTBOUND_INTENT_ATTEMPT_FORMAT: VaultMeta b"outbound:intent_attempt_format" Raw;
     /// Durable outbound-send intent ledger row: state machine, endpoint binding, and accounting. Key:
-    /// hash32.
-    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored;
+    /// hash32. An actor's erase takes the request of each row it admitted (FIX 9283).
+    OUTBOUND_INTENT_LEDGER_RECORD: VaultMeta b"outbound:intent_ledger:v2:" Raw Authored
+        => crate::outbound_intent_ledger::erase_outbound_intent_actor_in_txn;
+    /// What one ledger row's send came to beside its state, written with the ledger change it
+    /// records: its remote task handle (FIX 7960), its provider wait (FIX 8818) and its reserved
+    /// budget (FIX 7964), `rmp_serde::to_vec_named`. Key: hash32 (intent id).
+    OUTBOUND_INTENT_SETTLEMENT: VaultMeta b"outbound:intent_settlement:v1:" Named;
+    /// A call a restore holds no record of, as its per-tool bound counts it (FIX 6260): the
+    /// digest of its server and tool, then its admission times. Key: id16(attempt) + u64be(call
+    /// seq).
+    OUTBOUND_INTENT_UNAVAILABLE: VaultMeta b"outbound:intent_unavailable:v1:" Raw;
     /// The owner press a Linear dispatch's, a campaign leg's or (FIX 6424 part 3) a scoped-MCP
     /// call's admission spent, kept beside its ledger row for its retry once the admission
     /// committed (FIX 6424 part 2a): version, family tag, digest. Key: hash32 (intent id).
@@ -344,6 +363,10 @@ side_tables! {
     /// A bundled skill the owner's pack removal retired, and the pack that removed it; the pack's
     /// next install brings it back (OF-519). Key: id16.
     SKILL_HUB_PACK_SKILL_REMOVED: VaultMeta b"pack.skill-removed.v1/" Raw;
+    /// One pending Slack OAuth install awaiting its redirect (OF-519): the owner's proof snapshot,
+    /// the install link's client id and redirect, and the custody the bot token takes. Key: the
+    /// install state string.
+    SKILL_HUB_PACK_SLACK_INSTALL: VaultMeta b"pack.slack-install.v1/" Named;
     /// Configured publisher provenance for a staged pack. Key: id16 + blake3(JSON hub ref).
     SKILL_HUB_PACK_SOURCE_ALIAS: VaultMeta b"pack.source-alias.v1/" LegacyJson;
     /// Local-only content-hash pin (32 bytes) to the currently installed pack-byte-map carrier ASSET;
@@ -352,13 +375,18 @@ side_tables! {
     /// One person's PEOPLE `about` lines, one per sensitivity band, and the fact digests they stand
     /// on. Key: id16 (PERSON).
     PEOPLE_ABOUT: VaultMeta b"people:about:v1:" Named;
+    /// The billing account a PERSON filed as their own, which their room-paid calls bill (FIX
+    /// 3332). Key: id16 (PERSON).
+    PERSON_BILLING_ACCOUNT: VaultMeta b"person_billing_account:v1:" Named
+        => crate::llm::run_admission::erase_billing_account_actor_in_txn;
     /// Accepted persona copy and curation for an immutable mode-A export. Key: id16(export).
     PERSONA_SNAPSHOT_COPY: VaultMeta b"persona_snapshot:copy:v1:" Named Authored;
     /// A device-local held policy-classification item pending human moderation. Key: hex64 (blake3
     /// hash of caller/row/content-hash/frontier-hash).
     POLICY_HOLD_QUEUE: VaultMeta b"policy-hold:v1:" LegacyJson;
     /// Change-log record. Key: id16.
-    PORTS_CHANGE: VaultMeta b"ports:change:v1:" Named;
+    PORTS_CHANGE: VaultMeta b"ports:change:v1:" Named
+        => crate::ports::erase_change_log_actor_in_txn;
     /// Change-log by actor index. Key: id16 + u64be + id16.
     PORTS_CHANGE_BY_ACTOR: VaultMeta b"ports:change_actor:v1:" Raw;
     /// Change-log by entity index. Key: id16 + u64be + id16.
@@ -475,6 +503,11 @@ side_tables! {
     /// Latest receipt keyed by actor id16 ":" proposal identity string.
     PROPOSAL_SUBMISSION: VaultMeta b"proposal:submission:v1:" Named
         => crate::gate::proposal_observation::erase_submission_actor_in_txn;
+    /// This device's cache of an actor's opaque stamp token (FIX 10930): the id of its
+    /// `actor.stamp_token` claim, which a commit message names in place of the actor; an erase
+    /// of the actor drops it. Key: id16 (actor); value: id16 (token).
+    PROVENANCE_ACTOR_STAMP_TOKEN: VaultMeta b"provenance:actor_stamp_token:v1:" Raw
+        => crate::provenance::erase_actor_stamp_cache_in_txn;
     /// Born-from index over row births (Rule A trigger). Key: id16 (trigger ref) + id16 (born row).
     PROVENANCE_BIRTH_BY_TRIGGER: VaultMeta b"provenance:birth_by_trigger:v1:" Raw;
     /// Body descriptor: owner, occurrence, complete/incomplete state. Key: id16 (owner) + id16
@@ -568,6 +601,10 @@ side_tables! {
     IDENTITY_REDIRECT: VaultMeta b"redirect:v1:" Raw;
     /// Repo-conflict claim to reconciliation task. Key: id16.
     REPO_CONFLICT_RECONCILIATION_INDEX: VaultMeta b"repo_conflict:reconciliation:v1:" Raw;
+    /// The safe index copy of a text a model derived from a marked repo blob, or of a probe query
+    /// made from one (FIX 7608 S3F): pending, or ready with its source proof. Node-local cache, no
+    /// secret value. Key: u8 (owner kind) + id16.
+    REPO_DERIVED_INDEX_COPY: VaultMeta b"repo_index:derived_copy:v1:" Named;
     /// Durable per-operation oplog entry (prepared/committed/failed mutation record), keyed by (repo
     /// key hash, seq as 16 lowercase hex chars). Key: hex64 ":" hex16.
     REPO_MUTATION_OPLOG: VaultMeta b"repo_mutation:oplog:v1:" Named
@@ -635,7 +672,8 @@ side_tables! {
     CRITIC_REVIEW_CLAIM_TRUST: VaultMeta b"review:claim:v1:" Raw;
     /// Cached review verdict/triage/artifacts for a review request, keyed by a hash of the request's
     /// identity tuple. Key: hash32.
-    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored;
+    CRITIC_REVIEW_RESULT: VaultMeta b"review:result:v1:" Named Authored
+        => crate::learning::erase_review_scope_in_txn;
     /// Index from a review verdict claim id back to its CRITIC_REVIEW_RESULT row key. Key: id16.
     CRITIC_REVIEW_RESULT_ID: VaultMeta b"review:result_id:v1:" Raw;
     /// Claim-before-speaking receipt naming which actor may respond to one addressed turn. Key: id16

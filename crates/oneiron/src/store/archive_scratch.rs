@@ -40,8 +40,13 @@ impl Drop for ScratchEnv {
 }
 
 impl Store {
-    /// A new scratch environment for one import's row index (FIX 3678).
-    pub(crate) fn archive_scratch_env(&self) -> Result<ScratchEnv> {
+    /// A new scratch environment for one import's row index (FIX 3678),
+    /// its pages sealed under the vault's page key when `seal` holds one, as
+    /// the vault's own are (FIX 3910); an unsealed vault's stays plain.
+    pub(crate) fn archive_scratch_env(
+        &self,
+        seal: Option<&crate::world_keys::VaultPageSeal>,
+    ) -> Result<ScratchEnv> {
         let map_size = self
             .env
             .info()
@@ -50,6 +55,9 @@ impl Store {
             .saturating_mul(SCRATCH_MAP_ROUNDING);
         let mut options = EnvOpenOptions::new();
         options.map_size(map_size);
+        if let Some(seal) = seal {
+            options.page_key(seal.page_key());
+        }
         // SAFETY: the environment's one file is new and private to this
         // process (below), so no lock is needed: one thread, holding the one
         // `ScratchEnv`, is its only user. NO_SYNC and NO_META_SYNC lose

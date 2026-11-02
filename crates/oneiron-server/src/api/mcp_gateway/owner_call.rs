@@ -42,7 +42,7 @@ pub(crate) async fn resolve_mcp_caller(
 ) -> Result<McpCallContext, McpGatewayError> {
     let attested = crate::auth::attested_owner(connection, server);
     let Some(owner) = attested.or_else(|| session_owner(connection, server)) else {
-        return resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
+        return resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
             .await
             .map(|context| with_admitted_proof(context, connection));
     };
@@ -61,9 +61,10 @@ pub(crate) async fn resolve_mcp_caller(
         };
         return managed_owner_context(mode, request_id, headers, owner, auth, server);
     }
-    let context = resolve_mcp_gateway_actor(mode, request_id, headers, locality, server)
-        .await
-        .map(|context| with_admitted_proof(context, connection))?;
+    let context =
+        resolve_mcp_gateway_actor(mode, request_id, headers, connection, locality, server)
+            .await
+            .map(|context| with_admitted_proof(context, connection))?;
     let principal = context
         .actor
         .auth
@@ -142,6 +143,45 @@ pub(crate) fn attested_owner_call(
     ))
 }
 
+/// The console owner's own tool-first call a verb hook's ask stopped, built
+/// again at settlement (FIX 5204) under `auth`, the owner as
+/// [`CoreAuth::for_attested_owner`] rebuilt him now: only while
+/// `connection`, the STREAM the call saved, is still his own
+/// ([`owner_stream_connection`]). Neither his held socket nor a registration
+/// is needed; it sits in no session or room turn, as its call named none, and
+/// carries the call's `invocation` and the drain's permit. `None` for a
+/// stream that is not his.
+#[cfg(feature = "code-sandbox-wasmtime")]
+pub(super) fn owner_resume_context(
+    server: &Arc<SyncServer>,
+    auth: CoreAuth,
+    connection: &str,
+    invocation: oneiron::runtime_hooks::InvocationId,
+    drain: oneiron::runtime_hooks::verb::VerbAskDrainPermit,
+) -> Option<Result<McpCallContext, McpGatewayError>> {
+    let owner = auth.managed_owner()?;
+    if owner_stream_connection(owner).0 != connection {
+        return None;
+    }
+    let request_id = format!("verb-ask-{}", invocation.to_hex());
+    Some(
+        owner_context_at(
+            McpSurfaceMode::ToolFirst,
+            &request_id,
+            owner,
+            Some(auth),
+            None,
+            None,
+            server,
+        )
+        .map(|mut context| {
+            context.invocation = Some(invocation);
+            context.drain = Some(drain);
+            context
+        }),
+    )
+}
+
 /// [`managed_owner_context`] once the call's placement is known.
 fn owner_context_at(
     mode: McpSurfaceMode,
@@ -187,6 +227,7 @@ fn owner_context_at(
         room_turn,
         drain: None,
         forwarded: None,
+        client_surface: None,
     })
 }
 
@@ -248,7 +289,7 @@ pub(super) fn invocation_owner(
 /// An attested owner's STREAM connection: one per person, derived from him
 /// alone under its own prefix, so it never names a connector registration
 /// or another person's stream, and does not spell the person's id.
-fn owner_stream_connection(owner: oneiron::EntityId) -> StreamConnectionId {
+pub(super) fn owner_stream_connection(owner: oneiron::EntityId) -> StreamConnectionId {
     let key = blake3::derive_key(MCP_OWNER_STREAM_CONTEXT, owner.as_bytes());
     StreamConnectionId(format!("mcp-owner:{}", blake3::Hash::from(key).to_hex()))
 }

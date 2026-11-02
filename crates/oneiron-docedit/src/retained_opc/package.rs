@@ -4,7 +4,7 @@
 //!
 //! ZIP central-directory reader and copy-through writer. All source records
 //! remain owned by the package; only checked edits and added parts change output.
-use super::{Error, Result, XmlLimits, xml};
+use super::{Error, Result, xml};
 use crate::resource::{Dimension, Resources, wide};
 
 mod open;
@@ -23,23 +23,17 @@ const LOCAL: u32 = 0x0403_4b50;
 const CENTRAL: u32 = 0x0201_4b50;
 const EOCD: u32 = 0x0605_4b50;
 
-/// Caller-selected limits, checked before decompression and again after it.
-/// The entry count and the XML counts are observations, not refusals: the
-/// package's memory is reserved through its [`Resources`] (FIX 8574, 8598).
+/// Caller-selected byte ceilings, checked before decompression and again
+/// after it. Counts are observations, never carried here: the package's
+/// memory is reserved through its [`Resources`] (FIX 8574, 10590).
 #[derive(Debug, Clone, Copy)]
 pub struct Limits {
     /// Maximum source ZIP bytes.
     pub archive_bytes: usize,
-    /// The entries a caller expects: an observation. Only the ZIP32 codec
-    /// bounds the count (65,535 is its ZIP64 sentinel).
-    pub entries: usize,
     /// Maximum expanded bytes per entry.
     pub part_bytes: usize,
     /// Maximum total expanded bytes.
     pub expanded_bytes: usize,
-    /// XML depth and nodes a caller expects at the signature and edit doors:
-    /// observations, never a refusal.
-    pub xml: XmlLimits,
 }
 
 /// A package may still be exported exactly when XML metadata cannot be
@@ -178,16 +172,20 @@ impl Package {
                     .ok_or(Error::Edit("edited package size overflow"))
             },
         )?;
-        let budget =
-            self.limits
-                .part_bytes
-                .min(self.limits.expanded_bytes.checked_sub(other_size).ok_or(
-                    Error::capacity_hit(
-                        Dimension::ExpandedBytes,
-                        other_size,
-                        self.limits.expanded_bytes,
-                    ),
-                )?);
+        if other_size > self.limits.expanded_bytes {
+            return Err(Error::capacity_hit(
+                Dimension::ExpandedBytes,
+                other_size,
+                self.limits.expanded_bytes,
+            ));
+        }
+        // The edited part's budget keeps both ceilings, so its hit names the
+        // one that binds (FIX 10654).
+        let budget = xml::PartBudget {
+            part_bytes: self.limits.part_bytes,
+            expanded_bytes: self.limits.expanded_bytes,
+            others: other_size,
+        };
         let part = xml::ValidatedXmlPart::parse(&old, &self.resources)?;
         let new = part.replace_text(path, expected, value, budget)?.0;
         self.commit_replacement(index, old, new)
@@ -363,12 +361,27 @@ impl Package {
             .filter_map(|entry| entry.replacement.as_ref())
             .fold(0usize, |sum, data| sum.saturating_add(data.len()));
         let added = self.added_archive_bytes()?;
-        // An estimate past the added records, whose bytes are measured.
+        // Every byte the output carries over is measured (FIX 10656): the
+        // source, less each removed entry's records and each replaced
+        // entry's old payload and data descriptor, and the added records.
+        // The replacements' compressed copies are the estimate.
+        let carried = self.entries.iter().fold(
+            wide(self.source.len()).saturating_add(wide(added)),
+            |sum, entry| {
+                if entry.removed {
+                    sum.saturating_sub(wide(entry.local.len() + entry.central.len()))
+                } else if entry.replacement.is_some() {
+                    sum.saturating_sub(wide(entry.trailer.saturating_sub(entry.data.start)))
+                } else {
+                    sum
+                }
+            },
+        );
         let _hold = self.resources.reserve_estimate(
             wide(self.source.len())
                 .saturating_add(wide(replaced).saturating_mul(2))
                 .saturating_add(wide(added)),
-            wide(added),
+            carried,
         )?;
         let mut out = Vec::with_capacity(self.source.len());
         let mut offsets = vec![0u32; self.entries.len()];

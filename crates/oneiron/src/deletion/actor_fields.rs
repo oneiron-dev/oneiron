@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::secret_custody::EraseOwnerAct;
 use crate::side_table::ActorScrub;
 
 use super::tombstone::HARD_DELETE_MARKER;
@@ -21,21 +22,43 @@ const IDENTITY_OPS: ActorScrub = Vault::scrub_identity_op_actor_in_txn;
 /// table: each that names the actor is rewritten naming no one (FIX 3877).
 const ORIGIN_CLAIMS: ActorScrub = crate::origin::actor_erase::erase_publication_claim_actor_in_txn;
 
+/// An actor's stamp tokens are claims, not a side table: each is hard-erased,
+/// so every commit message and receipt naming it names no one (FIX 10930).
+const ACTOR_STAMP_TOKENS: ActorScrub = crate::provenance::erase_actor_stamp_tokens_in_txn;
+
 /// Runs in the purge's transaction: the identity ops first, then origin's
-/// claims, then every declared table's scrub in catalog order. Behind the
+/// claims and the actor's stamp tokens, then every declared table's scrub in
+/// catalog order. Behind the
 /// permanent hard-delete marker, the dispatch text the actor owns leaves the
 /// attempt payloads too (FIX 7076), and the planned intents' declared scrub
 /// leaves each intent it asked or whose plan seats it in its erased form
-/// (Engine 10-22); a delete writes no marker and keeps the text.
+/// (Engine 10-22); a delete writes no marker and keeps the text. Under
+/// `act`, the owner act the erase carries out, the blocked reports' rows go
+/// first, so each custody record their scrub revokes is carried to his other
+/// machines (FIX 11883); their declared scrub then finds none.
 pub(super) fn erase_actor_fields_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
+    act: Option<&EraseOwnerAct<'_>>,
 ) -> Result<()> {
-    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
     // A marker-only hard path writes the marker before this sweep and never
     // reaches the provenance door's erase.
-    if HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))? {
+    let hard =
+        HARD_DELETE_MARKER.contains(&vault.store, wtxn, &crate::side_table::HexId(*actor))?;
+    // The asks of the spawns it seated leave the code-run replay rows and
+    // their step starts before its other fields go (FIX 9180).
+    if hard {
+        let erased = BTreeSet::from([*actor]);
+        crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
+    }
+    if act.is_some() {
+        crate::self_heal::blocked_reports::erase_blocked_source_actor_as_in_txn(
+            vault, wtxn, actor, act,
+        )?;
+    }
+    scrub_actor_fields_in_txn(vault, wtxn, actor)?;
+    if hard {
         crate::attempt_queue::erase_attempt_payload_actor_in_txn(&vault.store, wtxn, actor)?;
     }
     Ok(())
@@ -50,6 +73,7 @@ fn scrub_actor_fields_in_txn(
 ) -> Result<()> {
     IDENTITY_OPS(vault, wtxn, actor)?;
     ORIGIN_CLAIMS(vault, wtxn, actor)?;
+    ACTOR_STAMP_TOKENS(vault, wtxn, actor)?;
     crate::workspace_roster::erase_audience_actor_in_txn(vault, wtxn, actor)?;
     for scrub in crate::side_table::actor_scrubs() {
         scrub(vault, wtxn, actor)?;
@@ -109,6 +133,9 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
 ) -> Result<()> {
     let mut erased = hard_erased_ids_in_txn(vault, wtxn)?;
     erased.extend(live);
+    // The spawn asks the image brings back for any of them, actor or not,
+    // leave its replay rows and step starts again (FIX 9180).
+    crate::code_run::erase_spawn_targets_in_txn(&vault.store, wtxn, &erased)?;
     // The planned intents they asked or are seated by take their erased
     // form first, while each still names its asker (Engine 10-22).
     crate::agent_dispatch::AgentDispatcher::erase_planned_intent_content_in_txn(
@@ -137,7 +164,8 @@ pub(crate) fn rerun_actor_scrubs_in_txn(
 /// A legal hold's release, in its own transaction (FIX 6280): the births a
 /// hold kept from an erased actor's scrub, and their window carriers, go
 /// once nothing holds their rows, a carrier whose birth never landed here
-/// too (FIX 6386); no other scrub runs again. The `dt:` markers and the
+/// too (FIX 6386), and so do the stamp tokens a hold kept (FIX 10930, 11040);
+/// no other scrub runs again. The `dt:` markers and the
 /// holds as they now stand say what is owed. A vault that keeps no hold row,
 /// standing or released, owes nothing: only a hold keeps a birth past its
 /// actor's scrub, and a released one keeps its row for 24 months, well past
@@ -155,7 +183,8 @@ pub(super) fn rerun_birth_actor_scrubs_in_txn(
         return Ok(());
     }
     let erased = hard_erased_ids_in_txn(vault, wtxn)?;
-    crate::provenance::birth::release_held_births_in_txn(vault, wtxn, &erased)
+    crate::provenance::birth::release_held_births_in_txn(vault, wtxn, &erased)?;
+    crate::provenance::release_held_actor_stamps_in_txn(vault, wtxn, &erased)
 }
 
 /// How two carrier copies of one row settle when they differ only in who

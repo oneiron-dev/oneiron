@@ -125,7 +125,9 @@ impl ScopedChildLoan {
     ///   that attempt's lease ([`Self::with_parent_attempt`]); it spawns
     ///   nothing before;
     /// - every requested port is an SDK verb named in `allowed`;
-    /// - the requested scope narrows `bound` ([`Scope::attenuate`]);
+    /// - the requested scope narrows `bound` ([`Scope::attenuate_with`]): a
+    ///   child project proven, in one read snapshot, to descend from the
+    ///   bound's project narrows it too (FIX 8999);
     /// - `src` is among the inputs, and every input is one of `parent_run`'s
     ///   own committed results, clean now, its range inside its body.
     ///
@@ -134,7 +136,8 @@ impl ScopedChildLoan {
     /// # Errors
     ///
     /// [`Error::InvalidConfig`] when `vault` is not the vault `parent`'s
-    /// route is on; the route's own read errors.
+    /// route is on; the route's own read errors; a project descent proof
+    /// that could not be read, never taken for a widening.
     pub fn from_parent(
         vault: &Vault,
         parent: &HostSelfDispatcher<'_>,
@@ -159,7 +162,29 @@ impl ScopedChildLoan {
         if !lent {
             return Ok(Err(SCOPED_CHILD_PORT_NOT_LENT));
         }
-        if bound.attenuate(requested.scope.clone()).is_err() {
+        // A child project proven to descend from the bound's narrows it, as
+        // agent dispatch admits it (FIX 8999). A proof that could not be read
+        // is the answer's error, never a widening; the snapshot ends here.
+        let narrows = {
+            let txn = vault.store.env.read_txn()?;
+            let mut unread = None;
+            let narrows = bound.attenuate_with(requested.scope.clone(), |project, ancestor| {
+                match crate::agent_dispatch::project_descends_from_in_txn(
+                    vault, &txn, project, ancestor,
+                ) {
+                    Ok(descends) => Ok(descends),
+                    Err(error) => {
+                        unread = Some(error);
+                        Ok(false)
+                    }
+                }
+            });
+            if let Some(error) = unread {
+                return Err(error);
+            }
+            narrows.is_ok()
+        };
+        if !narrows {
             return Ok(Err(SCOPED_CHILD_SCOPE_WIDENS));
         }
         if requested.source().is_none() {

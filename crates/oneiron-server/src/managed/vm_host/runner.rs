@@ -59,8 +59,9 @@ async fn start_or_terminate(
     fscrypt_key: &VmFscryptKey,
     terminate: &mut Signal,
 ) -> anyhow::Result<bool> {
+    let timeout = vm.boot_timeout();
     tokio::select! {
-        started = vm.start(credentials, fscrypt_key, API_TIMEOUT) => started.map(|()| true),
+        started = vm.start(credentials, fscrypt_key, timeout) => started.map(|()| true),
         _ = terminate.recv() => Ok(false),
     }
 }
@@ -109,8 +110,9 @@ pub async fn run_vault_vm(run: VaultVmRun) -> anyhow::Result<()> {
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let credentials = match (restore, credentials) {
         (Some(io), _) => {
+            let timeout = vm.boot_timeout();
             let restored = tokio::select! {
-                restored = vm.start_restore(io, &fscrypt_key, API_TIMEOUT) => Some(restored?),
+                restored = vm.start_restore(io, &fscrypt_key, timeout) => Some(restored?),
                 _ = terminate.recv() => None,
             };
             match restored {

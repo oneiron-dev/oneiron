@@ -80,6 +80,7 @@ async fn row_hooks_pre_decided(
             class: hook_class(class),
             scope: None,
             board_epoch: None,
+            turn: None,
             domain: verb_hook_boundary::row_domain(&verb),
             reader,
         };
@@ -113,7 +114,7 @@ async fn row_hooks_pre_decided(
         });
         Ok(pre)
     };
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let (ended, decided) = crate::hook_verdict::collect_hook_decisions(chain);
         ended.map(|pre| (pre, decided))
     })
@@ -140,7 +141,7 @@ async fn row_hooks_post_decided(
     result: serde_json::Value,
 ) -> Result<(serde_json::Value, Vec<serde_json::Value>), MemoryError> {
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || {
+    clock_ingress::run_blocking(move || {
         let (output, decided) = crate::hook_verdict::collect_hook_decisions(move || {
             verb_hook_boundary::row_post(&server.vault, pre, result)
         });
@@ -156,7 +157,7 @@ async fn row_hooks_post_decided(
 /// The caller returns its own error.
 pub(crate) async fn row_hooks_abort(server: &Arc<SyncServer>, pre: VerbHookPre) {
     let server = Arc::clone(server);
-    let kept = tokio::task::spawn_blocking(move || verb_hook_boundary::abort(&server.vault, pre));
+    let kept = clock_ingress::run_blocking(move || verb_hook_boundary::abort(&server.vault, pre));
     if let Err(error) = kept.await {
         tracing::warn!(%error, "a failed row's pre hook records were not kept");
     }
@@ -289,7 +290,7 @@ pub(super) fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), 
         // The attested owner carries no slip: its request's own owner
         // proof, as the export revalidates it in its snapshot.
         if auth.managed_owner().is_some() {
-            let owner = host_doors::owner_proof(auth, server, "vault.export")?;
+            let owner = host_doors::support::owner_proof(auth, server, "vault.export")?;
             server.vault.admit_authenticated_owner_export(&owner)?;
         }
         return Ok(());

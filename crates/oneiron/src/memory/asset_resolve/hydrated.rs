@@ -36,7 +36,7 @@ pub(in crate::memory) fn serve_hydrated_views(
         if view.kind != asset_kind {
             continue;
         }
-        let served = hydrated_asset(lane, *asset, &consumer, None, &mut |_| true)?;
+        let served = hydrated_asset(lane, *asset, &consumer, None, &mut |_| true, None)?;
         receipt.restrict_with(&served.receipt);
         if let HydratedAsset::Served { body, form, .. } = served.value {
             view.body = decode_body_json(&body);

@@ -17,9 +17,11 @@ mod legibility;
 mod night_step;
 pub(crate) mod nightly;
 mod observation;
+pub(crate) mod owed;
 mod policy;
 mod program;
 mod projector;
+pub(crate) mod read_phase;
 mod recipe;
 mod recipe_wake;
 pub(crate) mod recipes;
@@ -28,12 +30,15 @@ mod scheduling;
 mod settlement;
 pub(crate) mod sieve;
 pub(crate) mod statement_material;
+mod surprise_wake;
 mod types;
 
 pub(crate) use self::arc_backstop::arc_policy_in_txn;
 pub use self::deadline::*;
 pub use self::driver::*;
-pub(crate) use self::driver::{llm_waits_on_owner_act, waits_on_owner_act};
+pub(crate) use self::driver::{
+    check_host_wake_rewrite, llm_waits_on_owner_act, waits_on_owner_act,
+};
 pub use self::grain::*;
 pub use self::legibility::*;
 pub use self::night_step::NightStepRequestId;
@@ -59,8 +64,8 @@ pub(crate) use self::projector::apply_in_txn as apply_projection_in_txn;
 pub(crate) use self::projector::held_round_members_away_in_txn;
 pub use self::recipe::*;
 pub use self::recipes::WakeRecipePolicy;
-pub(crate) use self::scheduling::request_wake_in_txn;
 pub use self::scheduling::*;
+pub(crate) use self::scheduling::{request_wake_in_txn, surprise_floor_in_txn, surprises};
 pub(crate) use self::sieve::grant_written_in_txn as sieve_grant_written_in_txn;
 pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{

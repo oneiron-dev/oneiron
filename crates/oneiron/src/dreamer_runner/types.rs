@@ -13,6 +13,12 @@ use super::claim_authoring::{
     DreamerClaimAuthoringAdmission, DreamerClaimAuthoringBatchTier, DreamerClaimAuthoringBudgetTrap,
 };
 use super::codec::invalid_dreamer_runner;
+// A Retry park's pause, resolved per vault (FIX 8716).
+mod park;
+mod retry_policy;
+
+pub use park::ParkDreamerAttempt;
+
 use super::constants::{
     DEFAULT_DREAMER_CHILD_RESERVE_UNITS, DREAMER_CONSOLIDATION_MACRO_ATTEMPT_KIND,
     DREAMER_CONSOLIDATION_MESO_ATTEMPT_KIND, DREAMER_CONSOLIDATION_MICRO_ATTEMPT_KIND,
@@ -508,6 +514,12 @@ pub struct DreamerBudgetRecord {
     pub total_units: u64,
     pub remaining_units: u64,
     pub reserved_units: u64,
+    /// Spend settled beyond what was left (FIX 8702): incurred, never
+    /// refused. Nonzero only while `remaining_units` is 0.
+    pub overdraft_units: u64,
+    /// Admitted calls whose terminal usage is still owed to this line
+    /// (FIX 9015): each is charged when it settles.
+    pub owed_calls: u64,
     pub updated_at: u64,
 }
 
@@ -543,6 +555,9 @@ pub struct DreamerBudgetReservation {
     pub budget_id: String,
     pub attempt_id: AttemptId,
     pub reserved_units: u64,
+    /// Measured spend this child owes that no settlement has charged yet
+    /// (FIX 8728, 9015); its settlement or abort charges it.
+    pub owed_units: u64,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -650,11 +665,6 @@ pub struct DreamerRunTreeRecord {
     pub created_at: u64,
 }
 
-/// How long a [`DreamerParkCause::Retry`] park waits before a later pass
-/// resumes it, in store-clock seconds (Engine 10-21 ruling). Pacing, not a
-/// cap: the work always resumes, as the same try, once the delay passed.
-pub const DREAMER_RETRY_PARK_SECS: u64 = 900;
-
 /// Why a Dreamer attempt parked. The reason text is for people; this is
 /// what code reads. Only a [`Self::ProviderUnavailable`] park resumes when a
 /// model offer recovers (OF-305).
@@ -695,18 +705,6 @@ impl DreamerParkCause {
             Self::Cancelled => "cancelled",
             Self::Signal => "signal",
             Self::Other => "other",
-        }
-    }
-
-    /// Whether a later wake pass resumes a park of this cause as the same
-    /// try (DOOR-144), and how long after it parked: a Checkpoint or a
-    /// Paused park at once, a Retry after [`DREAMER_RETRY_PARK_SECS`].
-    #[must_use]
-    pub const fn later_pass_resume_delay(self) -> Option<u64> {
-        match self {
-            Self::Checkpoint | Self::Paused => Some(0),
-            Self::Retry => Some(DREAMER_RETRY_PARK_SECS),
-            _ => None,
         }
     }
 
@@ -778,19 +776,6 @@ impl DreamerParkCause {
     }
 }
 
-/// Input for parking a Dreamer attempt in local runner state.
-///
-/// `park_owner` is the parker's ownership token: only the owner recorded on
-/// the row may overwrite it or resume the attempt (fail-closed on mismatch).
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ParkDreamerAttempt {
-    pub attempt_id: AttemptId,
-    pub reason: String,
-    pub cause: DreamerParkCause,
-    pub park_owner: String,
-    pub now: u64,
-}
-
 /// Private parked-attempt row keyed by attempt id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DreamerParkedAttemptRecord {
@@ -798,5 +783,6 @@ pub struct DreamerParkedAttemptRecord {
     pub reason: String,
     pub cause: DreamerParkCause,
     pub park_owner: String,
+    pub carried_spend: Option<u64>,
     pub parked_at: u64,
 }

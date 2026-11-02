@@ -1,4 +1,4 @@
-//! Actor-class validation, legacy evidence transition, and model substrate codec.
+//! Actor-class validation and model substrate codec.
 
 use super::EdgeProvenanceClaimBody;
 use crate::edge::EdgeActorClass;
@@ -31,67 +31,6 @@ pub fn validate_actor_class(actor_entity_type: u8, actor_class: EdgeActorClass) 
     }
 }
 
-/// LEGACY engine-internal `evid` key that persisted the WRITE-TIME validated
-/// `actor_class` on the wrapping Claim BEFORE the ONE-1138 vocabulary bump
-/// (see the module docs' "Persisted actor_class" section). Pre-bump claims
-/// carrying it still decode; writers now write the `actor_class` BODY key
-/// only and leave `evid` to evidence purity.
-pub(crate) const EVIDENCE_KEY_ACTOR_CLASS: &str = "actor_class";
-
-/// Encodes the LEGACY persisted actor-class evidence: the engine-owned
-/// MessagePack map `{"actor_class": u8}` stored in the wrapping Claim's
-/// `evid` field by pre-ONE-1138 writers. Kept so tests can fabricate
-/// pre-bump claims; production writers no longer call it.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "legacy pre-ONE-1138 codec kept for fabricating pre-bump claims in tests"
-    )
-)]
-pub(crate) fn encode_actor_class_evidence(actor_class: EdgeActorClass) -> Value {
-    Value::Map(vec![(
-        Value::from(EVIDENCE_KEY_ACTOR_CLASS),
-        Value::from(actor_class as u8),
-    )])
-}
-
-/// Decodes the persisted actor-class evidence fail-closed: the value must be
-/// exactly the engine-owned map `{"actor_class": u8 <= 2}`. A provenance
-/// Claim without it cannot participate in flag refresh — typed error, never
-/// a defaulted class (D13).
-pub(crate) fn decode_actor_class_evidence(evidence: Option<&Value>) -> Result<EdgeActorClass> {
-    let Some(Value::Map(entries)) = evidence else {
-        return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
-            "provenance claim is missing its persisted actor_class evidence",
-        )));
-    };
-    let mut actor_class: Option<EdgeActorClass> = None;
-    for (key, value) in entries {
-        if key.as_str() != Some(EVIDENCE_KEY_ACTOR_CLASS) {
-            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
-                "unknown key in provenance actor_class evidence",
-            )));
-        }
-        if actor_class.is_some() {
-            return Err(Error::Claim(ClaimError::InvalidProvenanceBody(
-                "duplicate actor_class evidence key",
-            )));
-        }
-        let parsed = value
-            .as_u64()
-            .and_then(|raw| u8::try_from(raw).ok())
-            .and_then(actor_class_from_u8)
-            .ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
-                "actor_class evidence must be an integer u8 <= 2",
-            )))?;
-        actor_class = Some(parsed);
-    }
-    actor_class.ok_or(Error::Claim(ClaimError::InvalidProvenanceBody(
-        "provenance claim is missing its persisted actor_class evidence",
-    )))
-}
-
 pub(super) fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
     match value {
         0 => Some(EdgeActorClass::Human),
@@ -102,19 +41,16 @@ pub(super) fn actor_class_from_u8(value: u8) -> Option<EdgeActorClass> {
 }
 
 /// Resolves the persisted write-time `actor_class` of a stored
-/// `edge.provenance` Claim under the pinned ONE-1138 transition semantics:
+/// `edge.provenance` Claim from its value record body:
 ///
-/// * NEW shape — `actor_class` in the value record body, wrapper `evid`
-///   absent → the body value wins;
-/// * LEGACY shape (pre-bump, never invalidated) — body key absent, the
-///   engine-owned `{"actor_class": u8}` map on the wrapper's `evid` →
-///   decoded via the unchanged legacy codec;
+/// * `actor_class` in the value record body, wrapper `evid` absent → the
+///   body value wins;
 /// * BOTH places → ambiguous, fails closed
 ///   ([`ClaimError::InvalidProvenanceBody`](crate::error::ClaimError::InvalidProvenanceBody)) — two sources of truth for a flag
 ///   refresh are never reconciled silently;
-/// * NEITHER place → fails closed the same way — a provenance Claim without
-///   a persisted class cannot participate in flag refresh; the class is
-///   never defaulted (D13).
+/// * body key absent → fails closed the same way — a provenance Claim
+///   without a persisted class cannot participate in flag refresh; the
+///   class is never defaulted (D13).
 pub(crate) fn resolve_persisted_actor_class(
     record: &EdgeProvenanceClaimBody,
     evidence: Option<&Value>,
@@ -124,7 +60,9 @@ pub(crate) fn resolve_persisted_actor_class(
             "actor_class present in both the value record and the wrapper evid (ambiguous)",
         ))),
         (Some(class), None) => Ok(class),
-        (None, evidence) => decode_actor_class_evidence(evidence),
+        (None, _) => Err(Error::Claim(ClaimError::InvalidProvenanceBody(
+            "provenance claim is missing its persisted actor_class evidence",
+        ))),
     }
 }
 

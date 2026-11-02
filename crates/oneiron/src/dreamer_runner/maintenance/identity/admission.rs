@@ -25,19 +25,49 @@ use crate::{EntityId, Error, Result, Vault};
 
 /// The Dreamer's own lane for the host's identity decisions: its
 /// relationship-granted read, as the Coach's room upkeep reads. None while
-/// no identity ask is open, which a read alone tells, so an idle round
-/// opens no write.
+/// no identity work can be due (FIX 10375): no open ask, or — on an ordinary
+/// round — every ask escalated, kept separate, or waiting on its retry. On a
+/// resurface round an escalated ask also counts as work. The read-only
+/// pre-filter over-approximates toward opening the reader: the caller still
+/// decides whether the lane reads each stored-due ask whole.
+///
+/// # Errors
+///
+/// When storage or the Dreamer's principal resolution fails.
+pub fn maintenance_reader(
+    vault: &Vault,
+    now: u64,
+    resurface: bool,
+) -> Result<Option<ScopedRead<'_>>> {
+    let txn = vault.store.env.read_txn()?;
+    let mut work = false;
+    for (_, ask) in ASKS.scan(&vault.store, &txn)? {
+        if ask.escalated_at.is_some() {
+            if resurface {
+                work = true;
+                break;
+            }
+            continue;
+        }
+        if ask.kept_separate_at.is_none() && ask.retry_at <= now {
+            work = true;
+            break;
+        }
+    }
+    drop(txn);
+    if !work {
+        return Ok(None);
+    }
+    dreamer_reader(vault).map(Some)
+}
+
+/// The Dreamer's relationship-granted lane, whether or not an ask is open:
+/// the nightly re-check settles a mention only as it reads it (FIX 10374).
 ///
 /// # Errors
 ///
 /// When the vault cannot resolve the Dreamer's principal.
-pub fn maintenance_reader(vault: &Vault) -> Result<Option<ScopedRead<'_>>> {
-    let txn = vault.store.env.read_txn()?;
-    let open = ASKS.iter_from(&vault.store, &txn, &[])?.next().is_some();
-    drop(txn);
-    if !open {
-        return Ok(None);
-    }
+pub(super) fn dreamer_reader(vault: &Vault) -> Result<ScopedRead<'_>> {
     let dreamer = vault.dreamer_authority()?;
     let key = ScopedReadActorKey::with_actor_class(
         dreamer.entity_ref().to_hex(),
@@ -45,7 +75,7 @@ pub fn maintenance_reader(vault: &Vault) -> Result<Option<ScopedRead<'_>>> {
     )
     .ok_or_else(|| Error::InvalidConfig("invalid Dreamer read key".into()))?
     .require_relationship_grants(Some(dreamer.entity_ref()));
-    Ok(Some(vault.scoped_read(key)))
+    Ok(vault.scoped_read(key))
 }
 
 /// One lane's judgement in one snapshot: the lane, and the live policy it

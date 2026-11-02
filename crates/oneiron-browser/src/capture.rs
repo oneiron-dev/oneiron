@@ -18,7 +18,8 @@
 //! compares: each receipt's is a capture of its own, kept as its evidence
 //! even when its pixels repeat an earlier one's.
 
-use crate::{ScreenshotInput, ScreenshotTrigger};
+use crate::{BrowserError, ScreenshotInput, ScreenshotTrigger};
+use std::io::Cursor;
 
 /// What every screenshot an agent's verb takes masks: each secret field the
 /// page or window shows is blacked out before the image is held. The
@@ -42,6 +43,39 @@ pub(crate) struct Scope {
     /// The image's pixels per CSS or screen pixel.
     pub(crate) scale: f64,
     pub(crate) masking: &'static str,
+}
+
+/// The rectangle a held image shows, in its surface's pixels (a page's CSS
+/// pixels, a window's screen pixels): left, top, width and height. Each
+/// surface's frame carries one, beside what else its surface needs.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Viewport {
+    pub(crate) left: f64,
+    pub(crate) top: f64,
+    pub(crate) width: f64,
+    pub(crate) height: f64,
+}
+
+impl Viewport {
+    /// The viewport of the (`x`, `y`, `width`, `height`) region of an image
+    /// of `image` pixels that shows this viewport.
+    pub(crate) fn region(
+        &self,
+        image: (u32, u32),
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+    ) -> Self {
+        let across = self.width / f64::from(image.0.max(1));
+        let down = self.height / f64::from(image.1.max(1));
+        Self {
+            left: self.left + f64::from(x) * across,
+            top: self.top + f64::from(y) * down,
+            width: f64::from(width) * across,
+            height: f64::from(height) * down,
+        }
+    }
 }
 
 /// A held screenshot's capture: its id, and the scope it was taken in; none
@@ -97,4 +131,41 @@ pub(crate) fn unchanged_from(
 ) -> Option<String> {
     let (held, base) = base?;
     (held == image && base.scope.is_some() && base.scope == now.scope).then_some(base.id)
+}
+
+/// A PNG's width and height from its IHDR, when the bytes are a PNG.
+pub(crate) fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    let dimension = |at: usize| png.get(at..at + 4)?.try_into().ok().map(u32::from_be_bytes);
+    Some((dimension(16)?, dimension(20)?))
+}
+
+/// The (`x`, `y`, `width`, `height`) region of a held PNG.
+pub(crate) fn crop_region(
+    png: &[u8],
+    x: u32,
+    y: u32,
+    width: u32,
+    height: u32,
+) -> Result<image::DynamicImage, BrowserError> {
+    let image = image::load_from_memory(png).map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    if width == 0
+        || height == 0
+        || x.checked_add(width).is_none_or(|end| end > image.width())
+        || y.checked_add(height).is_none_or(|end| end > image.height())
+    {
+        return Err(BrowserError::Input(format!(
+            "region {x},{y} {width}x{height} does not fit the {}x{} image",
+            image.width(),
+            image.height()
+        )));
+    }
+    Ok(image.crop_imm(x, y, width, height))
+}
+
+pub(crate) fn encode_png(image: &image::DynamicImage) -> Result<Vec<u8>, BrowserError> {
+    let mut out = Cursor::new(Vec::new());
+    image
+        .write_to(&mut out, image::ImageFormat::Png)
+        .map_err(|e| BrowserError::Protocol(e.to_string()))?;
+    Ok(out.into_inner())
 }

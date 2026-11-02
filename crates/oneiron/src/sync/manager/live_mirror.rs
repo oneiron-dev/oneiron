@@ -22,14 +22,22 @@
 //! TURN whose facts it carries (FIX 3786), and its window alone is opened for
 //! them. So is a cold MESSAGE's window, for the quote pins a local write gave
 //! it (FIX 3462).
+//!
+//! A local write also leaves a durable pending-mirror marker in its own
+//! transaction (FIX 7957, FIX 9599; [`super::pending_mirror`]): each pass
+//! takes what a loaded window's markers owe it, rows and edge removals, and
+//! retires them after. At start the thread opens each window a marker names.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Condvar, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
+use loro::LoroDoc;
+
 use super::WindowManager;
+use super::pending_mirror::{self, Owed};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::sync::types::WindowKey;
@@ -45,21 +53,36 @@ const LIVENESS_POLL: Duration = Duration::from_secs(1);
 /// `false` leaves the marks for that window's next open.
 const ROOM_FACT_COLD_FLUSH: bool = true;
 
-/// Whether a window opened only for a room fact flush stays loaded once its
-/// repair is durable (FIX 3095; a call, canon is silent). `false` unloads
-/// it, unless another holder still has it.
-const ROOM_FACT_KEEP_FLUSH_WINDOW: bool = false;
+/// The windows a room fact or quote pin flush opened stay loaded, the most
+/// recently used this many of them; the least recently used beyond it
+/// unloads, unless another holder still has it. `0` unloads each one right
+/// after its flush, as before (FIX 3095, FIX 11601; a call, canon is silent).
+const ROOM_FACT_FLUSH_WINDOWS_KEPT: usize = 4;
 
 /// Whether a MESSAGE a local write queued, holding quote pins, has its window
 /// opened for them where no loaded window carries it (FIX 3462; a call, canon
 /// is silent). Only the window of the message's learned month opens, and it
-/// unloads after as a room fact flush's does. `false` leaves the pins for
-/// that window's next open.
+/// stays loaded as a room fact flush's does
+/// ([`ROOM_FACT_FLUSH_WINDOWS_KEPT`]). `false` leaves the pins for that
+/// window's next open.
 const MESSAGE_PIN_COLD_FLUSH: bool = true;
+
+/// Whether the first pass after start opens each window a pending-mirror
+/// marker names that no loaded window is (FIX 7957; a call, canon is silent):
+/// its open mirrors what a stopped process owed it. It stays loaded as a room
+/// fact flush's does ([`ROOM_FACT_FLUSH_WINDOWS_KEPT`]). Later passes open no
+/// window for a marker. `false` leaves the markers for each window's next
+/// open.
+const PENDING_MIRROR_START_FLUSH: bool = true;
 
 thread_local! {
     /// Set while this thread writes the rows a sync import brought.
     static IMPORTING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Whether this thread writes the rows a sync import brought.
+pub(super) fn importing() -> bool {
+    IMPORTING.with(Cell::get)
 }
 
 /// While it lives, the rows this thread commits are a sync import's: the
@@ -83,12 +106,14 @@ impl Drop for ImportScope {
 }
 
 /// Rows committed and not yet mirrored: every one, and those a local write
-/// changed. `setup_retry` asks for the setup window's waiting rows again.
+/// changed. `setup_retry` asks for the setup window's waiting rows again;
+/// `owed` asks for what the pending-mirror markers owe, at start.
 #[derive(Default)]
 struct Pending {
     rows: BTreeSet<EntityId>,
     edited: BTreeSet<EntityId>,
     setup_retry: bool,
+    owed: bool,
 }
 
 /// Rows committed here and not yet mirrored, and the thread that mirrors them.
@@ -97,6 +122,10 @@ pub(super) struct LiveMirror {
     pending: Mutex<Pending>,
     wake: Condvar,
     started: AtomicBool,
+    /// Whether the start pass over the pending-mirror markers was asked for.
+    driven: AtomicBool,
+    /// The windows flushes opened and keep loaded, least recently used first.
+    flush_kept: Mutex<VecDeque<WindowKey>>,
 }
 
 impl WindowManager {
@@ -130,6 +159,21 @@ impl WindowManager {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .setup_retry = true;
+        self.wake_live_mirror();
+    }
+
+    /// Asks the mirror thread, once per manager, for what the pending-mirror
+    /// markers a stopped process left owe their windows (FIX 7957), and
+    /// starts the thread for it.
+    pub(super) fn drive_pending_mirrors(self: &Arc<Self>) {
+        if self.live_mirror.driven.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        self.live_mirror
+            .pending
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .owed = true;
         self.wake_live_mirror();
     }
 
@@ -167,26 +211,12 @@ impl WindowManager {
         // its room's, parent's and thread root's windows as well as its own.
         let carriers = crate::sync::room_facts::committed_carriers(&self.vault, rows);
         self.flush_cold_windows(rows, edited, &carriers);
-        for key in self.loaded_keys() {
+        for key in self.mirror_keys() {
             let Some(window) = self.window(&key) else {
                 continue;
             };
             let _guard = self.materializer.lock();
-            match super::super::window::reverse_rematerialize_rows(
-                &self.vault,
-                &window.doc,
-                &key,
-                rows,
-                edited,
-            ) {
-                Ok(0) => {}
-                Ok(mirrored) => {
-                    tracing::debug!(window = %key, mirrored, "committed rows mirrored into the live window");
-                }
-                Err(error) => {
-                    tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
-                }
-            }
+            self.mirror_into_window(&key, &window.doc, rows, edited);
             // FIX 853: a MESSAGE row that lands after its document's head
             // finds the head here.
             crate::sync::message_docs::merge_committed_message_docs(
@@ -200,6 +230,7 @@ impl WindowManager {
                 && let Err(error) = crate::sync::room_facts::mirror_carriers(
                     &self.vault,
                     &window.doc,
+                    &key,
                     &carriers,
                     &[],
                 )
@@ -209,13 +240,110 @@ impl WindowManager {
         }
     }
 
+    /// Mirrors `rows`, `edited` ones over the carrier the doc holds, into
+    /// `doc`, the live window `key`, with what its pending-mirror markers owe
+    /// it (FIX 7957, FIX 9599): their rows as edited ones, and the removal of
+    /// their edges. The markers retire once all of it is written: Observer A
+    /// persisted each bridge commit's update inside the commit.
+    fn mirror_into_window(
+        &self,
+        key: &WindowKey,
+        doc: &LoroDoc,
+        rows: &BTreeSet<EntityId>,
+        edited: &BTreeSet<EntityId>,
+    ) {
+        let owed = Owed::read(&self.vault, key).unwrap_or_else(|error| {
+            tracing::warn!(window = %key, %error, "pending mirrors not read for the live window");
+            Owed::default()
+        });
+        let rows = owed.rows_with(rows);
+        if !rows.is_empty() {
+            match super::super::window::reverse_rematerialize_rows(
+                &self.vault,
+                doc,
+                key,
+                &rows,
+                &owed.rows_with(edited),
+            ) {
+                Ok(0) => {}
+                Ok(mirrored) => {
+                    self.touch_flush_window(key);
+                    tracing::debug!(window = %key, mirrored, "committed rows mirrored into the live window");
+                }
+                Err(error) => {
+                    tracing::warn!(window = %key, %error, "committed rows not mirrored into the live window");
+                    return;
+                }
+            }
+        }
+        if let Err(error) = owed.remove_edges(&self.vault, doc) {
+            tracing::warn!(window = %key, %error, "removed edges not mirrored into the live window");
+            return;
+        }
+        owed.retire(&self.vault);
+    }
+
+    /// The start pass over the pending-mirror markers (FIX 7957): what they
+    /// owe a loaded window lands in it, and each other window they name
+    /// opens, its open mirroring what it owes ([`PENDING_MIRROR_START_FLUSH`]).
+    fn drive_owed_mirrors(self: &Arc<Self>) {
+        let windows = match pending_mirror::owed_windows(&self.vault) {
+            Ok(windows) => windows,
+            Err(error) => {
+                tracing::warn!(%error, "pending mirrors not read at start");
+                return;
+            }
+        };
+        let loaded = self.loaded_keys();
+        let none = BTreeSet::new();
+        for key in windows {
+            let window = if loaded.contains(&key) {
+                self.window(&key)
+            } else if PENDING_MIRROR_START_FLUSH {
+                match self.open_window_for_room_fact_flush(&key) {
+                    Ok((_, true)) => {
+                        self.keep_flush_window(&key);
+                        None
+                    }
+                    Ok((window, false)) => Some(window),
+                    Err(error) => {
+                        tracing::warn!(window = %key, %error, "window owed pending mirrors not opened");
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+            let Some(window) = window else {
+                continue;
+            };
+            let _guard = self.materializer.lock();
+            self.mirror_into_window(&key, &window.doc, &none, &none);
+        }
+    }
+
+    /// The keys of every loaded window and of every window in transition. The
+    /// mirror's [`Self::window`] lookup waits for a cold open to register its
+    /// window, so a row committed during that open still reaches the doc, and
+    /// finds a window an unload removed gone.
+    fn mirror_keys(&self) -> Vec<WindowKey> {
+        let mut keys = self.loaded_keys();
+        for key in self.transition.keys() {
+            if !keys.contains(&key) {
+                keys.push(key);
+            }
+        }
+        keys
+    }
+
     /// Opens each window no loaded one is that holds side rows `rows`, just
     /// committed, left out of every loaded window: the window of each of
     /// `carriers` with marked side rows (FIX 3095), each carrier of a TURN
     /// among `edited` marked first (FIX 3786), and the window of each MESSAGE
     /// among `edited` with quote pins (FIX 3462). The open mirrors them and
     /// routes the repair ([`Self::open_window_for_room_fact_flush`]); a window
-    /// it opened is unloaded after ([`ROOM_FACT_KEEP_FLUSH_WINDOW`]).
+    /// it opened stays loaded, among [`ROOM_FACT_FLUSH_WINDOWS_KEPT`] most
+    /// recently used ([`Self::keep_flush_window`]).
     fn flush_cold_windows(
         self: &Arc<Self>,
         rows: &BTreeSet<EntityId>,
@@ -247,12 +375,46 @@ impl WindowManager {
                     continue;
                 }
             };
-            if opened
-                && !ROOM_FACT_KEEP_FLUSH_WINDOW
-                && let Err(error) = self.unload_window(&key)
-            {
+            if opened {
+                self.keep_flush_window(&key);
+            }
+        }
+    }
+
+    /// Keeps `key`, just opened for a flush, loaded: most recently used
+    /// among [`ROOM_FACT_FLUSH_WINDOWS_KEPT`]; unloads the least recently
+    /// used beyond it.
+    fn keep_flush_window(&self, key: &WindowKey) {
+        let evicted = {
+            let mut kept = self
+                .live_mirror
+                .flush_kept
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if let Some(pos) = kept.iter().position(|kept| kept == key) {
+                kept.remove(pos);
+            }
+            kept.push_back(key.clone());
+            let over = kept.len().saturating_sub(ROOM_FACT_FLUSH_WINDOWS_KEPT);
+            kept.drain(..over).collect::<Vec<_>>()
+        };
+        for key in evicted {
+            if let Err(error) = self.unload_window(&key) {
                 tracing::debug!(window = %key, %error, "window opened for a flush stays loaded");
             }
+        }
+    }
+
+    /// Marks `key` most recently used among the flush-kept windows, if kept.
+    fn touch_flush_window(&self, key: &WindowKey) {
+        let mut kept = self
+            .live_mirror
+            .flush_kept
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let Some(pos) = kept.iter().position(|kept| kept == key) {
+            kept.remove(pos);
+            kept.push_back(key.clone());
         }
     }
 
@@ -295,7 +457,7 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
             let (mut guard, _) = mirror
                 .wake
                 .wait_timeout_while(guard, LIVENESS_POLL, |pending| {
-                    pending.rows.is_empty() && !pending.setup_retry
+                    pending.rows.is_empty() && !pending.setup_retry && !pending.owed
                 })
                 .unwrap_or_else(PoisonError::into_inner);
             std::mem::take(&mut *guard)
@@ -303,6 +465,9 @@ fn mirror_loop(mirror: &LiveMirror, manager: &Weak<WindowManager>) {
         let Some(manager) = manager.upgrade() else {
             return;
         };
+        if pending.owed {
+            manager.drive_owed_mirrors();
+        }
         if !pending.rows.is_empty() {
             manager.mirror_committed_rows(&pending.rows, &pending.edited);
         }

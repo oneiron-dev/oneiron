@@ -28,8 +28,8 @@ use crate::error::{Error, Result, StoreError, VaultRootProblem};
 use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::store::key_custody::{
-    CustodyBinding, CustodyKind, CustodySubject, LocalCustody, RetireCause, retirement_prefix,
-    retirements_in_rows,
+    CustodyBinding, CustodyKind, CustodySubject, LocalCustody, RetireCause, binding_in_rows,
+    binding_key, custody_present, retirement_prefix, retirements_in_rows,
 };
 
 /// The `vault_meta` prefixes a source's erase evidence is read from: its
@@ -119,6 +119,47 @@ impl CredentialFences {
         }
     }
 
+    /// The source evidence a pending credential restore retakes now
+    /// (FIX-LIST 10671 (a), CALLS `KS-6 erase Keep source evidence`): the
+    /// fences and erase debt of the vault at `binding`'s root, read again
+    /// through the read-only door, or through the served handle where this
+    /// process serves that vault (FIX 11157), with `binding`'s retired value
+    /// keys. `None`, warned, when it does not read, holds no vault, or holds
+    /// another lineage's: none of these says whether an erase reached a
+    /// credential, so each stays pending.
+    pub(crate) fn retake_source(binding: &CustodyBinding) -> Option<Self> {
+        let prefixes = [FENCES.decl().prefix, retirement_prefix(), binding_key()];
+        let rows = match source_rows(binding.root(), &prefixes) {
+            Ok(rows) => rows,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a pending credential restore's source vault did not read; it stays pending"
+                );
+                return None;
+            }
+        };
+        let lineage = binding_in_rows(&rows).ok().flatten().is_some_and(|held| {
+            held.namespace() == binding.namespace() && held.vault() == binding.vault()
+        });
+        if !lineage {
+            tracing::warn!(
+                "the vault at a pending credential restore's source is not its lineage; it stays \
+                 pending"
+            );
+            return None;
+        }
+        let mut fences = Self::in_rows(&rows);
+        fences.with_custody(binding);
+        Some(fences)
+    }
+
+    /// Whether the source's fences did not read: each credential nothing
+    /// else names lands pending on that alone.
+    pub(crate) fn source_unread(&self) -> bool {
+        self.unread
+    }
+
     /// Adds every fence of `other`.
     pub(crate) fn merge(&mut self, other: &Self) {
         self.fenced.extend(other.fenced.iter().copied());
@@ -129,8 +170,29 @@ impl CredentialFences {
     }
 
     /// Takes `binding`'s retired credential value keys as evidence too,
-    /// each looked up by its own handle.
+    /// each looked up by its own handle, and every erased credential's fact
+    /// its custody keeps (FIX 10584 item 3): a head's facts a disaster
+    /// recovery landed there, or this vault's own. Facts that do not read
+    /// are warned, and read unread.
     pub(crate) fn with_custody(&mut self, binding: &CustodyBinding) {
+        let facts = custody_present(binding.root()).and_then(|present| {
+            if present {
+                LocalCustody::at(binding).erase_evidence()
+            } else {
+                Ok(std::collections::BTreeMap::new())
+            }
+        });
+        match facts {
+            Ok(facts) => self.fenced.extend(facts.into_keys()),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a custody's credential erase evidence did not read; each credential it \
+                     would re-admit and nothing fences is withheld, pending"
+                );
+                self.unread = true;
+            }
+        }
         self.custody = Some(binding.clone());
     }
 
@@ -201,6 +263,21 @@ impl CredentialFences {
 }
 
 impl Store {
+    /// Fences credential `credential` in `wtxn`, its discovery owed, unless
+    /// a fence stands: a pending restore's source erased it since the image
+    /// (FIX-LIST 10671 (a)), so this vault's finisher retires every key its
+    /// id names here.
+    pub(crate) fn put_credential_fence_owed_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        credential: &EntityId,
+    ) -> Result<()> {
+        if !FENCES.contains(self, wtxn, credential)? {
+            FENCES.put(self, wtxn, credential, &Discovery::Owed)?;
+        }
+        Ok(())
+    }
+
     /// This open vault's erase evidence, read in `txn` apart from any
     /// other read, so it never fails the read it rides: rows that do not
     /// read are warned and skipped; a scan that faults reads unread.
@@ -231,4 +308,38 @@ impl Store {
             }
         }
     }
+}
+
+/// The `vault_meta` rows under `prefixes` of the source vault at `root`,
+/// read through the read-only door; where the door refuses the root as one
+/// this process holds open, through the handle this process serves it with
+/// (FIX 11157). A root open here that no server holds refuses as before.
+fn source_rows(root: &Path, prefixes: &[&[u8]]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    let error = match crate::store::read_existing_vault_meta(root, prefixes) {
+        Ok(read) => return Ok(read.rows),
+        Err(error) => error,
+    };
+    let served = match &error {
+        Error::Store(StoreError::VaultRootPreflight {
+            problem: VaultRootProblem::DuplicateOpenRoot { open_path },
+            ..
+        }) => crate::store::served_vault_at(open_path),
+        _ => None,
+    };
+    let Some(vault) = served else {
+        return Err(error);
+    };
+    let env = &vault.store.env;
+    let txn = env.read_txn()?;
+    let vault_meta = env
+        .open_database::<Bytes, Bytes>(&txn, Some("vault_meta"))?
+        .ok_or(Error::CorruptedIndex("vault holds no side-table database"))?;
+    let mut rows = Vec::new();
+    for prefix in prefixes {
+        for row in vault_meta.prefix_iter(&txn, prefix)? {
+            let (key, value) = row?;
+            rows.push((key.to_vec(), value.to_vec()));
+        }
+    }
+    Ok(rows)
 }

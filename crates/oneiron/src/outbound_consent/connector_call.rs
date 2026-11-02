@@ -32,10 +32,12 @@
 //! rechecks the record's binding at each send, and a delivered reply is
 //! cleared of the value before it goes anywhere. A call under a secret grant
 //! (FIX 4313) keeps the grant beside the record, and the host redeems it again
-//! at every send. Whatever selected it, a handle, a grant or the route's own
-//! secret, each send's actual presentation is the host's to clear its reply
-//! of, inside the door, with the bytes it sent
-//! ([`ConnectorCallHost::clears_at_door`], FIX 7646, FIX 7647).
+//! at every send. The row keeps the use itself too, and a resume that sends
+//! the call writes that send's own use records (FIX 2822). Whatever selected
+//! it, a handle, a grant or the route's own secret, each send's actual
+//! presentation is the host's to clear its reply of, inside the door, with
+//! the bytes it sent ([`ConnectorCallHost::clears_at_door`], FIX 7646,
+//! FIX 7647).
 //!
 //! A connector may answer a call with questions instead of a result (its
 //! mid-call elicitation). The request reached it, so the send is delivered:
@@ -53,6 +55,7 @@ use crate::attempt_queue::AttemptId;
 use crate::connector_key::ConnectorCallRoute;
 use crate::entity_id::EntityId;
 use crate::outbound_intent_ledger::IntentLedgerError;
+use crate::secret_custody::SecretUseContext;
 use crate::secret_lease::SecretGrantRef;
 use crate::side_table::{self, Named, SideTable};
 
@@ -67,7 +70,7 @@ pub(super) use super::connector_call_driver::{Step, refused};
 pub use super::connector_call_types::{
     ConnectorAwaitingInput, ConnectorCallCaller, ConnectorCallHost, ConnectorCallInvocation,
     ConnectorCallOutcome, ConnectorCallRequest, ConnectorCallState, ConnectorQuestion,
-    ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
+    ConnectorResultAbsence, ConnectorToolSchema, PendingConnectorCallRef, UntrustedToolResult,
 };
 
 /// The most bytes of one connector discovery or qualification reply a host
@@ -126,6 +129,15 @@ pub(super) struct PendingConnectorCall {
     /// beside its record (FIX 4313).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) grant: Option<SecretGrantRef>,
+    /// The `self.use` that made the call, beside its record (FIX 2822): the
+    /// use's intent record and what it used, ids and names only. A resume
+    /// that sends the call writes its own use records, linked to it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) secret_use: Option<SecretUseContext>,
+    /// This pass runs inside a live `self.use` of the call, whose own
+    /// records keep its send (FIX 2822). Never stored.
+    #[serde(skip)]
+    pub(super) live_use: bool,
     /// The code consent wait bound beside this hold (DOOR-079 1a), in the
     /// writer that first kept it: only its owner's answer and the effect's
     /// own gate settle the call then.
@@ -166,6 +178,11 @@ pub(super) struct PendingConnectorCall {
     /// arguments sealed, never in the clear. Never stored.
     #[serde(skip)]
     pub(super) off_record: bool,
+    /// A full count-bound budget window paces this call until this engine
+    /// instant, Unix seconds (FIX 8686): it asks no one, does not expire, and
+    /// the settler drives it again from then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) paced_until: Option<u64>,
 }
 
 /// A held call's terminal outcome, without the tool's reply: the ledger
@@ -192,6 +209,8 @@ impl SettledConnectorCall {
             Self::Delivered { intent } => ConnectorCallOutcome::Delivered {
                 intent,
                 result: None,
+                result_absence: Some(ConnectorResultAbsence::NotRetained),
+                budget_steering: Vec::new(),
             },
             Self::Refused {
                 decision_ref,

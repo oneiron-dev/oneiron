@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use super::signature::is_content_hash;
-use super::{CountKey, IssueCategory, IssueSignature, PublisherResult};
+use super::transport::{SEND_STATE, SendStateRow};
+use super::{CountKey, IssueCategory, IssueSignature, PublisherResult, SignatureSendState};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -96,6 +97,52 @@ fn decode_signature(bytes: &[u8]) -> Result<IssueSignature> {
 pub fn emit_issue_signature(vault: &Vault, sig: IssueSignature) -> PublisherResult<EntityId> {
     let id = vault.store.clock.entity_id()?;
     vault.with_write_txn_grouped(|wtxn| SIGNATURE.put(&vault.store, wtxn, &id, &sig))?;
+    Ok(id)
+}
+
+/// [`emit_issue_signature`] for a delivery lane, in the lane's write: the
+/// signature lands with what else that write records, or not at all, and is
+/// [`SignatureSendState::Pending`] under the lane's logical send `send_ref`,
+/// the key its outcome is written back under. A signature no lane stores
+/// reads [`SignatureSendState::Local`].
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn emit_issue_signature_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    sig: &IssueSignature,
+    send_ref: &str,
+) -> PublisherResult<EntityId> {
+    let id = vault.store.clock.entity_id()?;
+    SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
+    let row = SendStateRow {
+        state: SignatureSendState::Pending,
+        send_ref: Some(send_ref.to_owned()),
+    };
+    SEND_STATE.put(&vault.store, wtxn, &id, &row)?;
+    Ok(id)
+}
+
+/// [`emit_issue_signature`] in the caller's write, with no send lane: the
+/// signature lands with what else that write records and reads
+/// [`SignatureSendState::Local`] until a lane takes it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn emit_issue_signature_local_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    sig: &IssueSignature,
+) -> Result<EntityId> {
+    // The id is spelled from the signature's own stored bytes, so emitting
+    // the same signature again — a trigger re-escalated to an owner who
+    // did not hold it yet — lands on the same row instead of a second one.
+    let bytes = encode_signature(sig)?;
+    let id = EntityId::derive(b"oneiron:issue-signature:v1", &[bytes.as_slice()])?;
+    SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
     Ok(id)
 }
 

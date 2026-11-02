@@ -18,6 +18,10 @@
 use crate::entity_id::EntityId;
 use crate::secret_custody::RevealAsker;
 
+mod binding;
+
+pub(crate) use self::binding::RepoProjectionRevealBinding;
+
 /// The agent a host proved receives a repo read's bytes: its registered
 /// actor, the model provider the host served it from, the project and the
 /// run it works in. A trusted-host contract like `GitPushCaller`, not a
@@ -68,6 +72,11 @@ impl RepoRevealRecipient {
     #[must_use]
     pub const fn agent(&self) -> &EntityId {
         &self.agent
+    }
+
+    /// The project its host bound it to, if any.
+    pub(crate) const fn project(&self) -> Option<EntityId> {
+        self.project
     }
 
     /// The reveal asker a per-file read of this recipient asks as.

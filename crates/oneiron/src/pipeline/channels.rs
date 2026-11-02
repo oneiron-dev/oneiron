@@ -763,27 +763,26 @@ pub(super) fn fusion_fetch_limit(requested: usize) -> usize {
     }
 }
 
-/// How many rows a text channel fetches for `requested`: never past
-/// [`MAX_SEARCH_LIMIT`], however many rows the index holds. A scoped scan
-/// admits through its scope while it scores, so it needs no wider fetch.
+/// How many rows a text channel fetches for `requested`: never past the
+/// window, [`MAX_SEARCH_LIMIT`] or the run's own deeper `depth`. A scoped
+/// scan admits through its scope while it scores: no wider fetch.
 ///
 /// [`MAX_SEARCH_LIMIT`]: crate::memory::caps::MAX_SEARCH_LIMIT
-pub(super) fn scoped_text_channel_limit(requested: usize) -> usize {
-    requested.min(crate::memory::caps::MAX_SEARCH_LIMIT)
+pub(super) fn scoped_text_channel_limit(requested: usize, depth: usize) -> usize {
+    requested.min(crate::memory::caps::MAX_SEARCH_LIMIT.max(depth))
 }
 
 /// How many rows a vector walk fetches for `requested`: a `narrowed` walk,
-/// whose scope admits inside it, the whole [`MAX_SEARCH_LIMIT`] window;
-/// any other the request, never past the window. Zero stays zero.
-///
-/// [`MAX_SEARCH_LIMIT`]: crate::memory::caps::MAX_SEARCH_LIMIT
-pub(super) fn scoped_vector_channel_limit(requested: usize, narrowed: bool) -> usize {
+/// whose scope admits inside it, the whole window (as above); any other the
+/// request, never past the window. Zero stays zero.
+pub(super) fn scoped_vector_channel_limit(requested: usize, narrowed: bool, depth: usize) -> usize {
+    let window = crate::memory::caps::MAX_SEARCH_LIMIT.max(depth);
     if requested == 0 {
         0
     } else if narrowed {
-        crate::memory::caps::MAX_SEARCH_LIMIT
+        window
     } else {
-        requested.min(crate::memory::caps::MAX_SEARCH_LIMIT)
+        requested.min(window)
     }
 }
 

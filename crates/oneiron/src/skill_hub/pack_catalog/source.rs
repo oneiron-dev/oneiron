@@ -2,9 +2,7 @@
 use super::{PackAdapter, PackKind, PackManifest, invalid};
 use crate::error::Result;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
-use crate::skill_hub::{
-    HubFile, MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES,
-};
+use crate::skill_hub::HubFile;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSource {
@@ -14,20 +12,13 @@ pub struct PackSource {
     pub(super) sections: Vec<PackSection>,
     pub(super) hooks: Vec<super::PackHook>,
     pub(super) organs: Vec<super::PackOrgan>,
+    pub(super) lenses: Vec<super::PackLens>,
 }
 impl PackSource {
+    /// Every file of any size and count is read whole (FIX 8202): no byte,
+    /// skill-reference or section count refuses a source.
     pub fn from_files(mut files: Vec<HubFile>) -> Result<Self> {
-        if files.len() > MAX_HUB_PACKAGE_FILES {
-            return Err(invalid("too many source files"));
-        }
-        let mut total = 0usize;
         for file in &files {
-            total = total
-                .checked_add(file.content.len())
-                .ok_or_else(|| invalid("source length overflow"))?;
-            if file.content.len() > MAX_HUB_FILE_BYTES || total > MAX_HUB_PACKAGE_TOTAL_BYTES {
-                return Err(invalid("source exceeds byte bound"));
-            }
             if file
                 .path
                 .split('/')
@@ -84,9 +75,6 @@ impl PackSource {
                         .content,
                 )
                 .map_err(|_| invalid("agent skills.json must be native structured references"))?;
-                if refs.len() > 128 {
-                    return Err(invalid("too many agent skill references"));
-                }
                 let mut seen = std::collections::BTreeSet::new();
                 for reference in refs {
                     reference.validate()?;
@@ -102,9 +90,6 @@ impl PackSource {
                 let section: PackSection = serde_json::from_slice(&file.content)
                     .map_err(|_| invalid("invalid pack section manifest"))?;
                 section.validate()?;
-                if sections.len() >= 128 {
-                    return Err(invalid("too many pack sections"));
-                }
                 if !section
                     .section_id
                     .starts_with(&format!("{}.", manifest.name))
@@ -130,9 +115,16 @@ impl PackSource {
                         file.path.as_str(),
                         "identity.md" | "policy.md" | "skills.json"
                     ))
-                && !["skills/", "knowledge/", "scripts/", "hooks/", "organs/"]
-                    .iter()
-                    .any(|prefix| file.path.starts_with(prefix))
+                && ![
+                    "skills/",
+                    "knowledge/",
+                    "scripts/",
+                    "hooks/",
+                    "organs/",
+                    "lenses/",
+                ]
+                .iter()
+                .any(|prefix| file.path.starts_with(prefix))
             {
                 return Err(invalid("unknown pack source facet"));
             }
@@ -145,6 +137,7 @@ impl PackSource {
         }
         let hooks = super::hooks::parse_source_hooks(&manifest, &files)?;
         let organs = super::organs::parse_source_organs(&manifest, &files)?;
+        let lenses = super::lenses::parse_source_lenses(&manifest, &files)?;
         Ok(Self {
             files,
             manifest,
@@ -152,6 +145,7 @@ impl PackSource {
             sections,
             hooks,
             organs,
+            lenses,
         })
     }
     pub fn entity_id(&self) -> Result<crate::EntityId> {
@@ -172,18 +166,38 @@ impl PackSource {
     pub fn organs(&self) -> &[super::PackOrgan] {
         &self.organs
     }
+    pub fn lenses(&self) -> &[super::PackLens] {
+        &self.lenses
+    }
+    /// The lens this source carries in its folder `name`.
+    #[must_use]
+    pub fn lens(&self, name: &str) -> Option<&super::PackLens> {
+        self.lenses.iter().find(|lens| lens.name == name)
+    }
     pub fn has_code(&self) -> bool {
         self.manifest.kind == super::PackKind::Connector
             || !self.organs.is_empty()
-            || self.files.iter().any(|file| {
-                file.path.starts_with("scripts/")
-                    || file.path.contains("/scripts/")
-                    || file.path.starts_with("hooks/")
-            })
+            || self.files.iter().any(is_script_or_hook_file)
+    }
+    /// Organs are this source's only code: it is no connector and carries
+    /// no script and no hook.
+    pub(super) fn code_is_organs_only(&self) -> bool {
+        !self.organs.is_empty()
+            && self.manifest.kind != PackKind::Connector
+            && !matches!(self.manifest.adapter, Some(PackAdapter::Script(_)))
+            && self.hooks.is_empty()
+            && !self.files.iter().any(is_script_or_hook_file)
     }
     pub fn content_hash(&self) -> SkillContentHash {
         self.hash
     }
+}
+
+/// A script or hook body: code a source carries as a file.
+fn is_script_or_hook_file(file: &HubFile) -> bool {
+    file.path.starts_with("scripts/")
+        || file.path.contains("/scripts/")
+        || file.path.starts_with("hooks/")
 }
 
 /// A pack-carried board recipe. Its verbs and authority are permission requests,
@@ -208,7 +222,6 @@ impl PackSection {
                 b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'.' | b'_' | b'-')
             })
             || self.verbs.is_empty()
-            || self.verbs.len() > 128
             || self.verbs.iter().any(|verb| !allow.contains(verb))
             || self
                 .verbs

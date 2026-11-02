@@ -44,11 +44,16 @@ impl DreamerWakeDriver<'_> {
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
         self.begin_wake(&input)?;
-        let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
+        let prepared = crate::dreamer_consolidation::PreparedWake::capture_for_pass(
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
-        )?;
+            &self.deadline,
+            cancel,
+        )?
+        // Every extraction of the wake reads its admitted hook material
+        // (FIX 10665).
+        .with_hook_material(self.hook_material.clone());
         let mut workers: Vec<_> = (0..executors.len())
             .map(|index| {
                 let mut worker = DreamerWakeDriver::new(

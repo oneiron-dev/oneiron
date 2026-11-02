@@ -237,6 +237,12 @@ pub(super) fn owner_choice_landing<P: Clone>(
 }
 
 impl<P> OwnerChoiceState<P> {
+    /// Whether no choice of the kind was ever folded: a register an image
+    /// need not carry (FIX 4624).
+    pub(super) fn is_empty(&self) -> bool {
+        self.frontiers.is_empty() && self.refused.is_empty()
+    }
+
     /// Lands a valid choice: a refused one is kept without effect; a
     /// recorded one supersedes the live choices of its target.
     pub(super) fn land(&mut self, landing: OwnerChoiceLanding<P>) {

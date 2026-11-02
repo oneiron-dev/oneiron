@@ -103,6 +103,8 @@ pub struct FreeTimeCycle {
     pub items: Vec<FreeTimeItemRef>,
     pub owner_note: Option<FreeTimeNote>,
     pub own_time_choice: Option<FreeTimeOwnTimeChoice>,
+    /// Own-time rounds the agent asked for after its first (FIX 7763).
+    pub own_time_rounds: u32,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -193,6 +195,15 @@ fn item_id(cycle: EntityId, kind: FreeTimeKind) -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(
         b"oneiron:free_time:item:v1",
         &[cycle.as_bytes().as_slice(), [kind.code()].as_slice()],
+    )
+}
+
+/// The id of a cycle's `round`th extra own-time item (FIX 7763): the same
+/// for every try of that round.
+pub(super) fn round_item_id(cycle: EntityId, round: u32) -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(
+        b"oneiron:free_time:item:round:v1",
+        &[cycle.as_bytes().as_slice(), round.to_be_bytes().as_slice()],
     )
 }
 
@@ -422,6 +433,7 @@ fn open_items_in_txn(
         items: Vec::new(),
         owner_note: None,
         own_time_choice: None,
+        own_time_rounds: 0,
     };
     for kind in [FreeTimeKind::ForHuman, FreeTimeKind::OwnTime] {
         let item = item_id(cycle, kind)?;
@@ -444,7 +456,7 @@ fn open_items_in_txn(
 /// Queues one item of `cycle` under the resident's own stamp, reserves its
 /// spend scope under the cycle's root and stamps its binding, in the
 /// cycle's commit.
-fn enqueue_item_in_txn(
+pub(super) fn enqueue_item_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     cycle: &FreeTimeCycle,

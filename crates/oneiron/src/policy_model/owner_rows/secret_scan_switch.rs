@@ -20,7 +20,7 @@ use crate::side_table::{self, Named, SideTable};
 const SECRET_SCAN_CHANGED: &str = "policy.secret_scan.changed";
 
 /// One owner change of the switch, in revision order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SecretScanReceipt {
     pub receipt_id: String,

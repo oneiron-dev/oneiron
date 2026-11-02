@@ -1,10 +1,49 @@
 //! The wake observation's seams in the pass (DOOR-144): its header and end,
 //! the attempt generations it admits, and the ended passes' Checkpoint parks
 //! its root resumes before it prepares. None of them fails or holds the pass.
+//! Each reported pass also logs one stage line (L07 DREAM-OBSERVE).
 
 use super::*;
+use crate::dreamer_consolidation::stage_log::ms_since;
 use crate::dreamer_runner::DreamerAdmittedAttempt;
 use crate::dreamer_wake::observation;
+
+/// The one line a wake pass logs once it reports: its trigger and scope, its
+/// tally, its wall ms and the Loro SnapshotAt exports this process made while
+/// it ran (a recall beside it counts too). Enum names, counts and ms only.
+pub(super) struct WakePassClock {
+    trigger: WakeTrigger,
+    scope: DreamerConsolidationScope,
+    started: std::time::Instant,
+    exports_at_start: u64,
+}
+
+impl WakePassClock {
+    pub(super) fn start(input: &RunWakePass) -> Self {
+        Self {
+            trigger: input.trigger,
+            scope: input.scope,
+            started: std::time::Instant::now(),
+            exports_at_start: loro::snapshot_at_exports(),
+        }
+    }
+
+    pub(super) fn log(&self, report: &WakePassReport) {
+        tracing::info!(
+            target: "oneiron::dreamer::stages",
+            trigger = ?self.trigger,
+            scope = self.scope.as_str(),
+            admitted = report.admitted,
+            completed = report.completed,
+            parked = report.parked,
+            elapsed_ms = ms_since(self.started),
+            stop = ?report.stop,
+            snapshot_at_exports =
+                loro::snapshot_at_exports().saturating_sub(self.exports_at_start),
+            "dreamer wake pass"
+        );
+    }
+}
 
 impl DreamerWakeDriver<'_> {
     /// Opens this pass's observation once its hooks allowed it, before any
@@ -66,11 +105,16 @@ impl DreamerWakeDriver<'_> {
         cancel: &WakeCancellation,
     ) -> Result<WakePassReport> {
         self.begin_wake(&input)?;
-        let prepared = crate::dreamer_consolidation::PreparedWake::capture_with_grants(
+        let prepared = crate::dreamer_consolidation::PreparedWake::capture_for_pass(
             self.vault,
             input.scope,
             input.host_scope.as_ref(),
-        )?;
+            &self.deadline,
+            cancel,
+        )?
+        // Every extraction of the wake reads its admitted hook material
+        // (FIX 10665).
+        .with_hook_material(self.hook_material.clone());
         self.run_prepared_wake_pass(input, exec, cancel, &prepared)
             .await
     }

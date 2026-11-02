@@ -21,7 +21,7 @@ use super::types::{
     AgentDispatchInput, AgentDispatchStatus, AgentDispatchTarget, KEY_AGENT_DEF, KEY_BUDGET,
     KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC, KEY_DEFINITION, KEY_DEPTH_REMAINING,
     KEY_DIRECT_SPAWN, KEY_LAUNCH, KEY_OBJECTIVES, KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET,
-    KEY_PROJECT_REF, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET,
+    KEY_PROJECT_REF, KEY_REQUESTER, KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET,
     KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use super::{
@@ -208,6 +208,15 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
         None => Value::Nil,
     };
     entries.push((Value::from(KEY_DIRECT_SPAWN), direct_spawn));
+    // FIX 11592: the requester rides only a dispatch a request queued.
+    if let Some(requester) = &input.requester {
+        let json = serde_json::to_string(requester).map_err(|_| {
+            Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "requester must encode",
+            ))
+        })?;
+        entries.push((Value::from(KEY_REQUESTER), Value::from(json)));
+    }
     Ok(Value::Map(entries))
 }
 
@@ -233,6 +242,16 @@ pub fn agent_dispatch_actor(input: &AgentDispatchInput) -> Result<WriteActor> {
         input.target.agent_definition_ref()?,
         EdgeActorClass::Agent,
     ))
+}
+
+/// [`agent_dispatch_actor`] bound to the attempt whose run writes as it
+/// (FIX 10537, L09 s50 10:4x): the Gate walks that attempt's delegation
+/// lineage at each write. It equals the unbound actor.
+pub fn agent_dispatch_run_actor(
+    input: &AgentDispatchInput,
+    attempt: crate::attempt_queue::AttemptId,
+) -> Result<WriteActor> {
+    Ok(agent_dispatch_actor(input)?.with_run_attempt(*attempt.as_bytes()))
 }
 
 /// A queue row's decoded dispatch input, or `None` when the row is not an

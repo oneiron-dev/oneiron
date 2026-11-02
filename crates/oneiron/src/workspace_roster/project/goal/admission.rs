@@ -361,9 +361,28 @@ pub(super) fn disarm_pointer(store: &Store, txn: &mut RwTxn<'_>, project: Entity
     Ok(())
 }
 
+/// The goal pointer of `id`, when `id` is a project that has one.
+fn pointed_goal(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<Option<String>> {
+    let Some(kind) = super::super::project_type(store) else {
+        return Ok(None);
+    };
+    if !crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
+        Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
+    })?
+    .unwrap_or(false)
+    {
+        return Ok(None);
+    }
+    let project = super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?;
+    Ok(project.and_then(|project| project.goal))
+}
+
 /// Before tombstone publication, ungated calls must refuse goal deletions.
 /// The caller's `gated` proof is minted by the owner deletion facade; this
 /// check is re-run with that facade's own authority recheck in the write txn.
+/// A gated deletion of a project with a goal passes: its goal retires with it
+/// in the destructive txn ([`retire_for_delete`]), and the tear still refuses
+/// a project with live children.
 pub(crate) fn precheck_delete(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -382,15 +401,7 @@ pub(crate) fn precheck_delete(
             return Err(invalid());
         }
     }
-    if let Some(kind) = super::super::project_type(store)
-        && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
-            Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
-        })?
-        .unwrap_or(false)
-        && let Some(project) =
-            super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
-        && project.goal.is_some()
-    {
+    if !gated && pointed_goal(store, txn, id)?.is_some() {
         return Err(invalid());
     }
     Ok(())
@@ -399,6 +410,9 @@ pub(crate) fn precheck_delete(
 /// Remove a goal's current pointer and admission marker as part of the SAME
 /// destructive txn. The facade prechecked and revalidated owner authority
 /// before publishing; replicated tombstones reuse the established delete rail.
+/// A deleted project's own goal retires the same way: a project reaches here
+/// with a goal only through a gated deletion, the one [`precheck_delete`]
+/// passes.
 pub(crate) fn retire_for_delete(
     vault: &crate::Vault,
     txn: &mut RwTxn<'_>,
@@ -406,12 +420,31 @@ pub(crate) fn retire_for_delete(
 ) -> Result<()> {
     let store = &vault.store;
     if !CLAIM_MARKERS.contains(store, txn, &id)? {
+        if let Some(goal) = pointed_goal(store, txn, id)?
+            && let Ok(goal) = EntityId::from_hex(&goal)
+            && CLAIM_MARKERS.contains(store, txn, &goal)?
+        {
+            retire_goal(vault, txn, goal, id)?;
+        }
         return Ok(());
     }
     let (body, _) = current_claim(store, txn, id)?;
     let ClaimSubject::Entity(project_id) = body.subject else {
         return Err(invalid());
     };
+    retire_goal(vault, txn, id, project_id)
+}
+
+/// Retires the goal `id` from `project_id`: its hub edge, the project's
+/// pointer to it (rewritten under a one-write permit, with the goal
+/// generation moved) and its admission marker.
+fn retire_goal(
+    vault: &crate::Vault,
+    txn: &mut RwTxn<'_>,
+    id: EntityId,
+    project_id: EntityId,
+) -> Result<()> {
+    let store = &vault.store;
     // A soft-erased claim keeps its shell; its hub edge cannot outlive the
     // admission marker. Hard purge also tolerates this already-removed edge.
     vault
@@ -455,18 +488,7 @@ pub(crate) fn retire_for_delete(
 /// Deletion is not a backdoor for dropping a protected goal or its project.
 /// A future owner-delete flow must supply its own checked authorization.
 pub(crate) fn guard_goal_delete(store: &Store, txn: &RoTxn<'_>, id: EntityId) -> Result<()> {
-    if CLAIM_MARKERS.contains(store, txn, &id)? {
-        return Err(invalid());
-    }
-    if let Some(kind) = super::super::project_type(store)
-        && crate::ports::EntityStoreRead::port_entity_with_raw(store, txn, &id, |raw| {
-            Ok(EntityMetadataHeader::parse(raw).is_some_and(|header| header.entity_type == kind))
-        })?
-        .unwrap_or(false)
-        && let Some(project) =
-            super::super::record::<super::super::ProjectRecord>(store, txn, id, kind)?
-        && project.goal.is_some()
-    {
+    if CLAIM_MARKERS.contains(store, txn, &id)? || pointed_goal(store, txn, id)?.is_some() {
         return Err(invalid());
     }
     Ok(())

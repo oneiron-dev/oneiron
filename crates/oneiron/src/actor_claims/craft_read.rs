@@ -17,7 +17,9 @@ use std::collections::BTreeSet;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
+use crate::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind, ReadSetProducer,
+};
 use crate::batch::EntityMetadataHeader;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimSubject, ScopedRead, claim_surfaceable, decode_claim_body,
@@ -508,6 +510,21 @@ impl Vault {
                     stamped += 1;
                 }
             }
+            // FIX 7020: inherited craft was exposed without the fresh-load
+            // door's ACTOR_CLAIM report. Keep those same rows on the leased
+            // attempt; an invalid id makes the set unknown, never a new
+            // refusal (L08-A 03:56, no shape change).
+            let rows = entries
+                .iter()
+                .filter(|entry| entry.kind == ManifestKind::ActorClaim)
+                .map(|entry| EntityId::from_hex(&entry.reference).ok())
+                .collect::<Option<Vec<_>>>();
+            self.record_attempt_sources_best_effort_in_txn(
+                txn,
+                leased.id,
+                ReadSetProducer::ACTOR_CLAIM,
+                rows,
+            );
             Ok(stamped)
         })
     }

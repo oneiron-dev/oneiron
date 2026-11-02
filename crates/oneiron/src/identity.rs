@@ -106,7 +106,8 @@ pub(crate) struct InstallSigner {
 impl InstallSigner {
     pub(crate) fn derive(machine: crate::EntityId, seed: &[u8; 32]) -> Self {
         let key = |context: &str| {
-            let derived = zeroize::Zeroizing::new(blake3::derive_key(context, seed));
+            // FIX 6669: derive straight into the guard.
+            let derived = crate::world_keys::derive_guarded(context, &[&seed[..]]);
             SigningKey::from_bytes(&derived)
         };
         Self {
@@ -165,6 +166,16 @@ pub(crate) fn read_client_id_in_txn(vault: &Vault, rtxn: &heed::RoTxn<'_>) -> Re
     Ok(CLIENT_ID
         .get(&vault.store, rtxn, &())?
         .map(|ClientId(id)| id))
+}
+
+/// [`read_client_id_in_txn`] where only the store is at hand: the MACRO
+/// election's writer records a home move with it (FIX 6459). Read-only.
+#[cfg_attr(not(feature = "sync"), allow(dead_code))]
+pub(crate) fn read_client_id_from(
+    dbs: &impl side_table::SideTableDbs,
+    rtxn: &heed::RoTxn<'_>,
+) -> Result<Option<u64>> {
+    Ok(CLIENT_ID.get(dbs, rtxn, &())?.map(|ClientId(id)| id))
 }
 
 /// Read-mostly own-txn accessor for this device's stable client id.

@@ -8,6 +8,7 @@
 //! the caller can hand it back to `retry` untouched.
 
 use crate::dto::WireJson;
+use crate::facade_types_generated::LegalHoldNotice;
 
 /// Every failure that crosses the generated foreign boundary.
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -34,6 +35,17 @@ pub enum OneironError {
         /// `pending` to resend the call under that invocation. `None` for
         /// every other failure.
         pending: Option<WireJson>,
+        /// When to call again, in seconds, when the refusal's source said
+        /// (FIX 8190).
+        retry_after: Option<u64>,
+        /// Each time the refused call's limit resets, as Unix seconds in the
+        /// source's order; empty when it said none.
+        resets_at: Vec<u64>,
+        /// The refusal's stable reason codes, in its producer's order (FIX
+        /// 7398); empty when it named none.
+        reason_codes: Vec<String>,
+        /// The legal-hold notice behind this refusal, when its producer supplied one.
+        legal_hold: Option<LegalHoldNotice>,
     },
 }
 
@@ -53,6 +65,13 @@ impl From<oneiron::MemoryError> for OneironError {
             ),
             None => (None, None, None),
         };
+        let legal_hold = match error.legal_hold {
+            Some(notice) => match crate::codec::lift_legal_hold_notice(*notice) {
+                Ok(notice) => Some(notice),
+                Err(error) => return error,
+            },
+            None => None,
+        };
         Self::Failure {
             code: error.code,
             message: error.message,
@@ -61,6 +80,10 @@ impl From<oneiron::MemoryError> for OneironError {
             replacement,
             schema_ref,
             pending,
+            retry_after: error.retry_after,
+            resets_at: error.resets_at,
+            reason_codes: error.reason_codes,
+            legal_hold,
         }
     }
 }

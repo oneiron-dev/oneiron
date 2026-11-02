@@ -1,10 +1,11 @@
 //! Consent-ask and bundle-approve cards with scope vocabularies.
 
 use super::consent_eval::{
-    ConsentActionDecision, ConsentActionEvaluation, ConsentActionKind, ConsentActionRequest,
-    GrantMintIntent, GrantMintIntentScope, consent_evaluation, ensure_authenticated_actor,
-    ensure_component_request, ensure_declared_action, ensure_principal_ref, non_empty,
-    noop_policy_rejection, required_scope_ref, widening_grant_surface_is_eligible,
+    CONSENT_NOOP_NON_PRINCIPAL_REASON, ConsentActionDecision, ConsentActionEvaluation,
+    ConsentActionKind, ConsentActionRequest, GrantMintIntent, GrantMintIntentScope,
+    actor_is_card_principal, consent_evaluation, ensure_component_request, ensure_declared_action,
+    ensure_principal_ref, non_empty, noop_policy_rejection, required_scope_ref,
+    widening_grant_surface_is_eligible,
 };
 use super::protocol::{Of336ActionDescriptor, Of336ComponentKind};
 use crate::consent::AuthenticatedOwner;
@@ -26,6 +27,11 @@ pub struct ConsentAskCard {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub origin_receipt_ref: Option<String>,
     pub scope_escalators: Vec<ConsentScopeEscalator>,
+    /// What the change reaches, before and after, in one read-only line
+    /// (ARCH-0070 `reach-line`): display only. It informs the tap and never
+    /// decides an action.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach_line: Option<String>,
 }
 
 impl ConsentAskCard {
@@ -52,6 +58,7 @@ impl ConsentAskCard {
             channel: None,
             origin_receipt_ref: None,
             scope_escalators,
+            reach_line: None,
         })
     }
 
@@ -71,6 +78,22 @@ impl ConsentAskCard {
     pub fn with_origin_receipt_ref(mut self, origin_receipt_ref: impl Into<String>) -> Self {
         self.origin_receipt_ref = Some(origin_receipt_ref.into());
         self
+    }
+
+    /// The card with `reach_line` shown whole beside its preview. A blank
+    /// line shows nothing.
+    #[must_use]
+    pub fn with_reach_line(mut self, reach_line: impl Into<String>) -> Self {
+        let reach_line = reach_line.into();
+        self.reach_line = Some(reach_line).filter(|line| !line.trim().is_empty());
+        self
+    }
+
+    /// The card with the line of a reach the vault already computed: a
+    /// plan's, a slate stamp's or a ramp offer's.
+    #[must_use]
+    pub fn with_reach(self, reach: &crate::vault_shape::ShapePlanReach) -> Self {
+        self.with_reach_line(reach.line.clone())
     }
 
     #[must_use]
@@ -108,7 +131,16 @@ impl ConsentAskCard {
         ensure_component_request(&self.card_id, request)?;
         ensure_principal_ref(&self.principal_ref)?;
         ensure_declared_action(&self.actions(), request)?;
-        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
+        if !actor_is_card_principal(vault, &self.principal_ref, request, authenticated_owner)? {
+            return Ok(noop_policy_rejection(
+                Of336ComponentKind::ConsentAsk,
+                &self.card_id,
+                &self.principal_ref,
+                request,
+                ConsentActionDecision::NoopNonPrincipal,
+                CONSENT_NOOP_NON_PRINCIPAL_REASON,
+            ));
+        }
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Approve => (ConsentActionDecision::ApprovedOnce, None),
@@ -168,7 +200,10 @@ impl ConsentAskCard {
 
     #[must_use]
     pub fn fallback_text(&self) -> String {
-        format!("{} {}", self.prompt, self.preview)
+        match &self.reach_line {
+            Some(reach_line) => format!("{} {}\n{reach_line}", self.prompt, self.preview),
+            None => format!("{} {}", self.prompt, self.preview),
+        }
     }
 
     fn grant_scope(&self, scope: ConsentScopeEscalator) -> Result<GrantMintIntentScope> {
@@ -278,7 +313,16 @@ impl BundleApproveCard {
                 "bundle approve card must include at least one send item".to_string(),
             ));
         }
-        ensure_authenticated_actor(vault, &self.principal_ref, request, authenticated_owner)?;
+        if !actor_is_card_principal(vault, &self.principal_ref, request, authenticated_owner)? {
+            return Ok(noop_policy_rejection(
+                Of336ComponentKind::BundleApprove,
+                &self.card_id,
+                &self.principal_ref,
+                request,
+                ConsentActionDecision::NoopNonPrincipal,
+                CONSENT_NOOP_NON_PRINCIPAL_REASON,
+            ));
+        }
 
         let (decision, grant_mint_intent) = match request.action {
             ConsentActionKind::Decline => (ConsentActionDecision::Declined, None),

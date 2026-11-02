@@ -17,8 +17,8 @@
 //! the old image authorized. A mismatch is `stale_image`, with no click.
 
 use super::{
-    Base, DesktopSession, PressMode, Snapshot, WALK_ON_MS_MOST, effect_class, floor_press,
-    looks_as_it_did, mask, press_for, receipt_class, walk_on_ms,
+    Base, DesktopSession, Snapshot, WALK_ON_MS_MOST, effect_class, floor_press, looks_as_it_did,
+    mask, receipt_class, walk_on_ms,
 };
 use crate::{BrowserError, Observation, PointInput};
 use serde_json::json;
@@ -29,6 +29,7 @@ impl DesktopSession {
     /// row under it on the final read, which the image's check reads too.
     pub(super) fn click_point(&mut self, input: PointInput) -> Result<Observation, BrowserError> {
         let started = Instant::now();
+        self.begin_verb();
         self.live()?;
         let (_, frame) = self.held(&input.image)?;
         if !(0.0..=1.0).contains(&input.x) || !(0.0..=1.0).contains(&input.y) {
@@ -73,29 +74,26 @@ impl DesktopSession {
         }
         let row = line.map(|line| line.row.clone());
         let class = row.as_ref().and_then(|row| effect_class(&row.name));
-        let press = match (class, &row) {
-            (Some(class), Some(row)) => press_for(&mut self.policy, class, row)?,
-            _ => PressMode::None,
-        };
+        let press = self.press_or_hold("click_at", &input, class, row.as_ref(), &read)?;
         let key = read.key;
-        let mut observation = self.act(&read, &Base::of(input.base), |session| {
+        let acted = self.act(&read, &Base::of(input.base), |session| {
             session
                 .input(
                     "click",
                     json!({"pid": key.pid, "window_id": key.id, "x": across.round(), "y": down.round()}),
                 )
                 .map_err(BrowserError::from)
-        })?;
+        });
         let class = receipt_class(class, row.as_ref());
-        self.receipt(
+        self.sent(
             "click_at",
+            &read,
             row.as_ref(),
             class,
             press,
-            &mut observation,
             started,
-        );
-        Ok(observation)
+            acted,
+        )
     }
 
     /// `snapshot`, walked on while it is cut and the point's row is not

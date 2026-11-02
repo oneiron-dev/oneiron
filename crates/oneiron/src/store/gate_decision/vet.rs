@@ -75,6 +75,11 @@ pub(super) fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()
                     .system_notices
                     .iter()
                     .all(valid_gate_system_notice_record)
+                && record
+                    .context
+                    .analysis
+                    .as_ref()
+                    .is_none_or(|analysis| !analysis.rules.is_empty())
         }
         // The skeleton keeps only the accountability fields the retention
         // design retains; everything claim-bearing must already be gone.
@@ -90,6 +95,7 @@ pub(super) fn vet_gate_decision_record(record: &GateDecisionRecord) -> Result<()
                 && record.actor_ref.is_none()
                 && record.grant_ref.is_none()
                 && record.diff_handle.is_empty()
+                && record.context.is_empty()
         }
         _ => false,
     };

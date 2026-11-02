@@ -12,9 +12,11 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use super::request_sources::{CallBackend, SourcedBackend};
 use super::sieve_ports::ExtractionPorts;
 use super::thing_agent::ThingChildHost;
 use crate::Vault;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::llm::manifest::ModelRole;
 use crate::llm::seat::PurposeEffort;
@@ -42,6 +44,9 @@ pub struct RoleBackend {
     pub backend: Arc<dyn LlmBackend>,
     pub model: ModelId,
     pub binding: HostInferenceBinding,
+    /// The same route, bound per call to the rows that call's input was
+    /// read from (FIX 6998); `None` when the host lends no such binding.
+    pub sourced: Option<Arc<dyn SourcedBackend>>,
 }
 
 /// The backends a host routes the Dreamer's roles to, the ports the sieve's
@@ -118,6 +123,8 @@ pub struct RoleCall<'r> {
     pub backend: &'r dyn LlmBackend,
     pub model: &'r ModelId,
     pub inference: HostInferenceContext<'r>,
+    /// The routed backend's per-call source binding, when the host lends one.
+    pub sourced: Option<&'r dyn SourcedBackend>,
 }
 
 impl<'r> RoleCall<'r> {
@@ -132,9 +139,14 @@ impl<'r> RoleCall<'r> {
         binding: &HostInferenceBinding,
         extraction_egress: Option<&'r dyn ExtractionEgressPredicate>,
     ) -> Self {
-        let (backend, model, binding) = match roles.get(role) {
-            Some(routed) => (routed.backend.as_ref(), &routed.model, &routed.binding),
-            None => (backend, model, binding),
+        let (backend, model, binding, sourced) = match roles.get(role) {
+            Some(routed) => (
+                routed.backend.as_ref(),
+                &routed.model,
+                &routed.binding,
+                routed.sourced.as_deref(),
+            ),
+            None => (backend, model, binding, None),
         };
         Self {
             backend,
@@ -143,7 +155,15 @@ impl<'r> RoleCall<'r> {
                 binding: binding.clone(),
                 extraction_egress,
             },
+            sourced,
         }
+    }
+
+    /// The backend one call of this role sends on (FIX 6998): bound to
+    /// `rows` when they are the complete set its input was read from, else
+    /// the role's own.
+    pub(super) fn call_backend(&self, rows: Option<Vec<EntityId>>) -> CallBackend<'r> {
+        CallBackend::new(self.backend, self.sourced, rows)
     }
 }
 

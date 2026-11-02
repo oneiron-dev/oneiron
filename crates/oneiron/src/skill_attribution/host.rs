@@ -7,6 +7,9 @@
 //!
 //! - the executor is the model the pack loaded under, else the seat the run
 //!   was born on. A run with neither binds nothing and closes unattributed;
+//! - the agent definition is the definition the dispatch named, pinned
+//!   `id@revision` as it stands at bind; a workflow target, or a definition
+//!   no longer stored, pins none (FIX 11637);
 //! - the judge is unknown as the run binds: the model whose answer to the
 //!   run's Done stands is recorded when its report takes that answer
 //!   ([`super::finalize_run_judge_in_txn`], FIX 1877), and a run no model
@@ -17,9 +20,10 @@
 //!
 //! Neither pattern context is a loaded skill, so neither earns pack credit: a
 //! pattern skill's payoff comes from its team receipt alone. The use lists
-//! start empty and only grow from witnessed use; credit follows the
-//! lineage-credit settings where the run's project and type apply, by
-//! default the full used chain with no per-hop check.
+//! start empty and only grow from witnessed use: a bind starts its used chain
+//! from the derivations the run witnessed before it (FIX 3103). Credit
+//! follows the lineage-credit settings where the run's project and type
+//! apply, by default the full used chain with no per-hop check.
 //!
 //! At close the host witnesses the run's output
 //! ([`witness_agent_run_close`]): the output derives from what the run
@@ -28,7 +32,9 @@
 use std::collections::{BTreeSet, VecDeque};
 
 use crate::Vault;
-use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, decode_agent_dispatch_input};
+use crate::agent_dispatch::{
+    AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchTarget, decode_agent_dispatch_input,
+};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::edge::EdgeKind;
@@ -41,6 +47,8 @@ use crate::learning_setting::{
 use crate::limit_ask::EngineLimit;
 use crate::ports::{EdgeDirection, EdgeStore};
 use crate::receipt::{CreditOptions, PackAttributionFields, UsedProvenanceEdge};
+use crate::registry::ENTITY_TYPE_AGENT_DEF;
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The role a run outside any team plays.
 const SOLO_ROLE: &str = "solo";
@@ -99,9 +107,11 @@ pub fn bind_agent_run_attribution(
     };
     let type_ref = TypeRef::from(&input.type_ref);
     let credit = credit_options(vault, input.project_ref, &type_ref)?;
-    let fields = PackAttributionFields {
+    let agent_definition = agent_definition_pin(vault, &input.target)?;
+    let mut fields = PackAttributionFields {
         type_ref,
         executor,
+        agent_definition,
         judge: None,
         pattern,
         team_shape: vec![role.to_owned()],
@@ -112,6 +122,7 @@ pub fn bind_agent_run_attribution(
         used_edges: Vec::new(),
         credit,
     };
+    super::derivation_witness::drain(&vault.store, attempt, record.attempt_count, &mut fields);
     AttemptQueue::new(vault).set_pack_attribution(
         attempt,
         lease_owner,
@@ -121,13 +132,104 @@ pub fn bind_agent_run_attribution(
     Ok(true)
 }
 
+/// The Dreamer attempts that load a skill pack and bind its attribution:
+/// the weave lens's render and an owner-admitted weave recipe.
+const DREAMER_WEAVE_ATTEMPT_TYPES: [&str; 2] = [
+    crate::dreamer_runner::DREAMER_WEAVE_LENS_ATTEMPT_KIND,
+    crate::dreamer_runner::DREAMER_WEAVE_RECIPE_ATTEMPT_KIND,
+];
+
+/// Binds the execution context of the leased Dreamer weave `attempt` (a
+/// weave lens render or a weave recipe), once, so the receipt of the pack it
+/// loaded closes attributed (FIX 1875). The run is solo and the Dreamer
+/// decides; it has no agent definition, sits in `project` (a recipe's
+/// evidence project, else none) and places at the vault type tree's root.
+/// Returns whether it bound one now: another attempt kind, a run no longer
+/// leased to `lease_owner`, one already bound, or one with no executor binds
+/// nothing.
+///
+/// # Errors
+///
+/// Storage errors and the attribution door's own refusals.
+pub fn bind_dreamer_weave_attribution(
+    vault: &Vault,
+    attempt: AttemptId,
+    lease_owner: &str,
+    project: Option<EntityId>,
+) -> Result<bool> {
+    let Some(status) = DreamerRunnerStore::new(vault).status(attempt)? else {
+        return Ok(false);
+    };
+    let record = &status.attempt;
+    if !DREAMER_WEAVE_ATTEMPT_TYPES.contains(&status.payload.attempt_type.as_str())
+        || !matches!(record.state, AttemptState::Leased | AttemptState::Landing)
+        || record.lease_owner.as_deref() != Some(lease_owner)
+    {
+        return Ok(false);
+    }
+    {
+        let rtxn = vault.store.env.read_txn()?;
+        if crate::receipt::has_attempt_pack_attribution_in_txn(&vault.store, &rtxn, attempt)? {
+            return Ok(false);
+        }
+    }
+    let Some(executor) = run_executor_model(vault, record)? else {
+        return Ok(false);
+    };
+    let type_ref = crate::task_type::type_tree(vault, None)?.root();
+    let credit = credit_options(vault, project, &type_ref)?;
+    let mut fields = PackAttributionFields {
+        type_ref,
+        executor,
+        agent_definition: None,
+        judge: None,
+        pattern: pattern_context(SOLO_ROLE)?,
+        team_shape: vec![SOLO_ROLE.to_owned()],
+        decider: vault.dreamer_actor_for_attempt(attempt)?.entity_ref(),
+        project,
+        output: None,
+        contributions: Vec::new(),
+        used_edges: Vec::new(),
+        credit,
+    };
+    super::derivation_witness::drain(&vault.store, attempt, record.attempt_count, &mut fields);
+    AttemptQueue::new(vault).set_pack_attribution(
+        attempt,
+        lease_owner,
+        record.attempt_count,
+        &fields,
+    )?;
+    Ok(true)
+}
+
+/// The agent definition `target` names, pinned `id@revision` as the stored
+/// definition stands now; `None` for a workflow target or a definition no
+/// longer stored (FIX 11637).
+fn agent_definition_pin(vault: &Vault, target: &AgentDispatchTarget) -> Result<Option<String>> {
+    let Ok(definition) = target.agent_definition_ref() else {
+        return Ok(None);
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    let LiveEntityRow::Live { entity_type, body } =
+        live_entity_row_in_txn(&vault.store, &rtxn, &definition)?
+    else {
+        return Ok(None);
+    };
+    if entity_type != ENTITY_TYPE_AGENT_DEF {
+        return Ok(None);
+    }
+    let decoded = crate::agent_def::decode_agent_definition(&body)?;
+    Ok(Some(format!("{}@{}", decoded.agent_id, decoded.version)))
+}
+
 /// Witnesses the close of the leased agent run `attempt`, before the
-/// terminal door freezes its receipt: `output` becomes the receipt's output
-/// and derives from each entity the run itself derived (one DerivedFrom edge
-/// each, written here), and the used chain grows by those edges and by the
-/// stored lineage above the run's derivations, as deep as the run's credit
-/// reaches. Returns whether it witnessed: a run with no bound attribution
-/// witnesses nothing.
+/// terminal door freezes its receipt: the used chain first takes every
+/// derivation this try witnessed, whenever and on whichever thread it landed
+/// (FIX 3103); `output` becomes the receipt's output and derives from each
+/// entity the run itself derived (one DerivedFrom edge each, written here),
+/// and the used chain grows by those edges and by the stored lineage above
+/// the run's derivations, as deep as the run's credit reaches. Returns
+/// whether it witnessed: a run with no bound attribution witnesses nothing.
 ///
 /// Only lineage is witnessed here. A skill the run loaded or called has not
 /// contributed by that alone, so the contribution list stays as the run's
@@ -159,6 +261,13 @@ pub fn witness_agent_run_close(
     if fields.output == Some(output) {
         return Ok(true);
     }
+    super::derivation_witness::drain_in_txn(
+        &vault.store,
+        &txn,
+        attempt.id,
+        attempt.attempt_count,
+        &mut fields,
+    );
     let mut seen: BTreeSet<(EntityId, EntityId)> = fields
         .used_edges
         .iter()
@@ -297,8 +406,22 @@ pub(crate) fn run_executor_model(vault: &Vault, record: &AttemptRecord) -> Resul
     if let Some(model) = &record.executor_model {
         return Ok(Some(model.clone()));
     }
+    let txn = vault.store.env.read_txn()?;
+    run_executor_model_in_txn(vault, &txn, record)
+}
+
+/// [`run_executor_model`] in the caller's snapshot, so a reader pairs the
+/// model with what else that snapshot holds (FIX 10192).
+pub(crate) fn run_executor_model_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    record: &AttemptRecord,
+) -> Result<Option<String>> {
+    if let Some(model) = &record.executor_model {
+        return Ok(Some(model.clone()));
+    }
     let run = EntityId::from_bytes(*record.id.as_bytes())?;
     Ok(vault
-        .model_seat_receipt(run)?
+        .model_seat_receipt_in_txn(txn, run)?
         .map(|seat| seat.model.to_string()))
 }

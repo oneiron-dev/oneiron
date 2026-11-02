@@ -3,7 +3,6 @@ use std::cell::Cell;
 
 use rmpv::Value;
 
-use crate::batch::secret_scan::admitted_from;
 use crate::receipt::{ActionInputs, call_bytes_digest};
 use crate::{EntityId, Error, Result};
 
@@ -15,6 +14,7 @@ use super::payload::{
     decode_self_dispatch_outcome, replay_denied_trap_error, replay_failed_trap_error,
     self_call_request_value, self_dispatch_outcome_value,
 };
+use super::spawn_replay::replay_request_match;
 use super::support::{
     CODE_RUN_OUTPUT_HANDLE_PREFIX, CODE_RUN_REPLAY_MAX_OUTPUT_PATH_BYTES, code_run_layout_hash,
     expect_map, invalid_code_run_replay, map_get, str_value, validate_label, validate_text,
@@ -61,6 +61,12 @@ pub struct CodeRunBridgeCall {
     /// ([`ActionInputs::action_digest`], OF-568); `None` when the host
     /// captured none, or the call never ran.
     pub action_digest: Option<String>,
+    /// The targets its host resolved for a spawn (FIX 9180), text-free;
+    /// none for every other call.
+    pub(crate) spawn_targets: super::spawn_replay::SpawnTargets,
+    /// A verb hook's view of this outcome was served to the guest. Its own
+    /// read rows are not witnessed yet, so source capture stays unknown.
+    pub hook_view_served: bool,
 }
 
 impl CodeRunBridgeCall {
@@ -81,7 +87,7 @@ impl CodeRunBridgeCall {
             ));
         }
 
-        let row = Self {
+        let mut row = Self {
             seq,
             effect: call.effect(),
             request: self_call_request_value(call)?,
@@ -89,8 +95,12 @@ impl CodeRunBridgeCall {
             started_at_ms,
             finished_at_ms,
             action_digest: None,
+            spawn_targets: super::spawn_replay::SpawnTargets::default(),
+            hook_view_served: false,
         };
+        row.scrub_target_erased_ask()?;
         row.validate_speech_coherence()?;
+        row.validate_spawn_coherence()?;
         Ok(row)
     }
 
@@ -435,6 +445,9 @@ pub struct CodeRunRawOutput {
     /// Whether the producer finished the body. An incomplete one is kept as
     /// far as it got, and says so; it never reads as a success.
     pub complete: bool,
+    /// Every row this occurrence's bytes were produced from; `None` when
+    /// any constituent is unknown (FIX 7104).
+    pub input_rows: Option<Vec<EntityId>>,
     pub preview: CodeRunOutputPreview,
 }
 
@@ -477,6 +490,7 @@ impl CodeRunRawOutput {
             },
             lines: facts.lines,
             complete,
+            input_rows: None,
             // A body the secret scan marked shows no preview: the view is
             // redacted, the stored body never rewritten.
             preview: CodeRunOutputPreview {
@@ -504,6 +518,7 @@ impl CodeRunRawOutput {
             kind: CodeRunOutputKind::Binary,
             lines: 0,
             complete: true,
+            input_rows: None,
             preview: CodeRunOutputPreview {
                 codec: crate::serialize::CODE_RUN_OUTPUT_PREVIEW_CODEC.to_owned(),
                 text: String::new(),
@@ -682,6 +697,9 @@ pub struct CodeRunReplayRecord {
     /// The credential attached to this live agent run (OF-181), as its host
     /// stored it: association metadata, never the lease proof.
     pub live_run: Option<super::live_run::CodeRunLiveRunBinding>,
+    /// Skills loaded and other runs' result rows read so far (FIX 6999).
+    /// `None` once any such constituent read is unknown.
+    pub callable_rows: Option<Vec<EntityId>>,
 }
 
 /// One name a program bound to a result of its run (`r7`, or a name it gave
@@ -759,6 +777,7 @@ impl CodeRunReplayRecord {
             abi_layout_checks: code_run_replay_abi_layout_checks(),
             bindings: Vec::new(),
             live_run: None,
+            callable_rows: Some(Vec::new()),
         }
     }
 
@@ -799,6 +818,13 @@ impl CodeRunReplayRecord {
         Cow::Owned(record)
     }
 
+    /// Unions newly witnessed callable/result rows into the record. Unknown
+    /// stays unknown; known sets are sorted and deduplicated (FIX 6999).
+    pub(crate) fn record_callable_rows(&mut self, rows: Option<Vec<EntityId>>) {
+        self.callable_rows =
+            crate::skill_optimize::union_source_rows([self.callable_rows.take(), rows]);
+    }
+
     /// The rows this run's verb calls listed as served, kept beside each
     /// answer it recorded (DEC-0005). `None` when an answer was recorded with
     /// no row set, or does not decode: no caller off this device is released
@@ -813,7 +839,8 @@ impl CodeRunReplayRecord {
 /// [`CodeRunReplayRecord::agent_verb_rows`] reads them; `None` when any answer
 /// has no row set or does not decode. A consult landing's answer lists the
 /// refs it read (DOOR-063), and a bound workflow run's the TASK, workflow,
-/// definitions and attempts it served (FIX 5316).
+/// definitions and attempts it served (FIX 5316). A board frame observed
+/// beside an answer adds the rows it was derived from (FIX 2135).
 pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<EntityId>> {
     let mut rows = Vec::new();
     let verb_calls = calls.iter().filter(|call| {
@@ -826,7 +853,7 @@ pub(crate) fn agent_verb_rows_of(calls: &[CodeRunBridgeCall]) -> Option<Vec<Enti
         if let SelfDispatchOutcome::AgentVerb(answer) =
             decode_self_dispatch_outcome(&call.outcome).ok()?
         {
-            rows.extend(answer.rows?);
+            rows.extend(answer.released_rows()?);
         }
         // An answer an erase took keeps the rows it was served from (FIX 5718).
         if let Some(kept) = super::wait_rows::erased_answer_rows(&call.outcome) {
@@ -932,9 +959,12 @@ impl SelfDispatcher for CodeRunReplayCursor<'_> {
         // difference the guest was never allowed to control.
         let call = call.with_bridge_stamp(stored.seq, stored.started_at_ms);
         let request = self_call_request_value(&call)?;
+        // A spawn row's erased ask answers only from a coherent row (FIX 9180).
+        stored.validate_spawn_coherence()?;
         // A stored request keeps the handles the side-row wall placed where
-        // the live call still holds the secrets (OF-067).
-        if stored.request != request && !admitted_from(&stored.request, &request)? {
+        // the live call still holds the secrets (OF-067). This cursor issues
+        // nothing, so a spawn's miss (FIX 7447) is a mismatch here.
+        if !replay_request_match(stored.effect, &stored.request, &request)?.is_hit() {
             return Err(invalid_code_run_replay("code-run replay request mismatch"));
         }
         // A cursor can be built from an in-memory record that never passed the

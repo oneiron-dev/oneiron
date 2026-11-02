@@ -95,6 +95,11 @@ pub struct Memory<'v> {
     /// The ask guest's grant a host admitted for this surface's actor
     /// (`with_task_grant`, OF-220): its task verbs prove the actor by it.
     pub(super) task_grant: Option<crate::authority::AdmittedTaskGrant>,
+    /// The requester a held request was admitted under, which a host binds
+    /// when it releases that request on a surface of its own
+    /// (`with_kept_requester`, FIX 11691): an agent dispatch the release
+    /// queues keeps it. A record, not authority.
+    pub(super) kept_requester: Option<crate::agent_dispatch::QueuedRequester>,
     /// The conversation whose request this surface's work answers, when a
     /// host bound one (`with_origin_conversation`, OF-221): context, not
     /// authority.
@@ -114,6 +119,11 @@ pub struct Memory<'v> {
     /// The exact instrument that credential is, when the host can verify it
     /// again (`with_credential_instrument`).
     pub(super) credential_instrument: Option<crate::runtime_hooks::verb::VerbAskInstrument>,
+    /// The managed vault's attested owner the host bound this caller to
+    /// (FIX 11129), carried apart from the vault's authority id, so a
+    /// rootless managed vault's owner is still known; `None` for any other
+    /// caller.
+    pub(super) attested_owner: Option<EntityId>,
     /// The door the caller came in by, when its host can run the call again
     /// through it (`with_credential_door`).
     pub(super) credential_door: Option<crate::runtime_hooks::verb::VerbAskDoor>,
@@ -168,6 +178,20 @@ pub struct HostWriteOrigin {
     /// from the run's own history, never from the guest. It names the pause
     /// only, beside the call's invocation.
     hook_ask: Option<EntityId>,
+    /// The live, verified slip whose turn woke the calling program (FIX
+    /// 8717), from the program's own binding, never from the guest: the
+    /// surface the origin reaches reads and writes under it.
+    read_proof: Option<crate::authority::VerifiedSlip>,
+    /// The durable code run the dispatcher is bound to (its replay record's
+    /// id), from the dispatcher's own binding, never from the guest: the
+    /// one run a creation this origin's writer asserts can be proved in
+    /// (FIX 1211).
+    bound_run: Option<EntityId>,
+    /// The code-mode step the call is in its durable run (FIX 11683): the
+    /// invocation the dispatcher derives from the call's place, the same
+    /// across replays of the run, never from the guest. A `reveal.wait` a
+    /// live re-attempt of that step makes reads its value again under it.
+    step: Option<crate::runtime_hooks::InvocationId>,
 }
 
 impl HostWriteOrigin {
@@ -178,7 +202,26 @@ impl HostWriteOrigin {
             model_provider: None,
             code_consent: None,
             hook_ask: None,
+            read_proof: None,
+            bound_run: None,
+            step: None,
         }
+    }
+
+    /// This origin naming the code-mode step its call is, if it is one.
+    pub(crate) const fn with_step(
+        mut self,
+        step: Option<crate::runtime_hooks::InvocationId>,
+    ) -> Self {
+        self.step = step;
+        self
+    }
+
+    /// This origin with the waking slip a turn program's call runs under,
+    /// if its program has one (FIX 8717).
+    pub(crate) fn with_read_proof(mut self, proof: Option<crate::authority::VerifiedSlip>) -> Self {
+        self.read_proof = proof;
+        self
     }
 
     /// This origin naming the hook pause its call resumes, if it resumes one.
@@ -222,6 +265,17 @@ impl HostWriteOrigin {
     #[must_use]
     pub const fn source(&self) -> ClaimSource {
         self.envelope.source()
+    }
+
+    /// This origin bound to the durable run its dispatcher is bound to.
+    pub(crate) const fn with_bound_run(mut self, run: Option<EntityId>) -> Self {
+        self.bound_run = run;
+        self
+    }
+
+    /// The durable code run the dispatcher bound this origin to, if any.
+    pub(crate) const fn bound_run(&self) -> Option<EntityId> {
+        self.bound_run
     }
 }
 

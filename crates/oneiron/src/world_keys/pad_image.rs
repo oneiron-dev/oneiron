@@ -11,7 +11,7 @@
 //! rest, its pad beside its reference, is never an image's form: a decode
 //! refuses one ([`image_pad_form_ok`]).
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
 use super::WorldKeyId;
@@ -19,11 +19,11 @@ use super::pad_custody::{
     PadBody, decode_pad_body, encode_carrier, encode_reference, encode_resting, pad_item,
     pad_row_body, reference_namespace,
 };
-use super::pads::{held_pad_world_in_txn, world_keys_destroyed_in_txn};
+use super::pads::{held_pad_world_in_txn, pad_row_id, world_keys_destroyed_in_txn};
 use crate::Vault;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_WORLD_KEY_PAD;
 use crate::store::{CustodyPlan, PlannedPad, Store, WorldPadCustody, plan_world_pad};
@@ -138,6 +138,90 @@ pub(crate) fn rested_pad_row(store: &Store, raw: &[u8]) -> Result<Option<Zeroizi
     Ok(Some(row))
 }
 
+/// What `key`'s pad row comes to where a restore's owed reference is settled
+/// again (PAD-2, FIX 10470).
+pub(crate) enum PadRowRest {
+    /// A bare reference whose pad current custody holds: the row at rest
+    /// with that pad beside it, to put under `row`.
+    Rest {
+        row: EntityId,
+        rested: Zeroizing<Vec<u8>>,
+    },
+    /// The row holds its pad already: its own beside its reference, or a
+    /// carrier's.
+    Held,
+    /// A bare reference whose pad current custody does not hold, a
+    /// header-only shell, or no row.
+    Unheld,
+}
+
+/// [`PadRowRest`] for `key`'s pad row as `txn` reads it: the row its full id
+/// derives, which must name exactly that key.
+///
+/// # Errors
+///
+/// A row of another kind or key, a body that does not decode, and custody
+/// and storage faults.
+pub(crate) fn pad_row_rest_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &WorldKeyId,
+) -> Result<PadRowRest> {
+    let row = pad_row_id(key)?;
+    let Some(raw) = store.port_entity_raw(txn, &row)?.map(Zeroizing::new) else {
+        return Ok(PadRowRest::Unheld);
+    };
+    if crate::batch::EntityMetadataHeader::parse(&raw)
+        .is_none_or(|header| header.entity_type != ENTITY_TYPE_WORLD_KEY_PAD)
+    {
+        return Err(Error::CorruptedIndex("world key pad row of another kind"));
+    }
+    let Some(body) = pad_row_body(&raw).filter(|body| !body.is_empty()) else {
+        return Ok(PadRowRest::Unheld);
+    };
+    let decoded = decode_pad_body(body)?;
+    if decoded.key() != key {
+        return Err(Error::CorruptedIndex("world key pad names another key"));
+    }
+    if decoded.pad().is_some() {
+        return Ok(PadRowRest::Held);
+    }
+    Ok(match rested_pad_row(store, &raw)? {
+        Some(rested) => PadRowRest::Rest { row, rested },
+        None => PadRowRest::Unheld,
+    })
+}
+
+/// Whether `key`'s pad row as `txn` reads it rests with its own pad beside
+/// its reference, the pad current custody holds for it: a rest's read back
+/// once committed.
+///
+/// # Errors
+///
+/// Custody and storage faults.
+pub(crate) fn pad_row_rests_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    key: &WorldKeyId,
+) -> Result<bool> {
+    let Some(raw) = store
+        .port_entity_raw(txn, &pad_row_id(key)?)?
+        .map(Zeroizing::new)
+    else {
+        return Ok(false);
+    };
+    let Some(Ok(PadBody::Reference(found, Some(pad)))) = pad_row_body(&raw).map(decode_pad_body)
+    else {
+        return Ok(false);
+    };
+    if found != *key {
+        return Ok(false);
+    }
+    Ok(store
+        .world_pad_in_custody(&pad_item(key))?
+        .is_some_and(|held| *held == *pad.bytes()))
+}
+
 /// The bare reference row `image` with the pad the live row `live` of the
 /// same key keeps (its own beside its reference, or a carrier's), as its
 /// carrier: a side restore's row whose pad the custody it forks lacks or
@@ -212,16 +296,20 @@ pub(crate) fn drop_pad_rows_in_txn(
 impl Vault {
     /// Publishes into current custody, before a snapshot takes its custody
     /// guard, each pad a row here holds that custody lacks (a row whose put
-    /// found custody faulted), so the image carries it by reference. Never
-    /// under the guard: a publication mints. A pad custody still cannot take
-    /// is warned and rides the image as its carrier
-    /// ([`PAD_IMAGE_UNPREPARED`]).
+    /// found custody faulted), so the image carries it by reference, then
+    /// reads each back after its writer committed (FIX 7313): only a pad
+    /// custody holds the same counts as prepared. Never under the guard: a
+    /// publication mints. Returns how many pads a row holds that custody
+    /// still does not hold the same (closed, faulted, holding another pad,
+    /// or a publication that did not read back): each is warned and rides
+    /// the image as its carrier ([`PAD_IMAGE_UNPREPARED`]).
     ///
     /// # Errors
     ///
     /// Storage faults.
-    pub(crate) fn prepare_image_pads(&self) -> Result<()> {
+    pub(crate) fn prepare_image_pads(&self) -> Result<usize> {
         let mut owed = Vec::new();
+        let mut unprepared = 0_usize;
         {
             let txn = self.store.env.read_txn()?;
             for id in self
@@ -242,18 +330,31 @@ impl Vault {
                 let Some(pad) = body.pad() else {
                     continue;
                 };
-                if !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
-                    && matches!(
-                        self.store.world_pad_custody_entry(&pad_item(&key)),
-                        Ok(WorldPadCustody::Missing)
-                    )
-                {
-                    owed.push((key, Zeroizing::new(*pad.bytes())));
+                if world_keys_destroyed_in_txn(&self.store, &txn, key.world)? {
+                    continue;
+                }
+                match self.store.world_pad_custody_entry(&pad_item(&key)) {
+                    Ok(WorldPadCustody::Missing) => {
+                        owed.push((key, Zeroizing::new(*pad.bytes())));
+                    }
+                    Ok(WorldPadCustody::Live(held)) if *held == *pad.bytes() => {}
+                    Ok(WorldPadCustody::Retired) => {}
+                    Ok(WorldPadCustody::Live(_) | WorldPadCustody::Closed) => {
+                        unprepared = unprepared.saturating_add(1);
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            kind = ?error.kind(),
+                            "a world key pad's custody did not read before an image; the image \
+                             carries it"
+                        );
+                        unprepared = unprepared.saturating_add(1);
+                    }
                 }
             }
         }
         if owed.is_empty() {
-            return Ok(());
+            return Ok(unprepared);
         }
         self.with_write_txn_grouped(|wtxn| {
             for (key, pad) in &owed {
@@ -269,6 +370,24 @@ impl Vault {
                 }
             }
             Ok(())
-        })
+        })?;
+        // The read back, once the writer committed: what the projection
+        // will find under the snapshot's guard.
+        for (key, pad) in &owed {
+            let held = self
+                .store
+                .world_pad_in_custody(&pad_item(key))
+                .unwrap_or_else(|error| {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a world key pad taken into custody did not read back"
+                    );
+                    None
+                });
+            if held.is_none_or(|held| *held != **pad) {
+                unprepared = unprepared.saturating_add(1);
+            }
+        }
+        Ok(unprepared)
     }
 }

@@ -16,15 +16,14 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::skill_optimize::{
-    GoalAxisReport, JudgeIncumbent, JudgeSwapPick, JudgeSwapPolicy, JudgeSwapReceipt,
-    PreferredResponse, ProjectGoalRevisionProposal, ResponsePairPick, SkillTradeoffAsk,
-    SkillTradeoffPreferences, TradeoffChoice, judge_incumbent, judge_swap_policy,
+    GoalAxisReport, HeldOutReplayNotes, JudgeIncumbent, JudgeSwapPick, JudgeSwapPolicy,
+    JudgeSwapReceipt, PreferredResponse, ProjectGoalRevisionProposal, ResponsePairPick,
+    SkillTradeoffAsk, SkillTradeoffPreferences, TradeoffChoice, judge_incumbent, judge_swap_policy,
     judge_swap_receipts, measure_skill_edit_goal_axes, pick_judge_swap_case, pick_response_pair,
     project_goal_revision_proposals, response_pair_picks, set_judge_swap_policy,
     set_skill_goal_project, settle_skill_tradeoff_ask, skill_goal_project, skill_tradeoff_asks_for,
@@ -32,40 +31,238 @@ use oneiron::skill_optimize::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::replay_judge::{self, JournalRow, ServeAxisBandit};
 use crate::server::SyncServer;
 
+mod tradeoff_resolve;
+pub(crate) use self::tradeoff_resolve::tradeoff_resolve_body_schema;
+
 /// Most journal rows one read returns.
 const MAX_JOURNAL_ROWS: usize = 500;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/skills/judge/decisions", get(decisions))
-        .route("/skills/judge/person-time", post(person_time))
-        .route("/skills/judge/measure", post(measure))
-        .route(
-            "/skills/judge/goal-project",
-            get(goal_project).post(bind_goal_project),
-        )
-        .route("/skills/judge/preferences", get(preferences))
-        .route("/skills/judge/tradeoff-asks", get(tradeoff_asks))
-        .route("/skills/judge/tradeoff-asks/pick", post(pick))
-        .route("/skills/judge/goal-revisions", get(goal_revisions))
-        .route("/skills/judge/swaps", get(swaps))
-        .route("/skills/judge/swaps/pick", post(swap_pick))
-        .route("/skills/judge/pairs", get(pair_picks))
-        .route("/skills/judge/pairs/pick", post(pair_pick))
-        .route(
-            "/skills/judge/swap-policy",
-            get(swap_policy).post(set_swap_policy),
-        )
+pub(super) fn owner_table() -> OwnerTable {
+    let mut table = vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/decisions",
+                summary: "The newest journal rows.",
+                row: None,
+            },
+            get(decisions),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/person-time",
+                summary: "One act's minutes on a run.",
+                row: None,
+            },
+            post(person_time),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/measure",
+                summary: "Measures an open proposal on its goal's plan with the registered judge and live arms, and keeps the report for the gate.",
+                row: None,
+            },
+            post(measure),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/goal-project",
+                summary: "The project a skill's goal is joined to.",
+                row: None,
+            },
+            get(goal_project),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/goal-project",
+                summary: "Joins a skill's goal to a project's goal record, or unbinds it.",
+                row: None,
+            },
+            post(bind_goal_project),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/preferences",
+                summary: "The tradeoff rules of a skill's goal, the ones its responsible person's picks taught included.",
+                row: None,
+            },
+            get(preferences),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/tradeoff-asks",
+                summary: "The tradeoff asks that have climbed to a role the owner holds.",
+                row: None,
+            },
+            get(tradeoff_asks),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/tradeoff-asks/pick",
+                summary: "The owner's A/B pick.",
+                row: None,
+            },
+            post(pick),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/goal-revisions",
+                summary: "The preferences the loop proposes for the project's goal in force, oldest first, for its goal interview to show.",
+                row: None,
+            },
+            get(goal_revisions),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/swaps",
+                summary: "The incumbent judge, the swap policy and every swap receipt, each disagreement's ruling included.",
+                row: None,
+            },
+            get(swaps),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/swaps/pick",
+                summary: "The owner's hand-test pick on one disagreement.",
+                row: None,
+            },
+            post(swap_pick),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/pairs",
+                summary: "Every pick the owner made between a blind preference pair's two responses.",
+                row: None,
+            },
+            get(pair_picks),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/pairs/pick",
+                summary: "The owner's pick between a blind preference pair's two responses.",
+                row: None,
+            },
+            post(pair_pick),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/skills/judge/swap-policy",
+                summary: "The tie-breakers, the pinned divergence rate and the hands-on setting in force.",
+                row: None,
+            },
+            get(swap_policy),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/skills/judge/swap-policy",
+                summary: "Replaces the swap policy; a field left out takes its default.",
+                row: None,
+            },
+            post(set_swap_policy),
+        ),
+    ];
+    table.extend(tradeoff_resolve::owner_table());
+    table
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s body (FIX 11611):
+/// [`BindGoalProject`].
+pub(crate) fn bind_goal_project_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<BindGoalProject>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/goal-project`'s answer (FIX 11611):
+/// [`GoalRevision`].
+pub(crate) fn goal_revision_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GoalRevision>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/measure`'s body (FIX 11611): [`Measure`].
+pub(crate) fn measure_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Measure>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/measure`'s answer (FIX 11611):
+/// [`GoalAxisReport`].
+pub(crate) fn goal_axis_report_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GoalAxisReport>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/pairs/pick`'s body (FIX 11611): [`PairPick`].
+pub(crate) fn pair_pick_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PairPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/pairs/pick`'s answer (FIX 11611):
+/// [`ResponsePairPick`].
+pub(crate) fn response_pair_pick_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ResponsePairPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/person-time`'s body (FIX 11611):
+/// [`RecordPersonTime`].
+pub(crate) fn record_person_time_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RecordPersonTime>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/person-time`'s answer (FIX 11611):
+/// [`PersonTimeTotal`].
+pub(crate) fn person_time_total_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PersonTimeTotal>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/swap-policy`'s body and answer (FIX 11611):
+/// [`JudgeSwapPolicy`].
+pub(crate) fn judge_swap_policy_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<JudgeSwapPolicy>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/swaps/pick`'s body (FIX 11611): [`SwapPick`].
+pub(crate) fn swap_pick_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SwapPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/swaps/pick`'s answer (FIX 11611):
+/// [`JudgeSwapPick`].
+pub(crate) fn judge_swap_pick_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<JudgeSwapPick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/tradeoff-asks/pick`'s body (FIX 11611):
+/// [`Pick`].
+pub(crate) fn tradeoff_pick_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Pick>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/skills/judge/tradeoff-asks/pick`'s answer (FIX 11611):
+/// [`Settled`].
+pub(crate) fn tradeoff_settled_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Settled>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PairPick {
     /// The blind preference pair, `first|second` (the two receipts).
@@ -83,7 +280,7 @@ struct Swaps {
     receipts: Vec<JudgeSwapReceipt>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SwapPick {
     /// The swap receipt, as 32 hex.
@@ -108,7 +305,7 @@ struct ProjectQuery {
     project: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct BindGoalProject {
     skill: String,
@@ -123,14 +320,14 @@ struct GoalProject {
     project: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct GoalRevision {
     /// The goal revision the join minted: every pending ask and standing
     /// acceptance is re-ruled under it.
     goal_revision: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Pick {
     /// The open optimizer proposal the ask is about, as 32 hex.
@@ -140,7 +337,7 @@ struct Pick {
     choice: TradeoffChoice,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Settled {
     proposal: String,
     accepted: bool,
@@ -156,11 +353,13 @@ struct JournalQuery {
 
 #[derive(Debug, Serialize)]
 struct Journal {
-    revision: &'static str,
+    /// The registered judge's `judge_revision()`; `None` when no judge is
+    /// registered, with every stored row still returned.
+    revision: Option<String>,
     decisions: Vec<JournalRow>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RecordPersonTime {
     /// The run's terminal receipt (`attempt:<32 hex>`).
@@ -170,13 +369,13 @@ struct RecordPersonTime {
     act: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PersonTimeTotal {
     receipt: String,
     minutes: f64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct Measure {
     /// The open optimizer proposal, as 32 hex.
@@ -186,7 +385,9 @@ struct Measure {
     pulls_per_axis: Option<u32>,
 }
 
-/// `GET /v1/owner/skills/judge/decisions`: the newest journal rows.
+/// `GET /v1/owner/skills/judge/decisions`: the newest journal rows, with
+/// the registered judge's revision; `None` when no judge is registered,
+/// with every stored row still returned.
 async fn decisions(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -199,7 +400,7 @@ async fn decisions(
         .clamp(1, MAX_JOURNAL_ROWS);
     let journal = blocking(move || -> OwnerResult<Journal> {
         Ok(Journal {
-            revision: replay_judge::JUDGE_REVISION,
+            revision: replay_judge::registered().map(|judge| judge.judge_revision().to_owned()),
             decisions: replay_judge::journal(server.vault(), limit)?,
         })
     })
@@ -211,10 +412,10 @@ async fn decisions(
 async fn person_time(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RecordPersonTime>, JsonRejection>,
+    payload: OwnerJsonBody<RecordPersonTime>,
 ) -> OwnerReply<PersonTimeTotal> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let total = blocking(move || -> OwnerResult<PersonTimeTotal> {
         let vault = server.vault();
         replay_judge::record_person_time(vault, &request.receipt, request.minutes, &request.act)
@@ -234,10 +435,10 @@ async fn person_time(
 async fn measure(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Measure>, JsonRejection>,
+    payload: OwnerJsonBody<Measure>,
 ) -> OwnerReply<GoalAxisReport> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let report = blocking(move || -> OwnerResult<GoalAxisReport> {
         let proposal = entity_id("proposal", &request.proposal)?;
         let judge = replay_judge::registered()
@@ -288,10 +489,10 @@ async fn goal_project(
 async fn bind_goal_project(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<BindGoalProject>, JsonRejection>,
+    payload: OwnerJsonBody<BindGoalProject>,
 ) -> OwnerReply<GoalRevision> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let revision = blocking(move || -> OwnerResult<GoalRevision> {
         let skill = entity_id("skill", &request.skill)?;
         let project = request
@@ -346,10 +547,10 @@ async fn tradeoff_asks(
 async fn pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<Pick>, JsonRejection>,
+    payload: OwnerJsonBody<Pick>,
 ) -> OwnerReply<Settled> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let settled = blocking(move || -> OwnerResult<Settled> {
         let proposal = entity_id("proposal", &request.proposal)?;
         let verdict = settle_skill_tradeoff_ask(
@@ -411,10 +612,10 @@ async fn swaps(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRe
 async fn swap_pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SwapPick>, JsonRejection>,
+    payload: OwnerJsonBody<SwapPick>,
 ) -> OwnerReply<JudgeSwapPick> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let pick = blocking(move || -> OwnerResult<JudgeSwapPick> {
         Ok(pick_judge_swap_case(
             server.vault(),
@@ -449,10 +650,10 @@ async fn pair_picks(
 async fn pair_pick(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PairPick>, JsonRejection>,
+    payload: OwnerJsonBody<PairPick>,
 ) -> OwnerReply<ResponsePairPick> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let pick = blocking(move || -> OwnerResult<ResponsePairPick> {
         Ok(pick_response_pair(
             server.vault(),
@@ -485,10 +686,10 @@ async fn swap_policy(
 async fn set_swap_policy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<JudgeSwapPolicy>, JsonRejection>,
+    payload: OwnerJsonBody<JudgeSwapPolicy>,
 ) -> OwnerReply<JudgeSwapPolicy> {
     let owner = owner(&auth, &server)?;
-    let policy = json_payload(payload)?;
+    let policy = payload.read(&server).await?;
     let policy = blocking(move || -> OwnerResult<JudgeSwapPolicy> {
         set_judge_swap_policy(server.vault(), &owner, &policy)?;
         Ok(policy)

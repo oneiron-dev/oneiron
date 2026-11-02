@@ -11,32 +11,46 @@ use rmpv::Value;
 
 /// Domain for an authenticated ask, not evidence of remote deletion.
 pub const COOP_DELETION_REQUEST_DOMAIN: &[u8] = b"oneiron/deletion/coop-request/v1";
-/// Wire schema version.
-pub const COOP_DELETION_REQUEST_SCHEMA_VERSION: u64 = 1;
+/// Wire schema version: v2 names the page an ask is of its selection (FIX
+/// 7941). There is no v1 reader.
+pub const COOP_DELETION_REQUEST_SCHEMA_VERSION: u64 = 2;
 /// Exact canonical body keys, in wire order.
-pub const COOP_DELETION_REQUEST_BODY_KEYS: [&str; 8] = [
+pub const COOP_DELETION_REQUEST_BODY_KEYS: [&str; 10] = [
     "schema_version",
     "pact_id",
     "requester_vault_id",
     "peer_vault_id",
     "worlds",
+    "page",
+    "pages",
     "epoch_cutoff",
     "ts",
     "nonce",
 ];
-/// Maximum explicitly named worlds. An empty list means the entire pact.
-pub const MAX_COOP_DELETION_WORLDS: usize = 256;
+/// The most worlds one page names (FIX 7941). An owner's selection of any
+/// size goes whole, as consecutive pages of its sorted, deduplicated worlds,
+/// each its own signed ask: a page stays far below the codec's body bound,
+/// and each goes as its own delivery, in turn with every other ask, under
+/// its own give-up deadline. An empty list means the entire pact.
+pub const MAX_COOP_DELETION_PAGE_WORLDS: usize = 256;
+/// The domain a page's own nonce derives under, from its selection's.
+const COOP_DELETION_PAGE_NONCE_DOMAIN: &str = "oneiron/deletion/coop-request/page-nonce/v1";
 /// The courtesy codec's bound on one body: an ask, an answer or a
 /// succession page (FIX 3014), each read whole.
 pub(super) const COOP_DELETION_BODY_MAX_BYTES: usize = 32_768;
 
-/// A courtesy ask about content authored/shared by the requester.
+/// A courtesy ask about content authored/shared by the requester: one page
+/// of the owner's selection.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CooperativeDeletionRequest {
     pub pact_id: [u8; 32],
     pub requester_vault_id: [u8; 32],
     pub peer_vault_id: [u8; 32],
     pub worlds: Vec<EntityId>,
+    /// This page's index in its selection, from 0.
+    pub page: u32,
+    /// How many pages its selection went as; at least 1.
+    pub pages: u32,
     pub epoch_cutoff: u64,
     pub ts: u64,
     pub nonce: [u8; 16],
@@ -91,7 +105,43 @@ pub(super) fn uint(v: &Value) -> Result<u64> {
     v.as_u64().ok_or_else(invalid)
 }
 
+/// The owner's whole selection as pages (FIX 7941): its sorted,
+/// deduplicated worlds in consecutive runs of at most
+/// [`MAX_COOP_DELETION_PAGE_WORLDS`]. An empty selection, the entire pact,
+/// is one empty page.
+fn selection_pages(mut worlds: Vec<EntityId>) -> Vec<Vec<EntityId>> {
+    worlds.sort_unstable();
+    worlds.dedup();
+    if worlds.is_empty() {
+        return vec![Vec::new()];
+    }
+    worlds
+        .chunks(MAX_COOP_DELETION_PAGE_WORLDS)
+        .map(<[EntityId]>::to_vec)
+        .collect()
+}
+
+/// The nonce page `page` of `pages` carries: a one-page ask's is its
+/// selection's own; a longer selection's pages each derive their own from
+/// it, so each page is its own ask under the replay fence and the same
+/// selection signed again gives the same pages.
+fn page_nonce(nonce: &[u8; 16], page: u32, pages: u32) -> [u8; 16] {
+    if pages == 1 {
+        return *nonce;
+    }
+    let mut material = [0; 24];
+    material[..16].copy_from_slice(nonce);
+    material[16..20].copy_from_slice(&page.to_be_bytes());
+    material[20..].copy_from_slice(&pages.to_be_bytes());
+    let derived = blake3::derive_key(COOP_DELETION_PAGE_NONCE_DOMAIN, &material);
+    let mut out = [0; 16];
+    out.copy_from_slice(&derived[..16]);
+    out
+}
+
 /// Encodes the canonical body, sorting and deduplicating the local world list.
+/// A page names at most [`MAX_COOP_DELETION_PAGE_WORLDS`] worlds, its index
+/// is below its page count, and only a one-page ask may name none.
 pub fn encode_cooperative_deletion_request_body(
     body: &CooperativeDeletionRequest,
 ) -> Result<Vec<u8>> {
@@ -99,7 +149,9 @@ pub fn encode_cooperative_deletion_request_body(
         || body.requester_vault_id == [0; 32]
         || body.peer_vault_id == [0; 32]
         || body.nonce == [0; 16]
-        || body.worlds.len() > MAX_COOP_DELETION_WORLDS
+        || body.worlds.len() > MAX_COOP_DELETION_PAGE_WORLDS
+        || body.page >= body.pages
+        || (body.pages > 1 && body.worlds.is_empty())
     {
         return Err(invalid());
     }
@@ -115,6 +167,8 @@ pub fn encode_cooperative_deletion_request_body(
         Value::Binary(body.requester_vault_id.to_vec()),
         Value::Binary(body.peer_vault_id.to_vec()),
         Value::Array(worlds.iter().map(|id| Value::from(id.to_hex())).collect()),
+        Value::from(body.page),
+        Value::from(body.pages),
         Value::from(body.epoch_cutoff),
         Value::from(body.ts),
         Value::Binary(body.nonce.to_vec()),
@@ -245,7 +299,7 @@ pub fn decode_and_verify_cooperative_deletion_request(
         return Err(invalid());
     }
     let world_values = f[4].as_array().ok_or_else(invalid)?;
-    if world_values.len() > MAX_COOP_DELETION_WORLDS {
+    if world_values.len() > MAX_COOP_DELETION_PAGE_WORLDS {
         return Err(invalid());
     }
     let worlds = world_values
@@ -257,9 +311,11 @@ pub fn decode_and_verify_cooperative_deletion_request(
         requester_vault_id: binary(f[2])?,
         peer_vault_id: binary(f[3])?,
         worlds,
-        epoch_cutoff: uint(f[5])?,
-        ts: uint(f[6])?,
-        nonce: binary(f[7])?,
+        page: u32::try_from(uint(f[5])?).map_err(|_| invalid())?,
+        pages: u32::try_from(uint(f[6])?).map_err(|_| invalid())?,
+        epoch_cutoff: uint(f[7])?,
+        ts: uint(f[8])?,
+        nonce: binary(f[9])?,
     };
     // Canonical re-encoding rejects unsorted/duplicate worlds and alternate spellings.
     if encode_cooperative_deletion_request_body(&body)? != *body_bytes {
@@ -269,7 +325,11 @@ pub fn decode_and_verify_cooperative_deletion_request(
 }
 
 impl Vault {
-    /// Signs a one-way courtesy request only after disconnect or dissolution.
+    /// Signs a one-way courtesy request only after disconnect or dissolution:
+    /// the owner's whole selection, as one signed ask per page (FIX 7941),
+    /// each under `signer_key` and the same pact claim, with its page and
+    /// page count in the signed bytes and one clock for every page. Nothing
+    /// refuses a selection for its size.
     pub fn sign_cooperative_deletion_request<S>(
         &self,
         pact_id: &[u8; 32],
@@ -277,10 +337,10 @@ impl Vault {
         epoch_cutoff: u64,
         nonce: [u8; 16],
         signer_key: AuthorityKey,
-        signer: S,
-    ) -> Result<SignedCooperativeDeletionRequest>
+        mut signer: S,
+    ) -> Result<Vec<SignedCooperativeDeletionRequest>>
     where
-        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
     {
         let fold = self.authority_fold()?;
         let pact = fold
@@ -296,27 +356,35 @@ impl Vault {
         if epoch_cutoff > pact.terminal_epoch.unwrap_or(pact.pact_epoch) {
             return Err(invalid());
         }
-        let mut body = CooperativeDeletionRequest {
-            pact_id: *pact_id,
-            requester_vault_id: fold.vault_id.ok_or_else(invalid)?,
-            peer_vault_id: pact.peer_vault_id,
-            worlds,
-            epoch_cutoff,
-            ts: crate::unix_seconds_now(),
-            nonce,
-        };
-        body.worlds.sort_unstable();
-        body.worlds.dedup();
-        let bytes = encode_cooperative_deletion_request_body(&body)?;
-        let transcript = [COOP_DELETION_REQUEST_DOMAIN, &bytes].concat();
-        let signature = AuthoritySignature {
-            suite: signer_key.suite(),
-            public_key: signer_key,
-            signature: signer(&transcript)?,
-        };
-        if !verify_authority_signature(&signature, &transcript) {
-            return Err(invalid());
+        let requester_vault_id = fold.vault_id.ok_or_else(invalid)?;
+        let ts = crate::unix_seconds_now();
+        let selection = selection_pages(worlds);
+        let pages = u32::try_from(selection.len()).map_err(|_| invalid())?;
+        let mut signed = Vec::with_capacity(selection.len());
+        for (page, worlds) in (0..pages).zip(selection) {
+            let body = CooperativeDeletionRequest {
+                pact_id: *pact_id,
+                requester_vault_id,
+                peer_vault_id: pact.peer_vault_id,
+                worlds,
+                page,
+                pages,
+                epoch_cutoff,
+                ts,
+                nonce: page_nonce(&nonce, page, pages),
+            };
+            let bytes = encode_cooperative_deletion_request_body(&body)?;
+            let transcript = [COOP_DELETION_REQUEST_DOMAIN, &bytes].concat();
+            let signature = AuthoritySignature {
+                suite: signer_key.suite(),
+                public_key: signer_key.clone(),
+                signature: signer(&transcript)?,
+            };
+            if !verify_authority_signature(&signature, &transcript) {
+                return Err(invalid());
+            }
+            signed.push(SignedCooperativeDeletionRequest { body, signature });
         }
-        Ok(SignedCooperativeDeletionRequest { body, signature })
+        Ok(signed)
     }
 }

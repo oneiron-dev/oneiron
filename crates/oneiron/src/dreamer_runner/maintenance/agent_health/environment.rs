@@ -3,7 +3,9 @@
 //! blames nobody"). The labels are those retained on the attempt's sealed
 //! terminal pack receipt, joined on that receipt alone: never on the actor and
 //! a time, and never on a served or request receipt. A finding with no exact
-//! attempt, an actor-only or taskless one, gets none.
+//! attempt, an actor-only or taskless one, gets none. The amendment judge's
+//! labels on that attempt's amended proposals join beside them, on the same
+//! receipt (FIX 8264).
 //!
 //! Scope (CALLS "Label scope"): a finding takes its attempt's labels only when
 //! one of them is the judge's current `environment`. It then takes every label
@@ -32,15 +34,22 @@ use super::{
     add_recipients,
 };
 use crate::attempt_queue::AttemptId;
+use crate::edit_distance::attribution::{
+    AmendmentCauseRecord, amendment_causes_for_attempt_in_txn,
+};
 use crate::receipt::attempt_pack_receipt_id;
 use crate::skill_attribution::{
     AttributionCauseRecord, AttributionVerdict, attempt_attribution_causes,
 };
 use crate::{EntityId, Result, Vault};
 
+/// Domain of an amendment label's source id: one id per settled cause row
+/// and label.
+const AMENDMENT_SOURCE_DOMAIN: &[u8] = b"oneiron:agent-health-amendment-cause:v1";
+
 /// One attribution label a card carries (OF-568 L10): a typed reference to
 /// the judge's retained label, never prose.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthCauseSource {
     /// The retained label's immutable source id: the DIAGNOSTIC cites it.
@@ -50,7 +59,8 @@ pub struct HealthCauseSource {
     /// The loaded skill its evidence named, if any.
     pub skill: Option<EntityId>,
     /// The judge's label, as its stable wire token: `environment`,
-    /// `skill_defect`, `execution_lapse`, `discovery` or `unclear`.
+    /// `skill_defect`, `execution_lapse`, `discovery`, `unclear`, or for an
+    /// amendment `preference_shift`.
     pub label: String,
     /// The label's share of the outcome, in `0..=1`.
     pub share: f32,
@@ -72,6 +82,35 @@ impl HealthCauseSource {
             judge_revision: record.judge_revision,
             displaced_by: record.displaced_by,
         }
+    }
+
+    /// One per label the amendment judge gave `record`, an amendment of the
+    /// attempt that sealed `receipt` (FIX 8264). The label's source id is
+    /// spelled from the cause row's stored source and the label, so the
+    /// same settled labels fold onto the same card row; the displacement of
+    /// that row's judge rides with the record (FIX 11638).
+    fn of_amendment(record: &AmendmentCauseRecord, receipt: &str) -> Result<Vec<Self>> {
+        let source = record.source.to_hex();
+        record
+            .shares
+            .iter()
+            .filter(|share| share.share > 0.0)
+            .map(|share| {
+                let label = share.class.as_str();
+                Ok(Self {
+                    source: EntityId::derive(
+                        AMENDMENT_SOURCE_DOMAIN,
+                        &[source.as_bytes(), label.as_bytes()],
+                    )?,
+                    receipt: receipt.to_owned(),
+                    skill: record.skill,
+                    label: label.to_owned(),
+                    share: share.share,
+                    judge_revision: record.judge.clone(),
+                    displaced_by: record.displaced_by.clone(),
+                })
+            })
+            .collect()
     }
 
     /// The judge's `environment` label, by a judge not displaced.
@@ -252,7 +291,7 @@ fn finding_sources(vault: &Vault, findings: &[Finding]) -> Result<Vec<Vec<Health
     findings
         .iter()
         .map(|finding| match finding.attempt.as_ref() {
-            Some(attempt) => attempt_sources(vault, &rtxn, attempt),
+            Some(attempt) => attempt_sources(vault, &rtxn, attempt, finding.generation),
             None => Ok(Vec::new()),
         })
         .collect()
@@ -271,7 +310,9 @@ fn read_late(vault: &Vault) -> Result<Late> {
             if read.insert(*attempt)
                 && let Ok(attempt) = AttemptId::from_bytes(attempt.as_bytes())
             {
-                sources.extend(attempt_sources(vault, &rtxn, &attempt)?);
+                // FIX 8259 (pin c): the late path keeps its documented
+                // over-attach; witnessed attempts carry no generation.
+                sources.extend(attempt_sources(vault, &rtxn, &attempt, None)?);
             }
         }
         let mut seen = BTreeSet::new();
@@ -285,14 +326,24 @@ fn read_late(vault: &Vault) -> Result<Late> {
 
 /// The labels on `attempt`'s sealed terminal pack receipt when one is a
 /// current environment label; none for an attempt that sealed no receipt, or
-/// whose labels hold no current environment label.
+/// whose labels hold no current environment label. FIX 8259: when both the
+/// receipt and the finding carry a lease generation and they differ, the
+/// finding read another generation's evidence, so it takes no labels; every
+/// other case keeps today's behavior.
 fn attempt_sources(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     attempt: &AttemptId,
+    generation: Option<u32>,
 ) -> Result<Vec<HealthCauseSource>> {
     let receipt = attempt_pack_receipt_id(attempt);
-    if crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &receipt)?.is_none() {
+    let Some(sealed) = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, &receipt)?
+    else {
+        return Ok(Vec::new());
+    };
+    if let (Some(want), Some(have)) = (generation, sealed.lease_generation())
+        && want != have
+    {
         return Ok(Vec::new());
     }
     let sources = receipt_sources(vault, txn, &receipt)?;
@@ -322,8 +373,31 @@ fn receipt_sources(
     txn: &heed::RoTxn<'_>,
     receipt: &str,
 ) -> Result<Vec<HealthCauseSource>> {
-    Ok(attempt_attribution_causes(vault, txn, receipt)?
+    let mut sources: Vec<HealthCauseSource> = attempt_attribution_causes(vault, txn, receipt)?
         .into_iter()
         .map(HealthCauseSource::of)
-        .collect())
+        .collect();
+    sources.extend(amendment_sources(vault, txn, receipt)?);
+    Ok(sources)
+}
+
+/// The labels the amendment judge gave the amended proposals of the attempt
+/// that sealed `receipt` (FIX 8264): read for the actor that receipt is bound
+/// to, and kept only where the amendment names that very receipt.
+fn amendment_sources(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt: &str,
+) -> Result<Vec<HealthCauseSource>> {
+    let Some(actor) = crate::skill::resident::receipt_resident_in_txn(&vault.store, txn, receipt)?
+    else {
+        return Ok(Vec::new());
+    };
+    let mut sources = Vec::new();
+    for record in amendment_causes_for_attempt_in_txn(vault, txn, &actor, receipt)? {
+        if record.attempt_receipt.as_deref() == Some(receipt) {
+            sources.extend(HealthCauseSource::of_amendment(&record, receipt)?);
+        }
+    }
+    Ok(sources)
 }

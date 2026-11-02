@@ -20,8 +20,7 @@
 use std::convert::Infallible;
 use std::sync::{Arc, PoisonError, TryLockError};
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::header;
 use axum::response::sse::{Event, Sse};
@@ -29,35 +28,112 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use futures_util::Stream;
 use oneiron_browser::{
-    BrowserError, BrowserPersonInput, BrowserSession, BrowserTab, Takeover, TakeoverRecord,
+    BrowserError, BrowserPersonInput, BrowserSession, BrowserTab, DemonstrationOutput, ExpectInput,
+    Takeover, TakeoverRecord,
 };
 use serde::{Deserialize, Serialize};
 
 use super::desktop_takeover_routes::frame_stream;
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/browsers", get(list))
-        .route("/browsers/take", post(take))
-        .route("/browsers/screen", post(screen))
-        .route("/browsers/stream", get(stream))
-        .route("/browsers/input", post(input))
-        .route("/browsers/return", post(hand_back))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/browsers",
+                summary: "Each bound run browser whose guest started, with who has it, the agent's ask while it waits, the holder's count of inputs, and its tabs, the front one marked.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/browsers/take",
+                summary: "The owner holds the run's browser, asked or not, once the agent's call in flight ends.",
+                row: None,
+            },
+            post(take),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/browsers/screen",
+                summary: "The front tab's viewport as a PNG, or the named tab's, which the owner who holds the browser brings to the front; unmasked, for the owner only: never kept, never a receipt.",
+                row: None,
+            },
+            post(screen),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/browsers/stream",
+                summary: "The run browser's front tab as server-sent events while the owner watches or holds it, as the desktop stream sends its display: state, frame, error, ended and refused events, and tabs when the browser's tabs change.",
+                row: None,
+            },
+            get(stream),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/browsers/input",
+                summary: "One click, type, key, hotkey, scroll or navigate from the owner who holds the browser, at the pixels of the screen they were last shown, in the front tab or the named one, which comes to the front.",
+                row: None,
+            },
+            post(input),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/browsers/return",
+                summary: "The owner hands the browser back, from holding it or from the agent's ask unanswered; the agent's verbs drive the tab they left in front.",
+                row: None,
+            },
+            post(hand_back),
+        ),
+    ]
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RunRequest {
     run: String,
 }
 
-#[derive(Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/browsers/take`'s body (FIX 11611):
+/// [`RunRequest`].
+pub(crate) fn browser_run_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RunRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/take`'s answer (FIX 11611):
+/// [`Takeover`].
+pub(crate) fn browser_takeover_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Takeover>()
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct ReturnRequest {
+    run: String,
+    #[serde(default)]
+    postcondition: Vec<ExpectInput>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/return`'s body (FIX 11611):
+/// [`ReturnRequest`].
+pub(crate) fn browser_return_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReturnRequest>()
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ScreenRequest {
     run: String,
@@ -66,13 +142,18 @@ struct ScreenRequest {
     tab: Option<String>,
 }
 
+/// The OpenAPI schema of `POST /v1/owner/browsers/screen`'s body (FIX 11613): [`ScreenRequest`].
+pub(crate) fn browser_screen_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ScreenRequest>()
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StreamQuery {
     run: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct InputRequest {
     run: String,
@@ -81,6 +162,12 @@ struct InputRequest {
     #[serde(default)]
     tab: Option<String>,
     action: BrowserPersonInput,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/input`'s body (FIX 11611):
+/// [`InputRequest`].
+pub(crate) fn browser_input_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputRequest>()
 }
 
 #[derive(Serialize)]
@@ -100,15 +187,29 @@ struct BrowserList {
     browsers: Vec<BrowserView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct InputReply {
     inputs: u64,
 }
 
-#[derive(Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/browsers/input`'s answer (FIX 11611):
+/// [`InputReply`].
+pub(crate) fn browser_input_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputReply>()
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 struct ReturnReply {
     record: TakeoverRecord,
     receipt: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    demonstration: Option<DemonstrationOutput>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/browsers/return`'s answer (FIX 11611):
+/// [`ReturnReply`].
+pub(crate) fn browser_return_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReturnReply>()
 }
 
 /// `GET /v1/owner/browsers`: each run browser whose guest started, its
@@ -157,10 +258,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn take(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRequest>,
 ) -> OwnerReply<Takeover> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let state = blocking(move || -> OwnerResult<Takeover> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let state = on_browser(&server, &request.run, |session| {
@@ -180,10 +281,10 @@ async fn take(
 async fn screen(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ScreenRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ScreenRequest>,
 ) -> Result<Response, EnvelopedApiError> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let png = blocking(move || -> OwnerResult<Vec<u8>> {
         owner.revalidate_principal_ref(server.vault())?;
         on_browser(&server, &request.run, |session| {
@@ -208,10 +309,10 @@ async fn screen(
 async fn input(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<InputRequest>, JsonRejection>,
+    payload: OwnerJsonBody<InputRequest>,
 ) -> OwnerReply<InputReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<InputReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let action = request.action;
@@ -224,24 +325,33 @@ async fn input(
     Ok(Json(reply))
 }
 
-/// `POST /v1/owner/browsers/return` with `{"run"}`: the owner hands the
-/// browser back, from holding it or from the agent's ask unanswered. Its
-/// record lands as the run's `browser_takeover` receipt.
+/// `POST /v1/owner/browsers/return` with `{"run", "postcondition"?}`: the
+/// owner hands the browser back, from holding it or from the agent's ask
+/// unanswered. Its record lands as the run's `browser_takeover` receipt.
+/// A span the agent's ask opted in comes back as `demonstration`, drafted
+/// with the ask's reason and these checks (CUA E9b).
 async fn hand_back(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ReturnRequest>,
 ) -> OwnerReply<ReturnReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReturnReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let run = run_of(&request.run)?;
-        let record = on_browser(&server, &request.run, |session| session.hand_back(by))?;
+        let postcondition = request.postcondition;
+        let (record, demonstration) = on_browser(&server, &request.run, |session| {
+            session.hand_back(by, postcondition)
+        })?;
         server.browser_seats.answered(run);
         let body = serde_json::to_value(&record).map_err(|e| OwnerError::Host(e.into()))?;
         let receipt = server.vault().append_browser_takeover_receipt(run, &body)?;
-        Ok(ReturnReply { record, receipt })
+        Ok(ReturnReply {
+            record,
+            receipt,
+            demonstration,
+        })
     })
     .await?;
     Ok(Json(reply))

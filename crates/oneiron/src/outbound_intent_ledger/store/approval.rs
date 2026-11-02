@@ -12,22 +12,25 @@ use super::super::types::{IntentLedgerError, IntentLedgerRecord, IntentLedgerRes
 
 /// Refuses a row whose admitted approval does not bind the row itself: its
 /// own intent, no endpoint or capability binding, and the digest its frozen
-/// payload recomposes for its server and tool.
-pub(super) fn validate_admitted_approval(record: &IntentLedgerRecord) -> IntentLedgerResult<()> {
+/// `payload` (the row's readable request) recomposes for its server and tool.
+pub(super) fn validate_admitted_approval(
+    record: &IntentLedgerRecord,
+    payload: &[u8],
+) -> IntentLedgerResult<()> {
     let Some(approval) = record.admitted_approval else {
         return Ok(());
     };
     let digest = match (record.server.as_str(), record.tool.as_str()) {
         ("email", "send") => {
             crate::channel_identity_provider::native_mail::approval_digest_from_frozen_payload(
-                record.payload(),
+                payload,
             )
         }
         ("esign", tool @ ("send_for_signature" | "remind")) => {
-            crate::outbound::esign_approval_digest_from_frozen_payload(record.payload(), tool)
+            crate::outbound::esign_approval_digest_from_frozen_payload(payload, tool)
         }
         ("failure_signals", "send") => {
-            crate::outbound::failure_signals_approval_digest_from_frozen_payload(record.payload())
+            crate::outbound::failure_signals_approval_digest_from_frozen_payload(payload)
         }
         _ => None,
     };

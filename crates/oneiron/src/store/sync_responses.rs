@@ -32,13 +32,17 @@ mod media;
 
 use serde::{Deserialize, Serialize};
 
+use self::media::media_job_carriage;
 pub use self::media::media_job_erased_state;
 #[cfg(feature = "sync")]
 pub(crate) use self::media::media_job_put_fenced_in_txn;
-pub(crate) use self::media::{media_job_carriage, media_job_owners};
+pub(crate) use self::media::{media_job_owners, media_job_scan};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, SideTableDbs};
+use crate::store::{
+    ResponseCarriage, ResponseFamily, ResponseRead, ResponseScan, opaque_retired_at,
+};
 
 /// Who owns a host row's response, as the host stamps it in the write that
 /// keeps the row: the actor that asked, the subject the response is about,
@@ -99,11 +103,18 @@ pub struct IdempotencyEntry {
     /// answers "response erased" until it expires (KS-2B2).
     #[serde(default)]
     pub erased: bool,
+    /// The writes committed while this entry stood as its request's intent,
+    /// on the threads that served the request, each counted in the write's
+    /// own transaction (FIX 10379): an intent that counts any says they
+    /// landed though its reply was never kept. Zero for any other entry.
+    #[serde(default)]
+    pub committed_writes: u32,
     /// The erase of its stamped caller drops the entry rather than leaving
     /// its erased form: a self-hosted non-core keyed route's verified
     /// individual caller's, as the host marks it (FIX 7357). Any other
     /// owner's erase leaves the erased form, as for every entry. Kept last
-    /// and written only when set, so every other entry's row is as before.
+    /// and written only when set: the compact encoding is positional, so a
+    /// field it skips must have none after it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub erase_drops: bool,
 }
@@ -164,18 +175,61 @@ impl IdempotencyEntry {
 }
 
 /// What a checkpoint carries of the cache entry `value`: the whole entry,
-/// with its erased form as the stub a retired instance keeps. `None` for an
-/// erased entry, which holds no response, and for one that does not decode.
-pub(crate) fn http_carriage(value: &[u8]) -> Option<Vec<u8>> {
-    let entry = IdempotencyEntry::decode(value).ok()?;
+/// with its erased form as the stub a retired instance keeps. No response
+/// for an erased entry; an entry that does not decode, or whose erased form
+/// does not encode, is carried whole as an opaque response, whose retired
+/// form is the erased marker (FIX 9390).
+pub(crate) fn http_scan(value: &[u8]) -> ResponseScan {
+    let Ok(entry) = IdempotencyEntry::decode(value) else {
+        return ResponseScan::opaque_row();
+    };
     if entry.erased {
-        return None;
+        return ResponseScan::NotResponse;
     }
     // The stub keeps whose erase drops it, for a restore to drop it too
     // (FIX 7470).
     let mut stub = entry.erased_form();
     stub.erase_drops = entry.erase_drops;
-    stub.encode().ok()
+    match stub.encode() {
+        Ok(stub) => ResponseScan::Decoded(ResponseCarriage::whole(stub)),
+        Err(_) => ResponseScan::opaque_row(),
+    }
+}
+
+/// The cache row `key` holds as `value`, read before the host decodes it
+/// (FIX 9390): its bytes, or `ResponseErased` for the erased marker of a
+/// retired entry that never decoded, which the host answers as its erased
+/// entry, never a miss and never a second run.
+///
+/// # Errors
+///
+/// `ResponseErased` for the erased marker.
+#[doc(hidden)]
+pub fn http_response_read<'a>(key: &[u8], value: &'a [u8]) -> Result<&'a [u8]> {
+    ResponseRead::of(ResponseFamily::Http, key, value).present()
+}
+
+/// When the erased marker the cache row `value` holds was stamped retired,
+/// in wall seconds since the Unix epoch (FIX 10710): the host expires that
+/// entry from then as it expires any other from its creation. `None` for
+/// any other row, and for a marker that kept no time, which never expires.
+/// Only the time is read, never the response.
+#[doc(hidden)]
+pub fn http_opaque_retired_at(value: &[u8]) -> Option<u64> {
+    opaque_retired_at(value)
+}
+
+/// The media job row `key` holds as `value`, read before the host decodes
+/// it (FIX 9390): its bytes, or `ResponseErased` for the erased marker of a
+/// retired job that never decoded, which the host answers as an erased job,
+/// never taken up, resumed or resubmitted.
+///
+/// # Errors
+///
+/// `ResponseErased` for the erased marker.
+#[doc(hidden)]
+pub fn media_response_read<'a>(key: &[u8], value: &'a [u8]) -> Result<&'a [u8]> {
+    ResponseRead::of(ResponseFamily::MediaJob, key, value).present()
 }
 
 /// The caller whose own erase drops the cache entry `stub` holds rather
@@ -296,6 +350,7 @@ pub(crate) fn erase_sync_response_owner_in_txn(
     for key in gone {
         rows.delete(wtxn, &key)?;
     }
+    crate::store::erase_invocation_claim_owner_in_txn(dbs, wtxn, owner)?;
     Ok(())
 }
 

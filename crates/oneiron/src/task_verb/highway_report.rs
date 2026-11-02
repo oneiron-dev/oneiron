@@ -142,6 +142,10 @@ pub(super) struct ReportTxn<'a, 't> {
     /// The id this report keeps its lifecycle receipt under when its write
     /// applies; `None` in a session that keeps no record.
     receipt_id: Option<String>,
+    /// What the report's decisions returned beside their answers (FIX
+    /// 10179, 10183): each ladder receipt and each settled ask's binding,
+    /// as lifecycle fields its commit keeps.
+    decisions: Vec<(String, String)>,
 }
 
 impl ReportTxn<'_, '_> {
@@ -153,6 +157,7 @@ impl ReportTxn<'_, '_> {
             judged: None,
             journal: None,
             receipt_id: None,
+            decisions: Vec::new(),
         }
     }
 }
@@ -170,7 +175,13 @@ impl<'a, 't> ReportTxn<'a, 't> {
             judged,
             journal: None,
             receipt_id: None,
+            decisions: Vec::new(),
         }
+    }
+
+    /// Keeps `value` under `field` in the lifecycle this report commits.
+    fn note_decision(&mut self, field: &str, value: String) {
+        self.decisions.push((field.to_owned(), value));
     }
 
     /// This report, journaled under `journal` when it names a try.
@@ -221,7 +232,8 @@ fn handle_entity(handle: &TaskHandle) -> EntityId {
 }
 
 /// What "Done means met?" is asked over: the TASK, its result, the brief's
-/// settled inputs and each criterion's evidence, and the criteria as text.
+/// settled inputs and each criterion's evidence, and the criteria as the
+/// call's `state.criteria`, the triple every rung maps (OF-506).
 pub(super) fn done_question_inputs(
     task_ref: EntityId,
     result_ref: EntityId,
@@ -230,18 +242,11 @@ pub(super) fn done_question_inputs(
     let success = &brief.brief.success;
     let mut evidence = vec![task_ref, result_ref];
     evidence.extend(brief.brief.settled.iter().copied());
-    evidence.extend(
-        success
-            .yes_if_all
-            .iter()
-            .chain(&success.no_if_any)
-            .filter_map(|criterion| criterion.evidence_ref),
-    );
+    evidence.extend(success.criteria_evidence());
     let state = serde_json::json!({
         "objective": brief.brief.objective,
         "question": success.question,
-        "yes_if_all": success.yes_if_all.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
-        "no_if_any": success.no_if_any.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(),
+        "criteria": success.question_criteria(),
         "result_ref": result_ref.to_hex(),
     });
     (evidence, state)

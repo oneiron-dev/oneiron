@@ -13,8 +13,12 @@ mod autocheck;
 mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
+pub use defaults::{
+    PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
+    PurposeDefaultSubmitter, purpose_default_grant_target,
+};
 mod inference_admission;
-pub(crate) use inference_admission::admitted_as;
+pub use inference_admission::admitted_as;
 mod role_defaults;
 mod solo;
 pub use inference_admission::{
@@ -62,9 +66,10 @@ pub use step::{
 };
 pub(crate) use step::{
     StepEffectBinding, consume_step_wait_in_txn, deindex_dreamer_step_claim, forget_step_memo,
-    index_dreamer_step_claim_for_put, open_step_wait_in_txn, register_detached_step_in_txn,
-    signal_step_wait_in_txn, verified_step_consolidation_eligible_in_txn,
-    verified_step_effector_eligible_in_txn, wake_trap_in_txn,
+    forget_step_memo_in_txn, index_dreamer_step_claim_for_put, open_step_wait_in_txn,
+    register_detached_step_in_txn, signal_step_wait_in_txn,
+    verified_step_consolidation_eligible_in_txn, verified_step_effector_eligible_in_txn,
+    wake_trap_in_txn,
 };
 // KS-2B1: row-held step responses under body custody.
 pub(crate) use step::{
@@ -104,10 +109,13 @@ pub use oneiron_model::llm::{
 // FIX 8314 (INFERENCE R1): model workers and the receipt of each physical call.
 pub use oneiron_model::llm::{
     INFERENCE_CALLS_KEY, InferenceCallReceipt, InferenceEndReason, QueueWait, WorkerBuildEvidence,
-    WorkerDescriptor, WorkerFailure, WorkerKind, WorkerMode, WorkerReadiness, WorkerStatus,
+    WorkerDescriptor, WorkerFailure, WorkerFailureDetail, WorkerKind, WorkerMode, WorkerPhase,
+    WorkerReadiness, WorkerStatus,
 };
 // FIX 9065: what each physical request measured, published on its lease while it runs.
-pub use oneiron_model::llm::{InferenceCallObservation, InferenceObservationId};
+pub use oneiron_model::llm::{
+    InferenceCallObservation, InferenceObservationId, InferencePublisher,
+};
 // FIX 7895: the answering llama.cpp process's launch alias, read in one place.
 pub use oneiron_model::llm::{LlamaAlias, parse_llama_alias, returned_model_wire_id};
 // DESIGN-V2 R2: the typed segment manifest and the worker session contracts.
@@ -122,6 +130,18 @@ pub use oneiron_model::llm::{
     SessionRestored, SessionSuffixCommit, SessionSuffixStaged, SessionTarget, SourceRevision,
     TokenDigest, TrustFence, VaultRef, message_digest, role_name,
 };
+// DESIGN-V2 R3: the snapshot ops of the worker session wire.
+pub use oneiron_model::llm::{
+    RegionDescriptor, SNAPSHOT_ENCODING, SNAPSHOT_HASH, SNAPSHOT_SCHEMA, SNAPSHOT_SCHEMA_MINOR,
+    SessionExport, SessionExported, SessionImport, SessionImported, SnapshotCapability,
+    SnapshotDigest, SnapshotMiss,
+};
+// DESIGN-V2 R4: the scheduling wire of a model worker (codec v1.3).
+pub use oneiron_model::llm::{
+    AdmissionGrant, CallSchedule, ResourceClass, SCHEDULING_CAPABILITY, SCHEDULING_POLICY,
+    SCHEDULING_SCHEMA_MINOR, ScheduleAck, ScheduleAction, ScheduleBoundary, ScheduleUpdate,
+    SchedulingCapability, SchedulingReceipt, WorkClass, WorkPriority,
+};
 // FIX 3416: the typed records a reply cited or created, which its host alone fills.
 pub use oneiron_model::llm::{ReplyAssertionRecord, ReplyAssertions};
 
@@ -134,7 +154,7 @@ pub use self::role_defaults::RoleModelDefaults;
 pub use self::solo::{is_solo, mark_solo};
 pub(crate) use self::step::{
     CallerSettledStep, ExecutedModelWitness, committed_steps_in_txn, settled_step_for_caller,
-    terminal_step_identity,
+    settled_step_usage_in_txn, terminal_step_identity,
 };
 pub(crate) use oneiron_model::llm::canonical_json_bytes;
 pub use oneiron_model::llm::limit;
@@ -172,10 +192,13 @@ use std::collections::BTreeMap;
 
 /// Typed question and outcome contracts.
 pub mod decision;
+pub(crate) use budget::erase_resident_share_actor_in_txn;
 pub use budget::rsi_doors;
 pub use budget::{
-    RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare, RsiExplorationRead,
-    RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
+    ResidentShareRead, RsiBudgetConfig, RsiBudgetError, RsiBudgetRead, RsiBudgetShare,
+    RsiExplorationRead, RsiOverdraftReceipt, RsiSettlement, RsiSpendPurpose, RsiTopUp,
+    VaultResidentLedger,
 };
+pub use step::heal_sent_markers;
 pub(crate) use step::{OpenTrapWait, open_trap_waits};
 pub(crate) use step::{resume_peer_result_steps, resume_signalled_steps};

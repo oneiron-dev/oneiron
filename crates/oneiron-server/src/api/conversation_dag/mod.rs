@@ -4,29 +4,26 @@
 //! refuses a credential narrowed to some records: its records cannot bound
 //! the ids that come back.
 
+mod append;
 mod summary;
 mod types;
 use super::{
-    CoreEntityWriteResponse, core_body_for_write, core_engine_error, core_entity_timestamps,
-    core_text_fields, core_write_text, encode_core_body, json_payload, parse_entity_id_param,
-    project_core_entity, query_params,
+    core_engine_error, core_entity_timestamps, json_payload, parse_entity_id_param, query_params,
 };
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
-use crate::projection::View;
 use crate::server::SyncServer;
+use append::{append_input, append_row, appended_response, project_appended};
 use axum::Json;
 use axum::extract::rejection::{JsonRejection, QueryRejection};
 use axum::extract::{Path, Query, State};
 use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
-use oneiron::conversation_dag::{AddressMode, AppendRecord, DagPageRequest, QuoteSpan};
-use oneiron::core_write::{
-    CoreDagAddressMode, CoreDagQuoteInput, DagRecordAppendInput, DagRecordAppendReceipt,
-};
+use oneiron::conversation_dag::DagPageRequest;
+use oneiron::core_write::DagRecordAppendReceipt;
 use oneiron::memory::MemoryError;
 use oneiron::reaction::{MessageReactionExternal, MessageReactionReceipt, MessageReactionRequest};
-use oneiron::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use oneiron::registry::ENTITY_TYPE_MESSAGE;
 use oneiron::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron::{EdgeKind, EntityId};
@@ -37,36 +34,6 @@ pub(crate) use types::*;
 
 fn ids(records: Vec<EntityId>) -> Vec<String> {
     records.into_iter().map(|id| id.to_hex()).collect()
-}
-
-fn appended_response(
-    server: &SyncServer,
-    appended: oneiron::conversation_dag::AppendedRecord,
-) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
-    server.ai.turn_landed(
-        server.vault(),
-        oneiron::dreamer_wake::WakeTurnSubject::Vault,
-    );
-    project_appended(server, appended.into())
-}
-
-/// An append's 200 body: the stored TURN, HEAD after it and its parent.
-/// It lands nothing; the write that made the record did.
-fn project_appended(
-    server: &SyncServer,
-    receipt: DagRecordAppendReceipt,
-) -> Result<Json<DagAppendResponse>, EnvelopedApiError> {
-    let id = parse_entity_id_param(&receipt.id, "id")?;
-    let Json(item) = project_core_entity(&server.vault, &id, View::Full)?;
-    Ok(Json(DagAppendResponse {
-        entity: CoreEntityWriteResponse {
-            id: receipt.id,
-            entity_type: ENTITY_TYPE_TURN,
-            item,
-        },
-        head: receipt.head,
-        parent: receipt.parent,
-    }))
 }
 
 /// A DAG or core write's refusal: the adapter's own, or the engine door's,
@@ -110,67 +77,11 @@ impl IntoResponse for DagWriteError {
     }
 }
 
-fn append_input(
-    server: &SyncServer,
-    conversation: EntityId,
-    req: DagAppendRequest,
-    auth: &CoreAuth,
-) -> Result<AppendRecord, EnvelopedApiError> {
-    let times = core_entity_timestamps(req.occurred_start, req.occurred_end, req.learned_at)?;
-    let body = core_body_for_write(
-        ENTITY_TYPE_TURN,
-        &req.body,
-        super::announcement_authority(server, auth),
-    );
-    Ok(AppendRecord {
-        conversation,
-        reply_to: parse_optional(req.reply_to.as_deref(), "reply_to")?,
-        quote: req
-            .quote
-            .as_ref()
-            .map(|quote| {
-                Ok::<_, ApiError>(QuoteSpan {
-                    message: parse_entity_id_param(&quote.message, "quote.message")?,
-                    start: quote.start,
-                    end: quote.end,
-                })
-            })
-            .transpose()?,
-        address: match req.addr.unwrap_or(DagAddressMode::Broadcast) {
-            DagAddressMode::Broadcast => AddressMode::Broadcast,
-            DagAddressMode::Direct => AddressMode::Direct,
-        },
-        recipients: req
-            .to
-            .unwrap_or_default()
-            .iter()
-            .map(|id| parse_entity_id_param(id, "to"))
-            .collect::<Result<Vec<_>, _>>()?,
-        parent: parse_optional(req.parent.as_deref(), "parent")?,
-        advance: req.advance,
-        kind: ENTITY_TYPE_TURN,
-        occurred: times.occurred,
-        learned_at: times.learned_at,
-        body: encode_core_body(&body)?,
-        text: core_text_fields(req.text.as_deref(), &body),
-        session: parse_optional(req.session.as_deref(), "session")?,
-        actor: req.actor.parse(server, auth)?,
-        thread_audience: req
-            .thread_audience
-            .map(|ids| {
-                ids.iter()
-                    .map(|id| parse_entity_id_param(id, "thread_audience"))
-                    .collect::<Result<std::collections::BTreeSet<_>, _>>()
-            })
-            .transpose()?,
-    })
-}
-
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records",
     params(("conversation_id" = String, Path)), request_body = DagAppendRequest,
     responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
         (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
-        (status = 409, description = "The conversation or its HEAD is not in a state this append takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The conversation or its HEAD is not in a state this append takes: the engine's INVALID_STATE, as the facade's MemoryError body. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = super::facade::MemoryErrorEnvelopeSchema),
         (status = 422, description = "A ref the write names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn append_core_record(
     auth: CoreAuth,
@@ -192,50 +103,26 @@ pub(crate) async fn append_core_record(
     // credential binds one that writes as this actor, else through the
     // row's own door as the actor the body bound. Either lands the turn
     // once.
-    let receipt =
-        match super::facade::action_routes::rest_action_bound(&server, &auth, &headers, &input)? {
-            Some(bound) if bound.writes_as() == actor => {
-                let row = AgentVerb::VaultConversationsRecordsAppend;
-                let key =
-                    super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
-                let output = super::facade::action_routes::execute_facade_row(
-                    &server, headers, extensions, bound, row, &input, key,
-                )
-                .await?;
-                serde_json::from_value::<DagRecordAppendReceipt>(output)
-                    .map_err(|_| ApiError::internal_server_error("append result encoding failed"))?
-            }
-            _ => super::facade::host_doors::write_dag_record(&server, &auth, actor, &input)?,
-        };
+    let receipt = match super::facade::action_routes::rest_action_bound(
+        &server,
+        &auth,
+        &headers,
+        &extensions,
+        &input,
+    )? {
+        Some(bound) if bound.writes_as() == actor => {
+            let row = AgentVerb::VaultConversationsRecordsAppend;
+            let key = super::facade::action_routes::rest_action_key(&server, &auth, &headers, row)?;
+            let output = super::facade::action_routes::execute_facade_row(
+                &server, headers, extensions, bound, row, &input, key,
+            )
+            .await?;
+            serde_json::from_value::<DagRecordAppendReceipt>(output)
+                .map_err(|_| ApiError::internal_server_error("append result encoding failed"))?
+        }
+        _ => super::facade::host_doors::write_dag_record(&server, &auth, actor, &input)?,
+    };
     Ok(project_appended(&server, receipt)?)
-}
-
-/// The append row's input: the request less its actor, which the route
-/// asserts and the writer bylines.
-fn append_row(conversation: EntityId, req: DagAppendRequest) -> DagRecordAppendInput {
-    DagRecordAppendInput {
-        conversation: conversation.to_hex(),
-        parent: req.parent,
-        reply_to: req.reply_to,
-        addr: req.addr.map(|addr| match addr {
-            DagAddressMode::Broadcast => CoreDagAddressMode::Broadcast,
-            DagAddressMode::Direct => CoreDagAddressMode::Direct,
-        }),
-        to: req.to,
-        advance: req.advance,
-        body: req.body,
-        text: core_write_text(req.text),
-        occurred_start: req.occurred_start,
-        occurred_end: req.occurred_end,
-        learned_at: req.learned_at,
-        session: req.session,
-        quote: req.quote.map(|quote| CoreDagQuoteInput {
-            message: quote.message,
-            start: quote.start,
-            end: quote.end,
-        }),
-        thread_audience: req.thread_audience,
-    }
 }
 
 /// `ids` less those `auth`'s own read withholds: the DAG ledger is read raw,
@@ -362,7 +249,8 @@ pub(crate) async fn get_core_dag(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/head",
     params(("conversation_id" = String, Path)), request_body = DagHeadRequest,
-    responses((status = 200, body = DagHeadResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagHeadResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope)))]
 pub(crate) async fn move_core_head(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -405,7 +293,8 @@ pub(crate) async fn resolve_core_scope(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/migrate-dag",
     params(("conversation_id" = String, Path)),
-    responses((status = 200, body = DagMigrationResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagMigrationResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope)))]
 pub(crate) async fn migrate_core_dag(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -422,7 +311,8 @@ pub(crate) async fn migrate_core_dag(
 
 #[utoipa::path(post, path = "/v1/core/turns/{turn_id}/sub-sessions",
     params(("turn_id" = String, Path)), request_body = DagSpawnRequest,
-    responses((status = 200, body = DagSpawnResponse), (status = 400, body = ApiErrorEnvelope)))]
+    responses((status = 200, body = DagSpawnResponse), (status = 400, body = ApiErrorEnvelope),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope)))]
 pub(crate) async fn spawn_core_sub_session(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -469,8 +359,11 @@ pub(crate) async fn list_core_sub_sessions(
 
 /// Queues a declared summary for the Dreamer, which alone writes the body
 /// (ARCH-0006a). Refused up front when no Dreamer here writes summaries.
+/// The declaration keeps the caller's own lane, frozen (FIX 2194), so its
+/// landing checks a reply inside it.
 fn declare_summary(
     server: &SyncServer,
+    auth: &CoreAuth,
     request: &ScopeSummaryRequest,
     purpose: Option<&str>,
 ) -> Result<(StatusCode, Json<DagSummaryQueuedResponse>), EnvelopedApiError> {
@@ -478,18 +371,18 @@ fn declare_summary(
         .ai
         .summary_writer()
         .map_err(ApiError::summary_writer_unavailable)?;
-    let queued = match purpose {
-        Some(purpose) => server.vault.request_scope_summary_for(request, purpose),
-        None => server.vault.request_scope_summary(request),
-    }
-    .map_err(|e| core_engine_error("summary declaration failed", e))?;
+    let lane = crate::api::scoped_read_for_core_auth(&server.vault, auth)?;
+    let queued = server
+        .vault
+        .request_scope_summary_in_lane(request, purpose, &lane)
+        .map_err(|e| core_engine_error("summary declaration failed", e))?;
     server.ai.attempt_queued();
     Ok((StatusCode::ACCEPTED, Json(summary::queued_response(queued))))
 }
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/summaries",
     params(("conversation_id" = String, Path)), request_body = DagSummaryRequest,
-    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, description = "Refused in the scope's current state; or a keyed retry whose first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn mint_core_scope_summary(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -516,7 +409,7 @@ pub(crate) async fn mint_core_scope_summary(
         },
         requester: req.actor.parse(&server, &auth)?,
     };
-    declare_summary(&server, &request, req.purpose.as_deref())
+    declare_summary(&server, &auth, &request, req.purpose.as_deref())
 }
 
 #[utoipa::path(get, path = "/v1/core/summaries/{summary_id}/covers",
@@ -563,7 +456,7 @@ pub(crate) async fn drill_core_header(
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagAppendRequest,
     responses((status = 200, body = DagAppendResponse), (status = 400, body = ApiErrorEnvelope),
         (status = 403, description = "The writer's standing is refused: the engine's FORBIDDEN, as the facade's MemoryError body. A credential without core:write is refused in the core envelope before the engine runs.", body = super::facade::MemoryErrorEnvelopeSchema),
-        (status = 409, description = "The thread or its conversation is not in a state this reply takes: the engine's INVALID_STATE, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema),
+        (status = 409, description = "The thread or its conversation is not in a state this reply takes: the engine's INVALID_STATE, as the facade's MemoryError body. A keyed retry whose first request never settled an outcome is also a 409 (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = super::facade::MemoryErrorEnvelopeSchema),
         (status = 422, description = "A ref the reply names does not resolve for its writer: INVENTED_REFERENCE, naming the field pointer, as the facade's MemoryError body.", body = super::facade::MemoryErrorEnvelopeSchema)))]
 pub(crate) async fn reply_in_thread(
     auth: CoreAuth,
@@ -638,7 +531,7 @@ pub(crate) async fn get_thread(
 
 #[utoipa::path(post, path = "/v1/core/conversations/{conversation_id}/records/{record}/thread/summary",
     params(("conversation_id" = String, Path), ("record" = String, Path)), request_body = DagThreadSummaryRequest,
-    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
+    responses((status = 202, body = DagSummaryQueuedResponse), (status = 400, body = ApiErrorEnvelope), (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope), (status = 503, body = ApiErrorEnvelope)))]
 pub(crate) async fn summarize_thread(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -666,7 +559,7 @@ pub(crate) async fn summarize_thread(
         target: ScopeSummaryTarget::Thread { trunk: record },
         requester: req.actor.parse(&server, &auth)?,
     };
-    declare_summary(&server, &request, req.purpose.as_deref())
+    declare_summary(&server, &auth, &request, req.purpose.as_deref())
 }
 
 #[utoipa::path(get, path = "/v1/core/conversations/{conversation_id}/canonical",
@@ -772,7 +665,7 @@ fn reaction_records(
 #[utoipa::path(post, path = "/v1/core/messages/{message}/reactions",
     params(("message" = String, Path)), request_body = ReactionRequest,
     responses((status = 200, body = ReactionResponse), (status = 400, body = ApiErrorEnvelope),
-        (status = 403, body = ApiErrorEnvelope)))]
+        (status = 403, body = ApiErrorEnvelope), (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope)))]
 pub(crate) async fn react_core_message(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
@@ -846,7 +739,12 @@ pub(crate) async fn react_core_message(
         _ => super::facade::action_routes::action_bound(
             &server,
             &auth,
-            super::owner_routes::machine_routes::act_surface(&server, &auth, &headers),
+            super::owner_routes::machine_routes::act_surface_admitted(
+                &server,
+                &auth,
+                &headers,
+                &extensions,
+            ),
         )?,
     };
     let receipt = match bound {

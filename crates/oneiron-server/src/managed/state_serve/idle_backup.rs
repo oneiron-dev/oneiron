@@ -5,8 +5,9 @@
 //! `prepare_reap` runs, which reads the writes in flight by kind (FIX
 //! 6902). An owner write among them leaves the vault busy. Otherwise the
 //! background passes, which take no new unit once frozen, are waited for,
-//! by the attempt's deadline; then the drain and the export, and, when the
-//! vault was quiet, one backup job on a blocking thread of its own
+//! by the attempt's deadline; then the drain and the export (the export
+//! alone once that wait ran out, FIX 6955), and, when the vault was quiet,
+//! one backup job on a blocking thread of its own
 //! ([`OwnerHost::back_up_before_idle`]). Every later call joins it, and none
 //! starts a second drain or a second backup. A call answers once the attempt
 //! settles, or once its deadline passes, [`IDLE_REAP_PREPARATION_SECS`] after
@@ -374,7 +375,19 @@ impl ManagedState {
         // flight are waited for, so the export comes after their last write.
         let owner_idle = at_freeze.owner_write == 0;
         let background_drained = owner_idle && self.drain_background(id, host.clone()).await;
-        let prepared = match self.drain_export(at_freeze).await {
+        // A wait the deadline cut short leaves the vault busy: no lease drain
+        // starts past it, and the export answers at once (FIX 6955).
+        let waited_out = owner_idle && !background_drained;
+        // The deadline may have passed while the last pass ended: no lease
+        // drain starts past it either (FIX 11066).
+        let waited_out = waited_out
+            || (background_drained && idle.deadline(id).is_some_and(|at| Instant::now() >= at));
+        // A drain still under way at the deadline is cut there, and the
+        // export answers at once, as the waited-out path does (FIX 11742).
+        let outcome = self
+            .drain_export(at_freeze, !waited_out, idle.deadline(id))
+            .await;
+        let prepared = match outcome {
             Ok(prepared) => prepared,
             Err(error) => {
                 idle.drop_failed(id);
@@ -417,10 +430,11 @@ impl ManagedState {
         Ok(())
     }
 
-    /// Waits for the background passes in flight to end: `true` once none
-    /// is, `false` once the attempt `id`'s deadline passed, settling it as
-    /// it stands then, or once the attempt was dropped. It wakes as each
-    /// pass ends and as the attempt changes, cancels nothing and releases
+    /// Waits for the background passes in flight, and device sync's run and
+    /// refresh, which pause at the freeze (FIX 5127), to end: `true` once
+    /// none is, `false` once the attempt `id`'s deadline passed, settling it
+    /// as it stands then, or once the attempt was dropped. It wakes as each
+    /// ends and as the attempt changes, cancels nothing and releases
     /// nothing. `host`'s backup jobs decide the reason at the deadline.
     async fn drain_background(&self, id: &str, host: Option<Arc<OwnerHost>>) -> bool {
         let idle = &self.idle_backup;
@@ -432,7 +446,7 @@ impl ManagedState {
             }
         });
         loop {
-            if self.admission.in_flight().background() == 0 {
+            if self.admission.in_flight().waited_for() == 0 {
                 idle.with_attempt(id, |attempt| {
                     if matches!(attempt.phase, Phase::Draining(_)) {
                         attempt.phase = Phase::Preparing;

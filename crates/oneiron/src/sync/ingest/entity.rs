@@ -21,15 +21,25 @@ use crate::sync::quarantine::{
 use crate::sync::quota;
 use crate::vault::Vault;
 
+mod asset_ref;
+mod withdrawn;
+
 /// What one ingest reads besides the value: the vault, the window the value replays into, the
 /// lease vault its receipts verify against, and that window's tombstones, indexed once per pass.
 pub(in crate::sync) struct IngestCtx<'a> {
     pub(super) vault: &'a Vault,
-    window_key: &'a str,
+    pub(super) window_key: &'a str,
     lease_vault_id: u64,
     tombstones: &'a TombstoneIndex,
-    residence: Option<Residence<'a>>,
+    pub(super) residence: Option<Residence<'a>>,
+    /// The window's AUTHORITY_LOG rows, gathered from its carrier before the walk, which each
+    /// arriving one is judged beside (FIX 11764); `None` without a carrier.
+    pub(super) authority_beside: Option<crate::sync::selector::authority_beside::AuthorityBeside>,
     pub(super) staged: super::task_pairs::Staging,
+    /// A by-reference body a transfer received, for its carrier (FIX 5489).
+    asset_body: Option<(EntityId, &'a crate::store::StagedAssetBody)>,
+    /// The window whose body references a residence-free caller reads.
+    body_refs: Option<&'a loro::LoroDoc>,
 }
 
 /// How an entry holds a body that does not belong to its window's residence.
@@ -58,13 +68,24 @@ impl<'a> IngestCtx<'a> {
             lease_vault_id,
             tombstones,
             residence: None,
+            authority_beside: None,
             staged: Default::default(),
+            asset_body: None,
+            body_refs: None,
         }
     }
 
-    /// Checks every body against the window's residence before admission.
+    /// Checks every body against the window's residence before admission, and gathers the
+    /// window's AUTHORITY_LOG rows from its carrier, before the walk reads it, for each
+    /// arriving one to be judged beside (FIX 11764).
     pub(in crate::sync) fn with_residence(mut self, residence: Residence<'a>) -> Self {
         self.residence = Some(residence);
+        self.authority_beside = self.carrier_doc().map(|doc| {
+            crate::sync::selector::authority_beside::AuthorityBeside::gather(
+                &doc.get_map("entities"),
+                |_| true,
+            )
+        });
         self
     }
 
@@ -88,6 +109,9 @@ pub(in crate::sync) enum EntityStep {
     Skip,
     /// The replicated row was written.
     Materialized(EntityId),
+    /// A carrier whose body moves by reference and is not here yet (FIX 5489): nothing is
+    /// written, and nothing its landing discharges is discharged, until the body comes.
+    Pending,
     /// A delete-protected engine row passed its door (and was written when `wrote`). Its `dt:`
     /// poison is neutralized and every tombstone naming it is refused into `x:` in the same
     /// transaction.
@@ -228,6 +252,7 @@ pub(in crate::sync) fn ingest_entity_in_savepoint(
         // Rule A: the row's carried birth lands in the savepoint that
         // admitted the row, or not at all.
         if let Some(doc) = ctx.carrier_doc()
+            && !matches!(step, EntityStep::Pending)
             && let Some(id) = EntityId::from_hex(key).ok().filter(|id| id.to_hex() == key)
             && crate::vault::live_entity_row_in_txn(&ctx.vault.store, &savepoint, &id)?.is_live()
         {
@@ -401,13 +426,18 @@ fn admit(
         || crate::workspace_roster::is_project_revision_type(&vault.store, header.entity_type);
     // H125: artifact version bytes fenced here when their last artifact went come back once an
     // artifact live here holds them again. A tombstone naming them still wins.
+    // A carrier a reference binds is the body it names, not its manifest bytes (FIX 5489).
+    let by_ref = asset_ref::bound(ctx, &id, blob);
     if header.entity_type == ENTITY_TYPE_ASSET && !ctx.tombstones.contains(&id) {
-        crate::blob_artifact::readmit_held_asset_in_txn(
-            &vault.store,
-            wtxn,
-            &id,
-            &blob[ENTITY_METADATA_HEADER_LEN..],
-        )?;
+        match &by_ref {
+            Some(body) => asset_ref::readmit_staged(ctx, wtxn, &id, body)?,
+            None => crate::blob_artifact::readmit_held_asset_in_txn(
+                &vault.store,
+                wtxn,
+                &id,
+                &blob[ENTITY_METADATA_HEADER_LEN..],
+            )?,
+        }
     }
     if !delete_protected && deleted_here(ctx, wtxn, &id) {
         crate::task_authority::note_suppressed_fact_in_txn(
@@ -419,8 +449,8 @@ fn admit(
         )?;
         return Ok(EntityStep::Skip);
     }
-    if withdrawn_generation_here(ctx, wtxn, &id, header, &blob[ENTITY_METADATA_HEADER_LEN..]) {
-        return Ok(EntityStep::Skip);
+    if let Some(step) = withdrawn::withdrawn_generation_step(ctx, wtxn, &id, header, blob)? {
+        return Ok(step);
     }
     // NOTE replay may not discharge or outlive an unproven purge retry (the old native NOTE
     // lane's pending-delete fence).
@@ -453,6 +483,7 @@ fn admit(
         if *local == *blob
             || pack_sync::pack_echo_equal(&local, blob)
             || crate::sync::asset_body::file_echo_equal(&vault.store, wtxn, &id, &local, blob)?
+            || asset_ref::echo(ctx, wtxn, &id, by_ref.as_ref(), &local, blob)?
             // A pad row rests as a reference to custody, its pad beside it (KS-5).
             || crate::world_keys::pad_echo_equal(&vault.store, &local, blob)
         {
@@ -515,7 +546,9 @@ fn admit(
     }
     let quota_debit = match header.entity_type {
         ENTITY_TYPE_REDACTION_AUDIT => match admit_receipt(ctx, wtxn, &id, blob, data)? {
-            ReceiptAdmission::LocalEcho => return Ok(EntityStep::Skip),
+            ReceiptAdmission::LocalEcho | ReceiptAdmission::Retained => {
+                return Ok(EntityStep::Skip);
+            }
             ReceiptAdmission::New(debit) => debit,
         },
         ENTITY_TYPE_AUTHORITY_LOG => {
@@ -527,12 +560,20 @@ fn admit(
                 refuse_protected_tombstones(ctx, wtxn, &id, header.entity_type)?;
                 return Ok(EntityStep::Protected { id, wrote: false });
             }
-            crate::batch::validate_replicated_authority_log_for_local_vault(
+            // History the window carries in two or more rows lands together: the row is
+            // judged beside the window's other authority rows, as its selector door judged it
+            // (FIX 11764).
+            let beside = || match &ctx.authority_beside {
+                Some(authority) => authority.rows(),
+                None => Ok(std::collections::BTreeMap::new()),
+            };
+            crate::batch::validate_replicated_authority_log_beside_for_local_vault(
                 &vault.store,
                 wtxn,
                 &id,
                 data,
                 vault.privacy_posture(),
+                &beside,
             )?;
             None
         }
@@ -545,7 +586,7 @@ fn admit(
                 wtxn,
                 &id,
                 header,
-                blob,
+                (blob, ctx.window_key),
                 data,
                 ctx.lease_vault_id,
             )?;
@@ -602,8 +643,12 @@ fn admit(
     // LMDB. The public gate would drop them; `put_replicated` admits both engine-authored bands
     // while still validating structure: unknown type bytes, ungrammatical predicates, malformed
     // CLAIM bodies and ONE-1159 provenance records fail typed, and come back as refusals.
-    // A TASK row its component stages lands in the component's batch (FIX 5998).
-    let applied = super::task_pairs::put_or_stage(&ctx.staged, vault, wtxn, id, header, &data);
+    // A TASK row its component stages lands in the component's batch (FIX 5998). A MESSAGE row
+    // an own machine's proven connection sent takes its own-device lane to the put (FIX 9600).
+    if let Some(body) = &by_ref {
+        return asset_ref::land(ctx, wtxn, id, header, body);
+    }
+    let applied = super::task_pairs::put_or_stage(ctx, wtxn, id, header, blob, &data);
     if let Err(err) = applied {
         if let Some(quota_debit) = quota_debit {
             quota::rollback_maintenance_ingest_debit_in_txn(vault, wtxn, quota_debit)?;
@@ -664,50 +709,6 @@ fn deleted_here(ctx: &IngestCtx<'_>, txn: &heed::RoTxn<'_>, id: &EntityId) -> bo
     }
 }
 
-/// A withdrawn generation stays withdrawn (OF-013): a body of that generation or older that is
-/// not its content-free keyframe never materializes, while the sweep's `hw:` row waits and after
-/// its fence replaces the row, and a keyframe never stands over a newer generation held here. A
-/// newer generation materializes as any body does. A failed read fails closed.
-fn withdrawn_generation_here(
-    ctx: &IngestCtx<'_>,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-    header: &EntityMetadataHeader,
-    data: &[u8],
-) -> bool {
-    let store = &ctx.vault.store;
-    let cutoff = match crate::deletion::withdrawn_generation_cutoff_in_txn(store, txn, id) {
-        Ok(Some(cutoff)) => cutoff,
-        Ok(None) => return false,
-        Err(err) => {
-            tracing::warn!(
-                entity = %id.to_hex(),
-                error = %err,
-                "sync ingest: withdrawn generation read failed, failing closed"
-            );
-            return true;
-        }
-    };
-    if header.learned_at > cutoff {
-        return false;
-    }
-    let words = !crate::compaction::is_withdrawn_keyframe(data);
-    let newer_here = store.port_entity_raw(txn, id).map_or(true, |local| {
-        local
-            .as_deref()
-            .and_then(EntityMetadataHeader::parse)
-            .is_some_and(|local| local.learned_at > header.learned_at)
-    });
-    if words || newer_here {
-        tracing::warn!(
-            entity = %id.to_hex(),
-            "sync ingest: body of a withdrawn generation, refusing materialization"
-        );
-        return true;
-    }
-    false
-}
-
 /// The REDACTION_AUDIT door (ONE-1134, ONE-1140). Receipts are immutable audit records
 /// (contracts.ts `redactionAuditReceipt`; ARCH-0023b audit/guardrail class: quarantine
 /// divergence, never silent LWW). In pinned order, before any byte is staged:
@@ -718,8 +719,8 @@ fn withdrawn_generation_here(
 ///    local receipt is an idempotent skip; any other local receipt at this id is a divergence,
 ///    and the local bytes are kept;
 /// 3. a NEW receipt verifies its Ed25519 transcript against the embedded att_pk (OD-6) and
-///    reads its `ls:` lease binding in this same transaction (OD-3/OD-7), then debits the
-///    maintenance-ingest quota.
+///    reads its `ls:` lease binding in this same transaction (OD-3/OD-7), then takes its turn
+///    in maintenance admission: debited now, or kept with its context as retained work.
 ///
 /// A refused receipt's bytes stay in the CRDT map, so a later forward rematerialization re-runs
 /// this door once the lease mirror catches up (OD-10 lazy re-admission).
@@ -747,14 +748,13 @@ fn admit_receipt(
         id,
         blob,
     )?;
-    let recorded_at = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
-    let debit = quota::try_accept_maintenance_ingest_peer_in_txn(
-        vault,
-        wtxn,
-        quota::peer_key_from_redaction_pubkey(&pubkey),
-        recorded_at,
-    )?;
-    Ok(ReceiptAdmission::New(debit))
+    let op = quota::MaintenanceOp::new(ctx.window_key, ctx.lease_vault_id, id, blob);
+    let signer = quota::peer_key_from_redaction_pubkey(&pubkey);
+    let admission = quota::admit_maintenance_in_txn(vault, wtxn, signer, op)?;
+    Ok(match admission {
+        quota::MaintenanceAdmission::Now(debit) => ReceiptAdmission::New(Some(debit)),
+        quota::MaintenanceAdmission::Retained => ReceiptAdmission::Retained,
+    })
 }
 
 /// The receipt door's verdict when it admits the bytes at all.
@@ -763,6 +763,8 @@ enum ReceiptAdmission {
     LocalEcho,
     /// A new receipt passed its origin predicate; the put rolls back the debit if it fails.
     New(Option<quota::MaintenanceIngestQuotaDebit>),
+    /// A new receipt waits its turn as retained work, Pending, never quarantined (FIX 8858).
+    Retained,
 }
 
 /// A delete-protected engine row never takes delete authority from a tombstone (ONE-1604-D1).

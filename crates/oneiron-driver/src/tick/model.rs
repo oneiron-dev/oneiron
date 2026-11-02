@@ -158,6 +158,17 @@ pub trait TickSource {
     /// that suspends the process can arm its own timer for it. Sources
     /// without a push lane keep the default: nothing is recorded.
     fn note_armed(&mut self, _lane: ArmedLane, _at_ms: Option<u64>) {}
+
+    /// Rests this source's deadline lane until `until`, or lifts its rest
+    /// when `None` (FIX 11403). The supervisor calls it when the source
+    /// redelivered a deadline whose owed retry is not yet due: no deadline
+    /// is re-read before then, and pushes keep flowing. True when this
+    /// source rests that lane alone; a source that cannot keeps the default,
+    /// and the supervisor then rests the whole source until `until`. A
+    /// decorator passes it to its inner source.
+    fn rest_deadlines(&mut self, _until: Option<tokio::time::Instant>) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -169,9 +180,9 @@ pub trait TickSource {
 ///
 /// Implementations must surface only deadlines the LOCAL node could
 /// actually admit: an un-admittable due deadline ticks immediately, drives
-/// a pass that refuses without mutating the row, and — deadlines having
-/// priority over pushes — re-surfaces on the very next read, spinning the
-/// supervisor and starving the push lanes.
+/// a pass that refuses without mutating the row, and — a due deadline
+/// taking every other turn from the pushes — re-surfaces on the very next
+/// read, spinning the supervisor and crowding the push lanes.
 pub trait DeadlineSource {
     /// The earliest upcoming commitment deadline this node could admit, or
     /// `None` when no such timed work exists.

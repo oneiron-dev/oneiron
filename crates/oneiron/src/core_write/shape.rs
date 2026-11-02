@@ -12,9 +12,6 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::registry::{ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN};
 use crate::{BatchBuilder, EntityId, TimeRange, Vault};
 
-/// The most entities one atomic batch puts.
-pub const CORE_MAX_BATCH_ENTITIES: usize = 256;
-
 pub const PLATFORM_ANNOUNCEMENT_MESSAGE_TYPE: &str = "platform_announcement";
 
 pub const PLATFORM_ANNOUNCEMENT_VOICE: &str = "platform";

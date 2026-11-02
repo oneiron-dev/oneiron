@@ -1,5 +1,6 @@
 //! Rebuildable claim projections maintained at the shared put chokepoint.
 use super::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource};
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, LegacyCompact, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Error, Result};
@@ -17,6 +18,11 @@ pub(crate) const PENDING_PRODUCER: SideTable<(EntityId, EntityId), (), Raw> =
 /// Catalog marker recording that at least one claim uses this predicate. Key: string.
 const PREDICATE_NAME: SideTable<String, (), Raw> =
     SideTable::new(&side_table::CLAIM_PREDICATE_NAME);
+
+/// Posting-list row of one claim under its world, base reality under the reserved base id.
+/// Key: id16 (world) + id16 (claim).
+const WORLD_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CLAIM_WORLD_INDEX);
 
 /// Reverse index: the projection-index keys written for one claim, so they can be removed
 /// together. Key: id16.
@@ -75,6 +81,14 @@ pub(crate) fn remove_claim_projection_index(
             }
             PENDING_PRODUCER.delete(store, txn, &(producer, tail_id))?;
             None
+        } else if let Some(tail) = key.strip_prefix(WORLD_INDEX.decl().prefix) {
+            let (world, tail_id) = <(EntityId, EntityId)>::decode_key(tail)
+                .ok_or(Error::CorruptedIndex("claim projection reverse key"))?;
+            if tail_id != id {
+                return Err(Error::CorruptedIndex("claim projection reverse key"));
+            }
+            WORLD_INDEX.delete(store, txn, &(world, tail_id))?;
+            None
         } else {
             return Err(Error::CorruptedIndex("claim projection reverse key"));
         };
@@ -124,6 +138,10 @@ pub(crate) fn remove_claim_projection_index_in_rows(
             <(EntityId, EntityId)>::decode_key(tail)
                 .filter(|(_, tail_id)| *tail_id == id)
                 .map(|_| None)
+        } else if let Some(tail) = key.strip_prefix(WORLD_INDEX.decl().prefix) {
+            <(EntityId, EntityId)>::decode_key(tail)
+                .filter(|(_, tail_id)| *tail_id == id)
+                .map(|_| None)
         } else {
             None
         }
@@ -161,6 +179,9 @@ pub(crate) fn maintain_claim_projection_index(
     let hash = predicate_hash(&body.predicate);
     let mut reverse_keys = vec![PREDICATE_INDEX.key_bytes(&(hash, id))];
     PREDICATE_INDEX.put(store, txn, &(hash, id), &body.predicate)?;
+    let world = body.world.unwrap_or_else(super::base_world_id);
+    reverse_keys.push(WORLD_INDEX.key_bytes(&(world, id)));
+    WORLD_INDEX.put(store, txn, &(world, id), &())?;
     crate::blob_artifact::record_version_claim(store, txn, body)?;
     if body.approval == ClaimApprovalStatus::Proposed
         && body.lifecycle == ClaimLifecycleStatus::Active
@@ -174,28 +195,55 @@ pub(crate) fn maintain_claim_projection_index(
     PROJECTION_REVERSE.put(store, txn, &id, &reverse_keys)?;
     Ok(())
 }
-fn predicate_ids_in_txn(
+/// Hands every claim id in `predicate`'s posting list to `visit`, in id order,
+/// under the caller's snapshot. The walk reads the whole list, however long
+/// (FIX 8659): past `count`'s threshold it raises the advisory
+/// [`EngineScan::PredicateClaimRows`] check of this predicate and reads on.
+fn walk_predicate_ids_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
-    hash: [u8; 32],
-    limit: usize,
-) -> Result<Vec<EntityId>> {
-    let mut ids = Vec::new();
+    predicate: &str,
+    mut count: ScanCount,
+    mut visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
+    let hash = predicate_hash(predicate);
     for row in PREDICATE_INDEX.iter_from(store, txn, &hash)? {
-        let (key, _) = row?;
-        ids.push(key.1);
-        if ids.len() > limit {
-            return Err(Error::IndexOverflow("claim projection query"));
-        }
+        count.row();
+        let ((_, id), _) = row?;
+        visit(id)?;
     }
-    Ok(ids)
+    count.defer(store);
+    Ok(())
 }
+/// Hands every claim id in `predicate`'s posting list to `visit`, in id order,
+/// under the caller's snapshot and the vault's [`EngineScan::PredicateClaimRows`]
+/// threshold row. No count ends the walk; `visit` may.
+pub(crate) fn for_each_claim_id_for_predicate_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    predicate: &str,
+    visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
+    let count = ScanCount::start(
+        store,
+        txn,
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+    )?;
+    walk_predicate_ids_in_txn(store, txn, predicate, count, visit)
+}
+/// Every claim id in `predicate`'s posting list, however many.
 pub(crate) fn claim_ids_for_predicate_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     predicate: &str,
 ) -> Result<Vec<EntityId>> {
-    predicate_ids_in_txn(store, txn, predicate_hash(predicate), 10_000)
+    let mut ids = Vec::new();
+    for_each_claim_id_for_predicate_in_txn(store, txn, predicate, |id| {
+        ids.push(id);
+        Ok(())
+    })?;
+    Ok(ids)
 }
 /// A predicate index row: `(predicate hash, claim id)` and its value.
 type PredicateRow = Result<(([u8; 32], EntityId), String)>;
@@ -231,33 +279,91 @@ pub(crate) fn claim_ids_for_predicate_page_in_txn(
     }
     Ok(ids)
 }
-/// The same posting list under a caller-resolved ceiling (a policy row), for
-/// doors whose limit is authored data rather than this index's default.
+/// The first world after `after` (from the start when `None`) that holds a
+/// claim in the world index, in id order: one key read, however many claims
+/// the skipped world holds.
+pub(crate) fn next_claim_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    after: Option<EntityId>,
+) -> Result<Option<EntityId>> {
+    let last = after.map(|world| (world, EntityId::from_bytes_unchecked([0xff; 16])));
+    let start = match &last {
+        Some(last) => std::ops::Bound::Excluded(last),
+        None => std::ops::Bound::Unbounded,
+    };
+    WORLD_INDEX
+        .iter_range(store, txn, start, std::ops::Bound::Unbounded)?
+        .next()
+        .transpose()
+        .map(|row| row.map(|((world, _), ())| world))
+}
+
+/// One page of `world`'s claims in the world index: at most `limit` claim ids
+/// after `after`, in id order.
+pub(crate) fn claim_ids_for_world_page_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+    after: Option<EntityId>,
+    limit: usize,
+) -> Result<Vec<EntityId>> {
+    let from = (
+        world,
+        after.unwrap_or_else(|| EntityId::from_bytes_unchecked([0; 16])),
+    );
+    let start = match after {
+        Some(_) => std::ops::Bound::Excluded(&from),
+        None => std::ops::Bound::Included(&from),
+    };
+    let mut ids = Vec::new();
+    for row in WORLD_INDEX.iter_range(store, txn, start, std::ops::Bound::Unbounded)? {
+        let ((row_world, id), ()) = row?;
+        if row_world != world || ids.len() == limit {
+            break;
+        }
+        ids.push(id);
+    }
+    Ok(ids)
+}
+/// Every claim id in the same posting list, with `limit` as the advisory
+/// check's threshold for a door whose number is authored data rather than
+/// the vault's row (FIX 8659). It is never a ceiling: the list is whole.
 pub(crate) fn claim_ids_for_predicate_bounded_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     predicate: &str,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
-    predicate_ids_in_txn(store, txn, predicate_hash(predicate), limit)
+    let threshold = u64::try_from(limit).unwrap_or(u64::MAX);
+    let count = ScanCount::start_at(
+        EngineScan::PredicateClaimRows,
+        predicate.as_bytes(),
+        threshold,
+    );
+    let mut ids = Vec::new();
+    walk_predicate_ids_in_txn(store, txn, predicate, count, |id| {
+        ids.push(id);
+        Ok(())
+    })?;
+    Ok(ids)
 }
-/// Classify distinct stored predicates under live policy before reading any
-/// claim bodies. The catalog and its posting lists co-commit with claim writes.
-pub(super) fn pinned_claim_ids_in_txn(
+/// Hands every claim id under a predicate live policy pins to `visit`,
+/// classifying distinct stored predicates before any claim body is read. The
+/// catalog and its posting lists co-commit with claim writes, and every
+/// posting is read (FIX 8659).
+pub(super) fn for_each_pinned_claim_id_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     policy: &crate::gate::PolicyManifestResolution,
-) -> Result<Vec<EntityId>> {
-    let mut candidates = Vec::new();
+    mut visit: impl FnMut(EntityId) -> Result<()>,
+) -> Result<()> {
     for predicate in PREDICATE_NAME.scan_keys(store, txn, &[])? {
         if policy.pins_predicate(&predicate) {
-            candidates.extend(claim_ids_for_predicate_in_txn(store, txn, &predicate)?);
-            if candidates.len() > 10_000 {
-                return Err(Error::IndexOverflow("pinned claim projection"));
-            }
+            for_each_claim_id_for_predicate_in_txn(store, txn, &predicate, &mut visit)?;
         }
     }
-    Ok(candidates)
+    Ok(())
 }
 
 #[cfg(test)]

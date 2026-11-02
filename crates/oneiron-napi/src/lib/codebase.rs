@@ -84,30 +84,53 @@ pub(super) fn napi_codebase_snapshot(
     })
 }
 
-pub(super) fn apply_codebase_filters<'a>(
-    mut builder: oneiron::PipelineBuilder<'a>,
-    repo_ref: Option<String>,
+/// The codebase filters a scoped search or pack names, parsed once, so a
+/// run can apply them again on base without a second parse.
+pub(super) struct CodebaseScope {
+    repo_ref: Option<RepoRef>,
     project_id: Option<String>,
-) -> napi::Result<oneiron::PipelineBuilder<'a>> {
-    if let Some(repo_ref) = repo_ref {
-        builder = builder.filter_repo_ref(RepoRef::parse(&repo_ref).map_err(to_napi_err)?);
-    }
-    if let Some(project_id) = project_id {
-        builder = builder.filter_project_id(project_id);
-    }
-    Ok(builder)
 }
 
-pub(super) fn apply_codebase_context_filters<'a>(
-    mut builder: oneiron::ContextPackBuilder<'a>,
-    repo_ref: Option<String>,
-    project_id: Option<String>,
-) -> napi::Result<oneiron::ContextPackBuilder<'a>> {
-    if let Some(repo_ref) = repo_ref {
-        builder = builder.filter_repo_ref(RepoRef::parse(&repo_ref).map_err(to_napi_err)?);
+impl CodebaseScope {
+    pub(super) fn parse(
+        repo_ref: Option<String>,
+        project_id: Option<String>,
+    ) -> napi::Result<Self> {
+        let repo_ref = repo_ref
+            .map(|repo_ref| RepoRef::parse(&repo_ref))
+            .transpose()
+            .map_err(to_napi_err)?;
+        Ok(Self {
+            repo_ref,
+            project_id,
+        })
     }
-    if let Some(project_id) = project_id {
-        builder = builder.filter_project_id(project_id);
+
+    /// `builder`, filtered to this scope.
+    pub(super) fn query<'a>(
+        &self,
+        mut builder: oneiron::PipelineBuilder<'a>,
+    ) -> oneiron::PipelineBuilder<'a> {
+        if let Some(repo_ref) = &self.repo_ref {
+            builder = builder.filter_repo_ref(repo_ref.clone());
+        }
+        if let Some(project_id) = &self.project_id {
+            builder = builder.filter_project_id(project_id.as_str());
+        }
+        builder
     }
-    Ok(builder)
+
+    /// `builder`, filtered to this scope.
+    pub(super) fn pack<'a>(
+        &self,
+        mut builder: oneiron::ContextPackBuilder<'a>,
+    ) -> oneiron::ContextPackBuilder<'a> {
+        if let Some(repo_ref) = &self.repo_ref {
+            builder = builder.filter_repo_ref(repo_ref.clone());
+        }
+        if let Some(project_id) = &self.project_id {
+            builder = builder.filter_project_id(project_id.as_str());
+        }
+        builder
+    }
 }

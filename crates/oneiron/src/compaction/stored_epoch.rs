@@ -68,7 +68,6 @@ pub(crate) fn stored_epoch_in(
 
 /// [`stored_epoch_in`] for the other keys, `fields`, of a pointer row that
 /// keeps an epoch's keyframe.
-#[cfg(feature = "sync")]
 fn pointer_epoch_in(
     dbs: &impl crate::side_table::SideTableDbs,
     txn: &heed::RoTxn<'_>,
@@ -93,17 +92,4 @@ fn pointer_epoch_in(
     } else {
         StoredEpoch::Unresolved
     })
-}
-
-/// Without the document plane no head can complete a pointer. The signature
-/// is the document plane's, whose head read is fallible.
-#[cfg(not(feature = "sync"))]
-#[expect(clippy::unnecessary_wraps)]
-fn pointer_epoch_in(
-    _dbs: &impl crate::side_table::SideTableDbs,
-    _txn: &heed::RoTxn<'_>,
-    _id: &EntityId,
-    _fields: Vec<(Value, Value)>,
-) -> Result<StoredEpoch> {
-    Ok(StoredEpoch::Unresolved)
 }

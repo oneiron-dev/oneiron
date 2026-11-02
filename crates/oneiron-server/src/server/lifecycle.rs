@@ -1,6 +1,6 @@
 //! Periodic lifecycle jobs: lease expiry, reassert-drain with debounce, and
 //! the engine's housekeeping pass.
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::{Duration, Instant};
@@ -104,8 +104,8 @@ impl SyncServer {
 
     /// Starts the periodic lifecycle loop. Each tick, the first at once,
     /// expires sync leases, drains reassert markers, finishes the dependent
-    /// walks left past their first batch and starts a housekeeping pass
-    /// through `admit`, the host's write gate.
+    /// walks left past their first batch and starts a housekeeping pass,
+    /// each through `admit`, the host's write gate.
     pub(crate) fn spawn_lifecycle_scheduler(
         self: &Arc<Self>,
         admit: HousekeepingAdmission,
@@ -149,7 +149,7 @@ impl SyncServer {
                     server.start_mirror_pushes(&admit, true).await;
                     continue;
                 }
-                server.run_scheduled_lifecycle_tick().await;
+                server.run_scheduled_lifecycle_tick(&admit).await;
                 server.finish_dependent_walks_once(&admit).await;
                 // The pass and the maintenance run on tasks of their own, so
                 // neither holds back the next tick's lease expiry, nor one
@@ -222,13 +222,20 @@ impl SyncServer {
         let _ = done.await;
     }
 
-    async fn run_scheduled_lifecycle_tick(&self) {
+    /// Expires sync leases and drains reassert markers under `admit`, held
+    /// through both (FIX 6955): a managed vault's reap freeze counts them, or
+    /// refuses the tick, which leaves both for the next admitted one.
+    async fn run_scheduled_lifecycle_tick(&self, admit: &HousekeepingAdmission) {
         let now_ms = unix_seconds_now().saturating_mul(1_000);
         self.dreamer_progress
             .lock()
             .await
             .remove_outdated(&self.ephemeral_store, now_ms);
 
+        let Some(_admission) = admit() else {
+            tracing::debug!("lease expiry and ra drain skipped: the host's gate refused the tick");
+            return;
+        };
         match self.expire_leases_once().await {
             Ok(report) => {
                 if report.skipped {
@@ -297,14 +304,13 @@ impl SyncServer {
         &self,
         now: u64,
     ) -> Result<LeaseExpiryReport, oneiron::Error> {
-        if !self
-            .begin_lifecycle_job(LifecycleJobKind::LeaseExpiry)
-            .await
-        {
+        // The job ends when its guard drops: a sweep cut at an await (an idle
+        // reap's deadline, FIX 11742) ends it as a finished one does.
+        let Some(_job) = self.lifecycle_job(LifecycleJobKind::LeaseExpiry) else {
             return Ok(LeaseExpiryReport::skipped());
-        }
+        };
 
-        let result = async {
+        async {
             let _guard = self.lease_registrar.lock().await;
             let vv_before = self.root_doc.oplog_vv();
             let frontiers_before = self.root_doc.state_frontiers();
@@ -344,10 +350,7 @@ impl SyncServer {
                 root_update,
             })
         }
-        .await;
-
-        self.end_lifecycle_job(LifecycleJobKind::LeaseExpiry).await;
-        result
+        .await
     }
 
     pub(crate) async fn drain_reassert_markers_once(
@@ -421,16 +424,40 @@ impl SyncServer {
     }
 
     pub(super) async fn begin_lifecycle_job(&self, kind: LifecycleJobKind) -> bool {
-        self.lifecycle_in_flight
-            .lock()
-            .await
-            .insert(self.lifecycle_job_key(kind))
+        self.lifecycle_jobs().insert(self.lifecycle_job_key(kind))
     }
 
     pub(super) async fn end_lifecycle_job(&self, kind: LifecycleJobKind) {
+        self.lifecycle_jobs().remove(&self.lifecycle_job_key(kind));
+    }
+
+    /// Begins the job `kind` as [`Self::begin_lifecycle_job`] does, held by
+    /// the guard it answers, which ends it when dropped; `None` while one is
+    /// in flight.
+    pub(super) fn lifecycle_job(&self, kind: LifecycleJobKind) -> Option<LifecycleJob<'_>> {
+        let key = self.lifecycle_job_key(kind);
+        self.lifecycle_jobs()
+            .insert(key)
+            .then_some(LifecycleJob { server: self, key })
+    }
+
+    fn lifecycle_jobs(&self) -> std::sync::MutexGuard<'_, HashSet<LifecycleJobKey>> {
         self.lifecycle_in_flight
             .lock()
-            .await
-            .remove(&self.lifecycle_job_key(kind));
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// A begun lifecycle job ([`SyncServer::lifecycle_job`]), ended when it
+/// drops: a sweep cut at an await, by a deadline's timeout or a dropped task,
+/// ends its job as a finished one does, so the next sweep runs (FIX 11742).
+pub(super) struct LifecycleJob<'a> {
+    server: &'a SyncServer,
+    key: LifecycleJobKey,
+}
+
+impl Drop for LifecycleJob<'_> {
+    fn drop(&mut self) {
+        self.server.lifecycle_jobs().remove(&self.key);
     }
 }

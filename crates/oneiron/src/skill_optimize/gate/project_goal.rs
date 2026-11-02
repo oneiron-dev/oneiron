@@ -151,12 +151,14 @@ pub fn skill_goal_project(vault: &Vault, skill: &EntityId) -> Result<Option<Enti
     Ok(Some(binding.project))
 }
 
-/// The project's stated preferences that name exact goal axes, as ladder
+/// The stated preferences of `record` that name exact goal axes, as ladder
 /// rules. "Prefer A over B" approves a vector that gains A and loses B, and
 /// rejects one that gains B and loses A; `+` joins several axes on a side.
 /// A preference that names no exact axis set stays prose for the leader.
-pub(super) fn project_rules(
-    join: &ProjectGoalJoin,
+/// The record half of [`project_rules`], for a reader with a goal record
+/// and no skill-goal join.
+pub(crate) fn project_rules_for_record(
+    record: &GoalRecord,
     axes: &[GoalAxisSpec],
 ) -> Vec<(TradeoffRule, String)> {
     let names = |side: &str| -> Option<BTreeSet<String>> {
@@ -166,7 +168,7 @@ pub(super) fn project_rules(
             .then_some(set)
     };
     let mut rules = Vec::new();
-    for (index, preference) in join.record.preferences.iter().enumerate() {
+    for (index, preference) in record.preferences.iter().enumerate() {
         let (Some(prefer), Some(over)) = (names(&preference.prefer), names(&preference.over))
         else {
             continue;
@@ -192,6 +194,14 @@ pub(super) fn project_rules(
         ));
     }
     rules
+}
+
+/// [`project_rules_for_record`] for a joined skill goal.
+pub(super) fn project_rules(
+    join: &ProjectGoalJoin,
+    axes: &[GoalAxisSpec],
+) -> Vec<(TradeoffRule, String)> {
+    project_rules_for_record(&join.record, axes)
 }
 
 /// One rung of the responsible-role chain a tradeoff ask climbs. Live people

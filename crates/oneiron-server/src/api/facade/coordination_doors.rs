@@ -13,14 +13,18 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use oneiron::agent_dispatch::PlannerDecisions;
+use oneiron::agent_dispatch::{AgentDispatcher, PlannerDecisions};
+use oneiron::attempt_queue::AttemptId;
 use oneiron::code_run::HostPlannerBinding;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
     ConsolidationHomePickReceipt, ConsolidationHomePickRequest, ConsolidationHomeView,
     ConsolidationLineageRequest, ConsolidationLineageView,
 };
-use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
+use oneiron::memory::{
+    DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView, MEMORY_CODE_INTERNAL,
+    MemoryError, MemoryResult,
+};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::run_doors::{
@@ -30,9 +34,9 @@ use oneiron::task_verb::run_doors::{
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::team::PlannedSpawnHost;
 use oneiron::team::doors::{
-    CriticAssociation, PlannedSpawnObservation, PlannedSpawnRead, SpawnIntentReply,
-    SpawnIntentRequest, TaskTypeTreePin, TaskTypeTreePinReceipt, TaskTypeTreeRead,
-    TaskTypeTreeReadReply,
+    CriticAssociation, ObservationIssue, PlannedSpawnObservation, PlannedSpawnRead,
+    SpawnIntentReply, SpawnIntentRequest, TaskTypeTreePin, TaskTypeTreePinReceipt,
+    TaskTypeTreeRead, TaskTypeTreeReadReply,
 };
 
 use super::host_doors::support::{MaybeListed, owner_proof};
@@ -213,10 +217,55 @@ pub(crate) async fn vault_agents_spawn_get(
         server,
         VERB,
         owner_proof(auth, server, VERB),
-        move |server, owner| oneiron::team::doors::observe_spawn_as(server.vault(), &owner, input),
+        move |server, owner| {
+            let mut observation =
+                oneiron::team::doors::observe_spawn_as(server.vault(), &owner, input)?;
+            note_no_executor(server, &mut observation);
+            Ok(observation)
+        },
         spawn_rows,
     )
     .await
+}
+
+/// Appends a `no_executor` issue for each launched attempt the native agent
+/// pump would take now (`AgentDispatcher::is_ready_native_run`: queued or
+/// scheduled and due, no saved workflow's leaf), when this host has no
+/// engine-native executor to run it (FIX 4929): the resident pump never
+/// starts here, so such a run waits until a host that has one serves the
+/// vault. A workflow's leaf is its own pump's and is never labelled. Status
+/// only: each attempt keeps the state the queue holds, and nothing is
+/// refused, held or relabelled. An attempt whose eligibility does not read
+/// is named as unavailable instead.
+fn note_no_executor(server: &SyncServer, observation: &mut PlannedSpawnObservation) {
+    if server
+        .code_execution_host()
+        .and_then(|host| host.engine_native())
+        .is_some()
+    {
+        return;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs());
+    let dispatcher = AgentDispatcher::new(server.vault());
+    let mut issues = Vec::new();
+    for member in &observation.launched {
+        let ready = AttemptId::from_bytes(member.attempt_ref.as_bytes())
+            .and_then(|attempt| dispatcher.is_ready_native_run(attempt, now));
+        match ready {
+            Ok(true) => issues.push(ObservationIssue::NoExecutor {
+                attempt_ref: member.attempt_ref,
+                state: member.state.clone(),
+            }),
+            Ok(false) => {}
+            Err(error) => issues.push(ObservationIssue::Unavailable {
+                consumer: format!("executor {}", member.attempt_ref.to_hex()),
+                reason: error.to_string(),
+            }),
+        }
+    }
+    observation.issues.extend(issues);
 }
 
 /// A force names the TASK whose branches it stopped.
@@ -225,7 +274,7 @@ pub(crate) async fn vault_tasks_cancel_force(
     auth: &CoreAuth,
     input: CancelForceRequest,
 ) -> MaybeListed<CancelForceReceipt> {
-    const VERB: &str = "vault.tasks.cancel_force";
+    const VERB: &str = "vault.tasks.cancel.force";
     as_person_naming(
         server,
         VERB,
@@ -364,6 +413,32 @@ pub(crate) async fn vault_consolidation_lineage(
                     .flat_map(|lineage| lineage.steps.iter().map(|step| step.claim_ref))
                     .collect(),
             )
+        },
+    )
+    .await
+}
+
+/// A candidate-decisions read names each candidate's subject and the listed
+/// claim its decisions bound it to.
+pub(crate) async fn vault_consolidation_candidate_decisions(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DreamerCandidateDecisionsRequest,
+) -> MaybeListed<Vec<DreamerDecidedCandidateView>> {
+    const VERB: &str = "vault.consolidation.candidate_decisions";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| {
+            oneiron::memory::read_dreamer_candidate_decisions_as(server.vault(), &owner, input)
+        },
+        |read| {
+            let mut rows: Vec<_> = read.iter().map(|candidate| candidate.subject).collect();
+            rows.extend(read.iter().filter_map(|candidate| candidate.corrects));
+            rows.sort_unstable();
+            rows.dedup();
+            Some(rows)
         },
     )
     .await

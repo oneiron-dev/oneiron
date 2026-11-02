@@ -2,12 +2,14 @@
 
 use super::storage::{
     RAMP_DEMOTION, RAMP_DEMOTION_OUTCOME, RAMP_DEMOTION_RECEIPT_PREFIX, RAMP_DEMOTION_ROW_LABEL,
-    RAMP_OUTCOME, RAMP_OUTCOME_RECEIPT_PREFIX, RAMP_OUTCOME_ROW_LABEL, StoredDemotion,
-    StoredRampOutcome, validated_ramp_row,
+    RAMP_OUTCOME, RAMP_OUTCOME_RECEIPT_PREFIX, RAMP_OUTCOME_ROW_LABEL, RampRowVersion,
+    StoredDemotion, StoredRampOutcome, validated_ramp_row,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::side_table::{Named, SideCodec, SideTable};
 use crate::vault::Vault;
 
 /// Whether a receipt is a ramp self-demotion — the discriminator inside the
@@ -34,28 +36,32 @@ fn is_ramp_receipt(record: &ReceiptRecord, prefix: &str) -> bool {
 pub(crate) fn ramp_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut out = Vec::new();
-    for entry in RAMP_OUTCOME
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
-    {
-        let ((_, id), row) = entry?;
-        let row = validated_ramp_row(row, RAMP_OUTCOME_ROW_LABEL)?;
-        let receipt = door_outcome_receipt_record(&id, &row);
-        if query.matches(&receipt) {
-            out.push(receipt);
-        }
-    }
-    for entry in RAMP_DEMOTION
-        .iter_from(&vault.store, &rtxn, &[])?
-        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN)
-    {
-        let ((_, id), row) = entry?;
-        let row = validated_ramp_row(row, RAMP_DEMOTION_ROW_LABEL)?;
-        let receipt = demotion_receipt_record(&id, &row);
-        if query.matches(&receipt) {
-            out.push(receipt);
-        }
-    }
+    ramp_rows_to_end(
+        vault,
+        &rtxn,
+        RAMP_OUTCOME,
+        RAMP_OUTCOME_ROW_LABEL,
+        b"ramp_outcome",
+        |id, row| {
+            let receipt = door_outcome_receipt_record(&id, &row);
+            if query.matches(&receipt) {
+                out.push(receipt);
+            }
+        },
+    )?;
+    ramp_rows_to_end(
+        vault,
+        &rtxn,
+        RAMP_DEMOTION,
+        RAMP_DEMOTION_ROW_LABEL,
+        b"ramp_demotion",
+        |id, row| {
+            let receipt = demotion_receipt_record(&id, &row);
+            if query.matches(&receipt) {
+                out.push(receipt);
+            }
+        },
+    )?;
     // ED-05's answered offers are the third family on this registration rather
     // than a fourth projector in `receipt::collect_receipt_records`: they are
     // the same ramp, the same `Gate` kind, and — sharing this read txn — they
@@ -66,6 +72,31 @@ pub(crate) fn ramp_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Vec<R
         query,
     )?);
     Ok(out)
+}
+
+/// Hands `visit` every row of one append-only ramp log, oldest first, each
+/// validated, the log read to its end with no count cutting it short (FIX
+/// 3582). Past its threshold row the walk raises one check for `scope` and
+/// reads on (rule 5).
+fn ramp_rows_to_end<V: RampRowVersion + 'static>(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    log: SideTable<(u64, EntityId), V, Named>,
+    label: &'static str,
+    scope: &[u8],
+    mut visit: impl FnMut(EntityId, V),
+) -> Result<()>
+where
+    Named: SideCodec<V>,
+{
+    let mut count = ScanCount::start(&vault.store, rtxn, EngineScan::ReceiptSourceRows, scope)?;
+    for entry in log.iter_from(&vault.store, rtxn, &[])? {
+        count.row();
+        let ((_, id), row) = entry?;
+        visit(id, validated_ramp_row(row, label)?);
+    }
+    count.finish(vault);
+    Ok(())
 }
 
 /// The scope tuple every ramp receipt names, in the SAME field keys the

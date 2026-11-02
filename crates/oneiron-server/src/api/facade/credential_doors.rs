@@ -32,7 +32,7 @@ pub(crate) async fn self_credential_attenuate(
         Err(error) => return (Err(error), Vec::new()),
     };
     let server = Arc::clone(server);
-    let answer = tokio::task::spawn_blocking(move || {
+    let answer = super::clock_ingress::run_blocking(move || {
         let slip = server.vault().attenuate_invocation_slip(
             &binding,
             input.caveat.into_engine(),

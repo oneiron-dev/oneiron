@@ -385,6 +385,38 @@ pub(super) fn ensure_authenticated_actor(
     )))
 }
 
+/// Whether the tapping actor is the card's principal (FIX 9859). The proof
+/// is revalidated on the person tier first, so a live person who is not the
+/// principal answers `false`, for a receipted no-op, whatever tier their
+/// credential has. The principal's own decline is a person-tier act; any
+/// other action the principal takes decides an act, so it still takes the
+/// owner tier, as [`ensure_authenticated_actor`] asks.
+///
+/// # Errors
+/// The proof does not revalidate on `vault` (revoked, foreign or not a live
+/// person), the principal lacks the owner tier for an act, or a storage
+/// error.
+pub(super) fn actor_is_card_principal(
+    vault: &crate::Vault,
+    principal_ref: &str,
+    request: &ConsentActionRequest,
+    authenticated_owner: &AuthenticatedOwner,
+) -> Result<bool> {
+    if !request
+        .actor
+        .authenticates_person(vault, principal_ref, authenticated_owner)?
+    {
+        return Ok(false);
+    }
+    ensure_authenticated_actor(vault, principal_ref, request, authenticated_owner)?;
+    Ok(true)
+}
+
+/// The reason a consent card's receipt names for a valid tap by someone
+/// other than its principal (FIX 9859): it decides nothing and mints no
+/// authority.
+pub const CONSENT_NOOP_NON_PRINCIPAL_REASON: &str = "consent_actor:non_principal";
+
 pub(super) fn noop_policy_rejection(
     component_kind: Of336ComponentKind,
     component_id: &str,

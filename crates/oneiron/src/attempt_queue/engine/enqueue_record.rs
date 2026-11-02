@@ -111,6 +111,7 @@ impl AttemptQueue<'_> {
             record.run_id.as_deref(),
             record.id.as_bytes(),
         )?;
+        crate::attempt_queue::index::put_created_in_txn(self.store, wtxn, &record)?;
         let ready_key = ready_key(ready_at(&record), record.id);
         self.store
             .attempt_ready
