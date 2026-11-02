@@ -113,6 +113,7 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
+        super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;
     }
     scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
@@ -121,7 +122,8 @@ pub(crate) fn erase_turn_program_actor_in_txn(
 /// What an erase of `actor` takes from the arm and wake tables, read on
 /// `txn`: the wakes it owes, and how many of its arming and wake rows do
 /// not decode. A wake is its own by its authority; one that does not decode
-/// is its own when its key names one of its armings.
+/// is its own when its key names one of its armings. Its wakes are read by
+/// their actor index (FIX 5774), never the whole wake table.
 struct ActorScope {
     wakes: Vec<(EntityId, EntityId)>,
     undecodable: usize,
@@ -146,9 +148,8 @@ fn actor_scope_in_txn(
         }
     }
     let mut wakes = Vec::new();
-    for row in WAKE.iter_raw_from(vault, txn, &[])? {
-        let (key, bytes) = row?;
-        let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
+    for key in super::index::actor_wakes_in_txn(vault, txn, actor)? {
+        let Some(bytes) = WAKE.get_borrowed(vault, txn, &key)? else {
             continue;
         };
         match WAKE.decode_value(&bytes) {
