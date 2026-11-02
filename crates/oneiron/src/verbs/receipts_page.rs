@@ -39,4 +39,7 @@ pub struct VaultReceiptsPage {
     /// page was served at it; `next_after` continues to the rest.
     #[serde(default)]
     pub limit_clamped: bool,
+    /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
+    /// read as receipts. None on the gate ledger, which holds no sends.
+    pub undecodable: u32,
 }

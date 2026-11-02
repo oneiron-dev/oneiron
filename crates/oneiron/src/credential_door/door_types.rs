@@ -10,8 +10,9 @@ pub(crate) use oneiron_authority::credential_door::names_a_floor;
 /// slip caveat: a catastrophe-class guard has no "off".
 pub(super) const DOOR_SCAN_ALWAYS_ON: bool = true;
 
-/// The hard ceiling on any lease this door issues, in seconds. A dial may
-/// narrow it; nothing may raise it.
+/// The lease ceiling this door holds while no holder policy row names one,
+/// in seconds: a default, never a limit on what the holder may choose
+/// (FIX 9777).
 pub(super) const DOOR_MAX_LEASE_TTL_SECS: u64 = 3600;
 
 /// The receive-pack door's effector — the scope every door-issued lease and
@@ -315,50 +316,34 @@ fn path_slug(input: &str) -> String {
 /// A lease-TTL ceiling in seconds, as a MEET-SEMILATTICE value rather than a
 /// number somebody may assign.
 ///
-/// [`DOOR_MAX_LEASE_TTL_SECS`] is the TOP of this lattice, not a check applied
-/// somewhere downstream of it. Every way in clamps against that floor, and the
-/// only way to combine two ceilings is `meet` (minimum), so a `TtlCeiling`
-/// above the floor is not a value this type can hold and no sequence of
-/// caveats, dial rows, clock readings, or call orders can construct one. That
-/// is the whole difference from the `Option<u64>` this replaced, where the
-/// invariant lived in whoever remembered to take the `min` last and an
-/// un-narrowed slip was spelled the same as a slip with no opinion.
+/// `None` is "no row declared one", the TOP of this lattice; the holder's
+/// declared rows meet (minimum) among themselves, so packs compose to the
+/// same answer in any order. The door reads [`DOOR_MAX_LEASE_TTL_SECS`] only
+/// while nothing was declared (FIX 9777).
 ///
 /// `Copy` on purpose: a ceiling is a BOUND, not custody of anything, and
 /// copying a bound cannot duplicate authority. [`DoorCredential`] itself stays
 /// non-`Clone`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct TtlCeiling(u64);
-
-impl Default for TtlCeiling {
-    /// The safe default IS the floor: a slip nobody narrowed sits at the
-    /// widest ceiling the door has, never wider and never unbounded.
-    fn default() -> Self {
-        Self::FLOOR
-    }
-}
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct TtlCeiling(Option<u64>);
 
 impl TtlCeiling {
-    /// The catastrophe floor — the widest ceiling that can exist here.
-    pub(super) const FLOOR: Self = Self(DOOR_MAX_LEASE_TTL_SECS);
-
-    /// The ceiling a declaration of `secs` buys. Never above the floor: a
-    /// value that would widen is clamped rather than refused, because this is
-    /// the NARROWING side of the seam. The refusals that must be loud — a dial
-    /// row that tries to widen the ceiling — are raised where the row is
-    /// decoded ([`decode_floors_row`]), so clamping here cannot hide one.
+    /// The ceiling a holder's declaration of `secs` sets.
     pub(super) fn at_most(secs: u64) -> Self {
-        Self(secs.min(Self::FLOOR.0))
+        Self(Some(secs))
     }
 
     /// The lattice meet: the tighter of two ceilings. Commutative,
-    /// associative and idempotent, so ceilings compose to the same answer in
-    /// any order and no composition can ever raise one.
+    /// associative and idempotent; an undeclared side leaves the other.
     pub(super) fn meet(self, other: Self) -> Self {
-        Self(self.0.min(other.0))
+        match (self.0, other.0) {
+            (Some(left), Some(right)) => Self(Some(left.min(right))),
+            (declared, None) | (None, declared) => Self(declared),
+        }
     }
 
+    /// The ceiling in force: the holder's, or the door's default.
     pub(super) fn secs(self) -> u64 {
-        self.0
+        self.0.unwrap_or(DOOR_MAX_LEASE_TTL_SECS)
     }
 }

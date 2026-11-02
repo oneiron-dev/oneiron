@@ -27,6 +27,27 @@ pub(in crate::outbound) struct SeatPolicyDecision {
     pub(super) action: SeatPolicyAction,
     pub(in crate::outbound) receipt_fields: BTreeMap<String, String>,
     pub(in crate::outbound) policy_trace: Vec<String>,
+    /// The seat's reason for a hold or a suppression.
+    reason: Option<String>,
+    /// For a hold, the instant the seat's window reopens, when the policy
+    /// names one (FIX 8813).
+    not_before: Option<u64>,
+}
+
+impl SeatPolicyDecision {
+    /// The seat's reason when this decision holds the send (FIX 8813).
+    pub(in crate::outbound) fn hold_reason(&self) -> Option<&str> {
+        (self.action == SeatPolicyAction::Hold)
+            .then_some(self.reason.as_deref())
+            .flatten()
+    }
+
+    /// The instant a send this decision holds may go again, when the seat
+    /// names one (FIX 8813).
+    pub(super) fn held_until(&self) -> Option<u64> {
+        self.not_before
+            .filter(|_| self.action == SeatPolicyAction::Hold)
+    }
 }
 
 impl From<LinkedInSeatPolicyDecision> for SeatPolicyDecision {
@@ -40,6 +61,8 @@ impl From<LinkedInSeatPolicyDecision> for SeatPolicyDecision {
             action,
             receipt_fields: value.receipt_fields,
             policy_trace: value.policy_trace,
+            reason: value.reason_code,
+            not_before: value.not_before,
         }
     }
 }
@@ -129,7 +152,11 @@ pub(super) fn evaluate_seat_policy(
         return (channel == LINKEDIN_CHANNEL)
             .then(|| LinkedInSeatPolicyDecision::seat_policy_missing().into());
     };
-    let policy = &ledger.raise(policy);
+    // FIX 8813: a daily cap's hold waits for the host's reset, or the next
+    // UTC midnight when it names none, on the request's clock.
+    let policy = &ledger
+        .raise(policy)
+        .with_caps_reset_after(request.occurred_at);
     let send_decision =
         policy.evaluate_outbound(&channel, &verb_contract.kind, request.occurred_at);
     if channel == LINKEDIN_CHANNEL

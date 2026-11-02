@@ -11,7 +11,10 @@
 //! confirms leaves the current kit's piece and every other drawn kit's in place. A
 //! data-key kit has no confirm and no pending pair. The two writes are not one
 //! platform operation: a pair torn between two pieces fails the piece's check and
-//! reads as corrupt, never as a piece.
+//! reads as corrupt, never as a piece. Keeping a data-key kit's piece also names
+//! this install in one slot of the vault id alone, and emptying it clears that
+//! name (FIX 12054): a sealed vault's pages unlock before its machine id can be
+//! read, so that slot is how the unlock finds the piece with no device wrap.
 
 use std::sync::Arc;
 
@@ -23,6 +26,9 @@ use super::{KitId, KitPiece, KitSecretKind};
 
 /// One keystore slot's size.
 const SLOT: usize = 32;
+
+/// A machine id's size: the install a slot is named for.
+const INSTALL: usize = 16;
 
 /// Which slot pair of this install's kit pieces (FIX 11977, 12046).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,9 +74,15 @@ impl KitPieceStore {
         }
     }
 
+    /// The vault id and machine id that name these slots.
+    pub(crate) fn vault_install(&self) -> ([u8; 32], [u8; 16]) {
+        (self.vault_id, self.install)
+    }
+
     /// Keeps `piece` in `pair`, its kind's current pair or its own kit's pending
     /// pair, replacing the piece kept there. A tail that does not write after its
-    /// head did empties the pair: half a piece is no piece.
+    /// head did empties the pair: half a piece is no piece. A data-key kit's
+    /// piece kept names this install by the vault id alone (FIX 12054).
     pub(crate) fn put(&self, piece: &KitPiece, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
         let [head, tail] = self.slots(pair);
         let bytes = piece.slot_bytes();
@@ -83,6 +95,7 @@ impl KitPieceStore {
             let _ = self.delete(pair);
             return Err(error);
         }
+        self.name_install(pair);
         Ok(())
     }
 
@@ -113,11 +126,56 @@ impl KitPieceStore {
         }
     }
 
-    /// Empties both slots of `pair`. Empty slots are not an error.
+    /// Empties both slots of `pair`. Empty slots are not an error. An emptied
+    /// data-key kit pair clears the vault id's name of this install (FIX 12054).
     pub(crate) fn delete(&self, pair: KitPiecePair) -> oneiron_keystore::Result<()> {
         let [head, tail] = self.slots(pair);
         self.keystore.delete(&head)?;
-        self.keystore.delete(&tail)
+        self.keystore.delete(&tail)?;
+        self.clear_install_name(pair);
+        Ok(())
+    }
+
+    /// Names this install, in the slot of the vault id alone, as the one whose
+    /// slots keep the data-key kit's piece, once `pair`, that kit's current
+    /// pair, holds it (FIX 12054): a sealed vault's pages unlock before its
+    /// machine id can be read, and the owner may have removed the device wrap
+    /// that names this install. The name replaces another install's: the
+    /// latest kept piece is the one named. Best-effort: a name that does not
+    /// write is logged, and the piece stays kept, found through a carried
+    /// device wrap as before.
+    fn name_install(&self, pair: KitPiecePair) {
+        if pair != KitPiecePair::Current(KitSecretKind::VaultKey) {
+            return;
+        }
+        let mut bytes = [0u8; SLOT];
+        bytes[..INSTALL].copy_from_slice(&self.install);
+        if let Err(error) = self.write(&install_slot(self.vault_id), &bytes) {
+            tracing::warn!(
+                %error,
+                "the vault id does not name the install that keeps the data-key kit piece"
+            );
+        }
+    }
+
+    /// Clears [`Self::name_install`]'s name once `pair`, the data-key kit's
+    /// current pair, is emptied, when it names this install: another
+    /// install's name of its own piece stays (FIX 12054). Best-effort: a name
+    /// left behind names empty slots, which read as no piece.
+    fn clear_install_name(&self, pair: KitPiecePair) {
+        if pair != KitPiecePair::Current(KitSecretKind::VaultKey) {
+            return;
+        }
+        match vault_key_piece_install(&*self.keystore, &self.vault_id) {
+            Ok(Some(install)) if install == self.install => {}
+            _ => return,
+        }
+        if let Err(error) = self.keystore.delete(&install_slot(self.vault_id)) {
+            tracing::warn!(
+                %error,
+                "the vault id still names an install whose data-key kit piece is gone"
+            );
+        }
     }
 
     /// The head and tail slots of `pair`.
@@ -155,6 +213,38 @@ impl KitPieceStore {
             }
             Err(error) => Err(error),
         }
+    }
+}
+
+/// The machine id of the install whose slots in `keystore` keep the data-key
+/// kit's piece of the vault whose store id is `vault_id`, as the vault id alone
+/// names it (FIX 12054): `None` when no install is named. A slot with bytes past
+/// the id is `Corrupt`.
+pub(crate) fn vault_key_piece_install(
+    keystore: &dyn DeviceKeystore,
+    vault_id: &[u8; 32],
+) -> oneiron_keystore::Result<Option<[u8; 16]>> {
+    let Some(bytes) = keystore.get(&install_slot(*vault_id))? else {
+        return Ok(None);
+    };
+    if bytes[INSTALL..].iter().any(|byte| *byte != 0) {
+        return Err(KeystoreError::Corrupt(
+            "the kit piece install slot holds bytes past the install's id",
+        ));
+    }
+    let mut install = [0u8; INSTALL];
+    install.copy_from_slice(&bytes[..INSTALL]);
+    Ok(Some(install))
+}
+
+/// The slot naming the install that keeps the data-key kit's piece of the vault
+/// `vault_id` (FIX 12054): filed under the all-zero install, no machine's id, so
+/// the vault id alone names it.
+fn install_slot(vault_id: [u8; 32]) -> KeystoreSlot {
+    KeystoreSlot {
+        vault_id,
+        install: [0; INSTALL],
+        kind: SlotKind::KitPiece(KitPieceSlot::VaultKeyInstall),
     }
 }
 

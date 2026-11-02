@@ -14,7 +14,7 @@
 
 use std::collections::BTreeMap;
 
-use super::{BatchState, MergeBatch, MergeQueue};
+use super::{BatchState, CheckPhase, MergeBatch, MergeQueue};
 use crate::Vault;
 use crate::contract_oracle::ContractOracle;
 use crate::error::Result;
@@ -95,9 +95,18 @@ impl MergeQueue<'_> {
         let Some(verdict) = ContractOracle::new(self.vault).verdict(verdict_id)? else {
             return Ok(None);
         };
-        let expected = format!("{}:{}:Slow:{}:{}", batch.id, path.mask, path.tree, head);
-        if verdict.candidate != expected
-            || verdict.baseline_id != batch.baseline_id
+        // The one binding rule both verdict formats share: a callback verdict's
+        // candidate, or a bound checker's receipt rebuilt for this path (FIX 9979).
+        let bound = self.require_check_binding(
+            batch,
+            path.mask,
+            &path.tree,
+            head,
+            CheckPhase::Slow,
+            &verdict,
+            None,
+        );
+        if !matches!(bound, Ok(true))
             || !verdict.passes()
             || !matches!(self.all_paths_green(batch), Ok(true))
         {

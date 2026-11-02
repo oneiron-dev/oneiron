@@ -209,7 +209,9 @@ impl Vault {
         }
         // Independent dependencies are not necessarily reachable from the tip.
         // Keep them until this publication stops owning the visible-ref slot.
+        let mut count = self.start_obligation_count(&request.repo_id)?;
         for oid in &request.required_objects {
+            count.row();
             if oid != &request.new_oid && git.object_exists(&request.repo, oid)? {
                 self.pin_origin_object(
                     git,
@@ -221,6 +223,7 @@ impl Vault {
                 )?;
             }
         }
+        count.finish(self);
         let row = OriginPublicationRow::from_record(&record);
         PUBLICATIONS.encode_value(&row)?;
         self.with_write_txn_grouped(|wtxn| {
@@ -486,7 +489,9 @@ impl Vault {
     /// What runs again is the git wire's own journaled effect, which replays
     /// when the repository agrees, rolls a crash-interrupted advance forward
     /// when it is merely behind, and refuses when the repository carries a
-    /// value nobody decided against.
+    /// value nobody decided against. Its dependencies are pinned again before
+    /// the ref moves, and a move that lands names the record in the visible
+    /// slot again (FIX 10002). Callers hold the repository coordinator.
     pub(super) fn redrive_published_origin_ref(
         &self,
         git: &GitWire<'_>,
@@ -504,6 +509,7 @@ impl Vault {
                 "published origin ref no longer has its required objects",
             ));
         }
+        self.repin_origin_dependencies(git, repo, &record, learned_at)?;
         let outcome = git.update_ref_cas(
             repo,
             &record.ref_name,
@@ -519,6 +525,7 @@ impl Vault {
             ));
         }
         if outcome.is_applied() {
+            self.restore_origin_visible_slot(&record)?;
             // Both a fresh advance and a replay can finish leaked cleanup.
             // Failure here keeps a safe root for census; it does not undo the
             // already-durable publication or reject a successful landing.
@@ -715,7 +722,9 @@ impl Vault {
                 record.new_oid.as_str()
             )));
         }
+        let mut count = self.start_obligation_count(&record.repo_id)?;
         for oid in &record.required_objects {
+            count.row();
             if !git.object_exists(repo, oid)? {
                 return Ok(Some(format!(
                     "required git object {} is not present in this object store",
@@ -724,6 +733,7 @@ impl Vault {
             }
         }
         for (oid, size) in &record.required_lfs_oids {
+            count.row();
             if !self.has_lfs_object(*oid, *size)? {
                 return Ok(Some(format!(
                     "required lfs object {} at {size} bytes is not stored in this vault",
@@ -750,6 +760,7 @@ impl Vault {
                 )));
             }
         }
+        count.finish(self);
         Ok(None)
     }
 
