@@ -462,7 +462,7 @@ impl Vault {
         let door = self.spent_nonces.door(self)?;
         // The snapshot ends before the spend opens its own under its lock:
         // a thread holds one reader at a time.
-        let (verified, now, expires_at) = {
+        let (verified, now, expires_at, clock) = {
             let txn = self.store.env.read_txn().ok()?;
             let clock = super::slip_replay::committed_request_now_in_txn(self, &txn).ok()??;
             let fold = self.authority_view_readonly_in_txn(&txn).ok()?;
@@ -479,11 +479,11 @@ impl Vault {
             if verified.claims().single_use || verified.claims().delegation.is_some() {
                 return None;
             }
-            (verified, now, mint.action.claims.expires_at)
+            (verified, now, mint.action.claims.expires_at, clock)
         };
         let spent =
             super::slip_replay::SpentKey::of(&verified.claims().binding_key, nonce, timestamp);
-        door.spend(spent, now, expires_at).then_some(verified)
+        door.spend(spent, now, expires_at, clock).then_some(verified)
     }
     /// Read-only transport verification from the signed authority-log mint.
     pub fn verify_logged_capability_slip_request(
