@@ -327,12 +327,15 @@ fn divergent_options_error(
     bad_request(
         format!(
             "{} is already open in this process with different options \
-             (open dimensions {:?} and device class {:?}, requested {:?} and {:?})",
+             (open dimensions {:?}, device class {:?} and checkpoint-root hold {:?}; \
+             requested {:?}, {:?} and {:?})",
             canonical.display(),
             registered.dimensions,
             registered.device_class,
+            registered.hold_checkpoint_root_signer,
             requested.dimensions,
             requested.device_class,
+            requested.hold_checkpoint_root_signer,
         ),
         &[
             "Reopen with the same options the first open used.",

@@ -21,6 +21,7 @@
 //! pads open only with the kit or a machine that world admits.
 
 mod drain;
+mod home_fetch;
 mod pad_worlds;
 mod status;
 
@@ -58,6 +59,8 @@ use crate::{EntityId, Result, Vault, VaultConfig};
 /// one is given.
 pub struct CustodyRecovery<'a> {
     folder: PathBuf,
+    /// Read in place of the folder when the owner named a home (FIX 5846).
+    fetched: Option<crate::store::custody_protocol::FetchedCustodySource>,
     anchor: Option<Box<dyn AnchorStore + 'a>>,
     root: Option<&'a HybridSecretKey>,
     machine: Option<(EntityId, &'a HybridSecretKey)>,
@@ -71,6 +74,7 @@ impl<'a> CustodyRecovery<'a> {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+            fetched: None,
             anchor: None,
             root: None,
             machine: None,
@@ -121,6 +125,7 @@ impl<'a> CustodyRecovery<'a> {
     pub(super) fn source(&self) -> CustodySourceAt<'_> {
         CustodySourceAt {
             folder: &self.folder,
+            fetched: self.fetched.as_ref(),
             anchor: self.anchor(),
             root: self.root,
             machine: self.machine,

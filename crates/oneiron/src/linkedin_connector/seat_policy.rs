@@ -14,6 +14,10 @@ use super::{
     LINKEDIN_SEAT_VERB_CATALOG, LINKEDIN_SEND_DM_VERB, LinkedInSandboxHostConfig,
 };
 
+/// The day a seat's daily caps count over when its host names no reset
+/// instant: they reset at the next UTC midnight (FIX 8791, FIX 8813).
+const LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS: u64 = 24 * 60 * 60;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LinkedInAccountRiskLimits {
     pub daily_dm_cap: u16,
@@ -125,6 +129,11 @@ pub struct LinkedInSeatDispatchState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_send_not_before: Option<u64>,
     pub request_is_sweep: bool,
+    /// The instant, in the dispatch clock's seconds, the host's daily counts
+    /// reset: a send or a profile read a daily cap holds waits until then
+    /// (FIX 8791, FIX 8813).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub caps_reset_at: Option<u64>,
 }
 
 impl LinkedInSeatDispatchState {
@@ -137,6 +146,7 @@ impl LinkedInSeatDispatchState {
             session_active: true,
             next_send_not_before: None,
             request_is_sweep: false,
+            caps_reset_at: None,
         }
     }
 
@@ -161,6 +171,12 @@ impl LinkedInSeatDispatchState {
     #[must_use]
     pub const fn with_next_send_not_before(mut self, not_before: u64) -> Self {
         self.next_send_not_before = Some(not_before);
+        self
+    }
+
+    #[must_use]
+    pub const fn with_caps_reset_at(mut self, caps_reset_at: u64) -> Self {
+        self.caps_reset_at = Some(caps_reset_at);
         self
     }
 
@@ -231,6 +247,24 @@ impl LinkedInSeatSandboxPolicy {
         Ok(self)
     }
 
+    /// This policy with the instant its daily caps reset after `now` named
+    /// (FIX 8791, FIX 8813): the host's own reset while it is still ahead,
+    /// else the next UTC midnight.
+    #[must_use]
+    pub fn with_caps_reset_after(mut self, now: u64) -> Self {
+        let reset = self
+            .state
+            .caps_reset_at
+            .filter(|reset| *reset > now)
+            .unwrap_or_else(|| {
+                (now / LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS)
+                    .saturating_add(1)
+                    .saturating_mul(LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS)
+            });
+        self.state.caps_reset_at = Some(reset);
+        self
+    }
+
     #[must_use]
     pub fn verb_catalog(&self) -> &'static [&'static str] {
         if self.kill_switch_engaged() {
@@ -271,7 +305,8 @@ impl LinkedInSeatSandboxPolicy {
             if verb == LINKEDIN_SEND_DM_VERB
                 && self.state.dm_sends_today >= self.limits.daily_dm_cap
             {
-                return LinkedInSeatPolicyDecision::hold("linkedin.daily_dm_cap", fields);
+                return LinkedInSeatPolicyDecision::hold("linkedin.daily_dm_cap", fields)
+                    .until(self.state.caps_reset_at);
             }
             if verb == LINKEDIN_CONNECT_REQUEST_VERB
                 && self.state.connect_requests_today >= self.limits.daily_connect_request_cap
@@ -279,7 +314,8 @@ impl LinkedInSeatSandboxPolicy {
                 return LinkedInSeatPolicyDecision::hold(
                     "linkedin.daily_connect_request_cap",
                     fields,
-                );
+                )
+                .until(self.state.caps_reset_at);
             }
             if let Some(not_before) = self.state.next_send_not_before
                 && occurred_at < not_before
@@ -288,7 +324,8 @@ impl LinkedInSeatSandboxPolicy {
                     "linkedin_next_send_not_before".to_owned(),
                     not_before.to_string(),
                 );
-                return LinkedInSeatPolicyDecision::hold("linkedin.cadence_not_ready", fields);
+                return LinkedInSeatPolicyDecision::hold("linkedin.cadence_not_ready", fields)
+                    .until(Some(not_before));
             }
         }
         LinkedInSeatPolicyDecision::allow(fields)
@@ -306,7 +343,8 @@ impl LinkedInSeatSandboxPolicy {
             return LinkedInSeatPolicyDecision::hold("linkedin.session_inactive", fields);
         }
         if self.state.profile_reads_today >= self.limits.daily_profile_read_cap {
-            return LinkedInSeatPolicyDecision::hold("linkedin.daily_profile_read_cap", fields);
+            return LinkedInSeatPolicyDecision::hold("linkedin.daily_profile_read_cap", fields)
+                .until(self.state.caps_reset_at);
         }
         LinkedInSeatPolicyDecision::allow(fields)
     }
@@ -389,6 +427,10 @@ pub struct LinkedInSeatPolicyDecision {
     pub reason_code: Option<String>,
     pub receipt_fields: BTreeMap<String, String>,
     pub policy_trace: Vec<String>,
+    /// For a hold, the instant the seat's window reopens, when the policy
+    /// names one: a daily cap's reset or the cadence edge (FIX 8791, FIX
+    /// 8813).
+    pub not_before: Option<u64>,
 }
 
 impl LinkedInSeatPolicyDecision {
@@ -404,11 +446,24 @@ impl LinkedInSeatPolicyDecision {
             reason_code: None,
             receipt_fields,
             policy_trace: Vec::new(),
+            not_before: None,
         }
     }
 
     fn hold(reason_code: &str, receipt_fields: BTreeMap<String, String>) -> Self {
         Self::blocked(LinkedInSeatPolicyAction::Hold, reason_code, receipt_fields)
+    }
+
+    /// This hold, waiting until `not_before`, which its receipt names.
+    fn until(mut self, not_before: Option<u64>) -> Self {
+        if let Some(not_before) = not_before {
+            self.receipt_fields.insert(
+                "linkedin_hold_not_before".to_owned(),
+                not_before.to_string(),
+            );
+        }
+        self.not_before = not_before;
+        self
     }
 
     /// The verdict for a LinkedIn effect dispatched with no current seat
@@ -448,6 +503,7 @@ impl LinkedInSeatPolicyDecision {
             reason_code: Some(reason_code.to_owned()),
             receipt_fields,
             policy_trace: vec![reason_code.to_owned()],
+            not_before: None,
         }
     }
 }

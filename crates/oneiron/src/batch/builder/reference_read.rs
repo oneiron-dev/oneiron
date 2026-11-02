@@ -143,9 +143,11 @@ pub(super) struct StagedDenial {
 /// staged snapshot gives, a Dreamer precommit refusal seen only there
 /// included, decides or shadows it; every other verdict is the preflight's,
 /// which already gave it. For the CLAIM it finds, the claim gate's reader-bound
-/// door is asked in a savepoint that is always rolled back, only for the
-/// receipt the gate records with that denial; a door that answers with
-/// another verdict there leaves the denial standing without one. The whole
+/// door is asked in a savepoint that is always rolled back, in the
+/// reference-only probe mode that skips the Dreamer precommit (FIX 11304),
+/// only for the receipt the gate records with that denial; the gate's own
+/// receipt path runs for the reference verdict, and `settle_denial_in`
+/// re-appends the carried copy once the savepoint rolls back. The whole
 /// staged run it replaces gave no item any other outcome: it dropped every
 /// other gate verdict and raised only a non-gate refusal, which here is each
 /// write envelope's own check, kept on this path for every CLAIM in order.
@@ -172,7 +174,7 @@ pub(super) fn staged_reference_denial(
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &*txn)?;
     let mut probe = vault.store.env.nested_write_txn(txn)?;
     let mut recorded = None;
-    let verdict = crate::gate::check_claim_policy_for_write_with_record_with_reader(
+    let verdict = crate::gate::check_claim_policy_for_write_with_record_with_reader_reference_probe(
         &vault.store,
         &mut probe,
         &claim.id,
@@ -197,6 +199,8 @@ pub(super) fn staged_reference_denial(
         reader,
     );
     drop(probe);
+    // The probe runs reference-only, so a reference denial arrives with the
+    // gate's receipt; any other verdict still leaves the denial bare.
     let (err, decision) = match verdict {
         Err(err) if unresolved_reference(&err) => (err, recorded),
         Ok(()) | Err(Error::Gate(_)) => (reference_rejection(), None),

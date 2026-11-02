@@ -32,10 +32,12 @@ pub(super) fn apply_commitment_gap_decay_arm(
     // grounds every selected instance before staging a single op and
     // never commits, so one stale, closed or gate-refused member takes
     // the whole selection down with the caller's transaction.
-    // Hand each id its preflight identity in recorded order. The
-    // nested ClaimCandidate applies consume its marker, not this
-    // outer arm; consuming here a second time aborts the lapse.
-    let lapse_decision_ids = take_lapse_decisions(&mut state.preflight_gate_decision_ids, &ids);
+    // Hand each claim the lapse writes its preflight identity in recorded
+    // order. The nested ClaimCandidate applies consume its marker, not this
+    // outer arm; consuming here again aborts it.
+    let lapse_claim_ids = crate::commitment::lapse_claim_ids(&ids)?;
+    let lapse_decision_ids =
+        take_lapse_decisions(&mut state.preflight_gate_decision_ids, &lapse_claim_ids);
     crate::commitment::lapse_commitments_in_txn(
         store,
         config,

@@ -2879,6 +2879,40 @@ async fn vault_message_stream_partial(
     )?;
     Ok(FacadeCallOutput::listed(output, &producers))
 }
+async fn vault_message_streams_refused(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.message_streams.refused")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.message_streams.refused", &value)?;
+    let mut hooks = facade_hooks_pre(server, call, "vault.message_streams.refused", value).await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_message_streams_refused(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_messages_durability(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -7684,6 +7718,46 @@ async fn vault_skills_optimize_tradeoff_asks_pick(
     .await?;
     let ran = async {
         let (output, listed) = super::host_doors::vault_skills_optimize_tradeoff_asks_pick(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
+async fn vault_skills_optimize_tradeoff_asks_resolve(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Write)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.skills.optimize.tradeoff_asks.resolve")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.skills.optimize.tradeoff_asks.resolve", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.skills.optimize.tradeoff_asks.resolve",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_skills_optimize_tradeoff_asks_resolve(
             server,
             auth,
             facade_door_input(&mut hooks)?,
@@ -33366,6 +33440,46 @@ async fn vault_consolidation_lineage(
         rows: super::host_doors::support::ListedRows::rows(listed),
     })
 }
+async fn vault_consolidation_candidate_decisions(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    input: Result<serde_json::Value, FacadeApiError>,
+) -> Result<FacadeCallOutput, FacadeApiError> {
+    let auth = call.auth();
+    auth.require(CoreScope::Read)?;
+    auth.require_unrestricted_record_scope()?;
+    facade_outside_room_turn(call, "vault.consolidation.candidate_decisions")?;
+    let value = input?;
+    oneiron::task_verb::sdk::validate_input("vault.consolidation.candidate_decisions", &value)?;
+    let mut hooks = facade_hooks_pre(
+        server,
+        call,
+        "vault.consolidation.candidate_decisions",
+        value,
+    )
+    .await?;
+    let ran = async {
+        let (output, listed) = super::host_doors::vault_consolidation_candidate_decisions(
+            server,
+            auth,
+            facade_door_input(&mut hooks)?,
+        )
+        .await;
+        Ok::<_, FacadeApiError>((facade_output(output?)?, listed))
+    }
+    .await;
+    let (output, listed) = match ran {
+        Ok(ran) => ran,
+        Err(error) => {
+            row_hooks_abort(server, hooks).await;
+            return Err(error);
+        }
+    };
+    Ok(FacadeCallOutput {
+        value: facade_hooks_post(server, hooks, output).await?,
+        rows: super::host_doors::support::ListedRows::rows(listed),
+    })
+}
 async fn vault_consolidation_promote(
     server: &Arc<SyncServer>,
     call: &FacadeCall<'_>,
@@ -38610,6 +38724,9 @@ async fn call_verb_row(
         "vault.message_stream_partial" => {
             Box::pin(vault_message_stream_partial(server, call, input)).await
         }
+        "vault.message_streams.refused" => {
+            Box::pin(vault_message_streams_refused(server, call, input)).await
+        }
         "vault.messages.durability" => {
             Box::pin(vault_messages_durability(server, call, input)).await
         }
@@ -38922,6 +39039,12 @@ async fn call_verb_row(
         }
         "vault.skills.optimize.tradeoff_asks.pick" => {
             Box::pin(vault_skills_optimize_tradeoff_asks_pick(
+                server, call, input,
+            ))
+            .await
+        }
+        "vault.skills.optimize.tradeoff_asks.resolve" => {
+            Box::pin(vault_skills_optimize_tradeoff_asks_resolve(
                 server, call, input,
             ))
             .await
@@ -40677,6 +40800,9 @@ async fn call_verb_row(
         }
         "vault.consolidation.lineage" => {
             Box::pin(vault_consolidation_lineage(server, call, input)).await
+        }
+        "vault.consolidation.candidate_decisions" => {
+            Box::pin(vault_consolidation_candidate_decisions(server, call, input)).await
         }
         "vault.consolidation.promote" => {
             Box::pin(vault_consolidation_promote(server, call, input)).await

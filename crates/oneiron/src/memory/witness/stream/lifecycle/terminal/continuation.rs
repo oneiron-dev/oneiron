@@ -47,14 +47,21 @@ pub(super) fn write_continuation_terminal(
     assertions: &WitnessAssertions,
     gate: TerminalGate<'_>,
     callback: Callback,
-    lane: Option<&crate::claim::ScopedRead<'_>>,
-    unread: &std::cell::Cell<Option<String>>,
+    (lane, memory): (
+        Option<&crate::claim::ScopedRead<'_>>,
+        &crate::memory::Memory<'_>,
+    ),
+    (unread, unproven): (
+        &std::cell::Cell<Option<String>>,
+        &std::cell::Cell<Vec<String>>,
+    ),
     receipt: &mut MessageStreamReceipt,
 ) -> MessageStreamResult<()> {
     let seed = &state.seed;
     vault.write_txn_door(callback, |txn| -> MessageStreamResult<()> {
         admit_terminal(gate, txn)?;
         reply_assertions::judge_in_txn(lane, txn, assertions, unread)?;
+        unproven.set(reply_assertions::unproven_in_txn(memory, txn, assertions));
         // Judged: this generation keeps its seed's and its terminal's
         // set on its own receipt; the birth envelope stays (FIX 10258).
         receipt.reply_assertions =

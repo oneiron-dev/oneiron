@@ -8,7 +8,7 @@
 mod body;
 mod page;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
@@ -168,8 +168,7 @@ impl Vault {
     /// stored binding, its body's source, each entry's fact entity (a live
     /// entry's actor too) and every row a replayed read served, as the run
     /// pinned it and as it reads now, and the rows each verdict an entry
-    /// heard resolved its evidence to. `None` once an entry heard a verdict
-    /// whose evidence rows are not known.
+    /// heard resolved its evidence to.
     ///
     /// # Errors
     ///
@@ -181,10 +180,10 @@ impl Vault {
         binding: EntityId,
         since: Option<FactPositionHex>,
         limit: usize,
-    ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
+    ) -> Result<(Vec<HookReplayEntry>, Vec<EntityId>)> {
         let total = limit.max(1);
         let mut entries = Vec::new();
-        let mut rows: Option<Vec<EntityId>> = Some(Vec::new());
+        let mut rows: Vec<EntityId> = Vec::new();
         let mut cursor = None;
         let mut since = since;
         loop {
@@ -202,13 +201,7 @@ impl Vault {
                 page_limit,
             )?;
             entries.extend(page.entries);
-            if let Some(listed) = listed {
-                if let Some(acc) = rows.as_mut() {
-                    acc.extend(listed);
-                }
-            } else {
-                rows = None;
-            }
+            rows.extend(listed);
             let Some(next) = page.next else {
                 break;
             };
@@ -217,10 +210,8 @@ impl Vault {
             }
             cursor = Some(next);
         }
-        if let Some(rows) = rows.as_mut() {
-            rows.sort_unstable();
-            rows.dedup();
-        }
+        rows.sort_unstable();
+        rows.dedup();
         Ok((entries, rows))
     }
 
@@ -254,10 +245,10 @@ impl Vault {
         row: &PackHookBinding,
         since: Option<FactPositionHex>,
         limit: usize,
-    ) -> Result<(Vec<HookReplayEntry>, Option<Vec<EntityId>>)> {
+    ) -> Result<(Vec<HookReplayEntry>, Vec<EntityId>)> {
         let total = limit.max(1);
         let mut entries = Vec::new();
-        let mut rows: Option<Vec<EntityId>> = Some(Vec::new());
+        let mut rows: Vec<EntityId> = Vec::new();
         let mut cursor = None;
         let mut since = since;
         loop {
@@ -276,13 +267,7 @@ impl Vault {
                 page_limit,
             )?;
             entries.extend(page.entries);
-            if let Some(listed) = listed {
-                if let Some(acc) = rows.as_mut() {
-                    acc.extend(listed);
-                }
-            } else {
-                rows = None;
-            }
+            rows.extend(listed);
             let Some(next) = page.next else {
                 break;
             };
@@ -291,10 +276,8 @@ impl Vault {
             }
             cursor = Some(next);
         }
-        if let Some(rows) = rows.as_mut() {
-            rows.sort_unstable();
-            rows.dedup();
-        }
+        rows.sort_unstable();
+        rows.dedup();
         Ok((entries, rows))
     }
 
@@ -326,8 +309,7 @@ impl Vault {
     }
 
     /// Runs `walk` with `row`'s replay, on its grant's reader's Recorded
-    /// lane, beside the rows its entries stood on (`None` once one heard a
-    /// verdict whose evidence rows are not known).
+    /// lane, beside the rows its entries stood on.
     fn replaying<T>(
         &self,
         runtime: &dyn HookBodyRuntime,
@@ -336,7 +318,7 @@ impl Vault {
         row: &PackHookBinding,
         body: std::result::Result<String, String>,
         walk: impl FnOnce(&Replay<'_>, &ScopedRead<'_>) -> Result<T>,
-    ) -> Result<(T, Option<Vec<EntityId>>)> {
+    ) -> Result<(T, Vec<EntityId>)> {
         let grant = effective_grant(self, binding_id, row)?;
         let memory = self.memory(grant.reader, filter::edge_class(grant.reader_class));
         let lane = memory
@@ -353,15 +335,11 @@ impl Vault {
             // Only rows that exist: the binding id may be one no row holds
             // yet, so the stored-binding wrapper lists it (FIX 4710).
             rows: RefCell::new(vec![row.source]),
-            unlisted_verdict: Cell::new(false),
         };
         let walked = walk(&replay, &lane)?;
-        let rows = (!replay.unlisted_verdict.get()).then(|| {
-            let mut rows = replay.rows.into_inner();
-            rows.sort_unstable();
-            rows.dedup();
-            rows
-        });
+        let mut rows = replay.rows.into_inner();
+        rows.sort_unstable();
+        rows.dedup();
         Ok((walked, rows))
     }
 
@@ -386,19 +364,12 @@ struct Replay<'r> {
     body: std::result::Result<String, String>,
     /// The rows its entries name and their bodies' reads served, so far.
     rows: RefCell<Vec<EntityId>>,
-    /// Set once an entry's body heard a verdict whose evidence rows are not
-    /// known.
-    unlisted_verdict: Cell<bool>,
 }
 
 impl Replay<'_> {
-    /// Lists the rows one verdict's evidence resolved to; one that kept no
-    /// list leaves the rows unknown.
-    fn heard(&self, evidence: Option<&[EntityId]>) {
-        match evidence {
-            Some(rows) => self.rows.borrow_mut().extend(rows.iter().copied()),
-            None => self.unlisted_verdict.set(true),
-        }
+    /// Lists the rows one verdict's evidence resolved to.
+    fn heard(&self, evidence: &[EntityId]) {
+        self.rows.borrow_mut().extend(evidence.iter().copied());
     }
 
     /// Lists every row `pins` served.
@@ -526,24 +497,24 @@ impl<'p> PinnedVerdicts<'p> {
 
     /// The pinned reply, beside the rows its evidence resolved to; a gone
     /// history reads none.
-    fn answer(
-        &mut self,
-        request: &str,
-    ) -> (std::result::Result<String, String>, Option<&'p [EntityId]>) {
+    fn answer(&mut self, request: &str) -> (std::result::Result<String, String>, &'p [EntityId]) {
         let pinned = self.pins.get(self.asked);
         self.asked += 1;
         match pinned {
-            Some(pin) if pin.request_json == request => {
-                (pin.reply.clone(), pin.evidence.as_deref())
-            }
+            Some(pin) if pin.request_json == request => match pin.evidence.as_deref() {
+                Some(evidence) => (pin.reply.clone(), evidence),
+                None => {
+                    self.missing.get_or_insert_with(|| {
+                        "a verdict's evidence rows are not known".to_owned()
+                    });
+                    (Err("this verdict's history is gone".to_owned()), &[])
+                }
+            },
             _ => {
                 self.missing.get_or_insert_with(|| {
                     format!("a verdict's history is gone: {}", bounded(request))
                 });
-                (
-                    Err("this verdict's history is gone".to_owned()),
-                    Some(&[][..]),
-                )
+                (Err("this verdict's history is gone".to_owned()), &[])
             }
         }
     }

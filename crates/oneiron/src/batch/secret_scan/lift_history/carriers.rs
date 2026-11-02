@@ -142,6 +142,16 @@ fn cursor(place: u8, key: &[u8]) -> Vec<u8> {
     [&[place][..], key].concat()
 }
 
+/// The census cursor of `decl`'s row `row` (its key after the table's
+/// prefix): `None` for a table that is no carrier.
+pub(super) fn cursor_of(decl: &SideTableDecl, row: &[u8]) -> Option<Vec<u8>> {
+    let place = CARRIERS.iter().position(|held| std::ptr::eq(*held, decl))?;
+    Some(cursor(
+        u8::try_from(place).ok()?,
+        &[decl.prefix, row].concat(),
+    ))
+}
+
 fn carrier_of(key: &[u8]) -> Option<(&'static SideTableDecl, &[u8])> {
     let (&place, row_key) = key.split_first()?;
     let decl = CARRIERS.get(usize::from(place))?;

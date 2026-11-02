@@ -25,6 +25,7 @@
 mod attempts;
 mod authored;
 mod carriers;
+mod frontier;
 mod loro_blocks;
 mod notice;
 mod projection;
@@ -35,6 +36,7 @@ mod repo_rows;
 mod retained;
 mod side_rows;
 
+pub(crate) use self::frontier::{propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn};
 pub use self::projection::secret_lift_as_owner_toward;
 
 use std::borrow::Cow;

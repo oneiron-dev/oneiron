@@ -3,19 +3,22 @@
 //! Defines its own items.
 
 use super::evaluation::scoped_rules;
+use super::manifest::{
+    effective_rule_rows, effective_rule_rows_in_txn, put_manifest_rule_row_in_txn,
+};
 use super::rules::{
     AmendmentDirection, BookingAntiAbuseRule, BookingAntiAbuseRuleRow,
     BookingRuleOwnerStampBinding, BookingRuleScope, RuleAmendmentOutcome, booking_rule_row_id,
     validate_rule_row,
 };
 use super::storage::{
-    NOTICE, NOTICE_KEY_TAG, ROW_VERSION_HASH_DOMAIN, RULE, RULE_KEY_TAG, encode_row,
-    engine_failure, notice_digest, refused, rule_digest,
+    PROPOSAL_KEY_TAG, ROW_VERSION_HASH_DOMAIN, RULE_PROPOSAL, encode_row, engine_failure, refused,
 };
 use crate::booking::config::{BOOKING_EVENT_TYPE_PREDICATE, decode_event_type_claim_value};
 use crate::booking::lifecycle::{booking_writer, digest_with};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{ClaimSubject, claim_surfaceable};
+use crate::consent::AuthenticatedOwner;
 use crate::{EntityId, Vault};
 
 // -------------------------------------------------------------------------
@@ -264,65 +267,23 @@ pub fn booking_rule_row_version_hash(
 // Activation
 // -------------------------------------------------------------------------
 
-fn read_rule_row_in_txn(
+/// The row in force under `row_id`, read in the caller's transaction.
+fn effective_rule_row_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     row_id: &str,
 ) -> Result<Option<BookingAntiAbuseRuleRow>, BookingError> {
-    RULE.get(&vault.store, rtxn, &(*RULE_KEY_TAG, rule_digest(row_id)))
-        .map_err(|error| engine_failure("rule read", error))
+    Ok(effective_rule_rows_in_txn(vault, rtxn)?
+        .into_iter()
+        .find(|row| row.row_id == row_id))
 }
 
-fn put_rule_row_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    row: &BookingAntiAbuseRuleRow,
-) -> Result<(), BookingError> {
-    RULE.put(
-        &vault.store,
-        wtxn,
-        &(*RULE_KEY_TAG, rule_digest(&row.row_id)),
-        row,
-    )
-    .map_err(|error| engine_failure("rule write", error))
-}
-
-/// The private write surface. [`apply_rule_amendment`] is the only caller;
-/// no public path may store a rule row without the versioned transaction.
-#[allow(dead_code)]
-fn put_booking_anti_abuse_rule(
-    vault: &Vault,
-    row: &BookingAntiAbuseRuleRow,
-) -> Result<(), BookingError> {
-    booking_writer(vault, |wtxn| put_rule_row_in_txn(vault, wtxn, row))
-}
-
-fn write_notice_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    row: &BookingAntiAbuseRuleRow,
-    direction: AmendmentDirection,
-) -> Result<(), BookingError> {
-    let token = match direction {
+fn direction_token(direction: AmendmentDirection) -> &'static str {
+    match direction {
         AmendmentDirection::Tightening => "tightening",
         AmendmentDirection::Equivalent => "re-assertion",
-        AmendmentDirection::Loosening => "owner-stamped loosening",
-    };
-    let notice = format!(
-        "booking anti-abuse rule {} activated at version {} ({}) by {}",
-        row.row_id,
-        row.version,
-        token,
-        row.amended_by.to_hex()
-    );
-    NOTICE
-        .put(
-            &vault.store,
-            wtxn,
-            &(*NOTICE_KEY_TAG, notice_digest(&row.row_id, row.version)),
-            &notice,
-        )
-        .map_err(|error| engine_failure("notice write", error))
+        AmendmentDirection::Loosening => "loosening",
+    }
 }
 
 /// Validates the scope against the same live configuration truth the solver
@@ -394,21 +355,34 @@ fn validate_rule_scope_in_txn(
 /// booking writer.
 ///
 /// `expected_current_version == 0` activates the row for the first time and
-/// the proposal must be version 1. Otherwise the stored row must sit at
-/// `expected_current_version`, the proposal must advance it by exactly one,
-/// and the direction law applies: tightening and equivalent re-assertions
-/// store immediately; a loosening requires `owner_stamp` whose binding
-/// equals [`booking_rule_row_version_hash`] of the exact proposed row. The
-/// stamp reference is recorded by the transaction — a caller-supplied
+/// the proposal must be version 1. Otherwise the row in force must sit at
+/// `expected_current_version` and the proposal must advance it by exactly
+/// one. `owner` is the amending person's proof and `amended_by` must name
+/// that person. Authority is verified inside the writer (FIX 9627): the
+/// person must be the rule's holder, a live owner of this vault proven at
+/// the owner tier who owns its booking pages, and a loosening must also
+/// carry the holder's authenticated, logged approve-once press on
+/// [`booking_rule_row_version_hash`] of the exact proposed row, which the
+/// transaction spends and records as `owner_stamp_ref`. A caller's
+/// `owner_stamp`, when given, must name that logged decision and hash. A
+/// change that lacks either is retained as a proposal
+/// ([`booking_anti_abuse_rule_proposals`]) and the row in force stays as it
+/// was; the owner's press and a resubmission activate it. A caller-supplied
 /// `owner_stamp_ref` is refused.
+///
+/// An activated row is written into the owner-trusted default policy
+/// manifest through the owner's manifest writer (FIX 9628), which records
+/// the gate receipt of the write, so it reaches every node on the manifest's
+/// own sync path.
 ///
 /// # Errors
 ///
 /// [`BookingError::InvalidConstraint`] on a stale expected version, a
-/// malformed or out-of-order proposal, a stamp declined for loosening, or a
-/// stamp that binds anything other than the exact proposed row and version.
+/// malformed or out-of-order proposal, an `amended_by` that is not the
+/// authenticated person, or a manifest write the policy writer refuses.
 pub fn apply_rule_amendment(
     vault: &Vault,
+    owner: &AuthenticatedOwner,
     expected_current_version: u64,
     proposed: BookingAntiAbuseRuleRow,
     owner_stamp: Option<&BookingRuleOwnerStampBinding>,
@@ -424,10 +398,18 @@ pub fn apply_rule_amendment(
             "the stamp binding is a transaction input; it is never caller-stored on the row",
         ));
     }
-    booking_writer(vault, |wtxn| {
+    let outcome = booking_writer(vault, |wtxn| {
+        let actor = owner
+            .revalidate_person_in_txn(vault, &*wtxn)
+            .map_err(|error| {
+                refused(format!("the amending person is not authenticated: {error}"))
+            })?;
+        if proposed.amended_by != actor {
+            return Err(refused("amended_by must name the authenticated person"));
+        }
         validate_rule_scope_in_txn(vault, &*wtxn, &proposed.scope)?;
-        let current = read_rule_row_in_txn(vault, &*wtxn, &proposed.row_id)?;
-        let (stored, direction) = match (expected_current_version, current) {
+        let current = effective_rule_row_in_txn(vault, &*wtxn, &proposed.row_id)?;
+        let direction = match (expected_current_version, current) {
             (0, None) => {
                 if proposed.version != 1 {
                     return Err(refused(
@@ -436,7 +418,7 @@ pub fn apply_rule_amendment(
                 }
                 // Activating a control that did not exist is additive; it is
                 // the tightening arm.
-                (proposed, AmendmentDirection::Tightening)
+                AmendmentDirection::Tightening
             }
             (0, Some(current)) => {
                 return Err(refused(format!(
@@ -456,68 +438,115 @@ pub fn apply_rule_amendment(
                         current.version
                     )));
                 }
-                let direction = amendment_direction(&current, &proposed)?;
-                let stored = match direction {
-                    AmendmentDirection::Loosening => {
-                        let Some(stamp) = owner_stamp else {
-                            return Err(refused(
-                                "loosening requires a logged owner stamp binding the exact proposed row and version",
-                            ));
-                        };
-                        let bound = booking_rule_row_version_hash(&proposed)?;
-                        if stamp.proposed_row_version_hash != bound {
-                            return Err(refused(
-                                "owner stamp does not bind the exact proposed row and version",
-                            ));
-                        }
-                        BookingAntiAbuseRuleRow {
-                            owner_stamp_ref: Some(stamp.stamp_ref),
-                            ..proposed
-                        }
-                    }
-                    AmendmentDirection::Tightening | AmendmentDirection::Equivalent => proposed,
-                };
-                (stored, direction)
+                amendment_direction(&current, &proposed)?
             }
         };
-        put_rule_row_in_txn(vault, wtxn, &stored)?;
-        write_notice_in_txn(vault, wtxn, &stored, direction)?;
+        let bound = booking_rule_row_version_hash(&proposed)?;
+        let holder = owner.revalidate_in_txn(vault, &*wtxn).is_ok()
+            && crate::memory::verify_public_booking_owner_in_txn(vault, &*wtxn, actor).is_ok();
+        // The holder's press, read from the consent ledger rather than taken
+        // from the caller. A spent or unreadable marker approves nothing.
+        let digest = crate::consent::EffectDigest::from_bytes(bound);
+        let approval =
+            crate::consent::approve_once_authorization_in_txn(&vault.store, &*wtxn, &digest)
+                .ok()
+                .flatten();
+        let decision = match &approval {
+            Some(_) => crate::consent::approve_once_decision_in_txn(&vault.store, &*wtxn, &digest)
+                .map_err(|error| engine_failure("approval decision read", error))?
+                .and_then(|decision| EntityId::from_bytes(decision.as_bytes()).ok()),
+            None => None,
+        };
+        let stamp_names_decision = owner_stamp.is_none_or(|stamp| {
+            Some(stamp.stamp_ref) == decision && stamp.proposed_row_version_hash == bound
+        });
+        let approved = decision.is_some() && stamp_names_decision;
+        let activates = holder
+            && match direction {
+                AmendmentDirection::Loosening => approved,
+                AmendmentDirection::Tightening | AmendmentDirection::Equivalent => true,
+            };
+        if !activates {
+            RULE_PROPOSAL
+                .put(&vault.store, wtxn, &(*PROPOSAL_KEY_TAG, bound), &proposed)
+                .map_err(|error| engine_failure("rule proposal write", error))?;
+            return Ok(RuleAmendmentOutcome {
+                stored: proposed,
+                owner_notice_required: true,
+                activated: false,
+            });
+        }
+        let stored = match (approval, approved) {
+            (Some(authorization), true) => {
+                crate::consent::spend_approve_once_in_txn(&vault.store, wtxn, &authorization)
+                    .map_err(|error| engine_failure("approval spend", error))?;
+                BookingAntiAbuseRuleRow {
+                    owner_stamp_ref: decision,
+                    ..proposed
+                }
+            }
+            _ => proposed,
+        };
+        RULE_PROPOSAL
+            .delete(&vault.store, wtxn, &(*PROPOSAL_KEY_TAG, bound))
+            .map_err(|error| engine_failure("rule proposal delete", error))?;
+        put_manifest_rule_row_in_txn(vault, owner, wtxn, &stored)?;
         Ok(RuleAmendmentOutcome {
             stored,
             owner_notice_required: true,
+            activated: true,
         })
-    })
+    })?;
+    if outcome.activated {
+        // A floor this commit moved is judged again at once, as every owner
+        // manifest write does.
+        vault.apply_pending_rebinds_after_commit();
+    }
+    Ok(outcome)
 }
 
-/// Decodes every stored rule row under the booking prefix. Rule rows are
-/// owner-configured and few, so the loaders below both start from one full
-/// prefix scan and differ only in their scope predicate.
-fn all_rule_rows(vault: &Vault) -> Result<Vec<BookingAntiAbuseRuleRow>, BookingError> {
+/// Every retained rule proposal awaiting its holder (FIX 9627), ordered by
+/// row id then version: the owner's review list. Approving one is the
+/// owner's approve-once press on its [`booking_rule_row_version_hash`],
+/// then the same amendment resubmitted.
+///
+/// # Errors
+///
+/// Storage and decode failures, wrapped per the lane's error stance.
+pub fn booking_anti_abuse_rule_proposals(
+    vault: &Vault,
+) -> Result<Vec<BookingAntiAbuseRuleRow>, BookingError> {
     let rtxn = vault
         .store
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
-    Ok(RULE
-        .scan_from(&vault.store, &rtxn, RULE_KEY_TAG)
-        .map_err(|error| engine_failure("rule scan", error))?
+    let mut rows: Vec<BookingAntiAbuseRuleRow> = RULE_PROPOSAL
+        .scan_from(&vault.store, &rtxn, PROPOSAL_KEY_TAG)
+        .map_err(|error| engine_failure("rule proposal scan", error))?
         .into_iter()
         .map(|(_, row)| row)
-        .collect())
+        .collect();
+    rows.sort_by(|left, right| {
+        left.row_id
+            .cmp(&right.row_id)
+            .then(left.version.cmp(&right.version))
+    });
+    Ok(rows)
 }
 
-/// Lists the stored rule rows for one exact scope, ordered by row id — the
+/// Lists the rule rows in force for one exact scope, ordered by row id — the
 /// admin/listing view. Request enforcement wants the applicable union
 /// instead: [`applicable_booking_anti_abuse_rules`].
 ///
 /// # Errors
 ///
-/// Storage and decode failures, wrapped per the lane's error stance.
+/// Policy resolution failures, wrapped per the lane's error stance.
 pub fn booking_anti_abuse_rules(
     vault: &Vault,
     scope: &BookingRuleScope,
 ) -> Result<Vec<BookingAntiAbuseRuleRow>, BookingError> {
-    let mut rows: Vec<BookingAntiAbuseRuleRow> = all_rule_rows(vault)?
+    let mut rows: Vec<BookingAntiAbuseRuleRow> = effective_rule_rows(vault)?
         .into_iter()
         .filter(|row| row.scope == *scope)
         .collect();
@@ -525,7 +554,7 @@ pub fn booking_anti_abuse_rules(
     Ok(rows)
 }
 
-/// Lists every stored rule row that governs one request: the page-wide
+/// Lists every rule row in force that governs one request: the page-wide
 /// (`event_type: None`) stack for `page_ref` PLUS, when the request names an
 /// event type, that event type's exact stack — the same union the
 /// evaluator's `scoped_rules` predicate keeps. The HTTP adapter's row
@@ -534,39 +563,62 @@ pub fn booking_anti_abuse_rules(
 ///
 /// # Errors
 ///
-/// Storage and decode failures, wrapped per the lane's error stance.
+/// Policy resolution failures, wrapped per the lane's error stance.
 pub fn applicable_booking_anti_abuse_rules(
     vault: &Vault,
     page_ref: &EntityId,
     event_type: &Option<EventTypeKey>,
 ) -> Result<Vec<BookingAntiAbuseRuleRow>, BookingError> {
-    let rows = all_rule_rows(vault)?;
+    let rows = effective_rule_rows(vault)?;
     let mut applicable: Vec<BookingAntiAbuseRuleRow> =
         scoped_rules(&rows, page_ref, event_type).cloned().collect();
     applicable.sort_by(|left, right| left.row_id.cmp(&right.row_id));
     Ok(applicable)
 }
 
-/// Every durable activation notice, oldest first by row id then text. The
-/// owner-visible companion of [`apply_rule_amendment`]: every stored
-/// activation leaves one notice row.
+/// The owner-visible state of every rule, ordered by text: one line per row
+/// in force (its version, who amended it, and whether an owner stamp
+/// loosened it) and one per retained proposal (with the digest its approval
+/// names). Each activation's history is its manifest write's gate receipt.
 ///
 /// # Errors
 ///
-/// Storage failures, and [`BookingError::InvalidConstraint`] when a notice is
-/// not UTF-8.
+/// Policy resolution, storage and encoding failures.
 pub fn booking_anti_abuse_notices(vault: &Vault) -> Result<Vec<String>, BookingError> {
-    let rtxn = vault
-        .store
-        .env
-        .read_txn()
-        .map_err(|error| engine_failure("read transaction", error))?;
-    let mut notices: Vec<String> = NOTICE
-        .scan_from(&vault.store, &rtxn, NOTICE_KEY_TAG)
-        .map_err(|error| engine_failure("notice scan", error))?
-        .into_iter()
-        .map(|(_, notice)| notice)
+    let rows = effective_rule_rows(vault)?;
+    let mut notices: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let token = if row.owner_stamp_ref.is_some() {
+                "owner-stamped loosening"
+            } else {
+                "tightening or re-assertion"
+            };
+            format!(
+                "booking anti-abuse rule {} activated at version {} ({}) by {}",
+                row.row_id,
+                row.version,
+                token,
+                row.amended_by.to_hex()
+            )
+        })
         .collect();
+    for proposal in booking_anti_abuse_rule_proposals(vault)? {
+        let token = match rows.iter().find(|row| row.row_id == proposal.row_id) {
+            Some(current) => {
+                amendment_direction(current, &proposal).map_or("change", direction_token)
+            }
+            None => direction_token(AmendmentDirection::Tightening),
+        };
+        notices.push(format!(
+            "booking anti-abuse rule {} proposed at version {} ({}) by {}; it activates on the owner's approval of {}",
+            proposal.row_id,
+            proposal.version,
+            token,
+            proposal.amended_by.to_hex(),
+            crate::booking::lifecycle::hex_lower(&booking_rule_row_version_hash(&proposal)?)
+        ));
+    }
     notices.sort();
     Ok(notices)
 }

@@ -81,14 +81,20 @@ impl MeshFloor {
     }
 
     /// `stream`, counted in the check from now until it closes, and the
-    /// handle its record's credential is attached through ([`keyed`]).
-    pub(super) fn observe<S>(&self, stream: S) -> (CountedStream<S>, BodyCredential) {
+    /// handle its record's credential is attached through ([`keyed`]). The
+    /// stream holds `place` until it closes, its upgrade included (FIX 11163).
+    pub(super) fn observe<S>(
+        &self,
+        stream: S,
+        place: OwnedSemaphorePermit,
+    ) -> (CountedStream<S>, BodyCredential) {
         let socket = self.pressure.socket(SocketHold::Floor);
         let (body, credential) = socket.body();
         let counted = CountedStream {
             stream,
             body,
             _socket: socket,
+            _place: place,
         };
         (counted, credential)
     }
@@ -127,11 +133,12 @@ pub(super) fn keyed<F: Future>(
 
 /// A mesh stream whose peer's bytes count in the check as they arrive. It
 /// goes with whoever holds the stream, the upgraded socket included, and
-/// its record ends when it is dropped.
+/// its record ends and its floor place frees when it is dropped.
 pub(super) struct CountedStream<S> {
     stream: S,
     body: ObservedBody,
     _socket: ObservedSocket,
+    _place: OwnedSemaphorePermit,
 }
 
 impl<S: AsyncRead + Unpin> AsyncRead for CountedStream<S> {
