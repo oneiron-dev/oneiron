@@ -115,6 +115,7 @@ impl Vault {
             due,
             &mut doc_mutated,
         );
+        crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
         if outcome.is_err() && !doc_mutated {
             // Pre-CRDT errors have no document mutation to recover: drop
             // only this request's Prepared marker. Once the shared live doc
@@ -253,6 +254,7 @@ impl Vault {
                     id,
                     gate_decision.map(|decision| decision.decision_id),
                 );
+                super::tombstone_scope::capture_deleted_scope(self, id, value);
                 // Marked before the publish txn opens, which LMDB cannot nest:
                 // a failed publish keeps the mutated live doc, and a later
                 // persist would make its removal durable without the mark.
@@ -335,6 +337,7 @@ impl Vault {
             id,
             gate_decision.map(|decision| decision.decision_id),
         );
+        super::tombstone_scope::capture_deleted_scope(self, id, value);
         mark_removed_carriers_first(
             self,
             CarrierRemoval::LocalPublication,
@@ -407,6 +410,9 @@ impl Vault {
     /// scrub must notify even when later CRDT publication fails. The existing
     /// tee is vault-scoped and has no recipient if no window manager is live.
     pub(super) fn notify_local_delete_materialized(&self, ids: &[EntityId]) {
+        // FIX 10466: the host's live snapshot copies that may depend on an
+        // erased id go too, whatever the build's features.
+        self.inference_snapshots_erased(ids);
         #[cfg(feature = "sync")]
         {
             let manager = self
@@ -628,22 +634,25 @@ impl Vault {
         Ok(())
     }
 
-    /// Every persisted update key of `window_key`, under the same 10,000-key
-    /// cap as [`Vault::sync_state_keys_with_prefix`].
+    /// Every persisted update key of `window_key`, however many (FIX 9783).
     #[cfg(feature = "sync")]
     fn window_update_keys(&self, window_key: &crate::sync::WindowKey) -> Result<Vec<String>> {
         let rtxn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::PackQuarantineRows,
+            window_key.as_str().as_bytes(),
+            crate::vault::MAX_SYNC_STATE_KEYS as u64,
+        );
         let mut keys = Vec::new();
-        for key in self.store.port_window_update_keys(
-            &rtxn,
-            Some(WindowAddress::new(window_key.as_str())),
-            |key| key.to_owned(),
-        )? {
-            if keys.len() >= crate::vault::MAX_SYNC_STATE_KEYS {
-                return Err(Error::IndexOverflow("window update keys"));
-            }
+        let address = WindowAddress::new(window_key.as_str());
+        for key in self
+            .store
+            .port_window_update_keys(&rtxn, Some(address), str::to_owned)?
+        {
+            count.row();
             keys.push(key?);
         }
+        count.finish(self);
         Ok(keys)
     }
 

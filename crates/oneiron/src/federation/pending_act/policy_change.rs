@@ -437,4 +437,30 @@ impl Vault {
         self.refresh_policy_change(&txn, &mut change, self.store.clock.now_recorded_at())?;
         Ok(change)
     }
+
+    /// Every proposed change of `vault_id`'s shared-act policy rows, for a
+    /// live Owner of the vault (FIX 4288), ascending by id, each read as
+    /// [`Self::shared_act_policy_change`] reads one: a pending change the
+    /// vault's rows moved past reads as stale, and settled changes stay
+    /// listed as they settled. Nothing is written, settled or swept.
+    pub fn shared_act_policy_changes(
+        &self,
+        owner: &AuthenticatedOwner,
+        vault_id: u64,
+    ) -> Result<Vec<SharedActPolicyChange>> {
+        let txn = self.store.env.read_txn()?;
+        // Owner tier: a change is the Owners' authority data.
+        owner.revalidate_in_txn(self, &txn)?;
+        check_vault(self, &txn, vault_id)?;
+        let now = self.store.clock.now_recorded_at();
+        let mut changes = Vec::new();
+        for (_, mut change) in CHANGES.scan(&self.store, &txn)? {
+            if change.vault_id != vault_id {
+                continue;
+            }
+            self.refresh_policy_change(&txn, &mut change, now)?;
+            changes.push(change);
+        }
+        Ok(changes)
+    }
 }

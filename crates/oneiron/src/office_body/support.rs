@@ -81,6 +81,7 @@ pub(super) fn fork_view(record: TypedBodyFork) -> OfficeBodyFork {
             TypedForkState::Discarded { by, at } => ForkState::Discarded { by, at },
         },
         run_root: None,
+        origin: None,
     }
 }
 
@@ -189,7 +190,13 @@ pub(super) fn recalc_xlsx(
         u64::from_le_bytes(seed),
     )
     .ok_or_else(|| invalid("office body recalc clock"))?;
-    match FormualizerEngine::new().recalculate_xlsx(bytes, limits, &clock, None) {
+    match FormualizerEngine::new().recalculate_xlsx(
+        bytes,
+        limits,
+        &clock,
+        None,
+        &crate::office_body::document_resources(),
+    ) {
         Ok(report) => Ok((
             report.bytes,
             Some(CalcEngineStamp::new(

@@ -61,6 +61,17 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
                 AuthorityOp::SlipConsume { slip_id }
             })
         }
+        OP_KIND_SLIP_GRANT_REVOKE => {
+            validate_keys(entries, &[OP_KEY_KIND, SLIP_KEY_GRANT_REF])?;
+            let grant_ref_hex = required(entries, SLIP_KEY_GRANT_REF)?
+                .as_str()
+                .ok_or_else(invalid_authority)?;
+            let grant_ref = EntityId::from_hex(grant_ref_hex).map_err(|_| invalid_authority())?;
+            if grant_ref.to_hex() != grant_ref_hex {
+                return Err(invalid_authority());
+            }
+            Ok(AuthorityOp::SlipGrantRevoke { grant_ref })
+        }
         OP_KIND_GENESIS => {
             validate_keys(
                 entries,
@@ -219,6 +230,7 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         OP_KIND_OWNER_WORK_REQUEST => super::owner_work::decode_owner_work_request(entries),
         OP_KIND_OWNER_WORK_RESULT => super::owner_work::decode_owner_work_result(entries),
         OP_KIND_OWNER_WORK_CANCEL => super::owner_work::decode_owner_work_cancel(entries),
+        OP_KIND_CUSTODY_PERMIT_PIECE => super::owner_work::decode_custody_permit_piece(entries),
         OP_KIND_CHECKPOINT_POLICY => super::checkpoint_policy::decode_checkpoint_policy(entries),
         OP_KIND_HOME_NODE_PICK => super::home_pick::decode_home_node_pick(entries),
         OP_KIND_CONVERSATION_TRAINING => {
@@ -229,6 +241,8 @@ pub fn decode_op(value: &Value) -> Result<AuthorityOp> {
         }
         OP_KIND_HOME_CANDIDACY => super::home_candidacy::decode_home_candidacy(entries),
         OP_KIND_AGENT_GRANT_ACT => super::agent_grant_act::decode_agent_grant_act(entries),
+        OP_KIND_POLICY_SETTING => super::policy_setting::decode_policy_setting(entries),
+        OP_KIND_EXPORT_ACT => super::export_act::decode_export_act(entries),
         OP_KIND_OWNER_KEY_ENROLL => super::owner_key_enrollment::decode_owner_key_enroll(entries),
         OP_KIND_FRONTIER_JOIN => super::frontier_join::decode_frontier_join(entries),
         _ => Err(invalid_authority()),

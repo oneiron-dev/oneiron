@@ -30,7 +30,7 @@ impl DreamerWakeDriver<'_> {
         let attempt_id = admitted.status.attempt.id;
         let kind = error.kind();
         let cause = executor_error_park_cause(kind);
-        let settled = match self.settle_charged_or_abort(line, attempt_id, meter, input.now) {
+        let settled = match self.settle_metered_charge(line, attempt_id, meter, input.now) {
             Ok(settled) => settled,
             Err(settle_error) => {
                 let cause = Some(cause);

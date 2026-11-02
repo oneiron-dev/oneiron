@@ -29,7 +29,6 @@ use crate::memory::{
     verify_actor_binding,
 };
 use crate::task_authority::{BindingGeneration, TaskStanding};
-use crate::write_envelope::WriteActor;
 
 use super::brief::StoredBrief;
 use super::consult_result::TaskVerbBody;
@@ -145,7 +144,7 @@ impl Memory<'_> {
             }
             other => MemoryError::from(other),
         };
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
         let fold = self
             .vault()
             .authority_view_readonly_in_txn(txn)
@@ -234,10 +233,16 @@ pub(super) fn qualified_key(via: &TaskVia, key: &str, what: &str) -> MemoryResul
             "{what} must be at most {MAX_HIGHWAY_KEY_LEN} bytes"
         )));
     }
-    Ok(match via {
+    Ok(qualify(via, key))
+}
+
+/// `key` qualified by the host's parent attempt, as [`qualified_key`]
+/// qualifies it; a wire key as it is.
+pub(super) fn qualify(via: &TaskVia, key: &str) -> String {
+    match via {
         TaskVia::Wire => key.to_owned(),
         TaskVia::Host(binding) => format!("{}/{key}", attempt_hex(binding.parent())),
-    })
+    }
 }
 
 pub(super) fn attempt_hex(id: AttemptId) -> String {

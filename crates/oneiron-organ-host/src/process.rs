@@ -35,11 +35,13 @@ use crate::asks::{AskStep, CallAsks};
 use crate::budget::{CallRoom, Lease, Room};
 use crate::clock::{Clock, WaitClock};
 use crate::error::HostError;
-use crate::sandbox::{self, OrganIsolation};
+use crate::isolation::OrganIsolation;
+use crate::sandbox;
 use crate::spec::{HostConfig, OrganSpec, OrganTier};
 
 mod frames;
 mod lifeline;
+mod shutdown;
 
 use frames::{Handshake, Reading, book_send, reserve_read};
 use lifeline::{EndOnDrop, Lifeline};
@@ -479,6 +481,7 @@ impl OrganProcess {
             if !self.is_alive() {
                 return Err(CallFailure::Crashed);
             }
+            shutdown::seat_open()?;
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err(CallFailure::Busy);
@@ -805,6 +808,7 @@ impl OrganProcess {
                 return Err(CallFailure::Frame(err.into()));
             }
         }
+        shutdown::sent(id);
         loop {
             match spin::recv_spinning(reply, Some(clock.deadline())) {
                 Ok(Delivery::Reply(reply, fds, lease)) => {

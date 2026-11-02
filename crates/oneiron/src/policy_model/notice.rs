@@ -8,18 +8,19 @@
 //! [`policy_model_rationale_notice`] is not a notice to a reader. It is an
 //! AUDIT row addressed to the substrate owner reading their own receipts,
 //! recording that the safeguard model stated a reason, by typed reference and
-//! a digest of that reason, never its text (FIX 10035): a model's reason can
-//! quote the candidate, and a durable receipt keeps no candidate plaintext.
-//! The reason itself stays on the verdict the caller holds. It rides the same
-//! ledger vector because that vector is what a gate receipt persists, and it
-//! names its own audience so a host rendering notices to a person can filter
-//! it out. It is appended LAST, so it can never become the single body a
-//! caller surfaces.
+//! a vault-keyed MAC of that reason, never its text (FIX 10035, 10532): a
+//! model's reason can quote the candidate, and a durable receipt keeps no
+//! candidate plaintext. The reason itself stays on the verdict the caller
+//! holds. It rides the same ledger vector because that vector is what a gate
+//! receipt persists, and it names its own audience so a host rendering
+//! notices to a person can filter it out. It is appended LAST, so it can
+//! never become the single body a caller surfaces.
 
+use crate::error::Result;
 use crate::store::{
     GATE_SYSTEM_NOTICE_ACTION_LABEL_MAX_LEN, GATE_SYSTEM_NOTICE_ACTION_TARGET_MAX_LEN,
     GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GATE_SYSTEM_NOTICE_ROW_REF_MAX_LEN, GateSystemNoticeAction,
-    GateSystemNoticeRecord,
+    GateSystemNoticeRecord, Store,
 };
 
 use super::planes::{HostedLegalPolicy, PolicyPlane};
@@ -239,9 +240,11 @@ fn hosted_notice(
 /// declared output contract does not carry one).
 ///
 /// The body is content-free (FIX 10035): the decision as its ledger token and
-/// [`policy_rationale_digest`] of the reason, with the verdict's row in
-/// `row_ref`. The words themselves stay on the verdict the caller was handed,
-/// never in a durable receipt, ordinary or relay alike.
+/// [`policy_rationale_mac`] of the reason, read in `txn`, with the verdict's
+/// row in `row_ref`. A vault that keys no value keeps the row with no MAC,
+/// never an unkeyed digest a guess could confirm (FIX 10532). The words
+/// themselves stay on the verdict the caller was handed, never in a durable
+/// receipt, ordinary or relay alike.
 ///
 /// `pass_plane` is the plane the CALL ran under, and every call site knows it
 /// statically. It is passed rather than derived because a verdict's category
@@ -251,22 +254,22 @@ fn hosted_notice(
 /// data the substrate owner reads. Deriving the plane from the category
 /// dropped exactly that row.
 pub(super) fn policy_model_rationale_notice(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
     verdict: &PolicyClassifyVerdict,
     pass_plane: PolicyPlane,
     policy_version: Option<&str>,
 ) -> Option<GateSystemNoticeRecord> {
-    let audit = verdict.audit.as_deref()?;
-    let rationale = audit.model_rationale.as_deref()?.trim();
-    if rationale.is_empty() {
-        return None;
-    }
+    let rationale = stated_rationale(verdict)?;
     // The verdict's own attribution wins where it has one; the calling plane
     // is what answers for a verdict that names none.
     let plane = verdict.plane().unwrap_or(pass_plane);
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "decision": verdict.decision.ledger_str(),
-        "policy_rationale_digest": policy_rationale_digest(rationale),
     });
+    if let Some(mac) = policy_rationale_mac(store, txn, rationale) {
+        body["policy_rationale_mac"] = serde_json::Value::from(mac);
+    }
     Some(GateSystemNoticeRecord {
         notice_type: SYSTEM_NOTICE_TYPE_MODEL_RATIONALE.to_owned(),
         channel: SYSTEM_NOTICE_CHANNEL_AUDIT.to_owned(),
@@ -290,16 +293,55 @@ pub(super) fn policy_model_rationale_notice(
     })
 }
 
-/// The content hash a durable receipt keeps of a model's stated reason, in
-/// place of its words (FIX 10035): BLAKE3 under its own derivation domain, as
-/// hex. It tells two reasons apart and pins the one the caller was handed; it
-/// carries none of the text.
-pub(super) fn policy_rationale_digest(rationale: &str) -> String {
-    blake3::Hasher::new_derive_key("oneiron/policy-rationale-digest/v1")
-        .update(rationale.as_bytes())
-        .finalize()
-        .to_hex()
-        .to_string()
+/// [`policy_model_rationale_notice`] for a door that holds no writer: the
+/// MAC is read in a snapshot under the custody read guard, opened only when
+/// the verdict carries a reason, so a verdict with none reads no key (FIX
+/// 10532).
+pub(super) fn policy_model_rationale_notice_in_snapshot(
+    store: &Store,
+    verdict: &PolicyClassifyVerdict,
+    pass_plane: PolicyPlane,
+    policy_version: Option<&str>,
+) -> Result<Option<GateSystemNoticeRecord>> {
+    if stated_rationale(verdict).is_none() {
+        return Ok(None);
+    }
+    let snapshot = store.custody_snapshot()?;
+    Ok(policy_model_rationale_notice(
+        store,
+        &snapshot,
+        verdict,
+        pass_plane,
+        policy_version,
+    ))
+}
+
+/// The safeguard model's stated reason on `verdict`, trimmed; `None` when
+/// the pass obtained none or an empty one.
+fn stated_rationale(verdict: &PolicyClassifyVerdict) -> Option<&str> {
+    let rationale = verdict.audit.as_deref()?.model_rationale.as_deref()?.trim();
+    (!rationale.is_empty()).then_some(rationale)
+}
+
+/// The vault-keyed MAC a durable receipt keeps of a model's stated reason,
+/// in place of its words (FIX 10035, 10532), as hex, read in `txn`
+/// ([`Store::policy_rationale_mac_in_txn`]). It tells two reasons apart and
+/// pins the one the caller was handed; it carries none of the text, and
+/// without the vault's key a guess at the reason cannot be checked against
+/// it. `None` while the vault keys no value, and when custody faults: the
+/// fault is logged without any byte of the reason, and the row keeps no MAC.
+/// Nothing refuses.
+fn policy_rationale_mac(store: &Store, txn: &heed::RoTxn<'_>, rationale: &str) -> Option<String> {
+    match store.policy_rationale_mac_in_txn(txn, rationale.as_bytes()) {
+        Ok(mac) => mac.map(|mac| blake3::Hash::from(mac).to_hex().to_string()),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "a policy rationale's MAC did not read; its audit row keeps none"
+            );
+            None
+        }
+    }
 }
 
 /// Complete typed receipts on the audit channel: typed pins, answers,

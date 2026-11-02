@@ -193,6 +193,8 @@ pub(super) fn lineage(
 ) -> Result<Vec<EntityId>> {
     // Breadth-first over the PROJECT DAG. The first shared ancestor is the
     // closest on the requester's side, while rules check every shared node.
+    // Every ancestor is read, however many; past the threshold row the walk's
+    // check is raised for its start (rule 5).
     let mut result = Vec::new();
     let mut pending = std::collections::VecDeque::from([start]);
     let mut seen = BTreeSet::new();
@@ -200,15 +202,17 @@ pub(super) fn lineage(
         if !seen.insert(id) {
             continue; // a diamond legitimately reaches one ancestor twice
         }
-        if seen.len() > 256 {
-            return Err(denied());
-        }
         let project = project_in(vault, txn, id)?;
         result.push(id);
         for parent in project.parents {
             pending.push_back(EntityId::from_hex(&parent)?);
         }
     }
+    let scope = [start.as_bytes().as_slice(), b"leader_chat".as_slice()].concat();
+    let scan = crate::scan_check::EngineScan::ProjectAncestryRows;
+    let mut walk = crate::scan_check::ScanCount::start(&vault.store, txn, scan, &scope)?;
+    walk.rows(seen.len());
+    walk.finish(vault);
     Ok(result)
 }
 /// The PERSON `actor` speaks as: itself, or the PERSON it is anchored to.

@@ -225,3 +225,56 @@ pub(super) fn floor_check_in_txn(
     )?;
     Ok(Some(proposal_id))
 }
+
+/// One downward floor crossing the contract recorded and no recovery has
+/// superseded: an open quarantine proposal, with the numbers it was minted
+/// on.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FloorCrossing {
+    /// The open `skill.quarantine_proposal` claim.
+    pub(crate) proposal: EntityId,
+    /// The executor whose cell crossed; `None` for the skill-wide check.
+    pub(crate) executor: Option<String>,
+    pub(crate) lower_bound: f32,
+    pub(crate) floor: f32,
+    /// When the crossing was recorded.
+    pub(crate) at: u64,
+}
+
+/// Every floor crossing still open on `skill`, at any executor, on the
+/// caller's snapshot. A read only: the floor check above is what mints and
+/// withdraws them.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn open_floor_crossings_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    skill: &EntityId,
+) -> Result<Vec<FloorCrossing>> {
+    let mut crossings = Vec::new();
+    for (proposal, body, at) in
+        active_claims_in_txn(vault, txn, skill, PREDICATE_SKILL_QUARANTINE_PROPOSAL)?
+    {
+        if body.approval != ClaimApprovalStatus::Proposed
+            || body.source != Some(ClaimSource::Observed)
+        {
+            continue;
+        }
+        let (Some(lower_bound), Some(floor)) = (
+            super::codec::map_f32(&body.value, KEY_LOWER_BOUND),
+            super::codec::map_f32(&body.value, KEY_FLOOR),
+        ) else {
+            continue;
+        };
+        crossings.push(FloorCrossing {
+            proposal,
+            executor: super::codec::map_str(&body.value, "executor").map(str::to_owned),
+            lower_bound,
+            floor,
+            at,
+        });
+    }
+    Ok(crossings)
+}

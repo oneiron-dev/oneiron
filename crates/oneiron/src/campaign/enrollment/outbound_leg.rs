@@ -7,13 +7,14 @@ use super::home_node::{
 use super::program::{CampaignProgramOutbound, CampaignProgramStep};
 use super::runner::CampaignEnrollmentAttemptPayload;
 use super::runner::{
-    decode_enrollment_attempt_payload, enrollment_consequence_id, resolve_program_step,
+    decode_enrollment_attempt_payload, enrollment_consequence_id, membership_sends,
+    resolve_program_step,
 };
-use super::storage::CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND;
+use super::storage::{CAMPAIGN_ENROLLMENT_MACRO_ATTEMPT_KIND, invalid};
 use crate::Vault;
 use crate::attempt_queue::AttemptRecord;
 use crate::entity_id::EntityId;
-use crate::error::Error;
+use crate::error::{Error, Result};
 use crate::gate::{
     ApprovalTarget, CampaignLegFacts, ExternalEffectGateInput, ExternalEffectPolicyRisk, GateActor,
     GateProvenanceHandles,
@@ -22,8 +23,11 @@ use crate::outbound_chokepoint::{
     OutboundEffectCommand, OutboundEffectError, OutboundEffectResult, OutboundTransport,
     PreparedAuthorization, PreparedEffect, execute_outbound_effect,
 };
-use crate::outbound_consent::OutboundBindingAuthority;
-use crate::outbound_intent_ledger::BudgetClass;
+use crate::outbound_consent::{OutboundBindingAuthority, OutboundResultSender};
+use crate::outbound_intent_ledger::{
+    BudgetClass, FrozenOutboundCall, IntentLedgerError, OutboundSendOutcome, ProviderWait,
+    RemoteTaskHandle,
+};
 
 /// What one run of the outward leg did.
 #[cfg_attr(not(test), allow(dead_code))]
@@ -39,6 +43,18 @@ pub(super) enum EnrollmentOutboundLeg {
     NotHomeNode(CampaignHomeNodeDesignation),
     /// No node holds it; nothing was sent.
     NoHomeNode,
+    /// The member's effective state is paused, suppressed or exited
+    /// (FIX 9662), on a first run or a replay alike; nothing was sent.
+    MembershipNotReady,
+    /// The member does not resolve to a sendable target on the step's
+    /// pinned channel and sender (FIX 11513 K12: a non-PERSON, a PERSON
+    /// with no comm address, a sender that is not Active on this channel
+    /// or may not send, or no live contact); nothing was sent.
+    UnresolvableTarget,
+    /// The step's filed body does not pin to the program row (FIX 11513
+    /// K11: no filed body, or the blob's latest version runs ahead of the
+    /// accepted row); nothing was sent.
+    BodyUnpinned,
 }
 
 /// One outward leg's chokepoint result (FIX 6424 part 2a).
@@ -52,6 +68,65 @@ pub(super) struct EnrollmentLegDispatch {
     /// retained before the chokepoint first took it; `None` when its
     /// retained request did not read or keep.
     pub(super) first_asked_event_ref: Option<EntityId>,
+}
+
+/// What the v1 envelope derivation resolved to (FIX 11670).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CampaignEnvelopeBytes {
+    /// The envelope bytes, frozen exactly as the outward leg freezes them.
+    Resolved(Vec<u8>),
+    /// The member does not resolve to a sendable target on the step's
+    /// pinned channel and sender (FIX 11513 K12); nothing is sent.
+    UnresolvableTarget,
+    /// The step's filed body does not pin to the program row (FIX 11513
+    /// K11); nothing is sent.
+    BodyUnpinned,
+}
+
+/// Derives the v1 envelope bytes the outward leg freezes: exactly these
+/// five keys, never the raw body (FIX 11513). Both resolutions are
+/// read-only fns of `(vault, event, step)`, so the membership leg calls
+/// this too and `enrollment_intent_id` hashes the bytes the leg freezes
+/// (FIX 11670).
+///
+/// # Errors
+///
+/// Storage errors propagate; every unresolvable shape is a variant,
+/// never an error. JSON encoding of the envelope cannot fail in
+/// practice and surfaces as [`Error::InvalidConfig`].
+pub(super) fn campaign_envelope_bytes(
+    vault: &Vault,
+    event: &CampaignEnrollmentEvent,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+) -> Result<CampaignEnvelopeBytes> {
+    let Some(target) =
+        super::target::resolve_campaign_member_target(vault, event.entity_ref, step)?
+    else {
+        return Ok(CampaignEnvelopeBytes::UnresolvableTarget);
+    };
+    let Some(content_ref) = vault.campaign_step_body_latest_ref_if_matches(
+        step.program_ref,
+        step.step_ref,
+        outbound.call_seq,
+        &outbound.payload,
+    )?
+    else {
+        return Ok(CampaignEnvelopeBytes::BodyUnpinned);
+    };
+    // The wire payload is the v1 envelope the channel sender decodes with
+    // `deny_unknown_fields`, never the raw body: exactly these five keys,
+    // none of the chokepoint-sniffed ones (FIX 11513).
+    let envelope = serde_json::json!({
+        "target": target.target,
+        "content_ref": content_ref,
+        "counterparty_ref": target.party_key,
+        "actor": event.owner_actor.to_hex(),
+        "trigger_ref": event.event_ref.to_hex(),
+    });
+    let envelope_bytes = serde_json::to_vec(&envelope)
+        .map_err(|_| invalid("a campaign envelope is not JSON-encodable"))?;
+    Ok(CampaignEnvelopeBytes::Resolved(envelope_bytes))
 }
 
 /// Runs the outward leg for a claimed enrollment attempt.
@@ -78,10 +153,7 @@ pub(super) struct EnrollmentLegDispatch {
 ///
 /// Gate, budget, ledger, and storage failures surface as
 /// [`OutboundEffectError`].
-// The host driver that pumps this queue is ONE-1778 surface work; until it
-// lands the leg has only its oracle. Same posture `gate.rs` takes for the
-// crate-visible effect surfaces it exposes ahead of their call sites.
-#[cfg_attr(not(test), allow(dead_code))]
+// The host drives it through [`drive_enrollment_outbound_leg`] (FIX 2636).
 pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     vault: &Vault,
     authority: &OutboundBindingAuthority,
@@ -109,6 +181,40 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
     let Some(outbound) = step.outbound.as_ref() else {
         return Ok(EnrollmentOutboundLeg::NoOutboundStep);
     };
+    // The send waits on the member's own state, read now (FIX 9662): an
+    // applied or replayed consequence never reaches a paused, suppressed or
+    // exited member.
+    if !membership_sends(vault, &event) {
+        return Ok(EnrollmentOutboundLeg::MembershipNotReady);
+    }
+    // The send waits on a resolvable target (FIX 11513 K12): without one
+    // there is no address to freeze, so the leg ends before the chokepoint
+    // rather than minting an intent that can never send. Ids only: the
+    // target address never reaches the log. The send likewise waits on the
+    // filed body pinning to the program row (FIX 11513 K11): the blob's
+    // latest version can run ahead of the accepted row, and then the send
+    // waits rather than carrying words the program never accepted.
+    let envelope_bytes = match campaign_envelope_bytes(vault, &event, &step, outbound)? {
+        CampaignEnvelopeBytes::Resolved(bytes) => bytes,
+        CampaignEnvelopeBytes::UnresolvableTarget => {
+            tracing::warn!(
+                event_ref = %event.event_ref.to_hex(),
+                program_ref = %step.program_ref.to_hex(),
+                step_ref = %step.step_ref.to_hex(),
+                "a campaign enrollment's member does not resolve to a sendable target on the step's pinned channel; nothing is sent (FIX 11513 K12)"
+            );
+            return Ok(EnrollmentOutboundLeg::UnresolvableTarget);
+        }
+        CampaignEnvelopeBytes::BodyUnpinned => {
+            tracing::warn!(
+                event_ref = %event.event_ref.to_hex(),
+                program_ref = %step.program_ref.to_hex(),
+                step_ref = %step.step_ref.to_hex(),
+                "a campaign enrollment's filed body does not pin to its program row; nothing is sent (FIX 11513 K11)"
+            );
+            return Ok(EnrollmentOutboundLeg::BodyUnpinned);
+        }
+    };
     let consequence_id = enrollment_consequence_id(&event, &step)?;
     // FIX 6424 part 2a (Engine ruling 7): the request retained for this call
     // is read before its gate input is built; a new one is retained before
@@ -119,7 +225,7 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         call_seq: outbound.call_seq,
         server: step.channel.clone(),
         tool: outbound.verb.clone(),
-        payload: outbound.payload.clone(),
+        payload: envelope_bytes,
         idempotency_supported: outbound.idempotency_supported,
         resolved_endpoint: None,
         gate: enrollment_gate_input(&step, outbound, &event, ask.target),
@@ -143,6 +249,93 @@ pub(super) fn run_enrollment_outbound_leg<T: OutboundTransport>(
         effect: result,
         first_asked_event_ref: ask.first_event_ref,
     }))
+}
+
+/// What the host's drive of one attempt's outward leg came to (ONE-1778,
+/// FIX 2636).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EnrollmentLegDrive {
+    /// The chokepoint took the call: it sent it, replayed the frozen bytes
+    /// the ledger already holds, or settled it.
+    Dispatched,
+    /// The Gate holds the call for the owner's approve-once press on this
+    /// digest (FIX 6424 part 2a); nothing went out.
+    AwaitingApproval {
+        /// The digest the press names, 64 lower-hex.
+        approval_digest: String,
+    },
+    /// Nothing is owed outward: the step declares no outward leg, the
+    /// member's own state holds the send, or the send does not resolve
+    /// (an unresolvable member or an unpinned body, FIX 11513 K11/K12).
+    NothingOwed,
+    /// Another node holds the designation; nothing was sent.
+    NotHomeNode(CampaignHomeNodeDesignation),
+    /// No node holds it; nothing was sent.
+    NoHomeNode,
+}
+
+/// Drives the outward leg of the claimed enrollment `attempt` through the
+/// host's `sender` (ONE-1778, FIX 2636), after its membership leg applied.
+/// The leg is the same self-contained bridge a crash resumes: the call's
+/// identity is the consequence and the step's durable `call_seq`, so a
+/// re-drive after a crash takes the stored intent and replays its frozen
+/// bytes instead of freezing a second send. Consent and sender inputs are
+/// the leg's own, unchanged.
+///
+/// # Errors
+///
+/// Gate, budget, ledger and storage failures, as the leg returns them.
+pub fn drive_enrollment_outbound_leg<S: OutboundResultSender>(
+    vault: &Vault,
+    local_node_id: u64,
+    attempt: &AttemptRecord,
+    sender: &mut S,
+    now_ms: u64,
+) -> std::result::Result<EnrollmentLegDrive, IntentLedgerError> {
+    let authority = OutboundBindingAuthority::for_vault(vault)?;
+    let mut transport = SenderTransport(sender);
+    Ok(
+        match run_enrollment_outbound_leg(
+            vault,
+            &authority,
+            local_node_id,
+            attempt,
+            &mut transport,
+            now_ms,
+        )? {
+            EnrollmentOutboundLeg::Dispatched(dispatch) => match dispatch.effect.approval_digest {
+                Some(approval_digest) => EnrollmentLegDrive::AwaitingApproval { approval_digest },
+                None => EnrollmentLegDrive::Dispatched,
+            },
+            EnrollmentOutboundLeg::NoOutboundStep
+            | EnrollmentOutboundLeg::MembershipNotReady
+            | EnrollmentOutboundLeg::UnresolvableTarget
+            | EnrollmentOutboundLeg::BodyUnpinned => EnrollmentLegDrive::NothingOwed,
+            EnrollmentOutboundLeg::NotHomeNode(designation) => {
+                EnrollmentLegDrive::NotHomeNode(designation)
+            }
+            EnrollmentOutboundLeg::NoHomeNode => EnrollmentLegDrive::NoHomeNode,
+        },
+    )
+}
+
+/// The host's result sender as the chokepoint's transport. The leg keeps no
+/// result body, so only the send's outcome, its remote task, and its
+/// provider wait pass through.
+struct SenderTransport<'a, S>(&'a mut S);
+
+impl<S: OutboundResultSender> OutboundTransport for SenderTransport<'_, S> {
+    fn send(&mut self, call: &FrozenOutboundCall) -> OutboundSendOutcome {
+        self.0.send(call).outcome
+    }
+
+    fn remote_task(&self) -> Option<RemoteTaskHandle> {
+        self.0.remote_task()
+    }
+
+    fn provider_wait(&self) -> Option<ProviderWait> {
+        self.0.provider_wait()
+    }
 }
 
 /// FIX 6424 part 2a (Engine 10-20 21:0x ruling 1): the approve-once digest

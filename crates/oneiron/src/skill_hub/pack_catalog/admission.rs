@@ -2,11 +2,12 @@
 use super::super::install_transition::{
     InstallBinding, InstallDisposition, InstallHoldReason, InstallPlan,
 };
+pub(super) use super::permission_card::pack_permissions;
 use super::qualify::{validate_installed_qualification, validate_qualification};
 use super::{
-    BundledSkillPermissions, PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict,
-    PackInstallAsk, PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackKind,
-    PackPermissions, PackQualification, PackRuntimeRecipe, PackSource, invalid,
+    PackAdapter, PackCandidateReason, PackFitPolicy, PackFitVerdict, PackInstallAsk,
+    PackInstallDisposition, PackInstallReceipt, PackInstallStatus, PackKind, PackPermissions,
+    PackQualification, PackRuntimeRecipe, PackSource, invalid,
 };
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::{
@@ -42,6 +43,9 @@ pub(super) struct PackCommit<'a> {
     /// The local world the owner picked for a travelling agent's World
     /// scope; its name binds when unset.
     pub(super) world: Option<EntityId>,
+    /// The holds the owner lifts with this commit
+    /// ([`Vault::activate_pack_candidate`]); empty for every other door.
+    pub(super) owner_activated: &'a [PackCandidateReason],
 }
 
 impl Vault {
@@ -69,16 +73,14 @@ impl Vault {
             return Err(invalid("pack did not pass fit"));
         }
         let observed_tools = policy.observed_tools(&source)?;
-        if observed_tools.len() > 256
-            || observed_tools.iter().any(|tool| {
-                tool.name.is_empty()
-                    || tool.name.len() > 128
-                    || tool.description.len() > 16_384
-                    || serde_json::to_vec(&tool.input_schema).map_or(true, |bytes| {
-                        bytes.len() > crate::skill_hub::MAX_HUB_FILE_BYTES
-                    })
-            })
-        {
+        if observed_tools.iter().any(|tool| {
+            tool.name.is_empty()
+                || tool.name.len() > 128
+                || tool.description.len() > 16_384
+                || serde_json::to_vec(&tool.input_schema).map_or(true, |bytes| {
+                    bytes.len() > crate::skill_hub::MAX_HUB_FILE_BYTES
+                })
+        }) {
             return Err(invalid("observed tool manifest exceeds bounds"));
         }
         // A flag-off Candidate still needs a valid script shape, but no wire run yet.
@@ -169,6 +171,7 @@ impl Vault {
                     permissions: &ask.permissions,
                     qualification: ask.qualification.as_ref(),
                     world: None,
+                    owner_activated: &[],
                 },
             )
         })
@@ -240,7 +243,8 @@ impl Vault {
     }
     /// Commits one screened install, from a hub ask or the owner's own put:
     /// bundled skills, the receipt, and for Active the kinds, predicate
-    /// ownership and the pack-drift repair of an update.
+    /// ownership and the pack-drift repair of an update. A hold the owner
+    /// lifted on these exact bytes stays lifted through every later door.
     pub(super) fn commit_pack_install_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -252,9 +256,23 @@ impl Vault {
         }
         let at = crate::unix_seconds_now();
         let travel = self.travel_agent_in_txn(&*txn, source, commit.world)?;
+        // A Candidate row that no longer decodes names no lifted hold; this
+        // commit rewrites or clears it.
+        let held = PACK_CANDIDATE.get(&self.store, txn, &candidate_key(source));
+        let mut owner_activated = match held {
+            Ok(held) => held.map(|held| held.owner_activated).unwrap_or_default(),
+            Err(error) if error.kind() == crate::error::ErrorKind::SideTableRow => Vec::new(),
+            Err(error) => return Err(error),
+        };
+        for reason in commit.owner_activated {
+            if !owner_activated.contains(reason) {
+                owner_activated.push(*reason);
+            }
+        }
         let candidate_reason = if commit.verdict.rules_hit {
             Some(PackCandidateReason::RulesHit)
         } else if commit.foreign.is_some()
+            && !owner_activated.contains(&PackCandidateReason::Advisories)
             && self.pack_advisory_hold_in_txn(txn, source.content_hash())?
         {
             Some(PackCandidateReason::Advisories)
@@ -329,6 +347,7 @@ impl Vault {
             agent: None,
             installed_at: at,
             notices: super::import_notice::import_notices_kept_in_txn(self, &*txn, travel.as_ref()),
+            owner_activated,
         };
         if status == PackInstallStatus::Candidate {
             PACK_CANDIDATE.put(&self.store, txn, &candidate_key(&source), &receipt)?;
@@ -396,12 +415,14 @@ impl Vault {
             && old.content_hash != receipt.content_hash
         {
             self.end_pack_setup_sessions_in_txn(txn, None, &old.pack_name, &old.content_hash)?;
-            // FIX 5941, off by default: a catalog connector the superseded
-            // source admitted stops routing until it qualifies on this one.
-            self.halt_updated_pack_connector_routes_in_txn(
+            // A catalog connector the superseded source admitted moves to
+            // this one when its declaration did not move (FIX 6041); FIX
+            // 5941, off by default, halts the rest.
+            self.follow_updated_pack_connector_routes_in_txn(
                 txn,
                 &old.source_id,
                 &old.content_hash,
+                &receipt,
                 at,
             )?;
             let from_version = self
@@ -430,8 +451,8 @@ impl Vault {
         Ok(PackInstallDisposition::Installed(Box::new(receipt)))
     }
     /// Each pack name whose install receipt selects a script, with the source
-    /// it selects, read without the catalog listing's bound: a restore asks
-    /// `installed_script_pack` about every one, however many packs it holds.
+    /// it selects, every one of them: a restore asks `installed_script_pack`
+    /// about each.
     pub(crate) fn script_pack_selections(&self) -> Result<Vec<(String, EntityId)>> {
         let txn = self.store.env.read_txn()?;
         let mut selections = Vec::new();
@@ -454,10 +475,7 @@ impl Vault {
     pub fn installed_packs(&self) -> Result<Vec<PackInstallReceipt>> {
         let txn = self.store.env.read_txn()?;
         let mut rows = Vec::new();
-        for (seen, entry) in PACK_INSTALL.iter_from(&self.store, &txn, &[])?.enumerate() {
-            if seen >= 4096 {
-                return Err(invalid("installed pack catalog exceeds bound"));
-            }
+        for entry in PACK_INSTALL.iter_from(&self.store, &txn, &[])? {
             let (name, _) = entry.map_err(|error| {
                 if error.kind() == crate::error::ErrorKind::SideTableRow {
                     invalid("pack install catalog corrupt")
@@ -505,9 +523,6 @@ impl Vault {
         let mut ids = Vec::new();
         for predicate in &pack.predicates {
             for (id, _) in self.claims_with_predicate_in_txn(&txn, predicate)? {
-                if ids.len() >= 128 {
-                    break;
-                }
                 ids.push(id);
             }
         }
@@ -707,125 +722,6 @@ impl Vault {
 fn candidate_key(source: &PackSource) -> String {
     source.content_hash().to_hex()
 }
-pub(super) fn pack_permissions(
-    source: &PackSource,
-    prior: Option<&PackInstallReceipt>,
-) -> Result<PackPermissions> {
-    let mut section_verbs = std::collections::BTreeSet::new();
-    let mut section_authorities = std::collections::BTreeSet::new();
-    for section in source.sections() {
-        section_verbs.extend(section.verbs.iter().map(|verb| verb.0.clone()));
-        section_authorities.insert(section.authority_lane.0.clone());
-    }
-    let grants: Vec<_> = source.manifest.requested_grants.iter().cloned().collect();
-    let wakes: Vec<_> = source.manifest.wake_subscriptions.iter().cloned().collect();
-    let hooks: Vec<_> = source
-        .hooks()
-        .iter()
-        .flat_map(super::PackHook::capability_tokens)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let organs: Vec<_> = source
-        .organs()
-        .iter()
-        .flat_map(super::PackOrgan::capability_tokens)
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    let section_verbs: Vec<_> = section_verbs.into_iter().collect();
-    let section_authorities: Vec<_> = section_authorities.into_iter().collect();
-    let added = |requested: &[String], previous: &[String]| {
-        requested
-            .iter()
-            .filter(|power| !previous.contains(power))
-            .cloned()
-            .collect()
-    };
-    let empty: &[String] = &[];
-    let mut folders = std::collections::BTreeMap::<String, Vec<crate::skill_hub::HubFile>>::new();
-    for file in source.files() {
-        if let Some(relative) = file.path.strip_prefix("skills/") {
-            let (folder, path) = relative
-                .split_once('/')
-                .ok_or_else(|| invalid("pack skill must have a folder"))?;
-            folders
-                .entry(folder.to_owned())
-                .or_default()
-                .push(crate::skill_hub::HubFile::new(path, file.content.clone()));
-        }
-    }
-    let mut bundled_skills = Vec::<BundledSkillPermissions>::new();
-    for files in folders.into_values() {
-        let package = super::super::folder::package_from_files(files)?;
-        let caps = &package.capabilities;
-        let skill = BundledSkillPermissions {
-            skill_id: package.record.skill_id,
-            bins: caps.bins.iter().cloned().collect(),
-            env: caps.env.iter().cloned().collect(),
-            mcp: caps.mcp.iter().cloned().collect(),
-            allowed_tools: caps.allowed_tools.iter().cloned().collect(),
-        };
-        if bundled_skills
-            .iter()
-            .any(|prior| prior.skill_id == skill.skill_id)
-        {
-            return Err(invalid("duplicate bundled skill identity"));
-        }
-        bundled_skills.push(skill);
-    }
-    bundled_skills.sort_by(|a, b| a.skill_id.cmp(&b.skill_id));
-    let mut widening_bundled_skills = Vec::new();
-    for skill in &bundled_skills {
-        let previous = prior.and_then(|receipt| {
-            receipt
-                .permissions
-                .bundled_skills
-                .iter()
-                .find(|previous| previous.skill_id == skill.skill_id)
-        });
-        let widening = BundledSkillPermissions {
-            skill_id: skill.skill_id.clone(),
-            bins: added(&skill.bins, previous.map_or(empty, |prior| &prior.bins)),
-            env: added(&skill.env, previous.map_or(empty, |prior| &prior.env)),
-            mcp: added(&skill.mcp, previous.map_or(empty, |prior| &prior.mcp)),
-            allowed_tools: added(
-                &skill.allowed_tools,
-                previous.map_or(empty, |prior| &prior.allowed_tools),
-            ),
-        };
-        if !widening.bins.is_empty()
-            || !widening.env.is_empty()
-            || !widening.mcp.is_empty()
-            || !widening.allowed_tools.is_empty()
-        {
-            widening_bundled_skills.push(widening);
-        }
-    }
-    Ok(PackPermissions {
-        bundled_skills,
-        widening_bundled_skills,
-        widening_grants: added(&grants, prior.map_or(empty, |row| &row.permissions.grants)),
-        widening_wakes: added(&wakes, prior.map_or(empty, |row| &row.permissions.wakes)),
-        widening_hooks: added(&hooks, prior.map_or(empty, |row| &row.permissions.hooks)),
-        widening_organs: added(&organs, prior.map_or(empty, |row| &row.permissions.organs)),
-        widening_section_verbs: added(
-            &section_verbs,
-            prior.map_or(empty, |row| &row.permissions.section_verbs),
-        ),
-        widening_section_authorities: added(
-            &section_authorities,
-            prior.map_or(empty, |row| &row.permissions.section_authorities),
-        ),
-        grants,
-        wakes,
-        hooks,
-        organs,
-        section_verbs,
-        section_authorities,
-    })
-}
-
 /// A pack never takes a namespace the engine owns, not as its name and not in
 /// a declaration, so no shipped migration map can move an owner's query over
 /// engine state (ARCH-0059 §4). Checked where a source is admitted, not where

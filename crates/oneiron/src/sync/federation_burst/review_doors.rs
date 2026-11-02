@@ -4,6 +4,7 @@ use super::{
     FederationBurstReviewReceipt, FederationIsolatedUpdate, FederationPeer, corrupt, ledger,
 };
 use crate::consent::AuthenticatedOwner;
+use crate::store::Store;
 use crate::{Result, Vault};
 
 fn key(peer: &[u8; 32]) -> Vec<u8> {
@@ -65,6 +66,32 @@ pub(super) fn retain_in_txn(
         );
         let bytes = rmp_serde::to_vec_named(&bundle).map_err(|_| corrupt())?;
         vault.store.sync_queue.put(txn, &key, &bytes)?;
+    }
+    Ok(())
+}
+
+/// Drops the review copies of request `id` once its batch is settled, ended
+/// or erased: the bundle keeps the request's reference, not its bytes (FIX
+/// 7998).
+pub(super) fn scrub_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    peer: &[u8; 32],
+    id: &[u8; 32],
+) -> Result<()> {
+    let key = key(peer);
+    let mut bundle: FederationBurstReviewBundle = match store.sync_queue.get(txn, &key)? {
+        Some(bytes) => rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?,
+        None => return Ok(()),
+    };
+    let request_ref = blake3::Hash::from(*id).to_hex().to_string();
+    let held = bundle.updates.len();
+    bundle
+        .updates
+        .retain(|update| update.request_ref != request_ref);
+    if bundle.updates.len() != held {
+        let bytes = rmp_serde::to_vec_named(&bundle).map_err(|_| corrupt())?;
+        store.sync_queue.put(txn, &key, &bytes)?;
     }
     Ok(())
 }
@@ -161,10 +188,22 @@ impl Vault {
                     continue;
                 }
                 if reject {
-                    self.store.sync_queue.delete(txn, &work.key())?;
-                    ledger::settle(self, txn, &peer, &work, true)?;
+                    work.remove_in_txn(&self.store, txn)?;
+                    ledger::settle(
+                        self,
+                        txn,
+                        &peer,
+                        &work,
+                        super::FederationBurstWorkState::Rejected,
+                    )?;
+                } else if let Some(state) =
+                    work.ended_in_txn(self, txn, &peer, self.now_recorded_at())?
+                {
+                    // A batch held under an older grant or pact scope, or
+                    // past its wait, ends alone; the rest are released
+                    // (FIX 7999).
+                    work.retire_in_txn(&self.store, txn, state)?;
                 } else {
-                    work.revalidate_authority_in_txn(self, txn, &peer)?;
                     work.isolated_update = None;
                     work.put_in_txn(self, txn)?;
                 }

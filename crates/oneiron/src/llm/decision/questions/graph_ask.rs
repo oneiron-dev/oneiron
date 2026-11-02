@@ -12,9 +12,8 @@ use crate::claim::{
 };
 use crate::llm::decision::{
     DecisionAnswer, DecisionAudio, DecisionBand, DecisionImage, DecisionQuestion, DecisionReceipt,
-    DecisionRung, EvidenceVersion, MAX_DECISION_AUDIO, MAX_DECISION_AUDIO_BYTES,
-    MAX_DECISION_AUDIOS_BYTES, MAX_DECISION_IMAGE_BYTES, MAX_DECISION_IMAGES,
-    MAX_DECISION_IMAGES_BYTES, PairedAnswer, PairedReading, ProviderPin, TypedDecision,
+    DecisionRung, EvidenceVersion, HostRuleRef, MAX_DECISION_AUDIO_BYTES, MAX_DECISION_IMAGE_BYTES,
+    PairedAnswer, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::receipt::{PixelPull, ServedForm};
 use crate::{
@@ -27,7 +26,6 @@ use std::collections::HashSet;
 
 mod fit;
 
-const MAX_UNITS: usize = 4096;
 const MAX_NEIGHBORS: usize = 16;
 const MAX_NEIGHBOR_SCAN: usize = 4096;
 const MAX_SOURCE_BYTES: usize = 1_048_576;
@@ -60,6 +58,9 @@ pub struct GraphPrediction {
     pub cost_per_thousand: f64,
     /// The paired reading from the same measurement, when the provider takes one.
     pub paired: Option<PairedAnswer>,
+    /// The host rule row the prediction was read from, as id@revision (FIX 2974); none
+    /// when no rule row answered.
+    pub rule: Option<HostRuleRef>,
 }
 
 /// What an answerer returns for one unit: a bare prediction the engine wraps
@@ -245,27 +246,21 @@ impl GraphAskFailure {
 /// Enumerate up to `limit` live units of a graph type under the asker's own
 /// read lane `lane`. The type index only nominates IDs: no raw row or count
 /// from that index reaches the answerer or the result without a scoped point
-/// read. This scan has a fixed bound, including invisible rows.
+/// read. The scan pages 256 index rows at a time, invisible ones included,
+/// until `limit` units are selected or the index ends.
 pub fn select_graph_units_by_type(
     lane: &ScopedRead<'_>,
     entity_type: u8,
     limit: usize,
 ) -> Result<Vec<EntityId>> {
-    if limit > MAX_UNITS {
-        return Err(Error::InvalidConfig(
-            "graph ask selection exceeds limit".into(),
-        ));
-    }
     let vault = lane.vault();
     let mut selected = Vec::new();
     let mut after = None;
-    let mut scanned = 0;
-    while selected.len() < limit && scanned < 100_000 {
+    while selected.len() < limit {
         let page = vault.entities_by_type_page(entity_type, after.as_ref(), 256)?;
         if page.is_empty() {
             break;
         }
-        scanned += page.len();
         after = page.last().copied();
         let values = lane.get_entities_parts_with_receipt(&page, None)?;
         for (id, value) in page.into_iter().zip(values.value) {
@@ -311,12 +306,9 @@ fn asker(lane: &ScopedRead<'_>) -> Result<EntityId> {
 }
 
 // A NOTE's author-only read requires an identity-checked actor class. The
-// asker is the reader even when a distinct agent performs the write.
-pub(super) fn asker_reader(vault: &Vault, principal: EntityId) -> Result<ScopedReadActorKey> {
-    let txn = vault.store.env.read_txn()?;
-    asker_reader_in_txn(vault, &txn, principal)
-}
-
+// asker is the reader even when a distinct agent performs the write. A
+// saved question narrows it to the lane its version keeps
+// (`saved_reader::saved_reader_in_txn`).
 pub(super) fn asker_reader_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -377,8 +369,7 @@ pub fn run_graph_ask_receipted(
     now: u64,
 ) -> std::result::Result<GraphAskReceipts, GraphAskFailure> {
     question.validate().map_err(GraphAskFailure::before_units)?;
-    if units.len() > MAX_UNITS || units.iter().copied().collect::<HashSet<_>>().len() != units.len()
-    {
+    if units.iter().copied().collect::<HashSet<_>>().len() != units.len() {
         return Err(GraphAskFailure::before_units(Error::InvalidConfig(
             "invalid graph ask unit selection".into(),
         )));
@@ -451,6 +442,8 @@ fn answer_unit(
     if !kind_is_graph_evidence(kind) {
         return Ok(UnitOutcome::Hidden);
     }
+    // The funnel supplies the live revision's logical bytes (FIX 5396), so
+    // the supplied length is the logical length (FIX 5398).
     if body.is_empty() || body.len() > MAX_SOURCE_BYTES {
         return Ok(UnitOutcome::Abstain);
     }
@@ -483,6 +476,16 @@ fn answer_unit(
             validate_decision(question, principal, &decision)?;
             let decision = decided(&context, &images, &audio, *decision);
             if decision.answer == DecisionAnswer::Abstain {
+                // The person ask it went up as is kept on the unit (FIX 11231).
+                let source = &context.sources[0];
+                super::role_asks::keep_question_unit_ask(
+                    vault,
+                    unit,
+                    source.hash,
+                    source.entity_type,
+                    None,
+                    &decision,
+                );
                 return Ok(UnitOutcome::Declined(Box::new(decision)));
             }
             decision
@@ -611,6 +614,38 @@ pub(super) fn unit_context(
     }))
 }
 
+/// A unit's context under an explicit recipe (FIX 2383): the unit, then each
+/// source the recipe names, as `lane` reads it, none left out. `None` when a
+/// source is out of `lane`'s reach, is no graph evidence, or is empty or past
+/// the source bound: a missing source means abstain, as in a recipe run.
+pub(super) fn recipe_context(
+    lane: &ScopedRead<'_>,
+    unit: EntityId,
+    kind: u8,
+    body: Vec<u8>,
+    evidence: &[EntityId],
+) -> Result<Option<GraphUnitContext>> {
+    let txn = lane.vault().store.env.read_txn()?;
+    let mut sources = Vec::with_capacity(evidence.len() + 1);
+    sources.push(source(unit, kind, body));
+    for id in evidence {
+        let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
+            return Ok(None);
+        };
+        // The funnel supplies the live revision's logical bytes (FIX 5396),
+        // so the supplied length is the logical length (FIX 5398).
+        if !kind_is_graph_evidence(kind) || body.is_empty() || body.len() > MAX_SOURCE_BYTES {
+            return Ok(None);
+        }
+        sources.push(source(*id, kind, body));
+    }
+    Ok(Some(GraphUnitContext {
+        unit,
+        sources,
+        omitted: Vec::new(),
+    }))
+}
+
 /// Whether `lane` still reads, in `txn`, exactly the eligible neighbours
 /// `context` was built from, and judges them as it did: the same kept and
 /// the same left out, so an omitted ref is still one the asker reads.
@@ -666,8 +701,10 @@ pub(crate) fn trial_unit_context_in_txn(
     locality: crate::claim::CallerLocality,
     answer: &AnswerRecord,
 ) -> Result<GraphUnitContext> {
-    let key = asker_reader_in_txn(vault, txn, principal)?.at(locality);
-    let lane = super::reader_authority::question_lane(vault, key);
+    // A trial reads inside the lane the answered version was saved under.
+    let read_lane = super::saved_reader::answer_lane_in_txn(vault, txn, principal, answer)?;
+    let key = super::saved_reader::saved_reader_in_txn(vault, txn, principal, &read_lane)?;
+    let lane = super::reader_authority::question_lane(vault, key.at(locality));
     let mut sources = Vec::new();
     for pin in &answer.decision.receipt.evidence_versions {
         let raw = lane
@@ -676,6 +713,9 @@ pub(crate) fn trial_unit_context_in_txn(
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("model trial source header"))?;
         let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
+        // The funnel supplies the live revision's logical bytes (FIX 5396):
+        // an older revision's manifest bytes miss the recorded hash and the
+        // trial refuses the frontier (FIX 5398).
         if *blake3::hash(&body).as_bytes() != pin.body_hash
             || !source_eligible(vault, txn, &pin.id, header.entity_type)?
         {
@@ -688,7 +728,7 @@ pub(crate) fn trial_unit_context_in_txn(
     if sources
         .first()
         .is_none_or(|source| source.id != answer.unit)
-        || super::refresh::trial_source_frontier(vault, txn, principal, answer.unit)?
+        || super::refresh::trial_source_frontier(vault, txn, principal, &read_lane, answer.unit)?
             != Some(answer.frontier)
     {
         return Err(Error::ConcurrentWrite(
@@ -746,6 +786,8 @@ fn predicted(
             think_row: None,
             person_row: None,
             rule: None,
+            asked: None,
+            state_cut: None,
         },
         human_ask: None,
     }
@@ -782,20 +824,17 @@ pub(super) fn source_versions(context: &GraphUnitContext) -> Vec<EvidenceVersion
 
 /// The images the context's ASSET sources hold, read through `lane` (the
 /// asker's own read) for an answerer that reads them: PNG or JPEG only,
-/// inside a call's count and byte bounds, each named `image_<n>` and pinned
-/// at its pixels' hash. The pull is recorded as an ask-image served form
-/// before any model reads it. An asset the lane withholds, or one past a
-/// bound, is read as text alone.
+/// each inside one image's byte bound, named `image_<n>` and pinned at its
+/// pixels' hash. Every such image goes on: their count and total size drop
+/// none (FIX 9903). The pull is recorded as an ask-image served form before
+/// any model reads it. An asset the lane withholds, or one no decision
+/// image can be, is read as text alone.
 pub(super) fn unit_images(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
 ) -> Result<Vec<DecisionImage>> {
     let mut images: Vec<DecisionImage> = Vec::new();
-    let mut total = 0usize;
     for source in &context.sources {
-        if images.len() == MAX_DECISION_IMAGES {
-            break;
-        }
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
@@ -813,14 +852,9 @@ pub(super) fn unit_images(
             image: pixels,
             frame: None,
         };
-        let bytes = image.image.bytes.len();
-        if image.format().is_none()
-            || bytes > MAX_DECISION_IMAGE_BYTES
-            || total.saturating_add(bytes) > MAX_DECISION_IMAGES_BYTES
-        {
+        if image.format().is_none() || image.image.bytes.len() > MAX_DECISION_IMAGE_BYTES {
             continue;
         }
-        total += bytes;
         images.push(image);
     }
     if !images.is_empty() {
@@ -834,21 +868,18 @@ pub(super) fn unit_images(
 }
 
 /// The audio clips the context's ASSET sources hold, read through `lane` (the
-/// asker's own read) for an answerer that hears them: WAV or MP3 only, inside
-/// a call's count and byte bounds, each named `audio_<n>` and pinned at its
-/// encoded bytes' hash. The clip goes to the model as audio, never as a
-/// transcript. An asset the lane withholds, or one past a bound, is read as
-/// text alone. Each clip handed on is receipted as pulled, as an image is.
+/// asker's own read) for an answerer that hears them: WAV or MP3 only, each
+/// inside one clip's byte bound, named `audio_<n>` and pinned at its encoded
+/// bytes' hash; as with images, their count and total size drop none. The
+/// clip goes to the model as audio, never as a transcript. An asset the lane
+/// withholds, or one no decision clip can be, is read as text alone. Each
+/// clip handed on is receipted as pulled, as an image is.
 pub(super) fn unit_audio(
     lane: &ScopedRead<'_>,
     context: &GraphUnitContext,
 ) -> Result<Vec<DecisionAudio>> {
     let mut audio: Vec<DecisionAudio> = Vec::new();
-    let mut total = 0usize;
     for source in &context.sources {
-        if audio.len() == MAX_DECISION_AUDIO {
-            break;
-        }
         if source.entity_type != crate::registry::ENTITY_TYPE_ASSET {
             continue;
         }
@@ -866,14 +897,9 @@ pub(super) fn unit_audio(
             media_type,
             bytes,
         };
-        let size = clip.bytes.len();
-        if clip.format().is_none()
-            || size > MAX_DECISION_AUDIO_BYTES
-            || total.saturating_add(size) > MAX_DECISION_AUDIOS_BYTES
-        {
+        if clip.format().is_none() || clip.bytes.len() > MAX_DECISION_AUDIO_BYTES {
             continue;
         }
-        total += size;
         audio.push(clip);
     }
     if !audio.is_empty() {
@@ -888,7 +914,9 @@ pub(super) fn unit_audio(
 
 /// A full decision is for this question, asker and contract; an answer
 /// carries a probability; no person answered it; and its readings are
-/// well formed.
+/// well formed. An abstention that asked the next authorised role (OF-506)
+/// ends on the person queue's pin: the ask is pending, never an answer; its
+/// holder's answer lands on the unit once settled (`role_asks`, FIX 11231).
 pub fn validate_decision(
     question: &DecisionQuestion,
     principal: EntityId,
@@ -896,6 +924,8 @@ pub fn validate_decision(
 ) -> Result<()> {
     let receipt = &decision.receipt;
     let answered = decision.answer != DecisionAnswer::Abstain;
+    let asked = !answered && decision.human_ask.is_some();
+    let last = receipt.providers.len().saturating_sub(1);
     if receipt.question != question.id
         || receipt.question_version != question.version
         || receipt.principal != principal
@@ -906,9 +936,11 @@ pub fn validate_decision(
             .is_some_and(|p| !p.is_finite() || !(0.0..=1.0).contains(&p))
         || receipt.band.validate().is_err()
         || receipt.providers.len() > 64
-        || receipt.providers.iter().any(|pin| {
-            pin.rung == DecisionRung::Human
-                || crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
+        || receipt.providers.iter().enumerate().any(|(at, pin)| {
+            if pin.rung == DecisionRung::Human {
+                return !(asked && at == last);
+            }
+            crate::llm::ModelId::new(format!("{}@{}", pin.model, pin.version)).is_err()
         })
         || receipt
             .time

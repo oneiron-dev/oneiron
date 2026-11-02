@@ -81,6 +81,7 @@ pub(crate) fn trusted_soft_addressing_edge(
 pub(super) fn validate(snapshot: &CanonicalSnapshot) -> Result<()> {
     validate_manifest_and_order(snapshot)?;
     validate_window_rows(snapshot)?;
+    snapshot.validate_asset_body_refs()?;
     validate_documents(snapshot)?;
     validate_entity_documents(snapshot)
 }
@@ -90,7 +91,7 @@ fn validate_manifest_and_order(snapshot: &CanonicalSnapshot) -> Result<()> {
         return Err(invalid("window key"));
     }
     if snapshot.schema_manifest.oneiron_schema_version != crate::store::STORAGE_ABI_VERSION
-        || snapshot.schema_manifest.container_schema_version != 1
+        || snapshot.schema_manifest.container_schema_version != 2
         || snapshot.schema_manifest.loro_version.is_empty()
     {
         return Err(invalid("unsupported schema manifest"));
@@ -497,13 +498,16 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
             if !forks.insert(fork.fork) {
                 return Err(invalid("entity document fork duplicated"));
             }
-            let (len, settled, actor, members) = proposals.entry(fork.proposal).or_insert((
-                fork.proposal_len,
-                fork.proposal_settled,
-                fork.actor,
-                BTreeSet::new(),
-            ));
+            let (len, settled, actor, lineage, members) =
+                proposals.entry(fork.proposal).or_insert((
+                    fork.proposal_len,
+                    fork.proposal_settled,
+                    fork.actor,
+                    &fork.proposal_opener_lineage,
+                    BTreeSet::new(),
+                ));
             if (*len, *settled, *actor) != (fork.proposal_len, fork.proposal_settled, fork.actor)
+                || **lineage != fork.proposal_opener_lineage
                 || !members.insert(fork.proposal_index)
             {
                 return Err(invalid("entity document proposal bundle"));
@@ -512,7 +516,7 @@ pub(super) fn validate_entity_documents(snapshot: &CanonicalSnapshot) -> Result<
     }
     if proposals
         .values()
-        .any(|(len, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
+        .any(|(len, _, _, _, members)| usize::try_from(*len).ok() != Some(members.len()))
     {
         return Err(invalid(
             "entity document proposal spans entities outside the snapshot",
@@ -594,6 +598,7 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
         return Err(invalid("document native record fields"));
     }
     validate_document_metadata(&row.metadata, row.field.as_deref())?;
+    validate_summary_meta(&row.summary_meta)?;
     let Some(history) = &row.history else {
         return Ok(());
     };
@@ -620,6 +625,7 @@ fn validate_history(row: &CanonicalEntityDocument) -> Result<()> {
     reached[head] = true;
     for (index, version) in history.versions.iter().enumerate().rev() {
         validate_document_metadata(&version.metadata, row.field.as_deref())?;
+        validate_summary_meta(&version.summary_meta)?;
         if !reached[index] {
             return Err(invalid("entity document version is not before its head"));
         }
@@ -724,6 +730,30 @@ fn validate_document_metadata(
             return Err(invalid("trailing document metadata bytes"));
         }
         crate::ports::validate_metadata(field, &value)?;
+    }
+    Ok(())
+}
+
+/// A scope summary's purpose and derivation (FIX 756): only those two keys,
+/// each one whole value of its own type.
+fn validate_summary_meta(fields: &BTreeMap<String, Vec<u8>>) -> Result<()> {
+    for (field, bytes) in fields {
+        match field.as_str() {
+            "purpose" => decode_whole::<crate::scope_summary::SummaryPurpose>(bytes)?,
+            "derivation" => decode_whole::<crate::scope_summary::SummaryDerivation>(bytes)?,
+            _ => return Err(invalid("entity document summary meta field")),
+        }
+    }
+    Ok(())
+}
+
+/// Whether `bytes` are exactly one MessagePack value of `T`.
+fn decode_whole<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<()> {
+    let mut reader = std::io::Cursor::new(bytes);
+    rmp_serde::from_read::<_, T>(&mut reader)
+        .map_err(|_| invalid("entity document summary meta encoding"))?;
+    if usize::try_from(reader.position()).ok() != Some(bytes.len()) {
+        return Err(invalid("trailing entity document summary meta bytes"));
     }
     Ok(())
 }

@@ -7,10 +7,11 @@
 
 use crate::EntityId;
 use crate::edit_roundtrip::CellValue;
+use crate::llm::decision::questions::{question_unit_correlation, standing_ask_route};
 use crate::llm::decision::{
-    DecisionAnswer, DecisionBandPolicy, DecisionDial, DecisionImage, DecisionLadder,
-    DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion, LocatedDecision,
-    MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
+    AskTo, DecisionAnswer, DecisionAudio, DecisionBandPolicy, DecisionDial, DecisionImage,
+    DecisionLadder, DecisionProvider, DecisionQuestion, DecisionRung, EvidenceVersion,
+    LocatedDecision, MAX_DECISION_STATE_BYTES, Reversibility, TypedDecision,
 };
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::{Error, Result};
@@ -25,11 +26,20 @@ pub struct UnitCall<'a> {
     pub evidence: &'a [EntityId],
     /// Named images filling state fields of their names; empty for text.
     pub images: &'a [DecisionImage],
+    /// Named audio clips filling state fields of their names; empty when the
+    /// unit carries none or no rung hears them.
+    pub audio: &'a [DecisionAudio],
     pub state: &'a Value,
     pub dial: DecisionDial,
     pub policy: &'a DecisionBandPolicy,
     pub reversibility: Reversibility,
     pub deadline: &'a RetrievalDeadline,
+    /// Where the unit's person ask goes, bound by the engine from the
+    /// question's principal, never by the model (OF-506).
+    pub ask_to: Option<&'a AskTo>,
+    /// The unit's own work, so each unit keeps its own ask
+    /// ([`question_unit_correlation`]).
+    pub correlation: Option<EntityId>,
 }
 
 /// The host's decide() for an artifact unit. A server binds its Local-vision
@@ -50,6 +60,28 @@ pub trait UnitDecider {
         _images: &[DecisionImage],
     ) -> Option<DecisionRung> {
         self.reads_images().then_some(dial.first)
+    }
+    /// Whether a rung this decider climbs hears audio. A unit's clips are
+    /// sent only when it does; otherwise they are listed as not served. The
+    /// default hears none.
+    fn reads_audio(&self) -> bool {
+        false
+    }
+    /// [`Self::first_taking`] over `images` and `audio` both: the rung a call
+    /// carrying both starts at ([`crate::llm::decision::MediaCall::of`]). The
+    /// default is [`Self::first_taking`] for images alone, and the dial's
+    /// first for audio when this decider hears it and reads any images too.
+    fn first_taking_media(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
+        if audio.is_empty() {
+            return self.first_taking(question, dial, images);
+        }
+        (self.reads_audio() && (images.is_empty() || self.reads_images())).then_some(dial.first)
     }
     /// The full decision for one call, with the ladder's receipt.
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision>;
@@ -89,8 +121,46 @@ impl UnitDecider for DecisionLadder<'_> {
         DecisionLadder::first_taking(self, question, dial, images)
     }
 
+    fn reads_audio(&self) -> bool {
+        [
+            self.rule,
+            self.local,
+            self.system_one,
+            self.escalation,
+            self.big,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|provider| provider.reads_audio())
+    }
+
+    fn first_taking_media(
+        &self,
+        question: &DecisionQuestion,
+        dial: DecisionDial,
+        images: &[DecisionImage],
+        audio: &[DecisionAudio],
+    ) -> Option<DecisionRung> {
+        DecisionLadder::first_taking_media(self, question, dial, images, audio)
+    }
+
     fn decide_unit(&self, call: &UnitCall<'_>) -> Result<TypedDecision> {
-        self.run_images(
+        self.for_unit(call).run_media(
+            call.question,
+            call.principal,
+            call.evidence,
+            call.images,
+            call.audio,
+            call.state,
+            call.dial,
+            call.policy,
+            call.reversibility,
+            call.deadline,
+        )
+    }
+
+    fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
+        self.for_unit(call).run_located(
             call.question,
             call.principal,
             call.evidence,
@@ -102,19 +172,16 @@ impl UnitDecider for DecisionLadder<'_> {
             call.deadline,
         )
     }
+}
 
-    fn decide_located(&self, call: &UnitCall<'_>) -> Result<LocatedDecision> {
-        self.run_located(
-            call.question,
-            call.principal,
-            call.evidence,
-            call.images,
-            call.state,
-            call.dial,
-            call.policy,
-            call.reversibility,
-            call.deadline,
-        )
+impl<'a> DecisionLadder<'a> {
+    /// The ladder with `call`'s person route and unit work, where it binds
+    /// them.
+    fn for_unit(&self, call: &UnitCall<'a>) -> Self {
+        let mut ladder = self.clone();
+        ladder.ask_to = call.ask_to.or(self.ask_to);
+        ladder.correlation = call.correlation.or(self.correlation);
+        ladder
     }
 }
 
@@ -139,14 +206,14 @@ pub struct ArtifactAsk<'a> {
 
 impl ArtifactAsk<'_> {
     /// A question an artifact can land: valid, not a Box or Point (no cell,
-    /// comment or column holds a region or a spot), on a dial that stops
-    /// below the person.
+    /// comment or column holds a region or a spot), on an ordered dial. A
+    /// dial up to the person asks the next authorised role for each unit it
+    /// reaches (FIX 9912); the unit stays unanswered while its ask is open.
     pub(crate) fn validate(&self) -> Result<()> {
         self.question.validate()?;
         self.dial.band.validate()?;
         if self.question.contract.locates()
             || self.dial.first > self.dial.ceiling
-            || self.dial.ceiling == crate::llm::decision::DecisionRung::Human
             || self.budget.is_zero()
             || self.run_ref.trim().is_empty()
         {
@@ -186,27 +253,51 @@ impl ArtifactAsk<'_> {
             self.budget
                 .min(self.deadline.saturating_duration_since(now)),
         );
+        let to = standing_ask_route(self.principal);
+        let mut read = blake3::Hasher::new();
+        for source in sources {
+            read.update(source.id.as_bytes());
+            read.update(&source.body_hash);
+        }
+        let correlation = question_unit_correlation(
+            self.question,
+            self.principal,
+            &bytes,
+            read.finalize().as_bytes(),
+        )?;
         let mut decision = self.decider.decide_unit(&UnitCall {
             question: self.question,
             principal: self.principal,
             evidence: &evidence,
             images,
+            audio: &[],
             state,
             dial: self.dial,
             policy: self.policy,
             reversibility: self.reversibility,
             deadline: &clock,
+            ask_to: Some(&to),
+            correlation: Some(correlation),
         })?;
         crate::llm::decision::questions::validate_unit_decision(
             self.question,
             self.principal,
             &decision,
         )?;
-        decision.receipt.evidence_versions = sources
+        // Only an image a rung was sent is evidence the decision read; one no
+        // rung could take stays out of its receipt (FIX 9903).
+        let shown: Vec<EvidenceVersion> = images
             .iter()
-            .cloned()
-            .chain(images.iter().map(|image| image.evidence.clone()))
+            .filter(|image| {
+                decision
+                    .receipt
+                    .images
+                    .iter()
+                    .any(|pin| pin.name == image.name)
+            })
+            .map(|image| image.evidence.clone())
             .collect();
+        decision.receipt.evidence_versions = sources.iter().cloned().chain(shown).collect();
         Ok(Some(decision))
     }
 }
@@ -218,6 +309,10 @@ pub struct UnitAbstention {
     /// The unit, as the caller named it.
     pub unit: Value,
     pub decision: Option<TypedDecision>,
+    /// The live body the ask read the unit on, when it read one: its decision
+    /// names the head version as evidence (FIX 12018).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// A unit the ask will not read as given.
@@ -227,6 +322,9 @@ pub struct UnitAbstention {
 pub struct UnitRefusal {
     pub unit: Value,
     pub reason: String,
+    /// The live body the ask read the unit on, when it read one (FIX 12018).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// What one artifact ask did: the proposal held for Keep (none when no unit

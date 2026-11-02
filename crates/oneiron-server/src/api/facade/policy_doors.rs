@@ -105,7 +105,7 @@ async fn run_action_answer(
     };
     let owner_surface = Some(surface);
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || {
+    super::clock_ingress::run_blocking(move || {
         let actor = WriteActor::new(actor, class);
         let principal = policy_setting_doors::action_principal(actor, key)?;
         let dispatch = SharedActionExecutor::app()?.execute_call(

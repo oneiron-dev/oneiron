@@ -17,6 +17,13 @@ pub struct CallEnvelope {
     pub tier: TierPrecedence,
     pub response_format: ResponseFormat,
     pub locality: ModelLocality,
+    /// Host-attested only (FIX 10592): true means the stamping door verified
+    /// every rung that may serve this call is `Payer::Local` + `OwnServer` +
+    /// `KeyCustody::Keyless` from the host-bound ladder, never a value read
+    /// from caller JSON. False is paid, today's behavior exactly. Skipped by
+    /// serde so step hashes, replay capsules and memo keys do not move.
+    #[serde(skip)]
+    pub host_keyless: bool,
     /// Set only at seat birth; adapters make this pin authoritative over raw options.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seat_effort: Option<super::ReasoningEffort>,
@@ -224,4 +231,18 @@ pub enum ModelLocality {
     OnDevice,
     OwnServer,
     ThirdParty,
+}
+
+impl ModelLocality {
+    /// The wire spelling, as the serde `snake_case` above spells it:
+    /// `on_device`/`own_server`/`third_party`. The one spelling every
+    /// route id mints (FIX 11768).
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OnDevice => "on_device",
+            Self::OwnServer => "own_server",
+            Self::ThirdParty => "third_party",
+        }
+    }
 }

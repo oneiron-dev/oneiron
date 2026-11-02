@@ -21,11 +21,15 @@ mod entry_barrier;
 mod extraction;
 mod hello_refusal;
 mod media_bridge;
+// Spoken audio gated per chunk on its way to the wire (FIX 9542).
+mod playout_queue;
 mod public;
 mod public_events;
 mod public_hold;
 mod public_loop;
 mod serve_bindings;
+// The call's speakers matched into its roster, and one retired (FIX 3344, 1522).
+mod speaker_match;
 mod speech;
 mod wire;
 
@@ -41,7 +45,8 @@ pub use wire::VoiceWireBindings;
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use oneiron::llm::{BudgetGuard, LlmBackend, LlmError};
-use oneiron::speculative::SpeculativeSessionConfig;
+use oneiron::policy_model::PolicyModelConfig;
+use oneiron::speculative::{SpeculativeSessionConfig, SpeculativeThreads};
 use oneiron::voice_cascade::{
     AsrEvent, AsrEventKind, AsrUpdate, OutputStop, PreparedAsr, UtteranceHandle,
     VoiceCascadeSession, VoiceSessionConfig,
@@ -70,6 +75,9 @@ pub struct VoiceHostBindings {
     pub extraction_prompt: String,
     pub session: VoiceSessionConfig,
     pub shutdown: ManagedShutdown,
+    /// The host's owner-plane policy config each sentence's safeguard
+    /// enforces under (FIX 5043): its notice wording and dial.
+    pub owner_policy: PolicyModelConfig,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -106,6 +114,19 @@ pub struct VoiceHost {
     /// The container the session is bound to, whose attendees' entries
     /// stop the call's output (OF-365 P5); `None` for no room's call.
     container: Option<(Arc<oneiron::Vault>, oneiron::EntityId)>,
+    /// The voice roster the call's hello named, which the speakers it hears
+    /// are matched into (FIX 3344); `None` for a call that named none.
+    roster: Option<speaker_match::CallRoster>,
+    /// The call's speculative passes that missed their deadline and run on:
+    /// joined before the call's write admission drops (FIX 3814).
+    speculative: SpeculativeThreads,
+    /// The host's owner-plane policy config, captured when the host is
+    /// built; every sentence's safeguard shares it (FIX 5043), its ladder's
+    /// paired question lent (FIX 1201).
+    owner_policy: Arc<PolicyModelConfig>,
+    /// The vault the host serves, kept for its body directory: inbound
+    /// wire frames spill there past the inline bound (FIX 3728).
+    vault: Arc<oneiron::Vault>,
 }
 
 /// Optional process-local configuration. The factory supplies the backend and
@@ -162,14 +183,18 @@ impl VoiceHost {
             bindings.extraction_prompt,
         )?;
         let call_deadline = vault.call_mode_deadline();
+        let host_vault = Arc::clone(&vault);
         let container = bindings
             .session
             .container
             .as_ref()
             .map(|bound| (Arc::clone(&vault), bound.container));
+        let roster = speaker_match::CallRoster::of(&vault, &bindings.session);
         Ok(Self {
             call_deadline,
             container,
+            roster,
+            speculative: SpeculativeThreads::default(),
             state: Arc::new(Mutex::new(SessionState {
                 core: VoiceCascadeSession::new(vault, bindings.session)?,
                 open: None,
@@ -177,6 +202,8 @@ impl VoiceHost {
             })),
             extractor,
             shutdown: bindings.shutdown,
+            owner_policy: Arc::new(bindings.owner_policy),
+            vault: host_vault,
         })
     }
 
@@ -190,6 +217,12 @@ impl VoiceHost {
     #[must_use]
     pub fn budget(&self) -> &BudgetGuard {
         &self.extractor.budget
+    }
+
+    /// The host's owner-plane policy config its sentence safeguards enforce.
+    #[must_use]
+    pub fn owner_policy(&self) -> &Arc<PolicyModelConfig> {
+        &self.owner_policy
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, SessionState>, HostError> {
@@ -219,6 +252,7 @@ impl VoiceHost {
                 fire_limit: 8,
                 final_limit: 32,
                 deadline: Some(self.call_deadline),
+                threads: Some(self.speculative.clone()),
             },
         )?;
         // Connection-local, monotonically unique correlation. Not authentication.
@@ -279,6 +313,22 @@ impl VoiceHost {
         state.open = None;
         Ok(state.core.end())
     }
+
+    /// Whether no speculative pass of the call still runs past its deadline.
+    fn speculative_at_rest(&self) -> bool {
+        self.speculative.at_rest()
+    }
+}
+
+/// Joins the speculative passes `threads` keeps, off the async runtime: a
+/// pass that missed its deadline still writes its telemetry and embedding
+/// jobs when its query ends, so its call waits for it before its write
+/// admission drops (FIX 3814). Each stops at its next deadline checkpoint.
+async fn join_speculative(threads: SpeculativeThreads) {
+    if threads.at_rest() {
+        return;
+    }
+    let _ = tokio::task::spawn_blocking(move || threads.join()).await;
 }
 
 impl Drop for VoiceHost {

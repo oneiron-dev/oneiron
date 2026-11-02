@@ -4,25 +4,27 @@
 //! locality and the offer that pays.
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, MutexGuard};
 
-use serde::Serialize;
-
-use super::super::media::{MediaBackend, MediaRequest};
 use super::super::{
     BudgetDenied, BudgetExhaustionPolicy, BudgetGuard, BudgetLease, BudgetRead, DispatchBinding,
-    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, SingleRouteBackend,
+    DispatchRefused, LlmBackend, LlmError, LlmRequest, LlmResponse, ModelId, WorkClass,
 };
 use super::declaration::{DeclarationEditor, RunDeclaration};
 use super::gate::{Dispatch, GatedBackend};
 use super::host::{HostAccount, OfferBinding, PaidConnector, PayerPerson};
-use super::media::MediaGate;
 use super::permit::RunPermit;
 use super::receipt::{CalledTeacher, RunEvent, RunReceipt, RunReceiptSink, TeacherReport};
 use super::settle::CallOutcome;
+use super::work_context::WorkContext;
 
 mod denied;
+mod media;
+mod origin;
 pub use denied::RunDenied;
+pub(super) use origin::CallOrigin;
+pub use origin::RunAttribution;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
 /// the row keeps none of the selector's bytes.
@@ -62,6 +64,11 @@ pub struct RunAdmission {
     /// Who acted to start the calls admitted through this handle
     /// ([`Self::initiated_by`], FIX 8970); `None` on the run itself.
     initiator: Option<crate::EntityId>,
+    /// The idempotency key a job submitted through this handle goes out
+    /// with ([`Self::submit_keyed`], FIX 2248); `None` on the run itself.
+    submit_key: Option<String>,
+    /// Host scheduling and physical-custody context for this handle (R4).
+    work_context: Option<WorkContext>,
 }
 
 pub(super) struct RunInner {
@@ -75,6 +82,8 @@ pub(super) struct RunInner {
     pub(super) payer: Option<PayerPerson>,
     /// The item a bound run serves (FIX 4453), fixed when the run starts.
     pub(super) attribution: Option<RunAttribution>,
+    /// The host marked the run as memory work (FIX 11003).
+    memory_work: AtomicBool,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
     /// The open paid-connector permits' leases. A model permit's lease is in
@@ -86,19 +95,6 @@ pub(super) struct RunInner {
 struct Revisioned {
     revision: u32,
     declaration: RunDeclaration,
-}
-
-/// What a bound run's calls serve, as the engine stamped it before the run
-/// began (FIX 4453): the agent, its free-time cycle and item, the label every
-/// call carries and the spend scope its spend lands on. Fixed for the run's
-/// life; never read from a prompt or from the run's name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RunAttribution {
-    pub agent: crate::EntityId,
-    pub cycle: crate::EntityId,
-    pub item: crate::EntityId,
-    pub purpose: crate::llm::CallPurpose,
-    pub spend_scope: String,
 }
 
 pub(super) struct CallFacts {
@@ -211,12 +207,15 @@ impl RunAdmission {
                 host,
                 payer,
                 attribution,
+                memory_work: AtomicBool::new(false),
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
                 paid: Mutex::new(BTreeSet::new()),
             }),
             sources: None,
             initiator: None,
+            submit_key: None,
+            work_context: None,
         }
     }
 
@@ -246,9 +245,8 @@ impl RunAdmission {
     #[must_use]
     pub fn sourced(&self, rows: Option<Vec<crate::EntityId>>) -> Self {
         Self {
-            inner: Arc::clone(&self.inner),
             sources: rows,
-            initiator: self.initiator,
+            ..self.clone()
         }
     }
 
@@ -264,10 +262,50 @@ impl RunAdmission {
         }
     }
 
-    /// `permit` naming this handle's initiator.
-    fn initiated(&self, mut permit: RunPermit) -> RunPermit {
-        permit.facts.initiator = self.initiator;
-        permit
+    /// This handle with host scheduling and physical-custody context (R4).
+    /// Every clone-based overlay preserves it, and scheduling stays outside
+    /// the run's declaration, prompt, conditioning, and dispatch identity.
+    #[must_use]
+    pub fn with_work_context(&self, context: WorkContext) -> Self {
+        Self {
+            work_context: Some(context),
+            ..self.clone()
+        }
+    }
+
+    /// The effective context for device admission. Explicit context wins;
+    /// memory work is Background, and every other unlabeled call is
+    /// Foreground so today's callers keep their equal FIFO standing.
+    #[must_use]
+    pub fn work_context(&self) -> WorkContext {
+        self.work_context.clone().unwrap_or_else(|| {
+            let mut context = WorkContext::default();
+            if self.inner.memory_work() {
+                context.class = WorkClass::Background;
+            }
+            context
+        })
+    }
+
+    /// Who this handle's calls answer to (FIX 562): the actor that acted to
+    /// start them ([`Self::initiated_by`]), else the actor the run's budget
+    /// line is bound to. `None` when neither is known.
+    #[must_use]
+    pub fn principal(&self) -> Option<crate::EntityId> {
+        self.initiator.or_else(|| self.inner.guard.actor())
+    }
+
+    /// This run, for a job whose submit goes out under `key` (FIX 2248):
+    /// every media gate built through the handle sends it with the job's
+    /// submit, so a provider that dedupes by it starts the job once however
+    /// often the submit is sent. The run, its line and its permits are the
+    /// same run's.
+    #[must_use]
+    pub fn submit_keyed(&self, key: Option<String>) -> Self {
+        Self {
+            submit_key: key,
+            ..self.clone()
+        }
     }
 
     /// The run's budget line as its meter reads now.
@@ -369,16 +407,9 @@ impl RunAdmission {
             ..call
         };
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self
-            .inner
-            .admit_model(
-                &declaration,
-                revision,
-                call,
-                request_digest,
-                self.sources.clone(),
-            )
-            .map(|permit| self.initiated(permit));
+        let admitted =
+            self.inner
+                .admit_model(&declaration, revision, call, request_digest, self.origin());
         self.inner.receipt_for(
             revision,
             call.selector,
@@ -396,90 +427,11 @@ impl RunAdmission {
         quantity: u64,
     ) -> Result<RunPermit, RunDenied> {
         let (revision, declaration) = self.inner.snapshot();
-        let admitted = self
-            .inner
-            .admit_connector(
-                &declaration,
-                revision,
-                connector,
-                quantity,
-                self.sources.clone(),
-            )
-            .map(|permit| self.initiated(permit));
+        let admitted =
+            self.inner
+                .admit_connector(&declaration, revision, connector, quantity, self.origin());
         self.inner
             .receipt_for(revision, None, &connector.connector, admitted, None)
-    }
-
-    /// The only backend a host hands a run for `offer`, over that offer's own
-    /// backend and credential: it checks and starts the call's permit before
-    /// any byte leaves, on `generate` and `stream`. A permit admitted under
-    /// another offer never starts here, whatever route the two share.
-    #[must_use]
-    pub fn gate(&self, inner: Arc<dyn SingleRouteBackend>, offer: &OfferBinding) -> GatedBackend {
-        let offer = self.inner.bound(offer).dispatch_binding();
-        GatedBackend::new(Arc::clone(&self.inner), inner, offer)
-    }
-
-    /// Admits one media call (`ai.image`, `ai.video`, `ai.speech`,
-    /// `ai.transcribe`, `ai.embed`) as the text call its admission request
-    /// names: the same teachers, offer, locality and route rules, and one
-    /// permit for one physical call.
-    pub fn admit_media(
-        &self,
-        selector: Option<&str>,
-        request: &MediaRequest,
-        offer: &OfferBinding,
-    ) -> Result<RunPermit, RunDenied> {
-        let admission = request.admission_request();
-        self.admit(RunCall {
-            selector,
-            request: &admission,
-            offer,
-        })
-    }
-
-    /// Admits one bounded media stream (live `ai.transcribe` partials) as
-    /// [`Self::admit_media`] admits one call, on one permit for the whole
-    /// stream. The permit reserves `reserve_units`, the stream's bound at its
-    /// rung's rate ([`MediaStreamLease::reserve_units`](super::MediaStreamLease::reserve_units)), in place of one
-    /// call's reservation; the run's line and the vault's allocation must
-    /// hold all of it before any audio leaves.
-    pub fn admit_media_stream(
-        &self,
-        selector: Option<&str>,
-        request: &MediaRequest,
-        offer: &OfferBinding,
-        reserve_units: u64,
-    ) -> Result<RunPermit, RunDenied> {
-        let admission = request.admission_request();
-        let offer = self.inner.bound(offer);
-        let call = RunCall {
-            selector,
-            request: &admission,
-            offer: &*offer,
-        };
-        let (revision, declaration) = self.inner.snapshot();
-        let declaration = declaration.with_reserve(reserve_units);
-        let admitted = self
-            .inner
-            .admit_model(&declaration, revision, call, None, self.sources.clone())
-            .map(|permit| self.initiated(permit));
-        self.inner.receipt_for(
-            revision,
-            selector,
-            admission.model.as_str(),
-            admitted,
-            Some(admission.model.clone()),
-        )
-    }
-
-    /// The only media backend a host hands a run for `offer`: it checks and
-    /// starts a media call's permit before any byte leaves, as
-    /// [`Self::gate`] does for a text call.
-    #[must_use]
-    pub fn media_gate(&self, inner: Arc<dyn MediaBackend>, offer: &OfferBinding) -> MediaGate {
-        let offer = self.inner.bound(offer).dispatch_binding();
-        MediaGate::new(Arc::clone(&self.inner), inner, offer)
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,

@@ -13,6 +13,10 @@ use crate::side_table::{self, CodecError, LegacyJson, Raw, RawValue, SideTable};
 use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::{Vault, entity_id::EntityId, error::Result, temporal::TimeRange};
 
+mod fitted;
+mod rule_fit;
+pub use rule_fit::{CallerPermissions, HoldsNothing, RuleSkillFit, SkillFitSetting};
+
 /// Hub-import receipt for one entity, keyed by (entity, source hub id, hash
 /// of the source ref string).
 const IMPORT_RECEIPT: SideTable<(EntityId, EntityId, [u8; 32]), HubImportReceipt, LegacyJson> =
@@ -27,6 +31,12 @@ const CODE_AUTO_INSTALL_REVISION: SideTable<(), u64, Raw> =
 /// Owner blocking rule on one canonical content hash; an absent row is off.
 const BLOCKED_HASH: SideTable<[u8; 32], MarketplaceSwitch, Raw> =
     SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_BLOCKED_HASH);
+/// Owner switch for turning a dependency advisory hit into one owner ask on
+/// a ready marketplace fit; an absent row is on.
+const ADVISORY_ASK: SideTable<(), MarketplaceSwitch, Raw> =
+    SideTable::new(&side_table::SKILL_HUB_MARKETPLACE_ADVISORY_ASK);
+/// The analysis bound a [`MarketplaceFitDecision`] keeps.
+const FIT_ANALYSIS_BYTES: usize = 512;
 
 /// One owner-set marketplace switch byte: `0` off, `1` on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,7 +88,8 @@ impl MarketplaceFitDecision {
         static_scan: &crate::skill_hub::SkillScanReceipt,
     ) -> Result<Self> {
         let analysis = analysis.into();
-        if analysis.len() > 512 || (outcome != MarketplaceFit::Ready && analysis.trim().is_empty())
+        if analysis.len() > FIT_ANALYSIS_BYTES
+            || (outcome != MarketplaceFit::Ready && analysis.trim().is_empty())
         {
             return Err(invalid("marketplace fit analysis is missing or too long"));
         }
@@ -90,6 +101,59 @@ impl MarketplaceFitDecision {
             analysis,
             static_scan: static_scan.clone(),
         })
+    }
+
+    /// Binds the bytes' dependency advisories into this fit. Each advisory
+    /// id is named in the analysis the import receipt carries; with
+    /// `hit_asks`, a hit turns a ready fit into one owner ask. An ask or a
+    /// no-fit keeps its rung, so a hit never blocks or holds an install.
+    fn with_advisories(mut self, advisory_ids: &[String], hit_asks: bool) -> Self {
+        if advisory_ids.is_empty() {
+            return self;
+        }
+        let lead = if hit_asks && self.outcome == MarketplaceFit::Ready {
+            self.outcome = MarketplaceFit::Ask;
+            "dependency advisories ask the owner once: "
+        } else {
+            "dependency advisories: "
+        };
+        self.analysis = advisory_analysis(&self.analysis, lead, advisory_ids);
+        self
+    }
+}
+
+/// `analysis`, then `lead` and the advisory ids, within the analysis bound.
+/// The advisory note keeps at least half the bound: the analysis is cut at a
+/// character boundary to fit beside it, and ids that do not fit are counted,
+/// never dropped silently.
+fn advisory_analysis(analysis: &str, lead: &str, ids: &[String]) -> String {
+    // Room for the "; " separator and an " and N more" count.
+    let room = FIT_ANALYSIS_BYTES - analysis.len().min(FIT_ANALYSIS_BYTES / 2) - 2;
+    let mut note = String::from(lead);
+    let mut shown = 0_usize;
+    for id in ids {
+        let extra = id.len() + if shown == 0 { 0 } else { 2 };
+        if note.len() + extra + 24 > room {
+            break;
+        }
+        if shown > 0 {
+            note.push_str(", ");
+        }
+        note.push_str(id);
+        shown += 1;
+    }
+    let note = match (shown, ids.len() - shown) {
+        (_, 0) => note,
+        (0, more) => format!("{note}{more} advisories"),
+        (_, more) => format!("{note} and {more} more"),
+    };
+    let mut cut = analysis.len().min(FIT_ANALYSIS_BYTES - note.len() - 2);
+    while !analysis.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    match analysis[..cut].trim_end() {
+        "" => note,
+        kept => format!("{kept}; {note}"),
     }
 }
 
@@ -205,6 +269,41 @@ impl Vault {
         })
     }
 
+    /// Whether a dependency advisory hit turns a ready marketplace fit into
+    /// one owner ask: on unless the owner turned it off.
+    pub fn marketplace_advisory_ask(&self) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        Ok(ADVISORY_ASK
+            .get(&self.store, &txn, &())?
+            .is_none_or(|MarketplaceSwitch(enabled)| enabled))
+    }
+
+    /// The owner sets whether a dependency advisory hit asks him once before
+    /// a ready marketplace install lands. The change is his own act,
+    /// consented once and spent in the same writer.
+    pub fn set_marketplace_advisory_ask(
+        &self,
+        owner: &AuthenticatedOwner,
+        enabled: bool,
+    ) -> Result<ConsentReceipt> {
+        self.with_write_txn_grouped(|txn| {
+            owner.revalidate_in_txn(self, txn)?;
+            let nonce = self.store.clock.entity_id()?;
+            let effect = ComposedEffect::new(EffectFacts::new(format!(
+                "skill.marketplace.advisory-ask:{enabled}:{}",
+                nonce.to_hex()
+            ))?)
+            .digest();
+            let receipt = self.approve_once_in_txn(txn, owner, effect)?;
+            let authorization =
+                crate::consent::approve_once_authorization_in_txn(&self.store, txn, &effect)?
+                    .ok_or_else(|| invalid("marketplace advisory ask consent missing"))?;
+            ADVISORY_ASK.put(&self.store, txn, &(), &MarketplaceSwitch(enabled))?;
+            crate::consent::spend_approve_once_in_txn(&self.store, txn, &authorization)?;
+            Ok(receipt)
+        })
+    }
+
     /// Fetches from a configured source and checks the publisher again at commit.
     /// Import, scan, activation and source receipt share one transaction.
     pub fn import_marketplace_skill_from_adapter<A: SkillHubAdapter>(
@@ -222,8 +321,8 @@ impl Vault {
     }
 
     /// The same import; with `advisories`, the bytes' OSV receipts are queried
-    /// before the writer and co-commit with the import, so the activation
-    /// consult reads them.
+    /// before the fit, bound into it, and co-commit with the import, so the
+    /// activation consult reads them.
     #[expect(
         clippy::too_many_arguments,
         reason = "the marketplace import plus an optional dependency advisory transport"
@@ -238,89 +337,10 @@ impl Vault {
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        let configured = {
-            let txn = self.store.env.read_txn()?;
-            self.check_publisher_in_txn(&txn, publisher)?;
-            let hub = self.hub_record_in_txn(&txn, &source.hub_id)?;
-            if publisher.hub != source.hub_id
-                || adapter.hub_id() != source.hub_id
-                || adapter.kind() != hub.kind
-                || adapter.endpoint() != Some(hub.endpoint.as_str())
-            {
-                return Err(invalid(
-                    "marketplace adapter is not the configured publisher source",
-                ));
-            }
-            hub
-        };
-        let package = adapter.fetch_package(source)?;
-        let parsed = super::folder::package_from_files(package.files)?;
-        let static_scan = crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?;
-        let fit = fit.evaluate(source, &parsed, &static_scan)?;
-        let advisory_scans = match advisories {
-            Some(query) => {
-                let inventory = super::osv::dependency_inventory(&parsed)?;
-                self.dependency_advisories(parsed.content_hash()?, &inventory, query, learned_at)?
-                    .2
-            }
-            None => Vec::new(),
-        };
-        self.with_write_txn_grouped(|txn| {
-            self.check_publisher_in_txn(txn, publisher)?;
-            if self.hub_record_in_txn(txn, &source.hub_id)? != configured {
-                return Err(invalid("configured hub moved while fetching"));
-            }
-            let hash = parsed.content_hash()?;
-            if fit.source != *source
-                || fit.hash != hash
-                || fit.capabilities != parsed.capabilities
-                || fit.static_scan != crate::skill_scan::run_static_skill_scan(&parsed, learned_at)?
-            {
-                return Err(invalid(
-                    "marketplace fit does not bind fetched source and permissions",
-                ));
-            }
-            let entity = self.import_skill_from_hub_in_txn(
-                txn,
-                source,
-                &parsed,
-                self.store.clock.entity_id()?,
-                occurred,
-                learned_at,
-            )?;
-            for scan in &advisory_scans {
-                self.ingest_skill_scan_verdict_in_txn(
-                    txn, &entity, hash, scan, occurred, learned_at,
-                )?;
-            }
-            let rule_blocked = marketplace_hash_blocked_in_txn(&self.store, txn, hash)?;
-            let code_bearing = parsed
-                .files
-                .iter()
-                .any(|file| file.path.starts_with("scripts/"));
-            let code_enabled = CODE_AUTO_INSTALL
-                .get(&self.store, txn, &())?
-                .is_some_and(|MarketplaceSwitch(enabled)| enabled);
-            let record = self.read_skill_record_in_txn(txn, &entity)?;
-            let plan = InstallPlan::marketplace(
-                &record,
-                InstallBinding::new(source, hash, &parsed.capabilities),
-                fit.outcome,
-                rule_blocked,
-                !code_bearing || code_enabled,
-            );
-            let result = self
-                .execute_hub_install_plan_in_txn(txn, &entity, &plan, occurred, learned_at, None)?;
-            self.write_hub_import_receipt_in_txn(
-                txn,
-                &entity,
-                hash,
-                source,
-                Some((publisher, result, fit.analysis.as_str())),
-                learned_at,
-            )?;
-            Ok(entity)
-        })
+        let fitted = self.fit_marketplace_skill(
+            adapter, source, publisher, fit, advisories, occurred, learned_at,
+        )?;
+        self.with_write_txn_grouped(|txn| self.commit_fitted_skill_in_txn(txn, &fitted, None))
     }
     pub(super) fn write_hub_import_receipt_in_txn(
         &self,

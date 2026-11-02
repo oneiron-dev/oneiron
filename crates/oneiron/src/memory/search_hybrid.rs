@@ -73,7 +73,6 @@ impl HybridSearchRequest {
                 return Err(MemoryError::bad_request("query_vector must be finite"));
             }
         }
-        caps::check_batch_len("phonetic_codes", self.phonetic_codes.len())?;
         for code in &self.phonetic_codes {
             caps::check_query(code)?;
             if code.trim().is_empty() {
@@ -81,7 +80,6 @@ impl HybridSearchRequest {
             }
         }
         if let Some(ppr) = &self.ppr {
-            caps::check_batch_len("ppr.seeds", ppr.seeds.len())?;
             if ppr.seeds.is_empty() {
                 return Err(MemoryError::bad_request("ppr requires seeds"));
             }
@@ -138,10 +136,13 @@ impl Memory<'_> {
         }
         self.produced_from(seeds.iter().copied());
         let (filter, policy) = lane.recall_plan()?;
-        let admitted =
-            |_: &crate::store::StoreRead<'_>, txn: &heed::RoTxn<'_>, id: &crate::EntityId| {
-                lane.recall_candidate_in(txn, &policy, &filter, id)
-            };
+        // Every candidate goes to the actor gate, under one authority per
+        // snapshot (FIX 11648).
+        let gate = lane.recall_candidate_gate(&policy, &filter);
+        let admitted = |_: &crate::store::StoreRead<'_>,
+                        _: &heed::RoTxn<'_>,
+                        _: &crate::EntityId|
+         -> crate::Result<bool> { Ok(true) };
         let mut pipeline = self
             .vault
             .query()
@@ -150,6 +151,7 @@ impl Memory<'_> {
             .scoped_note_reader(lane.actor_key().clone())
             .for_destination(lane.actor_key().destination())
             .filter_candidates(&admitted)
+            .gate_candidates(&gate)
             .boost_recency(crate::pipeline::DEFAULT_RECENCY_HALF_LIFE_DAYS)
             .boost_salience()
             .boost_confidence()

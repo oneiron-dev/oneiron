@@ -5,6 +5,9 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use super::script_plan::ScriptExecutionPlan;
 use super::{PackAdapter, PackInstallReceipt, PackInstallStatus, PackSource, invalid};
+use crate::code_run::ProgramStepFeedback;
+use crate::code_sandbox::source::prepare_source;
+use crate::engine_executor::{CheckedDoor, RowsCheck, TypeFeedback};
 use crate::{
     EntityId, Result, Vault,
     code_sandbox::microvm::{
@@ -48,6 +51,9 @@ pub struct PackScriptRun<'a> {
     pub image: &'a GuestImage,
     pub budget: ExecutionBudget,
     pub now: u64,
+    /// The host's type-feedback service, lent as it is; `None` answers that
+    /// no checker is attached (FIX 10389).
+    pub type_feedback: Option<&'a TypeFeedback>,
 }
 
 /// Typed output of a successful, validated foreign script. Verbs are intents,
@@ -60,6 +66,11 @@ pub struct PackScriptOutcome {
     pub wakes: Vec<ConnectorWakeDecision>,
     pub session_manifest: Option<oneiron_container::SessionManifest>,
     pub sandbox_receipt: Option<String>,
+    /// The adapter script's type feedback as it stood when the run ended,
+    /// beside the run and never inside its validated output (FIX 10389):
+    /// kept on the vault's rows under the run's identity, its late result
+    /// read by its `check_ref` as the owner.
+    pub program_steps: Vec<ProgramStepFeedback>,
 }
 
 #[derive(Deserialize)]
@@ -221,6 +232,7 @@ impl Vault {
             image,
             budget,
             now,
+            type_feedback,
         } = request;
         if !matches!(backend.name(), "firecracker" | "landlock-container")
             || receipt.pack_name != name
@@ -230,6 +242,18 @@ impl Vault {
             ));
         }
         let secret_refs = validate_grants(self, &source, agent, grants)?;
+        let runtime = receipt
+            .runtime
+            .as_ref()
+            .ok_or_else(|| invalid("script runtime absent"))?;
+        let plan = ScriptExecutionPlan::from_source(&source, runtime)?;
+        // Prepared once, and checked as its author wrote it, as the agent it
+        // runs for, before any grant joins it: every way out of the run past
+        // here keeps its feedback beside the run (FIX 10389).
+        let authored = plan.authored()?;
+        let prepared = prepare_source(authored);
+        let admitted = (run_id, agent, CheckedDoor::PackScript);
+        let mut check = RowsCheck::start(type_feedback, self, admitted, authored, &prepared);
         let mut allowlist = CredentialAllowlist::new();
         let mut bindings = BTreeMap::new();
         let mut guest_grants = BTreeMap::new();
@@ -260,12 +284,7 @@ impl Vault {
             vault: Arc::clone(self),
             grants: bindings,
         });
-        let runtime = receipt
-            .runtime
-            .as_ref()
-            .ok_or_else(|| invalid("script runtime absent"))?;
-        let plan = ScriptExecutionPlan::from_source(&source, runtime)?;
-        let injected = plan.assemble_program(&guest_grants)?;
+        let injected = plan.assemble_program(&prepared, &guest_grants)?;
         let mut component = Vec::new();
         fs::File::open(&image.component)
             .map_err(|_| invalid("guest component unavailable"))?
@@ -408,6 +427,7 @@ impl Vault {
             }
             Ok(())
         })?;
+        check.completed();
         Ok(PackScriptOutcome {
             run_id,
             inbound,
@@ -415,6 +435,7 @@ impl Vault {
             wakes,
             session_manifest,
             sandbox_receipt,
+            program_steps: vec![check.feedback()],
         })
     }
 }

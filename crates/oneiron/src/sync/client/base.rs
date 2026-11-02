@@ -41,6 +41,9 @@ pub struct SyncClient {
     pub(crate) manager: Arc<WindowManager>,
     pub(crate) root_doc: LoroDoc,
     pub(crate) note_session_bound: bool,
+    /// FIX 11111: the main socket already logged that it withholds this
+    /// machine's credentials from a cleartext server.
+    pub(crate) cleartext_withhold_logged: bool,
     pub(crate) document_updates: tokio::sync::broadcast::Receiver<Vec<u8>>,
     pub(crate) client_id: u64,
     pub(crate) config: SyncClientConfig,
@@ -51,8 +54,9 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
     pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
-    /// Unacknowledged cross-month deltas. Lost on process death, re-fetched by VV.
-    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>)>,
+    /// Unacknowledged cross-month deltas, each with the machine its connection
+    /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
+    pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
     pub(crate) root_bootstrapped: bool,
     /// Durable home ACKs of opened-item queue updates, keyed by queue sequence:
     /// the BLAKE3 of each acknowledged row's own bytes, set once its window
@@ -73,6 +77,13 @@ pub struct SyncClient {
     /// When each owed artifact publication, by digest, may be sent again on
     /// this connection. Cleared at every connect.
     pub(crate) artifact_publication_resend: HashMap<[u8; 32], std::time::Instant>,
+    /// This connection's by-reference ASSET body transfers (FIX 5489).
+    /// Started again at every connect. Only the client's own `&mut` takes
+    /// it; the mutex keeps the client `Sync`.
+    pub(crate) asset_bodies: Mutex<crate::sync::AssetBodySession>,
+    /// This connection's custody carrier leaf-key requests (FIX 11785).
+    /// Started again at every connect.
+    pub(super) leaf_key_sends: super::leaf_keys::LeafKeySends,
     /// The machine the home proved on this connection's upgrade (OF-534
     /// G6/G7), rechecked at each use; `Unknown` until a connection proves one.
     /// Cleared at every connect.
@@ -98,26 +109,18 @@ impl SyncClient {
             ));
         }
 
-        if config.note_session.is_some() {
-            let uri: tokio_tungstenite::tungstenite::http::Uri =
-                config.server_url.parse().map_err(|_| {
-                    Error::sync_protocol(SyncProtocolValidation::DocumentAdmissionDenied)
-                })?;
-            let loopback = uri.host().is_some_and(|host| {
-                host.trim_matches(['[', ']'])
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-            });
-            // A mesh dialer is a private carrier to a paired machine: the
-            // bind never crosses an open network.
-            if config.mesh_dialer.is_none()
-                && uri.scheme_str() != Some("wss")
-                && !(uri.scheme_str() == Some("ws") && loopback)
-            {
-                return Err(Error::sync_protocol(
-                    SyncProtocolValidation::DocumentAdmissionDenied,
-                ));
-            }
+        // A mesh dialer is a private carrier to a paired machine: the bind
+        // never crosses an open network. The residence lane holds the
+        // endpoint it dials to the same rule (FIX 8862).
+        if config.note_session.is_some()
+            && !super::endpoint::admits_credentials(
+                &config.server_url,
+                config.mesh_dialer.is_some(),
+            )
+        {
+            return Err(Error::sync_protocol(
+                SyncProtocolValidation::DocumentAdmissionDenied,
+            ));
         }
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let vault = Arc::clone(manager.vault());
@@ -170,6 +173,7 @@ impl SyncClient {
         let document_updates = manager.documents().subscribe();
         let mut client = Self {
             note_session_bound: false,
+            cleartext_withhold_logged: false,
             document_updates,
             vault,
             manager,
@@ -191,6 +195,8 @@ impl SyncClient {
             lfs_last_id: 0,
             last_lfs_download: None,
             artifact_publication_resend: HashMap::new(),
+            asset_bodies: Default::default(),
+            leaf_key_sends: Default::default(),
             home_peer: crate::authority::PeerMachine::Unknown,
             status: SyncStatus::Disconnected,
             event_tx,
@@ -261,7 +267,8 @@ impl SyncClient {
     /// here, judged as it is released: a window UPDATE by the raw verdict on
     /// its envelope's payload, its parts with it (a frame that cannot be read
     /// stays), a document frame, a NOTE command included, by its text
-    /// ([`crate::sync::documents::document_frame_withheld`]).
+    /// ([`crate::sync::documents::document_frame_withheld`]), and on a
+    /// federation lane by whether the peer may read that text now (FIX 8861).
     pub(crate) fn frame_withheld(&self, frame: &[u8]) -> bool {
         if frame.first() == Some(&transport::TAG_WINDOW_SYNC) {
             return frame
@@ -272,6 +279,11 @@ impl SyncClient {
                 });
         }
         crate::sync::documents::document_frame_withheld_for(&self.vault, self.home_peer, frame)
+            || self
+                .config
+                .federation_peer
+                .as_ref()
+                .is_some_and(|peer| peer.document_frame_withheld(&self.vault, frame))
     }
 
     /// Whether a vector request may name window `key` to the home this

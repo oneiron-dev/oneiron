@@ -137,6 +137,7 @@ impl VoiceServeConnection {
         host: VoiceHost,
         pass: F,
     ) -> (F::Output, io::Result<()>) {
+        let speculative = host.speculative.clone();
         let (stop, stopped) = oneshot::channel();
         let serving = (self.0)(
             host,
@@ -149,6 +150,10 @@ impl VoiceServeConnection {
             let _ = stop.send(());
             result
         };
-        tokio::join!(pass, serving)
+        let (result, served) = tokio::join!(pass, serving);
+        // Its speculative passes still running past their deadline write when
+        // their queries end: joined before the pass's admission drops (FIX 3814).
+        super::join_speculative(speculative).await;
+        (result, served)
     }
 }

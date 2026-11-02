@@ -33,20 +33,24 @@ use oneiron::llm::decision::questions::QuestionCriteria;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::{KeyCustody, LeaseUnit, OfferRoute, PaidConnector};
 use oneiron::llm::{
-    BudgetLease, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
+    BudgetLease, CacheDigest, FatalLlmError, LabelReadFailure, LabelReadModel, LabelReadRequest,
     LabelReadResponse, LabelReadout, LabelSet, LlmError, LlmInputUsage, LlmOutputUsage, LlmResult,
     LlmUsage, RetryableLlmError,
 };
+use oneiron::{ModelId, ModelLocality};
 use serde_json::{Value as JsonValue, json};
 
 use super::cache_usage::{label_read, put_inference_calls, take_inference_calls};
 use super::catalog::engine_model_id;
 use super::http::{HttpFailure, KeyStyle, ProviderHttp};
-use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver};
+use super::llama_identity::{AnsweringIdentity, LlamaIdentityResolver, execution_mode};
 use crate::config::models::{
     DecisionReadRecipe, DecisionReadSettings, ModelsConfig, ProbeQuestions, ProviderConfig,
     ReadPrompt, RenderRefusal,
 };
+
+mod host;
+use host::HostSlot;
 
 const TOKENIZE_PATH: &str = "/tokenize";
 const COMPLETION_PATH: &str = "/completion";
@@ -85,6 +89,8 @@ pub struct DecisionReadDoor {
     /// (`DecisionReadSettings::permitted`, FIX 9481). A door a host builds
     /// over its own reader is permitted.
     permitted: bool,
+    /// The vault the configured reader serves, once its server binds it.
+    host: HostSlot,
 }
 
 impl DecisionReadDoor {
@@ -104,6 +110,7 @@ impl DecisionReadDoor {
             think_threshold: None,
             recipe: None,
             permitted: true,
+            host: HostSlot::default(),
         }
     }
 
@@ -214,13 +221,15 @@ pub(super) fn bind(
         .get(&rung.model.provider)
         .ok_or_else(|| anyhow::anyhow!("decision read: no local_reasoner provider"))?;
     let model = engine_model_id(&rung.model, provider)?;
+    let host = HostSlot::default();
     let reader = DecisionReader::new(
-        model.as_str(),
+        &model,
         &rung.model.model,
         provider,
         settings,
         runtime,
         Arc::clone(identities),
+        Arc::clone(&host),
     )?;
     let mut door = DecisionReadDoor::new(
         Arc::new(reader),
@@ -231,6 +240,7 @@ pub(super) fn bind(
     door.think_threshold = Some(settings.think_threshold);
     door.recipe = Some(Arc::clone(&settings.recipe));
     door.permitted = settings.permitted;
+    door.host = host;
     Ok(Some(door))
 }
 
@@ -269,6 +279,12 @@ struct TokenIds {
 
 struct DecisionReader {
     model: String,
+    /// The engine id, as the vault's model registry keys it.
+    engine: ModelId,
+    /// The rung's provider is a third party's: its catalog price is the read's (FIX 11408).
+    leaves: bool,
+    /// The vault it serves, once its server binds it (FIX 11408, FIX 11412).
+    host: HostSlot,
     /// The rung's configured wire id: what a launch alias in an answer stands
     /// for. Never compared with an answer.
     wire_model: String,
@@ -290,15 +306,19 @@ struct DecisionReader {
 
 impl DecisionReader {
     fn new(
-        model: &str,
+        model: &ModelId,
         wire_model: &str,
         provider: &ProviderConfig,
         settings: &DecisionReadSettings,
         runtime: tokio::runtime::Handle,
         identities: Arc<LlamaIdentityResolver>,
+        host: HostSlot,
     ) -> anyhow::Result<Self> {
         Ok(Self {
-            model: model.to_owned(),
+            model: model.as_str().to_owned(),
+            engine: model.clone(),
+            leaves: provider.locality == ModelLocality::ThirdParty,
+            host,
             wire_model: wire_model.to_owned(),
             revision: format!(
                 "{}+recipe.{}",
@@ -352,11 +372,14 @@ impl DecisionReader {
     /// one position.
     async fn token_id(&self, text: &str, special: bool) -> LlmResult<u64> {
         let body = json!({"content": text, "add_special": false, "parse_special": special});
-        let reply = self
-            .http
-            .post_json(TOKENIZE_PATH, &BTreeMap::new(), &body)
-            .await
-            .map_err(transport)?;
+        let headers = BTreeMap::new();
+        let sent = self.http.post_json(TOKENIZE_PATH, &headers, &body);
+        // Read whole on the served vault's chat-reply line (FIX 11412).
+        let reply = match self.host.get() {
+            Some(host) => super::http::holding_chat_replies(&host.budgets, sent).await,
+            None => sent.await,
+        }
+        .map_err(transport)?;
         status(reply.status)?;
         match reply
             .body
@@ -375,8 +398,14 @@ impl DecisionReader {
 
     /// One completion of `prompt` (one prompt, or an array of them) forced
     /// to end at once, listing the top `n_probs` tokens. Any free slot takes
-    /// each prompt, and each slot's prompt cache keeps what it last read.
-    async fn complete(&self, prompt: JsonValue, eos: u64, n_probs: u64) -> LlmResult<JsonValue> {
+    /// each prompt, and each slot's prompt cache keeps what it last read. The
+    /// answer comes with the execution mode of what was sent (FIX 8329).
+    async fn complete(
+        &self,
+        prompt: JsonValue,
+        eos: u64,
+        n_probs: u64,
+    ) -> LlmResult<(JsonValue, Option<CacheDigest>)> {
         let body = json!({
             "prompt": prompt,
             "n_predict": 1,
@@ -389,6 +418,7 @@ impl DecisionReader {
             "post_sampling_probs": false,
             "logit_bias": [[eos, EOS_BIAS]],
         });
+        let execution = execution_mode(&body);
         let reply = self
             .http
             .post_json_within(
@@ -400,7 +430,7 @@ impl DecisionReader {
             .await
             .map_err(transport)?;
         status(reply.status)?;
-        Ok(reply.body)
+        Ok((reply.body, execution))
     }
 
     /// The pack's prompts in one completion, each answer read over its own
@@ -414,13 +444,14 @@ impl DecisionReader {
     ) -> LlmResult<LabelReadResponse> {
         let ids = self.ids().await?;
         let prompt_array = JsonValue::from(prompts.to_vec());
-        let first = self
+        let (first, first_mode) = self
             .complete(prompt_array, ids.eos, self.recipe.n_probs())
             .await?;
         let replies = answers(first, prompts.len())?;
         let mut readouts = Vec::with_capacity(prompts.len());
         let mut reads = Vec::with_capacity(prompts.len());
         for ((prompt, question), mut reply) in prompts.iter().zip(questions).zip(replies) {
+            let mut mode = first_mode.clone();
             let count = question.width();
             let (labels, tokens) = (&ids.labels[..count], &self.recipe.tokens()[..count]);
             let mut logprobs = label_logprobs(&reply, labels, tokens);
@@ -428,8 +459,9 @@ impl DecisionReader {
             if let Some(full) = self.recipe.n_probs_full()
                 && logprobs.as_ref().err() == Some(&failed(LabelReadFailure::MissingLabels))
             {
-                spent = Some(usage(&reply, self.answering(&reply).await.as_ref())?);
-                reply = self.complete(json!(prompt), ids.eos, full).await?;
+                let answering = self.answering(&reply).await;
+                spent = Some(usage(&reply, answering.as_ref(), mode.as_ref())?);
+                (reply, mode) = self.complete(json!(prompt), ids.eos, full).await?;
                 logprobs = label_logprobs(&reply, labels, tokens);
             }
             let mut readout = normalized(&logprobs?);
@@ -442,7 +474,8 @@ impl DecisionReader {
                 readout.reverse();
             }
             readouts.push(readout);
-            let usage = usage(&reply, self.answering(&reply).await.as_ref())?;
+            let answering = self.answering(&reply).await;
+            let usage = usage(&reply, answering.as_ref(), mode.as_ref())?;
             reads.push(match spent {
                 Some(first) => retried(first, usage),
                 None => usage,
@@ -467,6 +500,15 @@ impl LabelReadModel for DecisionReader {
     /// One label, or one joint label, per recipe token.
     fn max_labels(&self) -> usize {
         self.recipe.tokens().len()
+    }
+
+    /// A third-party rung's catalog price, from the served vault's registry row (FIX
+    /// 11408); none for a rung this host serves, or before a server binds the vault.
+    fn cost_per_thousand(&self) -> Option<f64> {
+        if !self.leaves {
+            return None;
+        }
+        self.host.get()?.cost_per_thousand(&self.engine)
     }
 
     /// Blocks on the server's runtime until the model answers, so it runs on
@@ -628,14 +670,18 @@ fn normalized(logprobs: &[f64]) -> Vec<f64> {
 /// counts is refused, so its caller charges the read's reservation. Its
 /// cache read is llama.cpp's own `timings.cache_n` when the answer's counts
 /// agree, beside the answer's inference receipt (FIX 6567, 8314) with the
-/// identity its own alias names, `answering`.
-fn usage(body: &JsonValue, answering: Option<&AnsweringIdentity>) -> LlmResult<LlmUsage> {
+/// identity its own alias names, `answering`, and the mode it was sent in.
+fn usage(
+    body: &JsonValue,
+    answering: Option<&AnsweringIdentity>,
+    execution: Option<&CacheDigest>,
+) -> LlmResult<LlmUsage> {
     let count = |key: &str| {
         body.get(key)
             .and_then(JsonValue::as_u64)
             .ok_or_else(|| failed(LabelReadFailure::Malformed))
     };
-    let (cache_read, raw_provider) = label_read(body, answering);
+    let (cache_read, raw_provider) = label_read(body, answering, execution);
     Ok(LlmUsage {
         input: LlmInputUsage {
             total: count("tokens_evaluated")?,

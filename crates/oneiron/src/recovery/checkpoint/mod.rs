@@ -25,16 +25,20 @@ mod commitment;
 mod credential_custody;
 mod custody_head;
 mod decisions;
+mod epochs;
 mod host_holds;
 mod image;
 mod landing;
 mod landing_lengths;
 mod pad_custody;
+mod pad_objects;
+mod pad_reopen;
 mod payload;
 mod rebuild;
 mod response_rows;
 mod restore_class;
 mod side_pads;
+mod signer_delegation;
 mod snapshot;
 mod tiers;
 mod watermark;
@@ -50,25 +54,30 @@ pub use admission::{
     CustodyRouteFact, EscrowRole, FreshRecipient, RecipientAdmissionFacts,
     RecipientRetirementDisposition, ReleasedRecipient, RestoreAdmission, RestoreAdmissionError,
     RestoreAdmissionReason, RestoreCommitFacts, RestoreDestinationState, RestorePhase, RestorePlan,
-    RetiredBy, RetiredRecipient, SourceExpectation, VerifiedSource,
+    RetiredBy, RetiredRecipient, SignerTrust, SourceExpectation, VerifiedSource,
 };
 pub(crate) use admission::{Rejected, because};
 pub use artifact::{ArtifactKind, ArtifactUnlocks, CheckpointKey, CheckpointSequenceBelowFloor};
 pub use commitment::CheckpointSigner;
 pub use credential_custody::CredentialRestoreNote;
 pub use custody_head::*;
-pub use host_holds::{BackupHoldVisibility, BackupHolds, HostOrderHolds};
+pub use epochs::RestorePadState;
+pub(crate) use epochs::{prune_carried_pads, reconcile_restore_pad_notes_in_txn};
+pub use host_holds::{
+    ArtifactHostOrderHolds, BackupHoldVisibility, BackupHolds, HostHoldsAvailability,
+    HostHoldsRecipient, HostHoldsSealing, HostHoldsUnavailable, HostOrderHolds,
+};
 use image::{CheckpointImage, read_image, read_image_required};
 pub use pad_custody::PadRestoreNote;
+pub use pad_objects::PadObjectNote;
+pub use pad_reopen::{PadReopenFault, PadReopenReport, PadReopenStage};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 pub use tiers::{StorageTier, storage_tier};
 pub use watermark::{
     BACKUP_WATERMARK_MARKER_SUFFIX, BackupArtifactEvidence, BackupMarker, BackupSnapshotReceipt,
-    BackupWatermark, backup_marker, inspect_backup, last_backed_up, verify_with_pins,
+    BackupWatermark, backup_marker, backup_marker_with_pins, inspect_backup, last_backed_up,
+    verify_with_pins,
 };
 pub use write_budget::{AtWriteFloor, RecoveryWriteBudget};
 type CanonicalRows = Vec<(Vec<u8>, Vec<u8>)>;
@@ -142,8 +151,8 @@ enum Source<'a> {
         first: LiveCustody,
         #[cfg(unix)]
         shared: Option<crate::store::SharedPath>,
-        /// The install's configured keystore; the platform's at its defaults
-        /// when none was given ([`SideRestoreSource::with_keystore`]).
+        /// The install's configured keystore ([`SideRestoreSource::with_keystore`]);
+        /// none is a host with none, which opens no device wrap (FIX 12225).
         keystore: Option<std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
         /// A sealed vault's page seal, which every read of it opens with.
         page_seal: Option<crate::world_keys::VaultPageSeal>,
@@ -200,20 +209,13 @@ impl SideRestoreSource<'_> {
     /// The key the artifact at `checkpoint` opens with. A vault open in this
     /// process gives its own ([`Vault::checkpoint_key`]); one read off the
     /// disk is never opened, so this install's keystore unlocks the key from
-    /// the device wrap the artifact carries
-    /// ([`CheckpointKey::unlock_on_this_device`]).
+    /// the device wrap the artifact carries, or refuses with none (FIX 12225).
     pub fn checkpoint_key(&self, checkpoint: &Path) -> Result<CheckpointKey> {
         match &self.0 {
             Source::Open(vault) => vault.checkpoint_key(),
-            Source::Disk {
-                keystore: Some(keystore),
-                ..
-            } => Ok(CheckpointKey::unlock(
-                checkpoint,
-                &crate::world_keys::VaultKeyUnlock::Device(keystore.as_ref()),
-            )?
-            .trusting_device(std::sync::Arc::clone(keystore))),
-            Source::Disk { dir, .. } => CheckpointKey::unlock_on_this_device(checkpoint, dir),
+            Source::Disk { keystore, .. } => {
+                CheckpointKey::unlock_on_this_device(checkpoint, keystore.as_ref())
+            }
         }
     }
     /// The source's page seal while its pages are sealed (OF-570 maximum
@@ -226,26 +228,6 @@ impl SideRestoreSource<'_> {
                 .then_some(vault.config.page_seal.as_ref())
                 .flatten(),
             Source::Disk { page_seal, .. } => page_seal.as_ref(),
-        }
-    }
-    /// The source's live custody state, read now, at a restore's start.
-    fn capture(&self) -> Result<LiveCustody> {
-        match &self.0 {
-            Source::Open(vault) => vault.store.live_custody(),
-            Source::Disk {
-                dir,
-                first,
-                page_seal,
-                ..
-            } => {
-                let live = crate::store::read_live_custody(dir, page_seal.as_ref())?;
-                if !first.same_vault(&live) {
-                    return Err(Error::InvalidConfig(
-                        "the vault read as this side restore's source has changed".into(),
-                    ));
-                }
-                Ok(live)
-            }
         }
     }
 }
@@ -265,6 +247,10 @@ pub struct RestoreEpoch {
     pub checkpoint_id: String,
     pub restored_at: u64,
     pub reason: RestoreReason,
+    /// What it still owes of the world key pads its image names (PAD-2):
+    /// absent from a row that owes and says nothing.
+    #[serde(default, skip_serializing_if = "RestorePadState::is_empty")]
+    pub pad_recovery: RestorePadState,
 }
 /// Source checkpoint identity and newly rebuilt engine indexes.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -304,6 +290,10 @@ pub struct RestoreReport {
     /// readable, by handle and generation, each with its remedy (KS-6 part
     /// 2, CALLS `KS-6 restore note form`); empty when every one landed.
     pub credential_notes: Vec<CredentialRestoreNote>,
+    /// What it did not carry of its source's current pad objects (PAD-1);
+    /// empty when it carried them all, or had none to carry.
+    pub pad_object_notes: Vec<PadObjectNote>,
+    pub erasure_note: Option<String>,
 }
 /// What a restore over a live vault says about a table a home move carries
 /// (FIX 5661 C2b).
@@ -434,14 +424,16 @@ impl Vault {
             config,
             reason,
             restored_at,
-            |_| Ok(()),
+            |_, _| Ok(()),
         )
     }
     /// [`Vault::restore_checkpoint`], with `finish` run on the restored vault
     /// once its rows are in and it reopened, before it is kept: how a host
     /// wraps a restored sealed vault's key to itself before the vault is
     /// published. A refusal from `finish` removes the vault, and the
-    /// page-seal mirror its open wrote, as any refusal does.
+    /// page-seal mirror its open wrote, as any refusal does. `finish` also
+    /// gets the host-order family `key` carries from the artifact's member,
+    /// where its tag names the member the artifact carries (FIX 6817).
     pub fn restore_checkpoint_finishing(
         path: &Path,
         key: &CheckpointKey,
@@ -449,7 +441,7 @@ impl Vault {
         config: VaultConfig,
         reason: RestoreReason,
         restored_at: u64,
-        finish: impl FnOnce(&Self) -> Result<()>,
+        finish: impl FnOnce(&Self, Option<&HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         Self::restore_keeping_custody(
             path,
@@ -503,6 +495,8 @@ impl Vault {
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<(Self, RestoreReport)> {
         let live = source.capture()?;
+        // What the source erased, those after the cut too (FIX 4753).
+        let erased = source.erased_ids();
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
         image.drop_machine_identity();
         // The copy holds the source's records, so its host orders hold them too.
@@ -510,7 +504,7 @@ impl Vault {
         // A pad its forked custody lacks or cannot read comes from the
         // source's live row (KS-5).
         let pads = source.live_pads(&image);
-        let (made, forked, mut vault, report) = Self::restore_image(
+        let (made, forked, mut vault, mut report) = Self::restore_image(
             image,
             checkpoint_id,
             bodies,
@@ -519,9 +513,12 @@ impl Vault {
             RestoreReason::Restore,
             restored_at,
             Custody::Fork(Some((&live, &pads))),
-            &BTreeSet::new(),
+            &erased,
             budget,
         )?;
+        // A pack source it erased halts the copy's routes too (FIX 6086).
+        response_rows::removals::halt_erased_pack_routes(&vault, &erased)?;
+        pad_objects::land_on_restore(&vault, &live.pad_objects, &mut report);
         forked.keep();
         made.keep(&mut vault);
         Ok((vault, report))
@@ -606,18 +603,24 @@ impl Vault {
         // by name; a missing one is refused, not made.
         crate::store::admit_existing_vault_root(path)?;
         let live = source.capture()?;
+        let erased = source.erased_ids();
         let archive = Self::open_owned(path, config.clone())?;
-        let (dropped_gate_decisions, erased_pads, credentials) =
-            archive.store.activate_archived(&live)?;
+        let expected = pad_objects::expected_of(&archive, &live.pad_objects);
+        let (dropped_gate_decisions, erased_pads, credentials, landing) =
+            archive.store.activate_archived(&live, expected.as_ref())?;
         let restored_at = archive.now_recorded_at();
+        let pad_notes: Vec<_> = erased_pads.iter().map(PadRestoreNote::erased).collect();
         drop(archive);
         // Reopened, it reads what it holds under its own custody.
         let vault = Self::open_owned(path, config)?;
-        Ok(RestoreReport {
+        // A pack source its source erased halts its routes here (FIX 6086).
+        response_rows::removals::halt_erased_pack_routes(&vault, &erased)?;
+        let mut report = RestoreReport {
             epoch: RestoreEpoch {
                 checkpoint_id: String::new(),
                 restored_at,
                 reason: RestoreReason::Activate,
+                pad_recovery: RestorePadState::settled(pad_notes.clone()),
             },
             rebuilt_entities: 0,
             rebuilt_text_documents: 0,
@@ -626,11 +629,15 @@ impl Vault {
             custody_note: vault.activation_custody_note(),
             training_note: vault.training_link_restore_notice(),
             home_table_notes: Vec::new(),
-            pad_notes: erased_pads.iter().map(PadRestoreNote::erased).collect(),
+            pad_notes,
             checkpoint_sequence: None,
             opaque_responses: 0,
             credential_notes: credential_custody::notes(&vault.store, credentials),
-        })
+            pad_object_notes: Vec::new(),
+            erasure_note: None,
+        };
+        pad_objects::finish_activation(&vault, &live.pad_objects, landing, &mut report);
+        Ok(report)
     }
     /// Historical content restore beside a live vault: the image's content
     /// with `current`'s live authority, consent, policy, credential and
@@ -708,8 +715,9 @@ impl Vault {
         let erased = crate::deletion::hard_erased_ids_in(current)?;
         let installed = current.installed_pack_sources()?;
         let (mut image, checkpoint_id, bodies) = read_image(path, key)?;
-        // The carried rows hold `current`'s custody binding and retirements.
-        let home_table_notes =
+        // The carried rows hold `current`'s custody binding and retirements,
+        // and its pad objects are captured in the read that carried them.
+        let (home_table_notes, current_pads) =
             authority_plane::carry_current_authority(&mut image.databases, current)?;
         // A Live family's response row came with it, and its binding: the
         // image's copy is passed over (KS-2B2).
@@ -743,6 +751,7 @@ impl Vault {
         // made for it, still under the copy's lease (review r3, Sol F4).
         authority_plane::refuse_new_members(current, &vault)
             .and_then(|()| decisions::refuse_loosened_decisions(current, &vault))?;
+        pad_objects::land_on_restore(&vault, &current_pads, &mut report);
         forked.keep();
         made.keep(&mut vault);
         Ok((vault, report))

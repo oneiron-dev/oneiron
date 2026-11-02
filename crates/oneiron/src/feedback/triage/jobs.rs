@@ -31,10 +31,6 @@ pub(super) fn invalid_job() -> Error {
     Error::InvalidConfig("invalid feedback triage job".into())
 }
 
-fn skill_unbound() -> Error {
-    Error::InvalidConfig("no feedback triage skill is bound".into())
-}
-
 pub(super) fn attempt_ref(id: AttemptId) -> Result<EntityId> {
     EntityId::from_bytes(*id.as_bytes())
 }
@@ -53,7 +49,7 @@ fn job_input(source_ref: &FeedbackTriageSourceRef, evidence: EntityId) -> Result
     .map_err(|_| invalid_job())
 }
 
-pub(super) fn job_target(input: &Value) -> Result<(FeedbackTriageSourceRef, EntityId)> {
+pub(crate) fn job_target(input: &Value) -> Result<(FeedbackTriageSourceRef, EntityId)> {
     let job: JobInput = rmpv::ext::from_value(input.clone()).map_err(|_| invalid_job())?;
     Ok((
         FeedbackTriageSourceRef {
@@ -118,15 +114,32 @@ pub(super) fn requeue_unacknowledged(
     let queue = AttemptQueue::new(vault);
     let mut requeued = 0;
     for (key, read) in handoffs {
-        if read.result.is_some() || read.erased_at.is_some() {
+        if read.erased_at.is_some() {
             continue;
+        }
+        // An acknowledged row stays out unless its evidence is erased, for
+        // the backstop below (FIX 10921).
+        if read.result.is_some() {
+            let txn = vault.store.env.read_txn()?;
+            if !erased::evidence_erased_in_txn(vault, &txn, &read)? {
+                continue;
+            }
         }
         // Read again under the writer: the job may have acknowledged since.
         let again = vault.with_write_txn_grouped(|txn| {
             let Some(mut handoff) = HANDOFFS.get(&vault.store, txn, &key)? else {
                 return Ok(false);
             };
-            if handoff.result.is_some() || handoff.erased_at.is_some() {
+            if handoff.erased_at.is_some() {
+                return Ok(false);
+            }
+            // The erase backstop (FIX 10921): an acknowledged row whose
+            // evidence the owner erased settles here and queues nothing.
+            if handoff.result.is_some() {
+                if !erased::evidence_erased_in_txn(vault, txn, &handoff)? {
+                    return Ok(false);
+                }
+                erased::settle_erased_in_txn(vault, txn, &key, &mut handoff, now)?;
                 return Ok(false);
             }
             if queue
@@ -181,13 +194,14 @@ impl Vault {
     /// item read back from its evidence, checked against that revision, with
     /// its evidence, the skill bound now and the part graph a long item's
     /// earlier runs left (FIX 7549); the result committed for it already;
-    /// or, once the owner erased its evidence, nothing to triage.
+    /// or, once the owner erased its evidence or while no skill is bound,
+    /// nothing to triage.
     ///
     /// # Errors
     ///
     /// An attempt that is not this facet's Coach attempt or not the
     /// revision's current job; a job naming no handoff, or an item that no
-    /// longer matches its revision; no bound skill; storage errors.
+    /// longer matches its revision; storage errors.
     pub fn feedback_triage_job(
         &self,
         attempt: &DreamerAdmittedAttempt,
@@ -208,7 +222,9 @@ impl Vault {
         if erased {
             return Ok(FeedbackTriageJob::Erased);
         }
-        let skill = skill.ok_or_else(skill_unbound)?;
+        let Some(skill) = skill else {
+            return Ok(FeedbackTriageJob::Unbound);
+        };
         let item = job_item(self, &handoff)?;
         Ok(FeedbackTriageJob::Pending(Box::new(FeedbackTriageInput {
             source_ref: handoff.source_ref,

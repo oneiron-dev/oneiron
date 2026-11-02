@@ -33,11 +33,14 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, ManifestEntry, ManifestKind};
 use crate::code_run::{SelfSpawnAsk, TaskExposure};
 use crate::context_projection::ContextSpec;
+use crate::engine_executor::continuation::run_continuation;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::failure_ladder::HealerCase;
 use crate::task_type::TaskTypeRef;
-use crate::team::{LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost};
+use crate::team::{
+    ErasedPackSpan, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch, PlannedSpawnHost,
+};
 use crate::workspace_roster::RoomWork;
 
 use super::erase::put_intent_in_txn;
@@ -63,6 +66,9 @@ const NOT_THE_PACK: &str = "this exposure is not the planned leader's frozen pat
      the pack its launch froze, under that skill and revision";
 const LEASE_UNHELD: &str = "a planned leader's pack is recorded under its run's live lease; run \
      the leader under the lease its claim took";
+/// What an erased pack's span in a continued leader run's task starts
+/// with: the phase the erase leaves its intent in.
+const ERASED_PACK_TAG: &str = "[erased]";
 
 /// The original leased request as its digest reads it: the key, the planner
 /// ask and the context as the agent asked for it, on its parent's run.
@@ -125,6 +131,11 @@ impl AgentDispatcher<'_> {
         // Custody is committed: no writer is held while placement and the
         // planner may ask a model.
         let placed = self.place_and_plan_for_attempt(leased, request, host, at);
+        // FIX 9180: the seat the plan resolved, noted before its settle can
+        // fail.
+        if let Ok((_, plan)) = &placed {
+            self.observe_seat(plan.plan.agent_def);
+        }
         self.settle_placed_and_planned(&name, &reservation, placed, at)
     }
 
@@ -204,7 +215,8 @@ impl AgentDispatcher<'_> {
     /// continuation of the leader, which carries the same key, leads it too.
     /// `None` for an attempt that leads no planned team: a planned solo, a
     /// member carrying the same plan, or any other run. An erased intent's
-    /// team answers its ids with no start or pack (Engine 10-22).
+    /// team answers its ids with no start, pack or exposure (Engine 10-22),
+    /// and the text-free span each run's exposure named.
     ///
     /// # Errors
     ///
@@ -230,8 +242,12 @@ impl AgentDispatcher<'_> {
     /// names none yet, and `exposure`, where the run put the pack's SKILL.md
     /// in its task, under the run's own id, which a continuation of the run
     /// reuses. Another run's exposure stays as it was. An erased intent's
-    /// team records nothing: its run keeps what it already read, and no
-    /// write brings the pack back.
+    /// team records nothing, and no write brings the pack back. Answers
+    /// whether the exposure was recorded (FIX 9184): `false` when an erase
+    /// took the intent's pack, before this writer or at its fence, so the
+    /// caller takes back what it just put in a fresh run's task, and lays
+    /// [`Self::tombstone_erased_leader_pack`] over the span a continued
+    /// run's task holds.
     ///
     /// # Errors
     ///
@@ -244,7 +260,7 @@ impl AgentDispatcher<'_> {
         exposure: &TaskExposure,
         executor: &str,
         at: u64,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let lease_owner = leased
             .lease_owner
             .as_deref()
@@ -256,7 +272,7 @@ impl AgentDispatcher<'_> {
             .planned_leader_in_txn(&txn, leased.id)?
             .ok_or_else(|| invalid(NOT_A_LEADER))?;
         let Some(pack) = &launch.pack else {
-            return Ok(());
+            return Ok(false);
         };
         let entry = ManifestEntry::new(ManifestKind::Skill, pack.skill_id(), pack.version(), at);
         if exposure.skill != pack.entity()
@@ -274,7 +290,62 @@ impl AgentDispatcher<'_> {
         row.updated_at = at;
         put_intent_in_txn(&self.vault.store, &mut txn, &key, &mut row)?;
         txn.commit()?;
-        Ok(())
+        // The fence writes an erased intent back with no exposure at all.
+        Ok(row.leader_exposures.contains_key(&run))
+    }
+
+    /// Lays a tombstone over the frozen pack's span `exposure` names in
+    /// `task`, a continued leader run's task, which its source's fork holds,
+    /// once an erase took the intent between the run's read of its launch
+    /// and [`Self::record_planned_leader_run`] (FIX 11093). The span is
+    /// never removed: the tombstone has its byte length, the erased tag and
+    /// then spaces, so every later exposure in the task keeps its offsets.
+    /// Only while the span still hashes as the exposure says; every other
+    /// byte of the task stays.
+    pub fn tombstone_erased_leader_pack(task: &mut String, exposure: &TaskExposure) {
+        Self::tombstone_erased_pack_span(task, &ErasedPackSpan::from(exposure));
+    }
+
+    /// [`Self::tombstone_erased_leader_pack`] over `span`, the text-free
+    /// span an erased intent keeps of a leader run's exposure: for a
+    /// continued run claimed after the erase, whose fork still holds its
+    /// source run's pack text there
+    /// ([`Self::planned_erased_pack_span_for_leader`]).
+    pub fn tombstone_erased_pack_span(task: &mut String, span: &ErasedPackSpan) {
+        let Some(length) = task
+            .get(span.start..span.end)
+            .filter(|held| *blake3::hash(held.as_bytes()).as_bytes() == span.content_hash)
+            .map(str::len)
+        else {
+            return;
+        };
+        let tag = ERASED_PACK_TAG.get(..length).unwrap_or(ERASED_PACK_TAG);
+        task.replace_range(span.start..span.end, &format!("{tag:<length$}"));
+    }
+
+    /// Where the erased pack's text sits in the task of `leader`, a
+    /// continued leader run claimed after an erase took its intent: the span
+    /// its source run, the run its checkpoint names, recorded, as the
+    /// intent's erased form keeps it. Its task is that run's fork, so it
+    /// still holds the text there, and the run lays
+    /// [`Self::tombstone_erased_pack_span`] over it. `None` for a run that
+    /// continues none or leads no planned team, while the pack stands, and
+    /// for a source run that recorded no exposure.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::planned_launch_for_leader`]; storage errors.
+    pub fn planned_erased_pack_span_for_leader(
+        &self,
+        leader: AttemptId,
+    ) -> Result<Option<ErasedPackSpan>> {
+        let Some(continuation) = run_continuation(self.vault, leader)? else {
+            return Ok(None);
+        };
+        let source = continuation.checkpoint.source_run;
+        Ok(self
+            .planned_launch_for_leader(leader)?
+            .and_then(|launch| launch.erased_pack_spans.get(&source).copied()))
     }
 
     /// The planned team `leader` leads and its intent's row key, read on
@@ -327,6 +398,7 @@ impl AgentDispatcher<'_> {
             start,
             pack,
             exposures: row.leader_exposures,
+            erased_pack_spans: row.erased_pack_spans,
         };
         Ok(Some((key, launch)))
     }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 /// What the expensive path found in a source range the cheap sieve flagged
 /// nothing in: the range as refs and UTF-8 byte offsets, and each span it
 /// found there. `discovered: []` is a negative label: the audit agrees.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WeaveSieveFindingView {
     /// What the rules expected of the range: `unflagged`.
     pub expectation: String,
@@ -23,7 +23,7 @@ pub struct WeaveSieveFindingView {
 /// One span the expensive path found in a window, by its byte offsets into
 /// the window's source text, or, when its quote locates no one place there,
 /// unlocated, with no offsets (FIX 7901).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct WeaveSieveDiscoveryView {
     /// `None` on an unlocated discovery.
     pub start: Option<u64>,

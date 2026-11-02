@@ -12,10 +12,12 @@
 //!
 //! A llama.cpp record's identity is what the answer's own launch alias names
 //! (FIX 7895, `llama_identity.rs`): the launch's epoch, and the digests its
-//! verified manifest lists. An answer without an alias, or whose manifest did
-//! not verify, has those absent and its build unknown. A chat record's
-//! runtime is then a digest of the build string the reply reports as
-//! `system_fingerprint`, which is a build, not an incarnation. A record
+//! verified manifest lists, with the execution mode of what the engine sent
+//! on that call (FIX 8329, `llama_identity::execution_mode`). An answer
+//! without an alias, or whose manifest did not verify, has those digests
+//! absent and its build unknown. A chat record's runtime is then a digest of
+//! the build string the reply reports as `system_fingerprint`, which is a
+//! build, not an incarnation. A record
 //! carries no measurement it was not given: its queue waits, first-token
 //! time, end, output count and drafts stay absent, and the engine model it
 //! was admitted for is the adapter's to stamp.
@@ -41,8 +43,13 @@ const SYSTEM_FINGERPRINT_KEY: &str = "system_fingerprint";
 /// occupancy, which counts generated tokens too. A reply that names its
 /// launch alias but carries no timings gets its receipt with no pass. A body
 /// with neither, without a usage object, or whose usage already holds
-/// records (the EXL3 server's own) is left as it came.
-pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&AnsweringIdentity>) {
+/// records (the EXL3 server's own) is left as it came. `execution` is the
+/// execution mode of the request the engine sent for it (FIX 8329).
+pub(super) fn carry_chat_evidence(
+    body: &mut JsonValue,
+    answering: Option<&AnsweringIdentity>,
+    execution: Option<&CacheDigest>,
+) {
     let native = body.get("timings").and_then(|timings| {
         Some((
             count(timings, "prompt_n")?,
@@ -88,7 +95,10 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&Answe
             generate_us,
         })
     });
-    let worker = llama_worker(chat_identity(answering, fingerprint.as_deref()), answering);
+    let worker = llama_worker(
+        chat_identity(answering, fingerprint.as_deref(), execution),
+        answering,
+    );
     let call = InferenceCallReceipt {
         logical_prompt_tokens: input,
         passes: pass.into_iter().collect(),
@@ -107,27 +117,37 @@ pub(super) fn carry_chat_evidence(body: &mut JsonValue, answering: Option<&Answe
     }
 }
 
-/// The llama.cpp worker that answered with `identity`: its build verified
-/// only by the manifest `answering`'s alias resolved to.
+/// The llama.cpp worker that answered with `identity`: verified artifacts
+/// only by the manifest `answering`'s alias resolved to; a runtime digest
+/// with no manifest is the reported version the fingerprint names.
 fn llama_worker(
     identity: CacheIdentity,
     answering: Option<&AnsweringIdentity>,
 ) -> WorkerDescriptor {
+    let verified = answering.is_some_and(|answering| {
+        answering.build_evidence() == WorkerBuildEvidence::VerifiedArtifacts
+    });
+    let build_evidence = if verified {
+        WorkerBuildEvidence::VerifiedArtifacts
+    } else if identity.runtime.is_some() {
+        WorkerBuildEvidence::ReportedVersion
+    } else {
+        WorkerBuildEvidence::Unknown
+    };
     WorkerDescriptor {
         kind: WorkerKind::LlamaCpp,
         identity,
-        build_evidence: answering.map_or(
-            WorkerBuildEvidence::Unknown,
-            AnsweringIdentity::build_evidence,
-        ),
+        build_evidence,
     }
 }
 
 /// A chat record's identity: what the answer's own alias names, with the
-/// reported build's digest as its runtime when no manifest names one.
+/// reported build's digest as its runtime when no manifest names one, and
+/// the call's own `execution` mode.
 fn chat_identity(
     answering: Option<&AnsweringIdentity>,
     fingerprint: Option<&str>,
+    execution: Option<&CacheDigest>,
 ) -> CacheIdentity {
     let mut identity = answering
         .map(AnsweringIdentity::for_chat)
@@ -135,6 +155,7 @@ fn chat_identity(
     if identity.runtime.is_none() {
         identity.runtime = fingerprint.and_then(digest);
     }
+    identity.execution_mode = execution.cloned();
     identity
 }
 
@@ -144,10 +165,12 @@ fn chat_identity(
 /// record's when its counts agree, else 0, as the standard counter always
 /// read it; the record keeps the read unknown. The identity is what
 /// `answering`, the answer's own alias, names: never a chat template, which
-/// a native prompt does not go through.
+/// a native prompt does not go through; its execution mode is `execution`,
+/// that of the completion the engine sent (FIX 8329).
 pub(super) fn label_read(
     answer: &JsonValue,
     answering: Option<&AnsweringIdentity>,
+    execution: Option<&CacheDigest>,
 ) -> (u64, JsonValue) {
     let timings = answer.get("timings");
     let native = |key: &str| timings.and_then(|timings| count(timings, key));
@@ -163,9 +186,12 @@ pub(super) fn label_read(
         generate_us: timings.and_then(|timings| micros(timings, "predicted_ms")),
     });
     let read = pass.measured_read().unwrap_or(0);
-    let identity = answering
-        .map(AnsweringIdentity::for_native)
-        .unwrap_or_default();
+    let identity = CacheIdentity {
+        execution_mode: execution.cloned(),
+        ..answering
+            .map(AnsweringIdentity::for_native)
+            .unwrap_or_default()
+    };
     let call = InferenceCallReceipt {
         logical_prompt_tokens: input,
         passes: vec![pass],

@@ -29,7 +29,7 @@ const ASK_VERSION: u32 = 1;
 const ASK_QUEUE_VERSION: &str = "v1";
 
 /// What a request asks of its holders.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldPrivacyRequestKind {
     /// An agent's tighten that no Grant line names: any one holder's yes
@@ -42,7 +42,7 @@ pub enum WorldPrivacyRequestKind {
 }
 
 /// Where a request stands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", tag = "state")]
 pub enum WorldPrivacyRequestStatus {
     Pending,
@@ -59,7 +59,7 @@ pub enum WorldPrivacyRequestStatus {
 }
 
 /// One world-privacy request, frozen when it was opened.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorldPrivacyRequest {
     /// Its id, as hex: the `answer` of the act that settles it.

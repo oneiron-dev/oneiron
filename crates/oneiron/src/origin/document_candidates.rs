@@ -43,6 +43,7 @@ mod projected_clearance;
 mod projected_decide;
 pub(crate) mod projected_files;
 mod projected_join;
+mod projected_reveal;
 pub(crate) mod projected_source;
 mod projected_tree;
 mod reads;
@@ -671,6 +672,14 @@ impl Vault {
         current.candidate = Some(prepared.candidate.clone());
         CODE_OPERATIONS.put(&self.store, wtxn, key, &current)?;
         self.persist_received_files_proposal_in_txn(wtxn, &prepared.proposal)?;
+        // Marked keys its files carry are offered a SEPARATE remediation;
+        // the candidate's bytes never change (FIX 7608 slice 6).
+        crate::repo_mutation::offer_secret_remediation_in_txn(
+            self,
+            wtxn,
+            &expected.source.object_store,
+            &prepared.proposal,
+        )?;
         Ok(true)
     }
 }

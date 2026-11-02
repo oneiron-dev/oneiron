@@ -143,6 +143,12 @@ impl Memory<'_> {
         self.host_origin.as_ref()?.code_consent.as_ref()
     }
 
+    /// The code-mode step the bound origin's call is, if any (FIX 11683):
+    /// only the dispatcher puts one there.
+    pub(crate) fn host_step(&self) -> Option<crate::runtime_hooks::InvocationId> {
+        self.host_origin.as_ref()?.step
+    }
+
     /// The original caller a code consent wait keeps (DOOR-079 1a): this
     /// surface's actor and, when its host bound one, the exact instrument its
     /// request was admitted on, with the door it came in by. Every caller
@@ -299,6 +305,16 @@ impl Memory<'_> {
         self
     }
 
+    /// Binds the managed vault's attested owner the host bound this caller
+    /// to (FIX 11129), carried apart from the vault's authority id, so a
+    /// rootless managed vault's owner is still known. It grants and narrows
+    /// nothing.
+    #[must_use]
+    pub fn with_attested_owner(mut self, holder: EntityId) -> Self {
+        self.attested_owner = Some(holder);
+        self
+    }
+
     /// Binds the door the caller came in by, which its host can run the call
     /// through again. It grants and narrows nothing.
     #[must_use]
@@ -309,21 +325,26 @@ impl Memory<'_> {
 
     /// The reference a verb hook's ask saves for this credential caller's
     /// call, with the instrument its request was admitted on as its witness:
-    /// only for a verified slip whose instrument and door a host bound, in
-    /// the room turn that door named, if any, and with nothing else on the
-    /// surface its door could not rebuild (a host origin, a machine signer, a
-    /// TASK host, an off-record session or a thread's turn). `None` resumes
-    /// only on the caller's retry.
+    /// only for an instrument and door a host bound, in the room turn that
+    /// door named, if any, and with nothing else on the surface its door
+    /// could not rebuild (a host origin, a machine signer, a TASK host, an
+    /// off-record session or a thread's turn). A slip's is its verified slip
+    /// and the binding its request was admitted on; a managed vault's
+    /// attested owner's is the person, the actor this surface is bound to as
+    /// a human, with no slip (FIX 11063). `None` resumes only on the
+    /// caller's retry.
     #[must_use]
     pub fn verb_ask_credential(&self) -> Option<crate::runtime_hooks::verb::VerbAskCredential> {
-        use crate::runtime_hooks::verb::{VerbAskCredential, VerbAskCredentialRef, VerbAskDoor};
+        use crate::runtime_hooks::verb::{
+            VerbAskCredential, VerbAskCredentialRef, VerbAskCredentialSource,
+            VerbAskCredentialWitness, VerbAskDoor,
+        };
         let door = self.credential_door.as_ref()?;
         let room = match door {
             VerbAskDoor::Facade { room } => *room,
-            VerbAskDoor::Mcp { .. } => None,
+            VerbAskDoor::Mcp { .. } | VerbAskDoor::McpOwner { .. } => None,
         };
         let rebuilt = self.credential
-            && self.read_proof.is_some()
             && self.room_turn.as_ref().map(|turn| turn.room) == room
             && self
                 .room_turn
@@ -336,15 +357,50 @@ impl Memory<'_> {
         if !rebuilt {
             return None;
         }
+        let instrument = self.credential_instrument.clone()?;
+        let witness = match instrument.source {
+            VerbAskCredentialSource::Slip { .. } => {
+                self.read_proof.as_ref()?;
+                VerbAskCredentialWitness::Slip(self.invocation_slip.clone()?)
+            }
+            VerbAskCredentialSource::AttestedOwner { holder } => {
+                if holder != self.actor || self.actor_class != crate::EdgeActorClass::Human {
+                    return None;
+                }
+                VerbAskCredentialWitness::AttestedOwner { holder }
+            }
+        };
         let reference = VerbAskCredentialRef {
-            instrument: self.credential_instrument.clone()?,
+            instrument,
             door: door.clone(),
             on_device: self.locality == crate::claim::CallerLocality::OnDevice,
         };
-        Some(VerbAskCredential::new(
-            reference,
-            self.invocation_slip.clone()?,
-        ))
+        Some(VerbAskCredential::new(reference, witness))
+    }
+
+    /// The managed vault's attested owner this surface's caller is, as the
+    /// host bound his credential's source (FIX 11063), or the holder the
+    /// host bound apart from it (FIX 11129) when no instrument names one:
+    /// the holder, when he is this surface's actor, as a human, and no slip
+    /// rides it. Work he queues carries his person alone and runs while the
+    /// vault records him as its live owner then (FIX 11090). `None` for any
+    /// other caller.
+    pub(crate) fn attested_owner_holder(&self) -> Option<EntityId> {
+        use crate::runtime_hooks::verb::VerbAskCredentialSource;
+        let named = match self
+            .credential_instrument
+            .as_ref()
+            .map(|instrument| &instrument.source)
+        {
+            Some(VerbAskCredentialSource::AttestedOwner { holder }) => Some(*holder),
+            _ => None,
+        };
+        let holder = named.or(self.attested_owner)?;
+        (self.credential
+            && self.invocation_slip.is_none()
+            && holder == self.actor
+            && self.actor_class == crate::EdgeActorClass::Human)
+            .then_some(holder)
     }
 
     /// Binds the door's admission of a hook's rewritten args: a rewrite the

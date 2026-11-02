@@ -10,6 +10,7 @@
 //! SkillRecord confidence is only a diagnostic cache and never a ranking input.
 
 mod amended;
+mod anchored_amendment;
 mod callable;
 mod codec;
 mod equivalent;
@@ -21,10 +22,15 @@ mod projector;
 mod provenance;
 mod read;
 mod resident;
+mod row_ids;
+mod rule_outcome;
 
-pub(crate) use self::amended::{AmendedOutcome, reconcile_amended_outcomes_in_txn};
+pub(crate) use self::amended::{
+    AmendedOutcome, amended_share_in_txn, reconcile_amended_outcomes_in_txn,
+};
 pub(crate) use self::callable::{project_callable_receipt_outcome, record_callable_invocation};
 pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
+pub(crate) use self::floor::open_floor_crossings_in_txn;
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL,
     SKILL_RELIABILITY_FLOOR_KEY, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
@@ -45,8 +51,8 @@ pub use self::projector::{
     PREDICATE_SKILL_RELIABILITY, SKILL_OUTCOME_AXIS, project_skill_reliability,
     project_skill_reliability_for, project_skill_reliability_for_executor,
 };
-pub(crate) use self::provenance::skill_reliability_sources;
 pub use self::provenance::{skill_provenance_trust_class, skill_reliability_prior};
+pub(crate) use self::provenance::{skill_reliability_prior_rows, skill_reliability_sources};
 pub use self::read::{
     ExecutorReliability, SkillReliabilityQuery, read_skill_reliability,
     rebuild_skill_confidence_cache, skill_executor_reliability, skill_reliability_posterior,
@@ -57,6 +63,11 @@ pub(crate) use self::read::{
     selection_posterior_for_query_in_txn, skill_selection_score_from_posterior, validate_executor,
 };
 pub use self::resident::rank_resident_skill_versions;
+pub(crate) use self::row_ids::attributed_outcome_row_ids;
+pub(crate) use self::rule_outcome::{
+    RuleOutcomeSource, record_rule_outcome_in_txn, rule_outcome_receipts_in_txn,
+    withdraw_rule_outcome_in_txn,
+};
 
 #[cfg(test)]
 mod tests;

@@ -7,7 +7,10 @@ use super::*;
 mod actor_erase;
 mod checkpoint_custody;
 mod claim_refs;
+mod context;
 mod keys;
+#[cfg(feature = "sync")]
+mod leave;
 mod ledger;
 mod lookup;
 mod orcb;
@@ -23,20 +26,31 @@ mod vet;
 pub(crate) use self::actor_erase::erase_gate_decision_actor_in_txn;
 pub use self::actor_erase::{ACTOR_ERASE_GATE_ATTRIBUTION, GateAttributionErase};
 pub(in crate::store) use self::checkpoint_custody::archived_by;
+#[cfg(feature = "sync")]
+pub(crate) use self::checkpoint_custody::put_back_pad_objects_in_txn;
 pub(crate) use self::checkpoint_custody::{
-    LiveCustody, MadeDestination, admit_existing_vault_root, host_hold_rows_in_txn,
-    preflight_absent_custody_rows, preflight_checkpoint_rows_rejected, read_live_custody,
-    refuse_custody_beside, replace_host_holds_in_txn,
+    ExpectedPadObjects, LiveCustody, MadeDestination, PAD_SOURCE_IDENTITY, PadObjectsCapture,
+    PadObjectsLanding, PadSourceIdentity, UncapturedPadObjects, admit_existing_vault_root,
+    host_hold_rows_in_txn, install_source_pad_objects_in_txn, preflight_absent_custody_rows,
+    preflight_checkpoint_rows_rejected, read_live_custody, refuse_custody_beside,
+    replace_host_holds_in_txn,
 };
 #[cfg(test)]
 pub(crate) use self::checkpoint_custody::{
     arm_after_restore_destination_made, arm_before_activation_fork, arm_before_live_custody_read,
+};
+pub use self::context::{
+    GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateDecisionContext,
+    GateDecisionReadContext, GateLoopFamily, GateLoopLink, GateLoopOrigin, GateLoopSource,
+    GateReadPosition, GateRiskAxis, GateRiskState,
 };
 pub(in crate::store) use self::keys::{
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
     GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
     gate_decision_upper_bound,
 };
+#[cfg(feature = "sync")]
+pub(in crate::store) use self::leave::HeldGateRows;
 
 pub(in crate::store) use self::types::GATE_DIFF_HANDLE_MAX_LEN;
 pub(crate) use self::types::{

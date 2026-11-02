@@ -1,8 +1,6 @@
-//! The engine scans whose tables grow with use (rule 5), each with its
-//! closed code, the threshold it asks past and its row's tag; split from
-//! its parent, which re-exports them.
-
-use super::DEFAULT_SCAN_CHECK_THRESHOLD;
+//! The engine scans whose tables grow with use (rule 5); their list,
+//! codes, thresholds and tags are in `engine_scan_table`. Split from its
+//! parent, which re-exports them.
 
 /// Each engine scan whose table grows with use, and so each that once
 /// refused past a row count.
@@ -17,6 +15,16 @@ pub enum EngineScan {
     VisibleRefRows,
     /// One repository's keep-ref owners, every kind.
     KeepOwnerRows,
+    /// One repository's full Git tree walk, trees and files (once refused past 100,000).
+    OriginTreeEntries,
+    /// One annotated-tag chain document ingress peels (once refused past 64).
+    OriginTagPeelSteps,
+    /// One GitWire plan's written and existing objects (once refused past 256).
+    GitWirePlanObjects,
+    /// One GitWire ref transaction's publications (once refused past 64).
+    GitWirePublications,
+    /// One origin publication's required Git and LFS objects (once refused past 4096).
+    OriginPublicationObligations,
     /// One entity type's rows in the type index.
     TypeIndexRows,
     /// One learned-at window's rows in the temporal index.
@@ -33,6 +41,14 @@ pub enum EngineScan {
     ScopedEdgeRows,
     /// The owner's MACHINE rows a mesh address bind walks for its endpoint.
     MachineRows,
+    /// Every repository's proposals a snapshot lookup walks (once refused past 100,000).
+    RepoProposalSnapshotRows,
+    /// The files and symlinks one checkout snapshot captures (once refused past 100,000).
+    RepoSnapshotFiles,
+    /// The own-catalog votes one repository proposal keeps (once refused past 64).
+    RepoProposalCritiques,
+    /// The paths one repository conflict records (once refused past 1,024).
+    RepoConflictPaths,
     /// The access grants a companion persona list walks.
     AccessGrantRows,
     /// One seed's inbound mentions a specificity weight counts.
@@ -70,6 +86,12 @@ pub enum EngineScan {
     RoomThreadTasks,
     /// The rows one session's read set holds.
     ReadSetRows,
+    /// One code symbol manifest's chunks or symbols, the more (once refused past 100,000).
+    SymbolManifestRows,
+    /// The longest producing-operation chain one symbol manifest carries (once refused past 1,024).
+    SymbolOperationChain,
+    /// One codebase snapshot's file manifest (once refused past 100,000).
+    CodebaseFileRows,
     /// One room's history rows a message page passes over.
     RoomPageRows,
     /// One room's history rows a liveness snapshot reads.
@@ -92,6 +114,18 @@ pub enum EngineScan {
     /// The contact claims naming a party, which an external send reads when
     /// a party-wide opt-out stands for its party and no contact row held it.
     PartyContactClaims,
+    /// One code-memory slot's live values after a write (once refused past 256).
+    CodeMemorySlotValues,
+    /// One code symbol's always-on contract keys (once refused past 8).
+    CodeMemoryAlwaysOnContracts,
+    /// The seed symbols one code-memory pull names (once refused past 256).
+    CodeMemoryPullSeeds,
+    /// The note limit one code-memory pull asks for (once refused past 256).
+    CodeMemoryPullNotes,
+    /// The symbols one code-memory pull expands (once cut short past 256).
+    CodeMemoryPullSymbols,
+    /// One repo diff side's visible text files (once refused past 1024).
+    RepoDiffFiles,
     /// The soft-confirm notice deliveries one retry sweep's page reads,
     /// settled ones included.
     AskSoftConfirmDeliveryRows,
@@ -195,296 +229,130 @@ pub enum EngineScan {
     /// The longest note one attempt row's events carry, in bytes (once
     /// refused past 2048).
     AttemptEventNoteBytes,
-}
-
-impl EngineScan {
-    /// Every scan, the list the check that none refuses for a count reads.
-    pub const ALL: [Self; 76] = [
-        Self::ReceivePackIntents,
-        Self::PublicationRows,
-        Self::VisibleRefRows,
-        Self::KeepOwnerRows,
-        Self::TypeIndexRows,
-        Self::LearnedRangeRows,
-        Self::EdgePeerRows,
-        Self::ReceiptRecordRows,
-        Self::TimelineRecords,
-        Self::GateDecisionRows,
-        Self::ScopedEdgeRows,
-        Self::MachineRows,
-        Self::AccessGrantRows,
-        Self::MentionRows,
-        Self::PprCacheDepRows,
-        Self::PackQuarantineRows,
-        Self::LexicalHintRows,
-        Self::AnswerReceiptRows,
-        Self::MinerArtifactRows,
-        Self::ChildOfMapEntries,
-        Self::TemporalSpannerRows,
-        Self::OccurredRangeRows,
-        Self::BlendTuningRuns,
-        Self::DreamerRetryPeers,
-        Self::PendingGateConsentRows,
-        Self::TaskCensusRows,
-        Self::AskWordRows,
-        Self::RoomThreadTasks,
-        Self::ReadSetRows,
-        Self::RoomPageRows,
-        Self::RoomHistoryRows,
-        Self::TaskBoardRows,
-        Self::RoomThreadChildRows,
-        Self::MessageOriginRows,
-        Self::ThreadTaskCensus,
-        Self::ProjectTaskRows,
-        Self::PendingCommStops,
-        Self::PartyContactClaims,
-        Self::AskSoftConfirmDeliveryRows,
-        Self::PredicateClaimRows,
-        Self::VaultEdgeRows,
-        Self::PrefilterReceiptRows,
-        Self::MachineHandoffChain,
-        Self::MachineHistoryTargetRows,
-        Self::ClaimVadIncidentEdges,
-        Self::RetrievalRunRows,
-        Self::CallReceiptRows,
-        Self::BlockedRunReports,
-        Self::SieveAuditRows,
-        Self::RoomRosterMembers,
-        Self::DagWalkRecords,
-        Self::TaskAuthorityFactEdges,
-        Self::OpenAskTaskRows,
-        Self::AudienceEdgeRows,
-        Self::RoomAncestryRecords,
-        Self::PrivateThreadAncestryRecords,
-        Self::RoomPolicyRows,
-        Self::RoomThreadHolderRows,
-        Self::ProjectDepthDefaultRows,
-        Self::ProjectDepthPolicyRows,
-        Self::ProjectDepthSourceAncestors,
-        Self::ProjectDepthPredecessors,
-        Self::ProjectDepthContributionBytes,
-        Self::DispatchAncestorRows,
-        Self::LinearProvenanceRows,
-        Self::NoteDocumentBytes,
-        Self::NoteDocumentPinRows,
-        Self::NoteDocumentAuthorshipRows,
-        Self::AgentDefinitionListEntries,
-        Self::AgentBirthSkillRows,
-        Self::AgentBirthClaimOfRows,
-        Self::SpendAncestorScopes,
-        Self::SpendRetryAttempts,
-        Self::AttemptKindRows,
-        Self::AttemptEventActorBytes,
-        Self::AttemptEventNoteBytes,
-    ];
-
-    /// The origin's scans, each over one repository or the publication
-    /// journal.
-    pub const ORIGIN: [Self; 4] = [
-        Self::ReceivePackIntents,
-        Self::PublicationRows,
-        Self::VisibleRefRows,
-        Self::KeepOwnerRows,
-    ];
-
-    /// The closed code the scan's row, check and log line name it by.
-    pub const fn code(self) -> &'static str {
-        match self {
-            Self::ReceivePackIntents => "receive_pack_intents",
-            Self::PublicationRows => "publication_rows",
-            Self::VisibleRefRows => "visible_ref_rows",
-            Self::KeepOwnerRows => "keep_owner_rows",
-            Self::TypeIndexRows => "type_index_rows",
-            Self::LearnedRangeRows => "learned_range_rows",
-            Self::EdgePeerRows => "edge_peer_rows",
-            Self::ReceiptRecordRows => "receipt_record_rows",
-            Self::TimelineRecords => "memory_timeline_records",
-            Self::GateDecisionRows => "gate_decision_rows",
-            Self::ScopedEdgeRows => "scoped_edge_rows",
-            Self::MachineRows => "machine_rows",
-            Self::AccessGrantRows => "access_grant_rows",
-            Self::MentionRows => "mention_rows",
-            Self::PprCacheDepRows => "ppr_cache_dep_rows",
-            Self::PackQuarantineRows => "pack_quarantine_rows",
-            Self::LexicalHintRows => "lexical_hint_rows",
-            Self::AnswerReceiptRows => "answer_receipt_rows",
-            Self::MinerArtifactRows => "miner_artifact_rows",
-            Self::ChildOfMapEntries => "child_of_map_entries",
-            Self::TemporalSpannerRows => "temporal_spanner_rows",
-            Self::OccurredRangeRows => "occurred_range_rows",
-            Self::BlendTuningRuns => "blend_tuning_runs",
-            Self::DreamerRetryPeers => "dreamer_retry_peers",
-            Self::PendingGateConsentRows => "pending_gate_consent_rows",
-            Self::TaskCensusRows => "task_census_rows",
-            Self::AskWordRows => "ask_word_rows",
-            Self::RoomThreadTasks => "room_thread_tasks",
-            Self::ReadSetRows => "read_set_rows",
-            Self::RoomPageRows => "room_page_rows",
-            Self::RoomHistoryRows => "room_history_rows",
-            Self::TaskBoardRows => "task_board_rows",
-            Self::RoomThreadChildRows => "room_thread_child_rows",
-            Self::MessageOriginRows => "message_origin_rows",
-            Self::ThreadTaskCensus => "thread_task_census",
-            Self::ProjectTaskRows => "project_task_rows",
-            Self::PendingCommStops => "pending_comm_stops",
-            Self::PartyContactClaims => "party_contact_claims",
-            Self::AskSoftConfirmDeliveryRows => "ask_soft_confirm_delivery_rows",
-            Self::PredicateClaimRows => "predicate_claim_rows",
-            Self::VaultEdgeRows => "vault_edge_rows",
-            Self::PrefilterReceiptRows => "prefilter_receipt_rows",
-            Self::MachineHandoffChain => "machine_handoff_chain",
-            Self::MachineHistoryTargetRows => "machine_history_target_rows",
-            Self::ClaimVadIncidentEdges => "claim_vad_incident_edges",
-            Self::RetrievalRunRows => "retrieval_run_rows",
-            Self::CallReceiptRows => "call_receipt_rows",
-            Self::BlockedRunReports => "blocked_run_reports",
-            Self::SieveAuditRows => "sieve_audit_rows",
-            Self::RoomRosterMembers => "room_roster_members",
-            Self::DagWalkRecords => "dag_walk_records",
-            Self::TaskAuthorityFactEdges => "task_authority_fact_edges",
-            Self::OpenAskTaskRows => "open_ask_task_rows",
-            Self::AudienceEdgeRows => "audience_edge_rows",
-            Self::RoomAncestryRecords => "room_ancestry_records",
-            Self::PrivateThreadAncestryRecords => "private_thread_ancestry_records",
-            Self::RoomPolicyRows => "room_policy_rows",
-            Self::RoomThreadHolderRows => "room_thread_holder_rows",
-            Self::ProjectDepthDefaultRows => "project_depth_default_rows",
-            Self::ProjectDepthPolicyRows => "project_depth_policy_rows",
-            Self::ProjectDepthSourceAncestors => "project_depth_source_ancestors",
-            Self::ProjectDepthPredecessors => "project_depth_predecessors",
-            Self::ProjectDepthContributionBytes => "project_depth_contribution_bytes",
-            Self::DispatchAncestorRows => "dispatch_ancestor_rows",
-            Self::LinearProvenanceRows => "linear_provenance_rows",
-            Self::NoteDocumentBytes => "note_document_bytes",
-            Self::NoteDocumentPinRows => "note_document_pin_rows",
-            Self::NoteDocumentAuthorshipRows => "note_document_authorship_rows",
-            Self::AgentDefinitionListEntries => "agent_definition_list_entries",
-            Self::AgentBirthSkillRows => "agent_birth_skill_rows",
-            Self::AgentBirthClaimOfRows => "agent_birth_claim_of_rows",
-            Self::SpendAncestorScopes => "spend_ancestor_scopes",
-            Self::SpendRetryAttempts => "spend_retry_attempts",
-            Self::AttemptKindRows => "attempt_kind_rows",
-            Self::AttemptEventActorBytes => "attempt_event_actor_bytes",
-            Self::AttemptEventNoteBytes => "attempt_event_note_bytes",
-        }
-    }
-
-    /// The threshold the scan asks past while no row is set: the count it
-    /// once cut its read short at, or the engine-wide default.
-    pub(super) const fn default_threshold(self) -> u64 {
-        match self {
-            Self::ClaimVadIncidentEdges | Self::TaskAuthorityFactEdges => 100_000,
-            Self::RoomRosterMembers
-            | Self::DagWalkRecords
-            | Self::AudienceEdgeRows
-            | Self::RoomAncestryRecords
-            | Self::PrivateThreadAncestryRecords => 10_000,
-            Self::RetrievalRunRows => 1024,
-            Self::CallReceiptRows => 8192,
-            Self::BlockedRunReports => 128,
-            Self::RoomPolicyRows => 1024,
-            Self::RoomThreadHolderRows => 1000,
-            Self::ProjectDepthDefaultRows
-            | Self::ProjectDepthPolicyRows
-            | Self::ProjectDepthSourceAncestors => 4096,
-            Self::ProjectDepthPredecessors => 256,
-            Self::ProjectDepthContributionBytes => 16 * 1024,
-            Self::DispatchAncestorRows => {
-                crate::context_projection::CONTEXT_PROJECTION_ANCESTOR_CHECK
-            }
-            Self::LinearProvenanceRows => 200,
-            Self::NoteDocumentBytes => 1_048_576,
-            Self::NoteDocumentPinRows => 256,
-            Self::NoteDocumentAuthorshipRows => 4096,
-            Self::AgentDefinitionListEntries => 64,
-            Self::AgentBirthSkillRows | Self::AgentBirthClaimOfRows => 100_000,
-            Self::SpendAncestorScopes => 256,
-            Self::SpendRetryAttempts => 1024,
-            Self::AttemptKindRows => 100_000,
-            Self::AttemptEventActorBytes => 128,
-            Self::AttemptEventNoteBytes => 2048,
-            _ => DEFAULT_SCAN_CHECK_THRESHOLD,
-        }
-    }
-
-    pub(super) const fn tag(self) -> [u8; 1] {
-        [match self {
-            Self::ReceivePackIntents => 1,
-            Self::PublicationRows => 2,
-            Self::VisibleRefRows => 3,
-            Self::KeepOwnerRows => 4,
-            Self::TypeIndexRows => 16,
-            Self::LearnedRangeRows => 17,
-            Self::EdgePeerRows => 18,
-            Self::ReceiptRecordRows => 19,
-            Self::TimelineRecords => 20,
-            Self::GateDecisionRows => 21,
-            Self::ScopedEdgeRows => 22,
-            Self::MachineRows => 23,
-            Self::AccessGrantRows => 24,
-            Self::MentionRows => 48,
-            Self::PprCacheDepRows => 49,
-            Self::PackQuarantineRows => 50,
-            Self::LexicalHintRows => 51,
-            Self::AnswerReceiptRows => 52,
-            Self::MinerArtifactRows => 53,
-            Self::ChildOfMapEntries => 54,
-            Self::TemporalSpannerRows => 55,
-            Self::OccurredRangeRows => 56,
-            Self::BlendTuningRuns => 57,
-            Self::DreamerRetryPeers => 58,
-            Self::PendingGateConsentRows => 25,
-            Self::TaskCensusRows => 32,
-            Self::AskWordRows => 33,
-            Self::RoomThreadTasks => 34,
-            Self::ReadSetRows => 35,
-            Self::RoomPageRows => 36,
-            Self::RoomHistoryRows => 37,
-            Self::TaskBoardRows => 38,
-            Self::RoomThreadChildRows => 39,
-            Self::MessageOriginRows => 40,
-            Self::ThreadTaskCensus => 41,
-            Self::ProjectTaskRows => 42,
-            Self::PendingCommStops => 64,
-            Self::PartyContactClaims => 65,
-            Self::AskSoftConfirmDeliveryRows => 66,
-            Self::PredicateClaimRows => 67,
-            Self::VaultEdgeRows => 68,
-            Self::PrefilterReceiptRows => 69,
-            Self::MachineHandoffChain => 70,
-            Self::MachineHistoryTargetRows => 71,
-            Self::ClaimVadIncidentEdges => 72,
-            Self::RetrievalRunRows => 73,
-            Self::CallReceiptRows => 74,
-            Self::BlockedRunReports => 75,
-            Self::SieveAuditRows => 76,
-            Self::RoomRosterMembers => 77,
-            Self::DagWalkRecords => 78,
-            Self::TaskAuthorityFactEdges => 79,
-            Self::OpenAskTaskRows => 80,
-            Self::AudienceEdgeRows => 81,
-            Self::RoomAncestryRecords => 82,
-            Self::PrivateThreadAncestryRecords => 83,
-            Self::RoomPolicyRows => 84,
-            Self::RoomThreadHolderRows => 85,
-            Self::ProjectDepthDefaultRows => 86,
-            Self::ProjectDepthPolicyRows => 87,
-            Self::ProjectDepthSourceAncestors => 88,
-            Self::ProjectDepthPredecessors => 89,
-            Self::ProjectDepthContributionBytes => 90,
-            Self::DispatchAncestorRows => 91,
-            Self::LinearProvenanceRows => 92,
-            Self::NoteDocumentBytes => 93,
-            Self::NoteDocumentPinRows => 94,
-            Self::NoteDocumentAuthorshipRows => 95,
-            Self::AgentDefinitionListEntries => 96,
-            Self::AgentBirthSkillRows => 97,
-            Self::AgentBirthClaimOfRows => 98,
-            Self::SpendAncestorScopes => 99,
-            Self::SpendRetryAttempts => 100,
-            Self::AttemptKindRows => 101,
-            Self::AttemptEventActorBytes => 102,
-            Self::AttemptEventNoteBytes => 103,
-        }]
-    }
+    /// The live identity candidates one attendee's first entry offers its
+    /// "who is this?" ask (once refused past 32).
+    AttendeeIdentityCandidates,
+    /// The fact refs one guest ask discloses, against the resolved class or
+    /// holder limit (once refused past it; shipped 16).
+    GuestDisclosureRefs,
+    /// The disclosed refs one guest grant carries (once refused past 64).
+    GuestGrantDisclosedRefs,
+    /// The symbols one symbol lease declaration names (once refused past
+    /// 4096).
+    DeclaredSymbols,
+    /// The longest session or speaker key one attendee's first entry
+    /// carries, in bytes (once refused past 128).
+    AttendeeIdentityKeyBytes,
+    /// The longest symbol one symbol lease declaration names, in bytes (once
+    /// refused past 1024).
+    DeclaredSymbolBytes,
+    /// The ancestor attempts one comm widen reach walk reads (once refused
+    /// past 256).
+    CommWidenAncestorRows,
+    /// The axes one confirmed project goal intake names, against its
+    /// resolved goal limit (once refused past it; shipped 32).
+    ProjectGoalAxes,
+    /// The preferences one confirmed project goal intake names, against its
+    /// resolved goal limit (once refused past it; shipped 64).
+    ProjectGoalPreferences,
+    /// One goal intake's goal or why, in bytes, against its resolved goal
+    /// limit (once refused past it; shipped 4096).
+    ProjectGoalTextBytes,
+    /// One goal intake's axis name, in bytes, against its resolved goal
+    /// limit (once refused past it; shipped 128).
+    ProjectGoalAxisNameBytes,
+    /// One goal intake's axis measure or bound, or preference field, in
+    /// bytes, against its resolved goal limit (once refused past it;
+    /// shipped 1024).
+    ProjectGoalDetailBytes,
+    /// One project body's board, roster, session or branch list (once
+    /// refused past 4096).
+    ProjectSideListEntries,
+    /// One project body's goal record axes (once refused past 128).
+    ProjectBodyGoalAxes,
+    /// The projects one project ancestry walk reads, or one body's direct
+    /// parents (once refused past 256).
+    ProjectAncestryRows,
+    /// The unanswered project cards one conversation or thread shows once a
+    /// new card is kept (once refused past 1).
+    ProjectOutstandingCards,
+    /// One project card's goal axes, board humans or starting skills (once
+    /// refused past 128).
+    ProjectProposalEntries,
+    /// The distinct views one parent-cycle member's worlds fold to, against
+    /// the resolved `cycle_worlds_max` (once withheld past it; shipped 64).
+    ProjectCycleWorlds,
+    /// The assignments one parent-cycle member's open states enumerate,
+    /// against the resolved `cycle_worlds_max` times its open states plus
+    /// one (once withheld past it; shipped factor 64).
+    ProjectCycleAssignments,
+    /// The work one parent-cycle decision spends, against the resolved
+    /// `cycle_worlds_max` times 64 times its members and held rows (once
+    /// withheld past it; shipped factor 64 × 64).
+    ProjectJointWork,
+    /// One project card's text, list entry, joined list or fallback text,
+    /// in bytes (once refused past 16 KiB).
+    ProjectProposalTextBytes,
+    /// One page of a thread's quote reply strips, as its caller asked for
+    /// it (once refused past 256; a larger ask is served 256 a page).
+    ReplyStripRequestedRows,
+    /// One page of a room's history, thread history, find, participants or
+    /// offers, as its caller asked for it (once refused past 256; a larger
+    /// ask is served 256 a page).
+    RoomRequestedPageRows,
+    /// The rows one room thread list was asked to render (once refused past
+    /// 64; a larger ask renders 64 with its find/get continuation).
+    RoomThreadListRows,
+    /// The links one room reply-chain walk reads (once refused past
+    /// 100,000).
+    RoomLinkWalkRows,
+    /// The messages one Retry lineage walk, or the turns one inherited
+    /// offer walk, reads (once refused or cut short past 10,000).
+    RoomRetryLineageRows,
+    /// The room mentions one witnessed room turn names (once refused past
+    /// 256).
+    RoomMentions,
+    /// The rows per list one room thread policy names (once refused past
+    /// 100,000).
+    RoomThreadPolicyRows,
+    /// The tokens per list one room thread policy names (once refused past
+    /// 1,000,000).
+    RoomThreadTokens,
+    /// The waits per thread one room thread policy names (once refused past
+    /// 100,000).
+    RoomThreadWaitRows,
+    /// One resident binding's goal axes (once refused past 32).
+    ResidentGoalAxes,
+    /// One agent definition's agentId, logicalId or displayName, in bytes
+    /// (once refused past 256).
+    AgentDefinitionIdentityBytes,
+    /// One agent definition's desc or a model entry's `when`, in bytes (once
+    /// refused past 4096).
+    AgentDefinitionDescriptionBytes,
+    /// One agent definition's version or a skill or MCP minVersion, in bytes
+    /// (once refused past 128).
+    AgentDefinitionVersionBytes,
+    /// One agent definition's instructions, in bytes (once refused past
+    /// 16,384).
+    AgentDefinitionInstructionBytes,
+    /// One agent definition's model, backend, skill, connector, MCP or
+    /// optional-memory family reference, in bytes (once refused past 256).
+    AgentDefinitionReferenceBytes,
+    /// One agent definition's verbatim pin, in bytes (once refused past
+    /// 1024).
+    AgentDefinitionVerbatimPinBytes,
+    /// One agent birth source's encoded bytes (once refused past 32 MiB).
+    AgentBirthSourceBytes,
+    /// One TASK post's caller intent key, in bytes (once refused past 256).
+    TaskPostIntentKeyBytes,
+    /// The deepest cover one audience read walks under its row (once denied
+    /// past 64).
+    AudienceCoverDepth,
+    /// One project authority chain's anchors (once quarantined past 64).
+    ProjectAnchorDepth,
+    /// One project fold's deepest lineage walk (once quarantined past 256).
+    ProjectFoldDepth,
+    /// One receipt-family source ledger a receipt query reads, named by its
+    /// scope (once cut short or refused past 100,000; FIX 3582).
+    ReceiptSourceRows,
 }

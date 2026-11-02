@@ -32,6 +32,8 @@ use crate::gate::policy_values::{
 };
 use crate::gate::project_conversion::ProjectConversionPolicy;
 
+mod goal_limits;
+
 #[cfg_attr(not(test), allow(dead_code))]
 impl PolicyManifestResolution {
     /// Fully resolved, trusted install policy. Missing or malformed policy
@@ -224,11 +226,6 @@ impl PolicyManifestResolution {
     }
 
     #[must_use]
-    pub(crate) fn goal_limits(&self) -> crate::workspace_roster::GoalLimits {
-        self.goal_limits.unwrap_or_default()
-    }
-
-    #[must_use]
     pub(in crate::gate) fn linear_mirror(&self) -> crate::gate::LinearMirrorPolicy {
         self.linear_mirror.unwrap_or_default()
     }
@@ -348,6 +345,44 @@ impl PolicyManifestResolution {
             default_secs: default_secs.min(max_secs),
             max_secs,
             max_wait_secs,
+        }
+    }
+
+    /// The vault's resident-run consecutive-try cap (FIX 7748): its row,
+    /// else the shipped three. A fail-closed manifest reads the shipped
+    /// row, since the shipped cap grants no extra try.
+    pub(crate) fn resident_run_max_tries(&self) -> u64 {
+        let fallback =
+            crate::gate::policy_values::shipped_default_max_tries("resident_run_max_tries");
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::ResidentRunMaxTries,
+                &PolicyEvaluationScope::default(),
+                PolicyValue::ResidentRunMaxTries(fallback),
+            )
+            .value
+        {
+            PolicyValue::ResidentRunMaxTries(tries) => tries,
+            _ => unreachable!("typed policy key"),
+        }
+    }
+
+    /// The vault's workflow-step consecutive-try cap (FIX 7748): its row,
+    /// else the shipped five. A fail-closed manifest reads the shipped
+    /// row, since the shipped cap grants no extra try.
+    pub(crate) fn workflow_step_max_tries(&self) -> u64 {
+        let fallback =
+            crate::gate::policy_values::shipped_default_max_tries("workflow_step_max_tries");
+        match self
+            .resolved_policy_value(
+                PolicyValueKey::WorkflowStepMaxTries,
+                &PolicyEvaluationScope::default(),
+                PolicyValue::WorkflowStepMaxTries(fallback),
+            )
+            .value
+        {
+            PolicyValue::WorkflowStepMaxTries(tries) => tries,
+            _ => unreachable!("typed policy key"),
         }
     }
 

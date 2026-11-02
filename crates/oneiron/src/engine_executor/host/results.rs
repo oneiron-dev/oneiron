@@ -194,7 +194,9 @@ impl RecordingJsHost<'_, '_> {
         // the body is published under (FIX 5399b).
         sink.finalize_sweep()?;
         let path = store_result_output_path(&sink.digest()?);
-        let output = storage.publish_code_run_output(path, sink, true, self.run_id)?;
+        let input_rows = self.result_rows();
+        let output =
+            storage.publish_code_run_output_sourced(path, sink, true, self.run_id, input_rows)?;
         if !inherit.is_empty() {
             storage.inherit_code_run_result_marks(self.run_id, &output, inherit)?;
         }

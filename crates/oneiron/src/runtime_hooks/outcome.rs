@@ -10,8 +10,6 @@ use super::block::HookBlockLifetime;
 
 const MAX_TEXT: usize = 256;
 const MAX_BODY: usize = 16 * 1024;
-const MAX_REFS: usize = 32;
-const MAX_DELIVERIES: u32 = 64;
 pub(super) const MAX_TOKEN_CAP: u32 = 4_096;
 
 /// One outcome, as the body emits it.
@@ -206,8 +204,9 @@ fn validate_block(block: &BlockRequest) -> std::result::Result<(), String> {
         text(id, MAX_TEXT)?;
     }
     match &block.lifetime {
-        Some(HookBlockLifetime::Deliveries(count)) if *count == 0 || *count > MAX_DELIVERIES => {
-            return Err("block deliveries are out of bounds".to_owned());
+        // Any positive count is kept as asked (FIX 10074); zero delivers nothing.
+        Some(HookBlockLifetime::Deliveries(0)) => {
+            return Err("block deliveries are zero".to_owned());
         }
         Some(HookBlockLifetime::UntilPredicate(glob)) => text(glob, MAX_TEXT)?,
         _ => {}
@@ -232,10 +231,8 @@ fn entity(value: &str) -> std::result::Result<EntityId, String> {
     EntityId::from_hex(value).map_err(|_| "an entity ref is not 32 hex".to_owned())
 }
 
+/// Checks every ref the outcome names, however many (FIX 10074).
 fn entities(values: &[String]) -> std::result::Result<(), String> {
-    if values.len() > MAX_REFS {
-        return Err("too many entity refs".to_owned());
-    }
     for value in values {
         entity(value)?;
     }

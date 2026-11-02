@@ -423,6 +423,29 @@ pub(crate) fn restrictive(verb: &str, args: &Value) -> Option<&'static Row> {
     }
 }
 
+/// Whether a call of `verb` on the caller's own `args` is wholly an owner's
+/// restriction-only act, an erase or a revoke and nothing else: the one
+/// classification a transport asks before it admits the call, so its
+/// ingress, owner proof, hooks and door read the restriction-only clock as
+/// this boundary's run does (FIX 11201). A table row the call meets is one,
+/// but a courtesy answer only when it deletes; a polymorphic call only when
+/// every part it writes withdraws or erases ([`payload::wholly_restrictive`]).
+/// A call that also grants, sets or keeps anything is not, whatever the hooks
+/// pin of it.
+///
+/// # Errors
+/// A read the classification needs (the kind of a pending shared act)
+/// failing: no answer is guessed from it.
+pub fn restriction_only_call(vault: &Vault, verb: &str, args: &Value) -> crate::Result<bool> {
+    if verb == "vault.courtesy_delete.answer" {
+        return Ok(args.get("choice").and_then(Value::as_str) == Some("delete"));
+    }
+    if restrictive(verb, args).is_some() {
+        return Ok(true);
+    }
+    payload::wholly_restrictive(vault, verb, args)
+}
+
 /// A restrictive call's landing: its verb, its pinned fields and its row's
 /// own check, the caller's own args, and what the owner's notice says about
 /// the hooks' changes.
@@ -480,6 +503,33 @@ impl Landing {
             puts,
             original: args.clone(),
             notes: Vec::new(),
+        })
+    }
+
+    /// The parts of this landing a held call's wait keeps (FIX 11497).
+    pub(crate) fn snapshot_parts(&self) -> (&'static str, &Value, &[String]) {
+        (self.verb, &self.original, &self.notes)
+    }
+
+    /// The landing a kept snapshot rebuilds on the answered pass (FIX
+    /// 11497), as [`Landing::of`] judges it but for the polymorphic rows,
+    /// which no held call carries; its batch withdrawals rebuild empty.
+    pub(crate) fn from_snapshot(verb: &str, original: Value, notes: Vec<String>) -> Option<Self> {
+        let row = restrictive(verb, &original)?;
+        Some(Self {
+            verb: row.verb,
+            pins: row
+                .pins
+                .iter()
+                .map(|pin| Pinned {
+                    path: pin.path.iter().map(|key| (*key).to_owned()).collect(),
+                    parse: pin.parse,
+                })
+                .collect(),
+            check: row.check,
+            puts: Vec::new(),
+            original,
+            notes,
         })
     }
 

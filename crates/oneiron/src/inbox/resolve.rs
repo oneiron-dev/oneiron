@@ -1,19 +1,18 @@
 //! Write-side inbox bulk bundle consent, approve-with-edit, and bundle-reopen doors.
 
 use crate::ports::EntityStoreRead;
-use sha2::Digest;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::batch::BatchOp;
 use crate::claim::{ClaimApprovalStatus, ClaimBody};
 use crate::edit_distance::delta::{
-    AmendmentDelta, DeltaCaptureContext, OUTCOME_APPROVED_AMENDED, attach_amendment_deltas,
-    capture_delta_best, put_amendment_delta_in_txn,
+    AmendmentDelta, DeltaCaptureContext, EndpointRef, MeasuredEnd, OUTCOME_APPROVED_AMENDED,
+    attach_amendment_deltas, capture_delta_best, live_revision_in_txn, put_amendment_delta_in_txn,
 };
 use crate::edit_distance::miner::{CompilationTarget, record_inbox_learning_in_txn};
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, GateError, Result};
 use crate::receipt::gate_decision_receipt;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Raw, SideTable};
@@ -28,7 +27,6 @@ use super::model::{
     InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
-use crate::error::GateError;
 
 /// The owner-set inbox review dial: a singleton row.
 const REVIEW_DIAL: SideTable<(), InboxReviewDial, Raw> =
@@ -103,7 +101,7 @@ impl Vault {
         self.resolve_inbox_group_bound_at(group_key, verb, None, now, Some((actor, target)))
     }
 
-    fn resolve_inbox_group_bound_at(
+    pub(super) fn resolve_inbox_group_bound_at(
         &self,
         group_key: &str,
         verb: InboxBulkVerb,
@@ -111,7 +109,9 @@ impl Vault {
         now: u64,
         learning: Option<(WriteActor, &CompilationTarget)>,
     ) -> Result<InboxBundleResolution> {
-        let group = explicit_inbox_group(self, group_key, now)?.ok_or(Error::EntityNotFound)?;
+        let group = explicit_inbox_group(self, group_key, now)?
+            .1
+            .ok_or(Error::EntityNotFound)?;
 
         let mut targets = Vec::new();
         for member in &group.members {
@@ -358,9 +358,10 @@ impl Vault {
         let group_key = inner.strip_prefix(INBOX_GROUP_DOOR_PREFIX).ok_or_else(|| {
             Error::InvalidConfig("inbox door ref must reference a dreamer run".into())
         })?;
-        let bundle_ref = bundle_ref_for_group(group_key);
-
-        let open_group = explicit_inbox_group(self, group_key, now)?;
+        // Bundles are receipted under the root key; a literal run id reopens
+        // its root's group and that group's receipts (FIX 9871).
+        let (canonical, open_group) = explicit_inbox_group(self, group_key, now)?;
+        let bundle_ref = bundle_ref_for_group(&canonical);
 
         let resolution_receipts = self
             .store
@@ -464,10 +465,14 @@ fn accept_member_with_amendment_in_txn(
     // reports the DECIDER's edit and not the approval flip this door performs
     // on every accept.
     let approved = approved_body(amended.as_ref().unwrap_or(&reviewed))?;
-    let (delta, delta_reasons) = if amended_approval {
-        captured_amendment_delta(&approved_body(&reviewed)?, &approved)
+    // Proposed end: the claim as reviewed (FIX 7819); a failed read fails only the capture.
+    let reviewed_end = if amended_approval {
+        Some((
+            live_revision_in_txn(&vault.store, wtxn, *id),
+            approved_body(&reviewed)?,
+        ))
     } else {
-        (None, Vec::new())
+        None
     };
 
     if amended_approval && learning.is_some() {
@@ -522,7 +527,13 @@ fn accept_member_with_amendment_in_txn(
         }
     }
 
-    vault.complete_deferred_claim_in_txn(wtxn, id, false, now)?;
+    let (delta, delta_reasons) = match reviewed_end {
+        Some((reviewed_at, proposed)) => {
+            captured_amendment_delta(vault, wtxn, id, reviewed_at, &proposed)
+        }
+        None => (None, Vec::new()),
+    };
+    vault.complete_deferred_claim_in_txn(wtxn, id, false, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
         wtxn,
@@ -534,6 +545,15 @@ fn accept_member_with_amendment_in_txn(
     // The gated rewrite may already have redeemed and removed the tray row;
     // the delete is idempotent either way.
     vault.store.delete_pending_gate_consent_in_txn(wtxn, id)?;
+    // FIX 7499, 7500: the candidate as it lands, amended or not, and the
+    // loop links of the decision this answers.
+    let landed = amended.as_ref().unwrap_or(&reviewed);
+    let context = crate::store::GateDecisionContext {
+        read: crate::store::GateDecisionReadContext::claim(id, landed)
+            .into_iter()
+            .collect(),
+        ..crate::store::GateDecisionContext::answering(&original)
+    };
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
         decision_id: crate::store::GateDecisionId::from_bytes(vault.store.clock.ulid()?),
@@ -565,6 +585,7 @@ fn accept_member_with_amendment_in_txn(
         grant_ref: bundle_ref.map(str::to_owned),
         diff_handle: pending.diff_handle,
         read_frontier_hash: pending.read_frontier_hash,
+        context,
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(wtxn, &record)?;
@@ -580,15 +601,17 @@ fn accept_member_with_amendment_in_txn(
             delta,
         )?;
     }
+    let vad_claim_id = pending.dreamer_run_id.is_some().then_some(*id);
+    crate::store::owe_claim_vad_in_txn(&vault.store, wtxn, vad_claim_id.as_slice(), now)?;
     Ok(Some(AcceptedMember {
         record,
         delta,
-        vad_claim_id: pending.dreamer_run_id.is_some().then_some(*id),
+        vad_claim_id,
     }))
 }
 
-/// Measures the amendment Δ, returning the receipt reasons that record a
-/// capture failure.
+/// Measures the amendment Δ between the claim as reviewed and as the accept
+/// landed it, returning the receipt reasons that record a capture failure.
 ///
 /// Δ capture is TELEMETRY hanging off an approval that has already happened,
 /// so a measurement failure is stamped on the receipt and the decision
@@ -596,13 +619,47 @@ fn accept_member_with_amendment_in_txn(
 /// decider already made — and a receipt that says its Δ is missing is worth
 /// more than one that silently has none.
 pub(super) fn captured_amendment_delta(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+    reviewed_at: Result<Option<crate::vault::RevisionRef>>,
     proposed: &[u8],
-    approved: &[u8],
 ) -> (Option<AmendmentDelta>, Vec<String>) {
-    match capture_delta_best(&DeltaCaptureContext::from_bodies(proposed, approved)) {
-        Ok(delta) => (Some(delta), Vec::new()),
-        Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
+    match measured_amendment_in_txn(vault, txn, claim, reviewed_at, proposed) {
+        Ok(Some(delta)) => (Some(delta), Vec::new()),
+        Ok(None) | Err(_) => (None, vec![INBOX_REASON_AMEND_DELTA_UNCAPTURED.to_owned()]),
     }
+}
+
+/// Both ends by their refs, the landed body read back; `None` if either is gone.
+fn measured_amendment_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim: &EntityId,
+    reviewed_at: Result<Option<crate::vault::RevisionRef>>,
+    proposed: &[u8],
+) -> Result<Option<AmendmentDelta>> {
+    let (Some(reviewed_at), Some(landed_at)) = (
+        reviewed_at?,
+        live_revision_in_txn(&vault.store, txn, *claim)?,
+    ) else {
+        return Ok(None);
+    };
+    let Some(raw) = vault.store.port_entity_record(txn, claim)? else {
+        return Ok(None);
+    };
+    let landed = approved_body(&crate::claim::decode_claim_body(&raw.body, true)?)?;
+    let context = DeltaCaptureContext::from_bodies(
+        MeasuredEnd {
+            at: EndpointRef::approved_claim(*claim, reviewed_at),
+            content: proposed,
+        },
+        MeasuredEnd {
+            at: EndpointRef::approved_claim(*claim, landed_at),
+            content: &landed,
+        },
+    );
+    Ok(capture_delta_best(context).ok())
 }
 
 /// The claim body as the door will persist it. Approval is the ENGINE's to
@@ -684,6 +741,9 @@ fn append_bundle_decision_in_txn(
         read_frontier_hash: basis
             .first()
             .map_or([0; 32], |record| record.read_frontier_hash),
+        // FIX 7499, 7500: every member's read context and loop links; the
+        // claim refs below bind each member's claim.
+        context: crate::store::GateDecisionContext::answering_all(basis),
         redacted_at: None,
     };
     let claim_refs = basis

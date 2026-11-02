@@ -33,10 +33,10 @@ const WRONG_QUESTION: &str = "question_ref is not this vault's setup training qu
 /// Setup never reopens: the setting's own door changes it.
 const ALREADY_ANSWERED: &str = "the vault's setup training question is already answered; change \
                                 the setting through PUT /v1/owner/conversation-learning";
-/// Counted admin choices made since the question was asked conflict; a setup
-/// answer would sign over them.
-const CONFLICTED: &str = "the conversation learning setting's choices since setup conflict; \
-                          settle them through PUT /v1/owner/conversation-learning";
+/// The setting's counted admin choices conflict; a setup answer would sign
+/// over them.
+const CONFLICTED: &str = "the conversation learning setting's counted choices conflict; settle \
+                          them through PUT /v1/owner/conversation-learning";
 
 /// Where a shared vault's setup training question stands, kept on its
 /// creation record.
@@ -49,8 +49,8 @@ pub enum SharedTrainingSetup {
         /// creator: never a fresh draw per read.
         question_ref: [u8; 32],
         /// When it was asked, in seconds on the vault's clock; zero when that
-        /// clock could not be read at creation, so that every counted admin
-        /// choice answers it.
+        /// clock could not be read at creation. A record of the asking only:
+        /// which choice answers it is the fold's to say.
         created_at: u64,
     },
     /// Answered, through this question or by a counted admin choice of the
@@ -122,7 +122,7 @@ impl Vault {
         };
         let answered = self
             .authority_view_readonly_in_txn(txn)
-            .and_then(|fold| self.answering_choice_in_txn(txn, &fold, 0));
+            .and_then(|fold| self.answering_choice_in_txn(txn, &fold));
         match answered {
             Ok(Some(answered)) => answered,
             Ok(None) => pending,
@@ -140,8 +140,8 @@ impl Vault {
     /// The vault's setup training question, for its admin: where it stands,
     /// and the setting revision an answer presents back as `seen`. A pending
     /// question reads the same until it is answered, and reading it consumes
-    /// nothing; a counted admin choice of the setting made since it was
-    /// asked reads as its answer. The proof is revalidated, and the admin
+    /// nothing; a counted admin choice of the setting in force now reads as
+    /// its answer. The proof is revalidated, and the admin
     /// rule judged, in this read's own transaction.
     ///
     /// # Errors
@@ -174,14 +174,14 @@ impl Vault {
     /// which the setting's watchers are told. The same answer again (the
     /// question and its `on`), from any admin and whatever its `seen`,
     /// returns the recorded one and signs nothing; so does an answer agreeing
-    /// with a counted admin choice the setting has had since the question was
-    /// asked. Setup never reopens.
+    /// with the counted admin choice of the setting in force now. Setup never
+    /// reopens.
     ///
     /// # Errors
     /// A refusal when the proof is no longer a live person of this vault or
     /// is no admin of it, when the vault was never shared, when the question
     /// is answered otherwise (the setting's own door changes it), or when the
-    /// setting's counted choices since the question conflict;
+    /// setting's counted choices conflict;
     /// [`Error::InvalidConfig`] when `question_ref` names another question;
     /// and the setting writer's own: [`Error::ConcurrentWrite`] for a stale
     /// `seen`, and a choice this install cannot carry or does not count. Any
@@ -214,18 +214,15 @@ impl Vault {
                     seen: setting.revision(),
                 });
             }
-            SharedTrainingSetup::Pending { created_at, .. } => {
-                if setting
-                    .choices
-                    .conflict
-                    .iter()
-                    .any(|head| head.at >= created_at)
-                {
+            // Counted choices in conflict are never signed over, whatever
+            // display time their entries carry (FIX 7710, FIX 7711).
+            SharedTrainingSetup::Pending { .. } => {
+                if !setting.choices.conflict.is_empty() {
                     return Err(authority_refused(CONFLICTED));
                 }
             }
         }
-        let (setting_act, view) = self.set_conversation_learning_in_txn(
+        let (setting_act, view, answered_at) = self.set_conversation_learning_in_txn(
             &mut txn,
             owner,
             surface,
@@ -233,7 +230,6 @@ impl Vault {
             false,
             Some(answer.seen),
         )?;
-        let answered_at = self.instant_in_txn(&txn)?.secs();
         creation.training_setup = SharedTrainingSetup::Answered {
             on: answer.on,
             answered_by: Some(person),
@@ -252,18 +248,20 @@ impl Vault {
         })
     }
 
-    /// `recorded` as it stands on `fold`: a pending question that a counted
-    /// admin choice of the setting made since it was asked has answered
-    /// reads as that choice's answer; anything else as recorded. It derives
-    /// and writes nothing, so a read never consumes the question.
+    /// `recorded` as it stands on `fold`: a pending question reads as the
+    /// answer of the counted admin choice of the setting in force now, as
+    /// the fold counts it, never by its entry's display time (FIX 7710, FIX
+    /// 7711): creation answered at once from any choice counted then, so one
+    /// in force now counted only after; anything else as recorded. It
+    /// derives and writes nothing, so a read never consumes the question.
     fn standing_setup_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
         recorded: &SharedTrainingSetup,
     ) -> Result<SharedTrainingSetup> {
-        if let SharedTrainingSetup::Pending { created_at, .. } = recorded
-            && let Some(answered) = self.answering_choice_in_txn(txn, fold, *created_at)?
+        if let SharedTrainingSetup::Pending { .. } = recorded
+            && let Some(answered) = self.answering_choice_in_txn(txn, fold)?
         {
             return Ok(answered);
         }
@@ -271,23 +269,19 @@ impl Vault {
     }
 
     /// The counted admin choice of the setting in force on `fold`, as the
-    /// answer it gives the setup question: `None` while no choice counts,
-    /// the counted ones conflict, or the one in force was made before
-    /// `since`. Only a choice that counts at full strength on this install is
-    /// in force (the rule its holds read), so a held one never answers it.
+    /// answer it gives the setup question: `None` while no choice counts or
+    /// the counted ones conflict. Only a choice that counts at full strength
+    /// on this install is in force (the rule its holds read), so a held one
+    /// never answers it.
     fn answering_choice_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,
-        since: u64,
     ) -> Result<Option<SharedTrainingSetup>> {
         let setting = &fold.conversation_training_vault;
         let (Some(act), Some(head)) = (setting.act(), setting.choices.in_force.as_ref()) else {
             return Ok(None);
         };
-        if head.at < since {
-            return Ok(None);
-        }
         Ok(Some(SharedTrainingSetup::Answered {
             on: setting.on(),
             answered_by: self.conversation_learning_set_by_in_txn(txn, fold)?,

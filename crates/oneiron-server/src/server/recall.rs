@@ -1,9 +1,10 @@
 //! The recall verb as every server transport runs it.
 //!
-//! One place builds recall's execution inputs, so the HTTP facade and the
-//! WebSocket read RPC run the same recall for the same request: above light
+//! One place builds recall's execution inputs, so the facade's doors (on
+//! HTTP and on a held socket alike), a pumped run's host row and the
+//! synchronous door run the same recall for the same request: above light
 //! effort the query is embedded whenever the vault's embedder is serving, and
-//! the caller's `as_of` rides along. Both doors read as the bound principal
+//! the caller's `as_of` rides along. Every door reads as the bound principal
 //! under the slip it presented (ONE-1187-D6).
 //! A vault with no embedder, or one still loading its model, recalls on its
 //! sparse signals and says so (`sparse: true`). On the one-space preset the
@@ -51,8 +52,8 @@ impl SyncServer {
     /// (FIX 805); `None` is the vault owner's.
     ///
     /// Blocking: it may embed the query and it reads the vault. Async callers
-    /// take [`Self::recall_off_runtime`]; a synchronous caller that may sit on
-    /// a runtime worker wraps it in [`blocking`].
+    /// take [`Self::recall_off_runtime_listing`]; a synchronous caller that
+    /// may sit on a runtime worker wraps it in [`blocking`].
     pub(crate) fn recall(
         &self,
         memory: &Memory<'_>,
@@ -61,6 +62,7 @@ impl SyncServer {
         input: RecallRequest,
         payer: Option<&PayerPerson>,
     ) -> MemoryResult<MemoryPack> {
+        let detail = recall_effort_name(input.effort);
         let effort = input.effort.map_or(Effort::Medium, RecallEffort::level);
         let rerank = self.door_rerank(effort, actor, class)?;
         let media = self.recall_media(&input)?;
@@ -80,7 +82,11 @@ impl SyncServer {
             rerank: rerank.engine(),
             ..RecallDoor::now()
         };
-        oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door)
+        let pack = oneiron::task_verb::sdk::recall_at_door_seeded(memory, input, embed, &door);
+        if pack.is_ok() {
+            self.push_retrieval_meter(detail);
+        }
+        pack
     }
 
     /// A recall's `media` (OF-370), decoded before any work, as the context
@@ -243,34 +249,21 @@ impl SyncServer {
         }
     }
 
-    /// [`Self::recall`] for `actor` under the slip it presented, from where
-    /// its connection sits, on the blocking pool. When the request names a
-    /// room turn, every read recall makes runs inside that room (ARCH-0067
-    /// §8).
+    /// [`Self::recall`] for `actor` under the slip it presented, toward
+    /// where its connection sits, on the blocking pool. When the request
+    /// names a room turn, every read recall makes runs inside that room
+    /// (ARCH-0067 §8).
     ///
     /// A request with a deadline answers by it whatever the blocking work is
     /// doing: past it, the door returns the last pack recall published (before
     /// retrieval, no items; once assembled, the items before the scope census;
     /// both `partial`, under the reader's receipt), and the cut work stops at
     /// its next checkpoint.
-    pub(crate) async fn recall_off_runtime(
-        self: &Arc<Self>,
-        actor: EntityId,
-        class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
-        locality: CallerLocality,
-        room: Option<EntityId>,
-        input: RecallRequest,
-    ) -> MemoryResult<MemoryPack> {
-        self.recall_off_runtime_listing(actor, class, proof, locality, room, input)
-            .await
-            .0
-    }
-
-    /// [`Self::recall_off_runtime`], with each row the pack is derived from
-    /// without naming it (a reaction claim a line counts) as recall read it,
-    /// for a door that judges the pack again before it leaves this device
-    /// (DEC-0005). A pack cut at its deadline comes with the rows read by then.
+    ///
+    /// Beside the pack come the rows it is derived from without naming them
+    /// (a reaction claim a line counts) as recall read them, for a door that
+    /// judges the pack again before it leaves this device (DEC-0005). A pack
+    /// cut at its deadline comes with the rows read by then.
     /// It asks no home: an opened device's pack says it answered alone. Its
     /// reads go to `destination` (FIX 4937): a locality alone is a
     /// destination nobody proved, as before.
@@ -320,6 +313,7 @@ impl SyncServer {
         home: HomeRecallCaller,
     ) -> (MemoryResult<MemoryPack>, Vec<EntityId>) {
         let destination: ReadDestination = destination.into();
+        let detail = recall_effort_name(input.effort);
         let producers = Arc::new(ProducerRows::default());
         let listing = Arc::clone(&producers);
         let pack: MemoryResult<MemoryPack> = async move {
@@ -339,7 +333,7 @@ impl SyncServer {
             // among its caller's deadline jobs until its work ends; past the
             // row it runs on and raises the row's check.
             let job = budget.map(|_| self.vault.admit_deadline_job(actor));
-            let task = tokio::task::spawn_blocking(move || {
+            let work = move || {
                 let _job = job;
                 let publish = move |pack| publish.put(pack);
                 let memory = reader(&server.vault, actor, class, proof.as_ref())
@@ -366,21 +360,41 @@ impl SyncServer {
                         oneiron::task_verb::sdk::recall_at_door_seeded(&memory, input, embed, &door)
                     }
                 }
-            });
-            let joined = match budget {
-                None => task.await,
-                Some(budget) => {
-                    let due = tokio::time::Instant::from_std(arrived + budget);
-                    match tokio::time::timeout_at(due, task).await {
-                        Ok(joined) => joined,
-                        Err(_) => return ready.take(),
+            };
+            let joined = if effort.requires_rerank() {
+                let task = super::recall_hyde::spawn_hyde_recall_oneshot(work);
+                match budget {
+                    None => task.await.map_err(|error| {
+                        tracing::warn!(%error, "recall task failed to join");
+                    }),
+                    Some(budget) => {
+                        let due = tokio::time::Instant::from_std(arrived + budget);
+                        match tokio::time::timeout_at(due, task).await {
+                            Ok(answer) => answer.map_err(|error| {
+                                tracing::warn!(%error, "recall task failed to join");
+                            }),
+                            Err(_) => return ready.take(),
+                        }
+                    }
+                }
+            } else {
+                let task = tokio::task::spawn_blocking(work);
+                match budget {
+                    None => task.await.map_err(|error| {
+                        tracing::warn!(%error, "recall task failed to join");
+                    }),
+                    Some(budget) => {
+                        let due = tokio::time::Instant::from_std(arrived + budget);
+                        match tokio::time::timeout_at(due, task).await {
+                            Ok(answer) => answer.map_err(|error| {
+                                tracing::warn!(%error, "recall task failed to join");
+                            }),
+                            Err(_) => return ready.take(),
+                        }
                     }
                 }
             };
-            let mut pack = joined.unwrap_or_else(|error| {
-                tracing::warn!(panicked = error.is_panic(), "recall task failed to join");
-                Err(recall_did_not_finish())
-            })?;
+            let mut pack = joined.unwrap_or_else(|_| Err(recall_did_not_finish()))?;
             let due = budget.map(|budget| arrived + budget);
             if due.is_none_or(|due| Instant::now() < due) {
                 complete_with_home(&self.vault, &mut pack, &ask, &home, due).await;
@@ -388,11 +402,14 @@ impl SyncServer {
             Ok(pack)
         }
         .await;
+        if pack.is_ok() {
+            self.push_retrieval_meter(detail);
+        }
         (pack, producers.take())
     }
 
-    /// [`Self::recall`] for `actor` at a synchronous door (the WebSocket read
-    /// RPC), which has no runtime to stop waiting on. A light recall under a
+    /// [`Self::recall`] for `actor` at a synchronous door, which has no
+    /// runtime to stop waiting on. A light recall under a
     /// deadline (call mode, or light effort with its own `deadline_ms`) reads
     /// on a thread of its own, and the door waits for it only until the
     /// answer is due, then answers with the last pack recall published. Above
@@ -401,6 +418,8 @@ impl SyncServer {
     ///
     /// Beside the pack come the rows it is derived from without naming them,
     /// as [`Self::recall_off_runtime_listing`] lists them.
+    // FIX 11469: kept as the sync door FIX 2060 ruled; no production host calls it yet.
+    #[allow(dead_code)]
     pub(crate) fn recall_at_sync_door(
         &self,
         actor: EntityId,
@@ -415,6 +434,8 @@ impl SyncServer {
         (pack, producers.take())
     }
 
+    // FIX 11469: the sync door's own read, kept with it.
+    #[allow(dead_code)]
     fn recall_at_sync_door_listing(
         &self,
         actor: EntityId,
@@ -438,6 +459,7 @@ impl SyncServer {
                 .listing_producers(producers);
             return blocking(|| self.recall(&memory, actor, class, input, None));
         };
+        let detail = recall_effort_name(input.effort);
         let ready = CutSlot::default();
         let publish = ready.clone();
         let vault = Arc::clone(&self.vault);
@@ -469,11 +491,19 @@ impl SyncServer {
             .map_err(|_| recall_did_not_finish())?;
         // The wait counts down to the due instant from wherever it starts.
         let due = arrived + budget;
-        match blocking(move || answer.recv_timeout(due.saturating_duration_since(Instant::now()))) {
+        let pack = match blocking(move || {
+            answer.recv_timeout(due.saturating_duration_since(Instant::now()))
+        }) {
             Ok(answer) => answer,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => ready.take(),
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(recall_did_not_finish()),
+        };
+        // The light deadline's own door meters its answer as the other two
+        // do (FIX 11011).
+        if pack.is_ok() {
+            self.push_retrieval_meter(detail);
         }
+        pack
     }
 
     /// The query's vector, or `None` when no embedder is serving.
@@ -490,6 +520,20 @@ impl SyncServer {
     }
 }
 
+/// The snake_case name of the effort a recall asked for, for its retrieval
+/// meter row's `detail`: the dial's own position, `call` included; omitted
+/// means `medium`.
+fn recall_effort_name(effort: Option<RecallEffort>) -> &'static str {
+    match effort.unwrap_or(RecallEffort::Medium) {
+        RecallEffort::Light => "light",
+        RecallEffort::Medium => "medium",
+        RecallEffort::High => "high",
+        RecallEffort::Xhigh => "xhigh",
+        RecallEffort::Max => "max",
+        RecallEffort::Call => "call",
+    }
+}
+
 /// A media query's refusal in the facade's vocabulary: the caller's mistake
 /// is `BAD_REQUEST`, a policy refusal `FORBIDDEN`, a space no rung serves
 /// `MODEL_UNAVAILABLE`.
@@ -498,6 +542,10 @@ fn media_refusal(error: crate::error::ApiError) -> MemoryError {
     let code = match error.code() {
         ErrorCode::BadRequest => MEMORY_CODE_BAD_REQUEST,
         ErrorCode::Forbidden => MEMORY_CODE_FORBIDDEN,
+        // The engine's own refusal codes keep their name (FIX 6032).
+        code @ (ErrorCode::HostActionRequiresSupportGrant | ErrorCode::OwnerBindingRequired) => {
+            code.as_str()
+        }
         ErrorCode::EmbedderUnavailable => MEMORY_CODE_MODEL_UNAVAILABLE,
         _ => MEMORY_CODE_INTERNAL,
     };
@@ -567,6 +615,7 @@ fn recall_did_not_finish() -> MemoryError {
 /// runs. Not for use inside a `LocalSet`; [`crate::build_app`] asks hosts
 /// not to serve from one.
 pub(crate) fn blocking<R: Send>(work: impl FnOnce() -> R + Send) -> R {
+    let work = oneiron::store::carry_idempotency_intent(work);
     match tokio::runtime::Handle::try_current().map(|handle| handle.runtime_flavor()) {
         Ok(tokio::runtime::RuntimeFlavor::MultiThread) => tokio::task::block_in_place(work),
         Ok(_) => std::thread::scope(|scope| {

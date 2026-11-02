@@ -53,6 +53,13 @@ pub(super) enum RawPutDoor {
     WitnessMessage,
 }
 
+/// [`validate_public_raw_put`] through the public door, for a bound raw
+/// put its off-record session stages in the room (FIX 8119): the refusals
+/// the same put meets on base.
+pub(crate) fn validate_staged_raw_put(entity_type: u8, data: &[u8], learned_at: u64) -> Result<()> {
+    validate_public_raw_put(entity_type, data, learned_at, RawPutDoor::Public)
+}
+
 pub(super) fn validate_public_raw_put(
     entity_type: u8,
     data: &[u8],
@@ -225,6 +232,13 @@ pub(super) fn push_claim_candidate_with_lexical_hints(
             }
             Vec::new()
         }
+    };
+    // A machine signature binds the parent's transcript, not a derived stale
+    // hint CLAIM's. Signed machine claims still land; their hints stay empty.
+    let normalized_hints = if envelope.machine_signature().is_some() {
+        Vec::new()
+    } else {
+        normalized_hints
     };
 
     ops.push(BatchOp::ClaimCandidate {

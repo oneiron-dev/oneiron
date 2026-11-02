@@ -14,6 +14,8 @@ pub(super) struct Sent {
     /// The resume state of the round the connector asked, if it asked one
     /// (FIX 9157).
     pub(super) resume: Option<RoundResume>,
+    /// The remote task the connector took the call as (FIX 7960).
+    pub(super) remote_task: Option<RemoteTaskHandle>,
 }
 
 impl Sent {
@@ -26,6 +28,7 @@ impl Sent {
             body: None,
             error: None,
             resume: None,
+            remote_task: None,
         }
     }
 
@@ -38,6 +41,7 @@ impl Sent {
             body: None,
             error: Some(error.to_owned()),
             resume: None,
+            remote_task: None,
         }
     }
 
@@ -50,6 +54,21 @@ impl Sent {
             body: Some(body),
             error: None,
             resume: None,
+            remote_task: None,
+        }
+    }
+
+    /// The connector took the call as the remote task `handle` (FIX 7960):
+    /// its outcome is still out, and the call is never sent again.
+    pub(super) fn deferred(handle: RemoteTaskHandle, body: Vec<u8>) -> Self {
+        Self {
+            outcome: OutboundSendOutcome::Deferred,
+            reply: None,
+            awaiting: None,
+            body: Some(body),
+            error: None,
+            resume: None,
+            remote_task: Some(handle),
         }
     }
 }

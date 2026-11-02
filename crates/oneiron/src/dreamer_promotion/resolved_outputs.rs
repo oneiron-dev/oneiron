@@ -7,8 +7,9 @@
 //! (FIX 7380): one stood in its write, none was held, pended or rejected
 //! there, and every one still stands. A refused or unstanding close leaves
 //! it open, and the outputs stand either way. A created output keeps its
-//! binding in its provenance, so a replay that meets the output again still
-//! closes the marker.
+//! binding in its provenance, and an evidence attachment beside the derived
+//! evidence of its support assertion (FIX 7381), so a replay that meets the
+//! output or the attachment again still closes the marker.
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
@@ -90,6 +91,44 @@ pub(super) fn stored_answers(vault: &Vault, head: EntityId) -> Vec<ResolvedConfl
         return Vec::new();
     };
     stored.iter().filter_map(decode_answer).collect()
+}
+
+/// An attachment's support-assertion `scope` without the answers binding
+/// its derived evidence keeps under `derived_key`, and the answers that
+/// binding names (FIX 7381): the attachment writes [`with_answers`] onto
+/// the derived evidence, and a replay compares the rest exactly. A binding
+/// that does not decode binds nothing.
+pub(super) fn split_attachment_answers(
+    scope: &Value,
+    derived_key: &str,
+) -> (Value, Vec<ResolvedConflictOutput>) {
+    let Value::Map(entries) = scope else {
+        return (scope.clone(), Vec::new());
+    };
+    let mut answers = Vec::new();
+    let mut kept = Vec::with_capacity(entries.len());
+    for (key, value) in entries {
+        let (Some(name), Value::Map(evidence)) = (key.as_str(), value) else {
+            kept.push((key.clone(), value.clone()));
+            continue;
+        };
+        if name != derived_key {
+            kept.push((key.clone(), value.clone()));
+            continue;
+        }
+        let mut rest = Vec::with_capacity(evidence.len());
+        for (field, inner) in evidence {
+            match (field.as_str(), inner) {
+                (Some(ANSWERS_KEY), Value::Array(stored)) => {
+                    answers.extend(stored.iter().filter_map(decode_answer));
+                }
+                (Some(ANSWERS_KEY), _) => {}
+                _ => rest.push((field.clone(), inner.clone())),
+            }
+        }
+        kept.push((key.clone(), Value::Map(rest)));
+    }
+    (Value::Map(kept), answers)
 }
 
 fn decode_answer(value: &Value) -> Option<ResolvedConflictOutput> {
@@ -180,14 +219,14 @@ fn close_answer(
         let mut evidence: Vec<EntityId> = Vec::new();
         for output in &answer.outputs {
             let body = vault
-                .get_claim_in_txn(&txn, output)?
+                .get_claim_for_effect_in_txn(&txn, output)?
                 .filter(crate::claim::claim_surfaceable);
             match (body, RowRevision::read_in(vault, &txn, output)?) {
                 (Some(body), Some(revision)) => {
                     outputs.push((*output, revision));
                     match stood.get(output) {
                         Some(cited) => evidence.extend_from_slice(cited),
-                        None => evidence.extend(stored_turn_refs(&body)),
+                        None => evidence.extend(stored_turn_refs(output, &body)),
                     }
                 }
                 _ => return Ok(Some(("output_not_standing", None))),
@@ -246,23 +285,30 @@ fn close_answer(
     Ok(refused)
 }
 
-/// The turn evidence `body`'s own write cited: the refs of the consolidation
-/// envelope it keeps as its candidate evidence. None for a body without one,
-/// or one that does not decode.
-fn stored_turn_refs(body: &crate::ClaimBody) -> Vec<EntityId> {
-    body.evidence
-        .as_ref()
-        .and_then(|evidence| {
-            field(
-                evidence,
-                crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
-            )
-        })
-        .and_then(|stored| {
-            crate::dreamer_consolidation::decode_consolidation_evidence(stored)
-                .ok()
-                .flatten()
-        })
-        .map(|envelope| envelope.refs)
-        .unwrap_or_default()
+/// The turn evidence output `output`'s body `body` cited in its own write:
+/// the refs of the consolidation envelope it keeps as its candidate
+/// evidence. None for a body without one, or one that does not decode; the
+/// latter is logged by its error kind and the holder output's id (the
+/// envelope has no id of its own), and the close goes on citing the rest
+/// (FIX 7421).
+fn stored_turn_refs(output: &EntityId, body: &crate::ClaimBody) -> Vec<EntityId> {
+    let Some(stored) = body.evidence.as_ref().and_then(|evidence| {
+        field(
+            evidence,
+            crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY,
+        )
+    }) else {
+        return Vec::new();
+    };
+    match crate::dreamer_consolidation::decode_consolidation_evidence(stored) {
+        Ok(envelope) => envelope.map(|envelope| envelope.refs).unwrap_or_default(),
+        Err(error) => {
+            tracing::warn!(
+                error_kind = ?error.kind(),
+                output = %output.to_hex(),
+                "an output's stored candidate evidence did not decode; the close cites the rest"
+            );
+            Vec::new()
+        }
+    }
 }

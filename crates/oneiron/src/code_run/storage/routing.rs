@@ -3,7 +3,7 @@
 use std::borrow::Cow;
 
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
-use crate::memory::{MessageResultAttachment, WitnessReceipt};
+use crate::memory::{MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
 use crate::session_overlay::RouteTarget;
 use crate::vault::VaultId;
@@ -15,14 +15,13 @@ use super::super::replay::{
 };
 use super::super::support::invalid_code_run_replay;
 use super::records::{
-    MODEL_HEAL_COUNTS, RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS,
-    finish_output, load_whole_body, next_additive_heal_count, read_body_row_range,
-    replay_generation_matches,
+    RAW_OUTPUT_SECRETS, RAW_OUTPUT_TAINTS, RAW_OUTPUTS, REPLAY_RECORDS, finish_output_sourced,
+    load_whole_body, read_body_row_range, replay_generation_matches,
 };
 use super::response_erase::fence_replay_in_txn;
 use super::response_owners::stamp_response_owner_in_txn;
 use super::speech_identity::{
-    ResultSpeech, canonical_witness_executor_turn, executor_speech_message_id_for_run,
+    ResultSpeech, canonical_witness_executor_turn_sourced, executor_speech_message_id_for_run,
     executor_speech_turn_id,
 };
 use crate::limit_ask::{EngineLimit, LimitWatch};
@@ -31,9 +30,13 @@ use crate::secret_rotation::ArtifactTaintState;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
+mod replay;
+mod type_feedback;
+
+pub(crate) use self::type_feedback::{FeedbackRoute, SessionInstanceBind};
 
 #[cfg(test)]
-use super::records::CodeRunModelHealCount;
+use super::records::{CodeRunModelHealCount, MODEL_HEAL_COUNTS};
 #[cfg(test)]
 use crate::Error;
 
@@ -76,11 +79,7 @@ impl SessionBinding<'_> {
     /// identity before this call. They travel through the distinct host-only
     /// path; the guest-facing `witness_executor_turn(Some(turn_ref))` refusal
     /// remains unchanged and unreachable from here.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "each argument is a host-owned witness axis; the explicit turn and message ids are the idempotency contract"
-    )]
-    pub(crate) fn witness_executor_turn(
+    pub(crate) fn witness_executor_turn_sourced(
         &self,
         kind: ExecutorUtterance,
         text: &str,
@@ -90,6 +89,7 @@ impl SessionBinding<'_> {
         message_id: EntityId,
         turn_id: EntityId,
         actor: WriteActor,
+        assertions: WitnessAssertions,
     ) -> Result<WitnessReceipt> {
         if self.session.participant() != Some(actor.entity_ref()) {
             return Err(crate::Error::InvalidConfig(
@@ -97,7 +97,7 @@ impl SessionBinding<'_> {
             ));
         }
         self.answered(|| {
-            self.session.witness_host_executor_turn(
+            self.session.witness_host_executor_turn_sourced(
                 &self.container,
                 kind,
                 text,
@@ -108,6 +108,7 @@ impl SessionBinding<'_> {
                 turn_id,
                 &self.route,
                 actor,
+                assertions,
             )
         })
     }
@@ -172,28 +173,7 @@ impl SessionBinding<'_> {
     ) -> Result<CodeRunReplayGeneration> {
         REPLAY_RECORDS.encode_value(record)?;
         let next_generation = record.generation()?;
-        self.answered(|| match healed_model {
-            Some(model) => self
-                .session
-                .side_table_compare_and_put_with_counter_routed(
-                    &self.route,
-                    &REPLAY_RECORDS,
-                    &record.run_id,
-                    record,
-                    |current| replay_generation_matches(current, expected),
-                    &MODEL_HEAL_COUNTS,
-                    &model.as_str().to_owned(),
-                    next_additive_heal_count,
-                )
-                .map(drop),
-            None => self.session.side_table_compare_and_put_routed(
-                &self.route,
-                &REPLAY_RECORDS,
-                &record.run_id,
-                record,
-                |current| replay_generation_matches(current, expected),
-            ),
-        })?;
+        self.answered(|| self.put_replay_routed(record, expected, healed_model, |_, _| Ok(())))?;
         Ok(next_generation)
     }
 
@@ -484,18 +464,51 @@ impl<'a> ExecutorStorage<'a> {
         order: u32,
         actor: WriteActor,
     ) -> Result<WitnessReceipt> {
-        self.witness_executor_message(run_ref, run_id, kind, text, None, occurred_at, order, actor)
+        self.witness_executor_utterance_sourced(
+            run_ref,
+            run_id,
+            kind,
+            text,
+            occurred_at,
+            order,
+            actor,
+            WitnessAssertions::default(),
+        )
+    }
+
+    /// [`Self::witness_executor_utterance`] with this reply's typed assertions.
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn witness_executor_utterance_sourced(
+        &self,
+        run_ref: &str,
+        run_id: Option<EntityId>,
+        kind: ExecutorUtterance,
+        text: &str,
+        occurred_at: u64,
+        order: u32,
+        actor: WriteActor,
+        assertions: WitnessAssertions,
+    ) -> Result<WitnessReceipt> {
+        self.witness_executor_message(
+            run_ref,
+            run_id,
+            kind,
+            text,
+            None,
+            occurred_at,
+            order,
+            actor,
+            assertions,
+        )
     }
 
     /// A run's answer said as a typed result (FIX 365): one visible MESSAGE
     /// at the same derived identity a spoken bubble takes, its text empty,
     /// its attachment the preview and the facets, its hold on the body in
     /// the transaction that lands it.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "run ref/id, attachment, served rows, order, and actor are distinct host-owned witness axes"
-    )]
-    pub(crate) fn witness_executor_result(
+    /// A typed-result bubble with this reply's typed assertions (FIX 365 sourced variant).
+    #[expect(clippy::too_many_arguments)]
+    pub(crate) fn witness_executor_result_sourced(
         &self,
         run_ref: &str,
         run_id: EntityId,
@@ -504,6 +517,7 @@ impl<'a> ExecutorStorage<'a> {
         occurred_at: u64,
         order: u32,
         actor: WriteActor,
+        assertions: WitnessAssertions,
     ) -> Result<WitnessReceipt> {
         self.witness_executor_message(
             run_ref,
@@ -517,6 +531,7 @@ impl<'a> ExecutorStorage<'a> {
             occurred_at,
             order,
             actor,
+            assertions,
         )
     }
 
@@ -534,6 +549,7 @@ impl<'a> ExecutorStorage<'a> {
         occurred_at: u64,
         order: u32,
         actor: WriteActor,
+        assertions: WitnessAssertions,
     ) -> Result<WitnessReceipt> {
         // HOST-derived, on both arms: durable executors bind the replay run id
         // as well as the dispatcher ref, while standalone callers retain the
@@ -543,7 +559,7 @@ impl<'a> ExecutorStorage<'a> {
         let message_id = executor_speech_message_id_for_run(run_ref, run_id, order)?;
         let turn_id = executor_speech_turn_id(run_ref, run_id)?;
         match self {
-            Self::Canonical(vault) => canonical_witness_executor_turn(
+            Self::Canonical(vault) => canonical_witness_executor_turn_sourced(
                 vault,
                 run_ref,
                 run_id,
@@ -554,8 +570,9 @@ impl<'a> ExecutorStorage<'a> {
                 order,
                 message_id,
                 actor,
+                assertions.clone(),
             ),
-            Self::Session(binding) => binding.witness_executor_turn(
+            Self::Session(binding) => binding.witness_executor_turn_sourced(
                 kind,
                 text,
                 result,
@@ -564,6 +581,7 @@ impl<'a> ExecutorStorage<'a> {
                 message_id,
                 turn_id,
                 actor,
+                assertions,
             ),
         }
     }
@@ -797,11 +815,26 @@ impl<'a> ExecutorStorage<'a> {
         complete: bool,
         owner: EntityId,
     ) -> Result<CodeRunRawOutput> {
+        self.publish_code_run_output_sourced(path, sink, complete, owner, None)
+    }
+
+    /// [`Self::publish_code_run_output`] with the occurrence's complete
+    /// input rows, or `None` when any constituent is unknown (FIX 7104).
+    pub(crate) fn publish_code_run_output_sourced(
+        &self,
+        path: String,
+        sink: BodySink,
+        complete: bool,
+        owner: EntityId,
+        input_rows: Option<Vec<EntityId>>,
+    ) -> Result<CodeRunRawOutput> {
         match self {
             Self::Canonical(vault) => {
-                vault.publish_code_run_output(path, sink, complete, Some(owner))
+                vault.publish_code_run_output_sourced(path, sink, complete, Some(owner), input_rows)
             }
-            Self::Session(binding) => binding.publish_output(path, sink, complete, owner),
+            Self::Session(binding) => {
+                binding.publish_output_sourced(path, sink, complete, owner, input_rows)
+            }
         }
     }
 

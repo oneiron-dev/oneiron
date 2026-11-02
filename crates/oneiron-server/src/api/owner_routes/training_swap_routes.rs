@@ -15,9 +15,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::embed::PendingEmbedderBinding;
@@ -29,9 +27,9 @@ use oneiron::training_pack::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::ai_host::trained_serving::{TrainedServing, trained_serving};
-use crate::api::json_payload;
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -39,10 +37,27 @@ use crate::server::SyncServer;
 /// Why the direct door refuses an embedder run.
 const EMBEDDER_REFUSED: &str = "embedder swaps stage through a space move";
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/coach/training-runs/view", post(view))
-        .route("/coach/training-runs/swap", post(swap))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/view",
+                summary: "One training run's result: state, evaluation, checks, overlaps, swap receipts, swap questions and how it serves here.",
+                row: None,
+            },
+            post(view),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/coach/training-runs/swap",
+                summary: "Binds the training result the owner viewed, named by its spec and checkpoint hashes, to its role; an embedder run is refused.",
+                row: None,
+            },
+            post(swap),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -157,10 +172,10 @@ fn hash_field(field: &str, value: &str) -> OwnerResult<[u8; 32]> {
 async fn view(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ViewTrainingRun>, JsonRejection>,
+    payload: OwnerJsonBody<ViewTrainingRun>,
 ) -> OwnerReply<TrainingRunView> {
     owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || -> OwnerResult<TrainingRunView> {
         let id = entity_id("run", &request.run)?;
         let vault = server.vault();
@@ -217,10 +232,10 @@ async fn view(
 async fn swap(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SwapTrainingRun>, JsonRejection>,
+    payload: OwnerJsonBody<SwapTrainingRun>,
 ) -> OwnerReply<RoleSwapReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<RoleSwapReceipt> {
         let id = entity_id("run", &request.run)?;
         let spec = hash_field("expected.spec", &request.expected.spec)?;

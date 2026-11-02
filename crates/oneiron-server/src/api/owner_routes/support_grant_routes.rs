@@ -13,8 +13,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -24,17 +23,43 @@ use oneiron::task_verb::sdk::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, hooked_row, memory_refusal};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/support-grants", get(list))
-        .route("/support-grants/mint", post(mint))
-        .route("/support-grants/revoke", post(revoke))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/support-grants",
+                summary: "The vault's support grants (OF-606), newest first: active ones, or every one with `include_inactive=true`; at most `limit` (500). Each names its support PERSON and class, bounds, purpose, ticket, approving owner, wall deadline, status and its one-tap revoke command.",
+                row: Some("vault.support_grants.list"),
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/support-grants/mint",
+                summary: "Mint our support person or agent a time-limited, revocable grant (OF-606): a live, non-owner PERSON of the vault (`holder`, `holder_class` human or agent) bound to that party's own Ed25519 key (`holder_key`, 64 hex), inside explicit bounds (`scope` with named worlds; `records` optional; propose or write only when named), for `ttl_secs` (default 3600, at most 86400), with a `purpose` and optional `ticket_ref`. Answers the credential (no private key), the grant and the mint's Gate receipt.",
+                row: Some("vault.support_grants.mint"),
+            },
+            post(mint),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/support-grants/revoke",
+                summary: "Revoke one support grant (`grant_ref`, 64 hex): a repeat answers `changed: false`, an id that names no support grant is not found, and `delivered_recallable` is always false: what support already read is not recalled.",
+                row: Some("vault.support_grants.revoke"),
+            },
+            post(revoke),
+        ),
+    ]
 }
 
 /// What a route answers when this host holds no slip-signing key.
@@ -49,10 +74,10 @@ fn no_issuer() -> OwnerError {
 async fn mint(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SupportGrantMintRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SupportGrantMintRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         hooked_row(
             server.vault(),
@@ -108,10 +133,10 @@ async fn list(
 async fn revoke(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SupportGrantRevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<SupportGrantRevokeRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         hooked_row(
             server.vault(),

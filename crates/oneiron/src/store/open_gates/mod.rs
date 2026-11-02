@@ -3,6 +3,11 @@
 //! ABI/schema gates, HNSW config and embedding-model gates, and open-time
 //! migrations. The exact gate order is documented on [`crate::store`].
 
+mod create_commit;
+mod create_dbs;
+mod create_env;
+mod create_preflight;
+mod custody_pad_rows;
 mod embedding_transform_gates;
 mod hnsw_model_gates;
 mod manifest_storage_gates;
@@ -12,6 +17,9 @@ mod open_version_keys;
 mod read_only_door;
 mod vault_root_bind;
 
+pub(in crate::store) use self::custody_pad_rows::{
+    PairedIdentityRows, PairedSourceAsk, PairedSyncRows, read_existing_custody_pad_rows,
+};
 pub(crate) use self::embedding_transform_gates::{
     EMBEDDING_TRANSFORM_KEY, admit_embedding_transform_in_txn,
 };
@@ -31,11 +39,14 @@ pub use self::open_version_keys::{
 pub(crate) use self::open_version_keys::{
     DefaultPolicySeedMode, EMBEDDING_MODEL_EPOCH_KEY, GRAPH_VERSION_KEY, HNSW_CONFIG_KEY,
     HnswCompatibilityState, MODEL_ID_KEY, TEMPORAL_LONG_INTERVALS_SCHEMA_VERSION_KEY,
-    TEXT_INDEX_SCHEMA_VERSION, VECTOR_VERSION_KEY,
+    TEXT_ANALYZER_MANIFEST_HASH_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION,
+    VECTOR_VERSION_KEY,
 };
 pub(in crate::store) use self::read_only_door::not_an_existing_root;
 pub(in crate::store) use self::read_only_door::read_existing_vault_meta;
-pub(crate) use self::read_only_door::{read_existing_embedding_model, read_existing_entity_rows};
+pub(crate) use self::read_only_door::{
+    read_existing_embedding_model, read_existing_entity_rows, read_existing_sync_state_rows,
+};
 // Test-only seam (gate/mod.rs precedent): the store test suite names these
 // bare through `use super::*`, but no non-test code outside `open_gates/`
 // reaches them through the seam, so the re-exports live under `cfg(test)`.
@@ -51,6 +62,6 @@ pub(in crate::store) use self::open_version_keys::{
 };
 #[cfg(test)]
 pub(crate) use self::open_version_keys::{
-    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, TEXT_ANALYZER_MANIFEST_HASH_KEY,
-    TEXT_ANALYZER_MANIFEST_KEY, TEXT_BM25_FIELD_SCHEMA_HASH_KEY, TEXT_INDEX_SCHEMA_VERSION_KEY,
+    STORAGE_ABI_VERSION_KEY, STORAGE_SCHEMA_VERSION_KEY, TEXT_ANALYZER_MANIFEST_KEY,
+    TEXT_INDEX_SCHEMA_VERSION_KEY,
 };

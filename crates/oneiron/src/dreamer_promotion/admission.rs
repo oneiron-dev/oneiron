@@ -10,6 +10,11 @@ use crate::registry::{
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
 
+// The citation vocabulary is the claim's own (FIX 904); promotion names it
+// from there, as its writers and the Gate's reference read always have.
+pub use crate::claim::{CursorSpan, EvidenceKind, EvidenceRef};
+pub(crate) use crate::claim::{public_evidence_refs, public_evidence_value};
+
 /// Why a visible source does not corroborate a generated claim. These are
 /// evidence decisions, never an outbound authorization or a consent grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -76,60 +81,4 @@ pub(crate) fn evidence_ref_refusal_in_txn(
         }
         Some(_) => Ok(None),
     }
-}
-
-/// ARCH-0032: one citation of the entity's own document at an exact frontier.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EvidenceRef {
-    pub kind: EvidenceKind,
-    pub entity: String,
-    pub doc: String,
-    pub at: Vec<u8>,
-    pub span: Option<CursorSpan>,
-    pub quote_sha256: Option<[u8; 32]>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceKind {
-    Turn,
-    Message,
-    Note,
-    AssetText,
-    ImportRecord,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CursorSpan {
-    pub start: Vec<u8>,
-    pub end: Vec<u8>,
-}
-
-/// A candidate may carry these citations into the promotion writer, which
-/// verifies them again inside its own commit. No source or actor rides here.
-pub(crate) fn public_evidence_refs(value: Option<&rmpv::Value>) -> Result<Vec<EvidenceRef>> {
-    let Some(value) = value
-        .and_then(rmpv::Value::as_map)
-        .and_then(|fields| {
-            fields
-                .iter()
-                .find(|(key, _)| key.as_str() == Some("evidence_refs"))
-        })
-        .map(|(_, value)| value)
-    else {
-        return Ok(Vec::new());
-    };
-    let bytes = rmp_serde::to_vec_named(value)
-        .map_err(|_| crate::Error::InvalidClaimBody("evidence refs do not encode"))?;
-    rmp_serde::from_slice(&bytes)
-        .map_err(|_| crate::Error::InvalidClaimBody("evidence refs do not decode"))
-}
-
-pub(crate) fn public_evidence_value(refs: &[EvidenceRef]) -> Result<rmpv::Value> {
-    let bytes = rmp_serde::to_vec_named(refs)
-        .map_err(|_| crate::Error::InvalidClaimBody("evidence refs do not encode"))?;
-    rmpv::decode::read_value(&mut bytes.as_slice())
-        .map_err(|_| crate::Error::InvalidClaimBody("evidence refs do not decode"))
 }

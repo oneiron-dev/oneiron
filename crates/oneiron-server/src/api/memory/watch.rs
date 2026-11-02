@@ -23,10 +23,7 @@ pub(in crate::api) async fn core_memory_watch_read(
     let (owner, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Read, true)?;
     let watch = oneiron::saved_query::memory_watch(&server.vault, owner, anchor)
         .map_err(|error| core_engine_error("memory watch read failed", error))?;
-    Ok(Json(CoreMemoryWatchResponse {
-        watched: watch.is_some(),
-        query_ref: watch.map(|watch| watch.query_ref.to_hex()),
-    }))
+    Ok(Json(watch_response(watch)))
 }
 
 #[utoipa::path(
@@ -83,10 +80,7 @@ fn set_core_memory_watch(
         enabled,
         unix_seconds_now(),
     )?;
-    Ok(Json(CoreMemoryWatchResponse {
-        watched: watch.is_some(),
-        query_ref: watch.map(|watch| watch.query_ref.to_hex()),
-    }))
+    Ok(Json(watch_response(watch)))
 }
 
 fn watch_identity(
@@ -121,4 +115,89 @@ fn watch_identity(
         return Err(ApiError::not_found("claim", Some(id_hex)).into());
     }
     Ok((owner, anchor))
+}
+
+/// The response for `watch`, with its health when a wake recorded one.
+fn watch_response(watch: Option<oneiron::saved_query::MemoryWatch>) -> CoreMemoryWatchResponse {
+    CoreMemoryWatchResponse {
+        watched: watch.is_some(),
+        query_ref: watch.as_ref().map(|watch| watch.query_ref.to_hex()),
+        health: watch
+            .and_then(|watch| watch.health)
+            .map(CoreMemoryWatchHealth::from),
+    }
+}
+
+/// A watch's health as the evaluator's last wake of it left it (FIX 11250):
+/// when it ended, which pass ran it, what it came to, its failures in a row
+/// and how far it ended behind the change it answered.
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct CoreMemoryWatchHealth {
+    /// Unix seconds the last wake ended at.
+    last_evaluated_at: u64,
+    /// `reactive` (a re-check of what a write moved) or `paged`.
+    pass: String,
+    /// `evaluated` or `failed`.
+    outcome: String,
+    /// The candidates the wake evaluated, when it ran to its end.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    evaluated: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    memo_hits: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    judges_run: Option<u32>,
+    /// Whether one of the watch's own bounds stopped the wake early.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stopped_at_bound: Option<bool>,
+    /// The failed wake's error kind.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<String>,
+    consecutive_failures: u32,
+    /// Unix seconds of the oldest change the wake answered.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    triggered_at: Option<u64>,
+    /// Seconds the wake ended behind that change.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lag_secs: Option<u64>,
+}
+
+impl From<oneiron::saved_query::SavedQueryHealth> for CoreMemoryWatchHealth {
+    fn from(health: oneiron::saved_query::SavedQueryHealth) -> Self {
+        use oneiron::saved_query::{SavedQueryPass, SavedQueryWakeOutcome};
+        let mut view = Self {
+            last_evaluated_at: health.last_evaluated_at,
+            pass: match health.pass {
+                SavedQueryPass::Reactive => "reactive",
+                SavedQueryPass::Paged => "paged",
+            }
+            .to_owned(),
+            outcome: "evaluated".to_owned(),
+            evaluated: None,
+            memo_hits: None,
+            judges_run: None,
+            stopped_at_bound: None,
+            failure: None,
+            consecutive_failures: health.consecutive_failures,
+            triggered_at: health.triggered_at,
+            lag_secs: health.lag_secs,
+        };
+        match health.outcome {
+            SavedQueryWakeOutcome::Evaluated {
+                evaluated,
+                memo_hits,
+                judges_run,
+                stopped_at_bound,
+            } => {
+                view.evaluated = Some(evaluated);
+                view.memo_hits = Some(memo_hits);
+                view.judges_run = Some(judges_run);
+                view.stopped_at_bound = Some(stopped_at_bound);
+            }
+            SavedQueryWakeOutcome::Failed { kind } => {
+                view.outcome = "failed".to_owned();
+                view.failure = Some(kind);
+            }
+        }
+        view
+    }
 }

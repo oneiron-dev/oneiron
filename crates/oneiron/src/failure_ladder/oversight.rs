@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 const DOMAIN: &[u8] = b"oneiron:healer-oversight:v1\0";
 
-/// Proposed/reviewed/escalated timestamps for one healer case. Key: hex32 (case_ref).
+/// Proposed/reviewed/routed timestamps for one healer case. Key: hex32 (case_ref).
 const ACTIVITY: SideTable<String, Activity, Named> = SideTable::new(&side_table::HEALER_ACTIVITY);
 
 /// Latest signed per-vault-device oversight receipt. Key: u8 (OversightKind tag: 0/1/2).
@@ -19,13 +19,33 @@ struct Activity {
     proposed_at: u64,
     reviewed_at: Option<u64>,
     escalated: bool,
+    /// When the case first reached a person's tray: with its proposal, or
+    /// at a review that reached a person. A later answer never clears it.
+    escalated_at: Option<u64>,
+    /// `Some(true)` while the case is known (its healer was dispatched) and
+    /// no proposal of it has persisted: `proposed_at` is then the dispatch
+    /// time, and the proposal clock has not started.
+    awaiting_proposal: Option<bool>,
+    /// `Some(true)` when the case's review was recorded while it awaited its
+    /// proposal: `reviewed_at` then predates `proposed_at`, the first
+    /// persisted proposal's time, and the review counts with no latency.
+    reviewed_before_proposal: Option<bool>,
 }
 
 impl Activity {
+    fn awaiting(&self) -> bool {
+        self.awaiting_proposal == Some(true)
+    }
+
+    fn reviewed_early(&self) -> bool {
+        self.reviewed_before_proposal == Some(true)
+    }
+
     /// The business rule `Named`'s plain decode cannot enforce: a review cannot predate its
-    /// own proposal. Runs immediately after every decode, direct or through [`ACTIVITY`].
+    /// own proposal, unless it was recorded while the case awaited that proposal. Runs
+    /// immediately after every decode, direct or through [`ACTIVITY`].
     fn validate_order(&self) -> Result<()> {
-        if self.reviewed_at.is_some_and(|at| at < self.proposed_at) {
+        if !self.reviewed_early() && self.reviewed_at.is_some_and(|at| at < self.proposed_at) {
             return Err(Error::CorruptedIndex("healer activity"));
         }
         Ok(())
@@ -106,7 +126,10 @@ fn validate_case_ref(case: &str) -> Result<()> {
     }
     Ok(())
 }
-pub(crate) fn proposed_in_txn(
+/// Registers `case` as known when its healer is dispatched, without starting
+/// its proposal clock: a dispatch is no proposal (FIX 9852). A case already
+/// known stays as it is.
+pub(crate) fn opened_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     case: &str,
@@ -123,16 +146,75 @@ pub(crate) fn proposed_in_txn(
                 proposed_at: now,
                 reviewed_at: None,
                 escalated: false,
+                escalated_at: None,
+                awaiting_proposal: Some(true),
+                reviewed_before_proposal: None,
             },
         )?;
     }
     Ok(())
 }
+
+/// Starts `case`'s proposal clock at `now`, in the write that persists its
+/// proposal. The first proposal stands: a later one changes nothing. A
+/// review answered while the case awaited it keeps its own time (FIX 10820).
+pub(crate) fn proposed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    case: &str,
+    now: u64,
+) -> Result<()> {
+    validate_case_ref(case)?;
+    let key = case.to_owned();
+    let activity = match ACTIVITY.get(&vault.store, txn, &key)? {
+        None => Activity {
+            proposed_at: now,
+            reviewed_at: None,
+            escalated: false,
+            escalated_at: None,
+            awaiting_proposal: None,
+            reviewed_before_proposal: None,
+        },
+        Some(mut activity) if activity.awaiting() => {
+            activity.proposed_at = now.max(activity.proposed_at);
+            activity.awaiting_proposal = None;
+            activity
+        }
+        Some(_) => return Ok(()),
+    };
+    ACTIVITY.put(&vault.store, txn, &key, &activity)
+}
+
+/// Records that `case`'s proposal landed in a person's tray, in the write
+/// that lands it (FIX 9853). The first route stands, and no later answer
+/// clears it. A case with no activity row yet is proposed at `now` too.
+pub(crate) fn routed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    case: &str,
+    now: u64,
+) -> Result<()> {
+    validate_case_ref(case)?;
+    let key = case.to_owned();
+    let mut activity = ACTIVITY.get(&vault.store, txn, &key)?.unwrap_or(Activity {
+        proposed_at: now,
+        reviewed_at: None,
+        escalated: false,
+        escalated_at: None,
+        awaiting_proposal: None,
+        reviewed_before_proposal: None,
+    });
+    if activity.escalated_at.is_some() {
+        return Ok(());
+    }
+    activity.escalated_at = Some(now.max(activity.proposed_at));
+    ACTIVITY.put(&vault.store, txn, &key, &activity)
+}
 /// Records a person's review of `case` inside the transaction that acts on
 /// it (OF-449: an owner's answer to a cleanup proposal). The first review
 /// stands: a later one changes nothing. A case with no activity row yet is
 /// counted as proposed at `proposed_at`, and a review never predates its
-/// proposal.
+/// proposal, or its dispatch while it awaits one.
 pub(crate) fn reviewed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -147,13 +229,40 @@ pub(crate) fn reviewed_in_txn(
         proposed_at,
         reviewed_at: None,
         escalated: false,
+        escalated_at: None,
+        awaiting_proposal: None,
+        reviewed_before_proposal: None,
     });
     if activity.reviewed_at.is_some() {
         return Ok(());
     }
-    activity.reviewed_at = Some(now.max(activity.proposed_at));
+    let at = now.max(activity.proposed_at);
+    activity.reviewed_at = Some(at);
     activity.escalated = escalated;
+    if escalated && activity.escalated_at.is_none() {
+        activity.escalated_at = Some(at);
+    }
+    if activity.awaiting() {
+        activity.reviewed_before_proposal = Some(true);
+    }
     ACTIVITY.put(&vault.store, txn, &key, &activity)
+}
+
+/// [`reviewed_in_txn`] at `now` for a case whose activity row exists, and
+/// nothing for one with none: a healer proposal's own review door counts it
+/// under the proposal's id, which only an unbound submission keys (FIX 10821).
+pub(crate) fn reviewed_if_known_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    case: &str,
+    now: u64,
+    escalated: bool,
+) -> Result<()> {
+    validate_case_ref(case)?;
+    if !ACTIVITY.contains(&vault.store, txn, &case.to_owned())? {
+        return Ok(());
+    }
+    reviewed_in_txn(vault, txn, case, now, now, escalated)
 }
 impl Vault {
     /// The host's reviewed-decision door; this records a fact, never applies a
@@ -166,7 +275,8 @@ impl Vault {
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::InvalidConfig("unknown healer case".into()))?;
             activity.validate_order()?;
-            if now < activity.proposed_at {
+            // An early review's retry is answered as any recorded review's is.
+            if now < activity.proposed_at && !activity.reviewed_early() {
                 return Err(Error::InvalidConfig("review predates proposal".into()));
             }
             if let Some(prior) = activity.reviewed_at {
@@ -179,6 +289,12 @@ impl Vault {
             }
             activity.reviewed_at = Some(now);
             activity.escalated = escalated;
+            if escalated && activity.escalated_at.is_none() {
+                activity.escalated_at = Some(now);
+            }
+            if activity.awaiting() {
+                activity.reviewed_before_proposal = Some(true);
+            }
             ACTIVITY.put(&self.store, txn, &key, &activity)?;
             Ok(())
         })
@@ -199,6 +315,9 @@ impl Vault {
             proposed_at,
             reviewed_at,
             escalated: false,
+            escalated_at: None,
+            awaiting_proposal: None,
+            reviewed_before_proposal: None,
         };
         self.with_write_txn_grouped(|txn| {
             ACTIVITY.put(&self.store, txn, &case.to_owned(), &activity)
@@ -221,18 +340,28 @@ impl Vault {
             };
             for (_, activity) in ACTIVITY.scan(&self.store, txn)? {
                 activity.validate_order()?;
-                if activity.proposed_at > now {
+                // A dispatched case no proposal of it has persisted is not
+                // proposed, reviewed or not (FIX 9852, 10820).
+                if activity.proposed_at > now || activity.awaiting() {
                     continue;
                 }
                 counts.proposed = counts.proposed.saturating_add(1);
                 if let Some(at) = activity.reviewed_at.filter(|at| *at <= now) {
                     counts.reviewed = counts.reviewed.saturating_add(1);
+                    // A review recorded before its proposal persisted waited
+                    // for nothing.
                     counts.review_latency_secs = counts
                         .review_latency_secs
-                        .saturating_add(at - activity.proposed_at);
-                    counts.escalated = counts
-                        .escalated
-                        .saturating_add(u64::from(activity.escalated));
+                        .saturating_add(at.saturating_sub(activity.proposed_at));
+                }
+                // Routing to a person counts when it happened, reviewed or
+                // not (FIX 9853); a row from before the route was kept
+                // counts its review's escalation as before.
+                let routed = activity
+                    .escalated_at
+                    .or(activity.reviewed_at.filter(|_| activity.escalated));
+                if routed.is_some_and(|at| at <= now) {
+                    counts.escalated = counts.escalated.saturating_add(1);
                 }
             }
             let mut receipts = Vec::new();

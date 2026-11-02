@@ -25,6 +25,7 @@
 //! A restore over a live vault keeps the tries those bindings name as the
 //! live vault holds them, as it keeps the bindings (`restore`, FIX 6577).
 
+mod actor_content;
 mod cycle;
 mod doors;
 mod erase;
@@ -51,7 +52,8 @@ pub use self::doors::{
     FreeTimeCyclesRequest, FreeTimeItemReceiptView, FreeTimeItemView, FreeTimeLabelSpend,
     FreeTimeNoteView, FreeTimePolicyRequest, FreeTimePolicyRow, FreeTimePolicySetRequest,
     FreeTimePolicyState, FreeTimePolicyView, FreeTimeSpendView, free_time_cycle_as_owner,
-    free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as_owner,
+    free_time_cycles_as_owner, free_time_policy_as_owner, free_time_policy_set_as,
+    free_time_policy_set_as_owner,
 };
 pub(crate) use self::erase::erase_free_time_actor_in_txn;
 #[cfg(feature = "sync")]

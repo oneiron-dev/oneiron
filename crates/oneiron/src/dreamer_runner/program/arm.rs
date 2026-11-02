@@ -4,6 +4,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::batch::secret_scan::{Lifted, Part, admit_parts_in_txn};
 use crate::error::{ArtifactError, ClaimError, Error, Result};
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::side_table::SideKey;
@@ -11,6 +12,7 @@ use crate::skill::{SkillCallContract, SkillLifecycle, SkillRole};
 use crate::{EntityId, Vault};
 
 use super::authority::TurnProgramAuthority;
+use super::erase::scrub_actor_admission_instruments_in_txn;
 use super::run::{scrub_actor_step_bodies_in_txn, undecodable_actor_steps_in_txn};
 use super::types::{ArmTurnProgram, ProgramRecipePin, TurnProgramArming, TurnProgramRegistration};
 use super::{ARM, WAKE};
@@ -24,9 +26,12 @@ const fn invalid(reason: &'static str) -> Error {
 /// Arms `input` for the future turns of `authority`'s actor, in the caller's
 /// writer: the actor's authority must stand now, the conversation (when one
 /// is named) must be a live CONVERSATION, and the SKILL an active callable
-/// whose call contract the arguments meet. The definition is pinned here.
-/// Arming the same definition for the same conversation again returns the
-/// standing registration.
+/// whose call contract the arguments meet. The arguments are admitted
+/// through the secret write-wall before anything is pinned (FIX 8718): each
+/// secret goes to custody under the registration and leaves its handle, and
+/// the pin, its revision and every copy and read of it hold only that
+/// admitted text. The definition is pinned here. Arming the same definition
+/// for the same conversation again returns the standing registration.
 pub(crate) fn arm_turn_program_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -49,7 +54,11 @@ pub(crate) fn arm_turn_program_in_txn(
     {
         return Err(Error::EntityNotFound);
     }
-    let definition = pin_in_txn(vault, txn, input)?;
+    // The custody origin of the arguments' secrets: the registration this
+    // arming mints, unless it finds the standing one, whose secrets custody
+    // already holds and whose handles they keep.
+    let registration = vault.new_entity_id()?;
+    let definition = pin_in_txn(vault, txn, input, registration)?;
     let revision = definition.revision();
     for row in ARM.iter_from(vault, &*txn, actor.as_bytes())? {
         let (_, armed) = row?;
@@ -61,7 +70,7 @@ pub(crate) fn arm_turn_program_in_txn(
         }
     }
     let arming = TurnProgramArming {
-        registration: vault.new_entity_id()?,
+        registration,
         actor,
         actor_class: authority.class_byte(),
         conversation: input.conversation,
@@ -86,7 +95,8 @@ pub(crate) fn disarm_turn_program_in_txn(
 
 /// An erased actor arms nothing and is owed nothing (FIX 3520): its armings
 /// and the wakes its turns left go in the erase's own writer, and so do the
-/// bodies its programs' steps keep (FIX 5710). Admission receipts, attempt
+/// bodies its programs' steps keep (FIX 5710) and the signed instrument each
+/// of its admissions sealed (FIX 10668). Admission receipts, attempt
 /// stamps and each step's evidence stay, as every runner stamp does. An
 /// owner's erase never fails on a row that does not decode (FIX 5736): an
 /// arming under the actor's key, a wake keyed to one of its armings and a
@@ -103,14 +113,17 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {
         WAKE.delete(vault, txn, key)?;
+        super::index::unindex_wake_in_txn(vault, txn, *actor, *key)?;
     }
+    scrub_actor_admission_instruments_in_txn(vault, txn, actor)?;
     scrub_actor_step_bodies_in_txn(vault, txn, actor).map(drop)
 }
 
 /// What an erase of `actor` takes from the arm and wake tables, read on
 /// `txn`: the wakes it owes, and how many of its arming and wake rows do
 /// not decode. A wake is its own by its authority; one that does not decode
-/// is its own when its key names one of its armings.
+/// is its own when its key names one of its armings. Its wakes are read by
+/// their actor index (FIX 5774), never the whole wake table.
 struct ActorScope {
     wakes: Vec<(EntityId, EntityId)>,
     undecodable: usize,
@@ -135,9 +148,8 @@ fn actor_scope_in_txn(
         }
     }
     let mut wakes = Vec::new();
-    for row in WAKE.iter_raw_from(vault, txn, &[])? {
-        let (key, bytes) = row?;
-        let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
+    for key in super::index::actor_wakes_in_txn(vault, txn, actor)? {
+        let Some(bytes) = WAKE.get_borrowed(vault, txn, &key)? else {
             continue;
         };
         match WAKE.decode_value(&bytes) {
@@ -194,11 +206,13 @@ pub(super) fn pin_stands_in_txn(
         && contract_digest(call)? == pin.contract_digest)
 }
 
-/// The pin of `input`'s SKILL as it stands in `txn`.
+/// The pin of `input`'s SKILL as it stands in `txn`, with `input`'s
+/// arguments as the secret write-wall admits them for `registration`.
 fn pin_in_txn(
     vault: &Vault,
-    txn: &heed::RoTxn<'_>,
+    txn: &mut heed::RwTxn<'_>,
     input: &ArmTurnProgram,
+    registration: EntityId,
 ) -> Result<ProgramRecipePin> {
     let record = vault
         .get_skill_record_in_txn(txn, &input.skill)?
@@ -222,8 +236,7 @@ fn pin_in_txn(
         .to_hex();
     let entry = call.reference.clone();
     let contract_digest = contract_digest(call)?;
-    let args = serde_json::to_string(&input.args)
-        .map_err(|_| invalid("the arguments cannot be encoded"))?;
+    let args = admitted_args_in_txn(vault, txn, registration, &input.args)?;
     Ok(ProgramRecipePin {
         skill: input.skill,
         version: record.version,
@@ -233,6 +246,31 @@ fn pin_in_txn(
         executor: input.executor.clone(),
         args,
     })
+}
+
+/// `args` as the JSON text the secret write-wall admits for `registration`,
+/// read as a body so a credential-valued member is read structurally (FIX
+/// 8718): with the owner's scanning on, each secret goes to custody and
+/// leaves its handle; a hit the wall cannot place refuses the arming, before
+/// anything is pinned. With scanning off the text is the caller's own.
+fn admitted_args_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    registration: EntityId,
+    args: &serde_json::Value,
+) -> Result<String> {
+    let mut body =
+        serde_json::to_vec(args).map_err(|_| invalid("the arguments cannot be encoded"))?;
+    admit_parts_in_txn(
+        vault,
+        txn,
+        registration,
+        &mut [("body", Part::Body(&mut body))],
+        &mut Lifted::default(),
+    )?;
+    let admitted: serde_json::Value = serde_json::from_slice(&body)
+        .map_err(|_| invalid("the admitted arguments are not JSON"))?;
+    serde_json::to_string(&admitted).map_err(|_| invalid("the arguments cannot be encoded"))
 }
 
 /// BLAKE3 over a call contract: its entry, arguments and returns.

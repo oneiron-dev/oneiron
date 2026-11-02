@@ -2,6 +2,7 @@
 
 use crate::campaign::claims::{
     PREDICATE_CAMPAIGN_MEMBER, PREDICATE_COMM_JURISDICTION, decode_comm_jurisdiction_value,
+    do_not_contact_subjects_in_txn,
 };
 use crate::claim::{ClaimBody, ClaimLifecycleStatus, ClaimSubject};
 use crate::counterparty_contact::normalize_channel_class;
@@ -12,8 +13,9 @@ use crate::store::Store;
 
 use super::codec::{
     active_claim_bodies_in_txn, claim_body_in_txn, map_entries, nested_entity_ref, nested_flag,
-    nested_map, nested_text, resolve_comm_party_in_txn, sole_active_claim_body_in_txn,
+    nested_map, nested_text, nested_texts, sole_active_claim_body_in_txn,
 };
+use super::consent::HydratedConsentFacts;
 use super::evaluate::{
     ComplianceBinding, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,
     HydratedListProvenance, compliance_binding, evaluate_dispatch_compliance,
@@ -21,9 +23,9 @@ use super::evaluate::{
 };
 use super::pack_store::active_compliance_pack_in_txn;
 use super::rules::{
-    CONFIDENCE_MILLIS_SCALE, CompliancePack, PREDICATE_CRM_COMPLIANCE_EVIDENCE,
-    PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION, PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE,
-    PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
+    CHANNEL_WILDCARD, CONFIDENCE_MILLIS_SCALE, CompliancePack, PREDICATE_CRM_COMPLIANCE_CONSENT,
+    PREDICATE_CRM_COMPLIANCE_EVIDENCE, PREDICATE_CRM_COMPLIANCE_JP_PUBLICATION,
+    PREDICATE_CRM_COMPLIANCE_LIST_PROVENANCE, PREDICATE_CRM_COMPLIANCE_MESSAGE_ELEMENTS,
 };
 
 // ---------------------------------------------------------------------------
@@ -33,55 +35,89 @@ use super::rules::{
 /// The external-effect gate's campaign-compliance leg.
 ///
 /// Returns `None` when compliance does not govern the effect at all: no
-/// counterparty, no comm-owned PERSON behind the address, or a PERSON carrying
-/// no campaign membership. Membership IS the campaign scope — the CRM pack's
+/// counterparty, or no PERSON carrying its party key holds a campaign
+/// membership. Membership IS the campaign scope — the CRM pack's
 /// ratified law is that a cohort is claims — so a booking confirmation or a
 /// support reply never enters this stage.
+///
+/// Every governed PERSON behind the address is evaluated on its own facts
+/// (FIX 9658), and the first block in PERSON-id order is the verdict: a twin
+/// that carries the same key cannot lend its consent to, or withdraw its rows
+/// from, another.
 pub(crate) fn campaign_compliance_gate(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     now_utc: u64,
 ) -> Result<Option<ComplianceVerdict>> {
-    Ok(governed_dispatch_in_txn(store, txn, effect, now_utc)?
-        .map(|(pack, facts)| evaluate_dispatch_compliance(&pack, &facts)))
+    let Some((pack, governed)) = governed_dispatches_in_txn(store, txn, effect, now_utc)? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        governed
+            .iter()
+            .map(|facts| evaluate_dispatch_compliance(&pack, facts))
+            .find(|verdict| *verdict != ComplianceVerdict::Allow)
+            .unwrap_or(ComplianceVerdict::Allow),
+    ))
 }
 
 /// The rows the gate's compliance leg binds `effect` to and which of them
 /// block it, before its verdict keeps only the first block and the stale-row
 /// wall reads the clock; `None` where compliance does not govern the effect.
-/// The checkpoint restore compares it across two vaults.
+/// Every governed PERSON's binding folds into one, so the checkpoint restore
+/// compares the same law the live gate applies.
 pub(crate) fn campaign_compliance_binding(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
 ) -> Result<Option<ComplianceBinding>> {
     // No row's binding reads the clock; only the stale-row wall does.
-    Ok(governed_dispatch_in_txn(store, txn, effect, 0)?
-        .map(|(pack, facts)| compliance_binding(&pack, &facts)))
+    let Some((pack, governed)) = governed_dispatches_in_txn(store, txn, effect, 0)? else {
+        return Ok(None);
+    };
+    Ok(governed
+        .iter()
+        .map(|facts| compliance_binding(&pack, facts))
+        .reduce(|mut folded, binding| {
+            folded.rows.extend(binding.rows);
+            folded.uncovered |= binding.uncovered;
+            folded.failed.extend(binding.failed);
+            folded
+        }))
 }
 
-/// The active pack and `effect`'s hydrated facts, or `None` when compliance
-/// does not govern it: no counterparty, no comm-owned PERSON behind the
-/// address, or one in no campaign.
-fn governed_dispatch_in_txn(
+/// The active pack and the hydrated facts of every PERSON the effect's
+/// counterparty names that a campaign governs, in PERSON-id order; `None`
+/// when there is none.
+///
+/// The PERSONs are read from synced truth, every row carrying exactly this
+/// `party_key` (FIX 9658), never from the node-local party shortcut: a
+/// missing or stale shortcut can neither hide a governed PERSON nor pick one
+/// same-key twin over another.
+fn governed_dispatches_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     effect: &ExternalEffectGateInput,
     now_utc: u64,
-) -> Result<Option<(CompliancePack, DispatchComplianceFacts)>> {
+) -> Result<Option<(CompliancePack, Vec<DispatchComplianceFacts>)>> {
     let Some(counterparty) = effect.counterparty.as_deref() else {
         return Ok(None);
     };
-    let Some(subject) = resolve_comm_party_in_txn(store, txn, counterparty)? else {
-        return Ok(None);
-    };
-    if !has_active_claim_in_txn(store, txn, &subject, PREDICATE_CAMPAIGN_MEMBER)? {
+    let mut subjects = do_not_contact_subjects_in_txn(store, txn, counterparty)?;
+    subjects.sort_unstable();
+    let mut governed = Vec::new();
+    for subject in subjects {
+        if has_active_claim_in_txn(store, txn, &subject, PREDICATE_CAMPAIGN_MEMBER)? {
+            governed.push(hydrate_dispatch_compliance_facts(
+                store, txn, effect, subject, now_utc,
+            )?);
+        }
+    }
+    if governed.is_empty() {
         return Ok(None);
     }
-    let pack = active_compliance_pack_in_txn(store, txn)?;
-    let facts = hydrate_dispatch_compliance_facts(store, txn, effect, subject, now_utc)?;
-    Ok(Some((pack, facts)))
+    Ok(Some((active_compliance_pack_in_txn(store, txn)?, governed)))
 }
 
 /// Resolves every fact the evaluator is allowed to see.
@@ -98,16 +134,18 @@ pub(super) fn hydrate_dispatch_compliance_facts(
     now_utc: u64,
 ) -> Result<DispatchComplianceFacts> {
     let observation = jurisdiction_observation_in_txn(store, txn, &counterparty)?;
-    let evidence = dispatch_evidence_in_txn(store, txn, &counterparty)?;
+    let channel = normalize_channel_class(&effect.channel);
+    let evidence = dispatch_evidence_in_txn(store, txn, &counterparty, effect, &channel)?;
     let elements = message_elements_in_txn(store, txn, effect.channel_identity_ref)?;
     Ok(DispatchComplianceFacts {
         counterparty,
         jurisdiction: observation.as_ref().map(|(token, _)| token.clone()),
         jurisdiction_confidence_millis: observation.and_then(|(_, confidence)| confidence),
-        channel: normalize_channel_class(&effect.channel),
+        channel,
         legal_form: evidence.legal_form,
         list_provenance: evidence.list_provenance,
         jp_publication: evidence.jp_publication,
+        consent: evidence.consent,
         // A send with no bound sending identity has no identity to disclose,
         // whatever a configuration row claims.
         sender_identity_present: elements.sender_identity && effect.channel_identity_ref.is_some(),
@@ -178,12 +216,15 @@ struct DispatchEvidence {
     legal_form: Option<String>,
     list_provenance: Option<HydratedListProvenance>,
     jp_publication: Option<HydratedJpPublicationFacts>,
+    consent: HydratedConsentFacts,
 }
 
 fn dispatch_evidence_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     subject: &EntityId,
+    effect: &ExternalEffectGateInput,
+    channel: &str,
 ) -> Result<DispatchEvidence> {
     let Some(body) =
         sole_active_claim_body_in_txn(store, txn, subject, PREDICATE_CRM_COMPLIANCE_EVIDENCE)?
@@ -195,6 +236,7 @@ fn dispatch_evidence_in_txn(
         legal_form: nested_text(entries, "legal_form"),
         list_provenance: hydrate_list_provenance(store, txn, subject, entries)?,
         jp_publication: hydrate_jp_publication(store, txn, subject, entries)?,
+        consent: hydrate_consent(store, txn, subject, entries, effect, channel)?,
     })
 }
 
@@ -265,6 +307,81 @@ fn hydrate_jp_publication(
         in_course_of_business: nested_flag(facts, "in_course_of_business"),
         no_marketing_statement_attached: nested_flag(facts, "no_marketing_statement_attached"),
     }))
+}
+
+/// The consent record's field names: the one place hydration spells them.
+mod consent_record {
+    /// The evidence claim's key that cites the record.
+    pub(super) const EVIDENCE_KEY: &str = "consent";
+    pub(super) const REF: &str = "ref";
+    pub(super) const OPT_IN: &str = "opt_in";
+    pub(super) const CHANNELS: &str = "channels";
+    pub(super) const SENDER_REF: &str = "sender_ref";
+    pub(super) const OBTAINED_IN_SALE: &str = "obtained_in_sale";
+    pub(super) const OBTAINED_IN_SALE_NEGOTIATION: &str = "obtained_in_sale_negotiation";
+    pub(super) const SIMILAR_OFFERING: &str = "similar_offering";
+    pub(super) const OBJECTED: &str = "objected";
+    pub(super) const OPTOUT_OFFERED_AT_COLLECTION: &str = "optout_offered_at_collection";
+    pub(super) const CHARITABLE_PURPOSE: &str = "charitable_purpose";
+    pub(super) const EXPRESSED_SUPPORT: &str = "expressed_support";
+}
+
+/// Resolves the consent record the evidence cites (FIX 9657).
+///
+/// The record must be an ACTIVE `crm.compliance.consent` claim on THIS
+/// recipient, like every cited record; superseding or retracting it is how
+/// consent is withdrawn, and it carries no expiry of its own. Its opt-in counts
+/// only for a channel it names (or `*`), and, when it names a sending
+/// identity, only for that one. An unresolved record is no consent record:
+/// every fact it would carry is `false`.
+fn hydrate_consent(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    subject: &EntityId,
+    entries: &[(rmpv::Value, rmpv::Value)],
+    effect: &ExternalEffectGateInput,
+    channel: &str,
+) -> Result<HydratedConsentFacts> {
+    let Some(record_ref) = nested_map(entries, consent_record::EVIDENCE_KEY)
+        .and_then(|nested| nested_entity_ref(nested, consent_record::REF))
+    else {
+        return Ok(HydratedConsentFacts::default());
+    };
+    let Some(record) = evidence_record_in_txn(
+        store,
+        txn,
+        subject,
+        &record_ref,
+        PREDICATE_CRM_COMPLIANCE_CONSENT,
+    )?
+    else {
+        return Ok(HydratedConsentFacts::default());
+    };
+    let facts = map_entries(&record.value);
+    let channel_covered = nested_texts(facts, consent_record::CHANNELS)
+        .iter()
+        .any(|named| named == CHANNEL_WILDCARD || normalize_channel_class(named) == channel);
+    let sender_covered = nested_entity_ref(facts, consent_record::SENDER_REF)
+        .is_none_or(|sender| effect.channel_identity_ref == Some(sender));
+    Ok(HydratedConsentFacts {
+        record_ref: Some(record_ref),
+        explicit_opt_in: nested_flag(facts, consent_record::OPT_IN)
+            && channel_covered
+            && sender_covered,
+        obtained_in_sale: nested_flag(facts, consent_record::OBTAINED_IN_SALE),
+        obtained_in_sale_negotiation: nested_flag(
+            facts,
+            consent_record::OBTAINED_IN_SALE_NEGOTIATION,
+        ),
+        similar_offering: nested_flag(facts, consent_record::SIMILAR_OFFERING),
+        no_objection: !nested_flag(facts, consent_record::OBJECTED),
+        optout_offered_at_collection: nested_flag(
+            facts,
+            consent_record::OPTOUT_OFFERED_AT_COLLECTION,
+        ),
+        charitable_purpose: nested_flag(facts, consent_record::CHARITABLE_PURPOSE),
+        expressed_support: nested_flag(facts, consent_record::EXPRESSED_SUPPORT),
+    })
 }
 
 /// A cited record counts only when it is an ACTIVE CLAIM of the expected

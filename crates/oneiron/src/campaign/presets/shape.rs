@@ -70,7 +70,7 @@ pub struct LanePolicyData {
 pub struct SnoozePolicyData {
     /// Shortest admissible pause.
     pub min_secs: u64,
-    /// Pause taken when the reply names no date.
+    /// Pause taken when the reply names no date, counted from the reply.
     pub default_secs: u64,
     /// Longest admissible pause.
     pub max_secs: u64,
@@ -79,6 +79,19 @@ pub struct SnoozePolicyData {
     pub wake_on_new_trigger: bool,
     /// Always 0: re-entry restarts at touch 1.
     pub restart_touch_index: u32,
+}
+
+impl SnoozePolicyData {
+    /// The snooze dials as JSON, the shape `defaults.json` and a preset carry.
+    pub(crate) fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "min_secs": self.min_secs,
+            "default_secs": self.default_secs,
+            "max_secs": self.max_secs,
+            "wake_on_new_trigger": self.wake_on_new_trigger,
+            "restart_touch_index": self.restart_touch_index,
+        })
+    }
 }
 
 /// Which ARCH-0032b brief a template describes.
@@ -154,7 +167,8 @@ pub enum RhythmAnchor {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CommitmentRhythmData {
-    /// ISO-8601 period token, `P1M`; data only, not a new `Schedule` variant.
+    /// ISO-8601 period token (`P1M` by default); data only, not a new
+    /// `Schedule` variant.
     pub period: String,
     /// The checkpoints inside one period.
     pub checkpoints: Vec<RhythmCheckpointData>,

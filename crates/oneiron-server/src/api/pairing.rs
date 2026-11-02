@@ -63,8 +63,12 @@ pub(super) async fn create_link(
         // refuses it.
         Some(ownership) => {
             let owner = super::owner_routes::owner(&auth, &server)?;
-            let surface =
-                super::owner_routes::machine_routes::act_surface(&server, &auth, &parts.headers);
+            let surface = super::owner_routes::machine_routes::act_surface_admitted(
+                &server,
+                &auth,
+                &parts.headers,
+                &parts.extensions,
+            );
             with_issuer(&server, |issuer| {
                 server.vault().issue_machine_pairing_link(
                     issuer,
@@ -166,6 +170,7 @@ pub(super) async fn oauth_exchange(
         token: slip.to_token().map_err(|_| ApiError::unauthorized())?,
         pin: None,
         home: None,
+        re_paired: false,
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
     }))
 }
@@ -181,10 +186,16 @@ pub(super) struct RedeemLink {
     /// link that adds a machine.
     #[serde(default)]
     machine: Option<MachineEnrolment>,
+    /// The joining machine's install-key signature over this redemption
+    /// (`oneiron::authority::machine_possession_transcript`), hex: with it a
+    /// machine this home already holds pairs again under its own identity
+    /// and class, credential only (FIX 8636). Read only beside `machine`.
+    #[serde(default)]
+    machine_possession: Option<String>,
 }
 /// [`MachineEnrolmentRequest`] on the wire: hex ids and keys, base64 for the
 /// 1600-byte encryption key.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(super) struct MachineEnrolment {
     vault_id: String,
@@ -231,6 +242,10 @@ pub(super) struct Paired {
     /// device dials (`oneiron device enrol`).
     #[serde(skip_serializing_if = "Option::is_none")]
     home: Option<PairedHome>,
+    /// The link paired again a machine this home already holds, credential
+    /// only (FIX 8636): its identity and profile stand as they were.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    re_paired: bool,
     /// Whom the paired slip may message (FIX 3899): the reach the owner set
     /// on the link, `vault` when he set none.
     comm: oneiron::authority::CommReach,
@@ -278,14 +293,22 @@ pub(super) async fn redeem(
         .as_ref()
         .map(MachineEnrolment::request)
         .transpose()?;
+    let possession = request
+        .machine_possession
+        .as_deref()
+        .map(parse_signature)
+        .transpose()?
+        .map(|proof| <[u8; 64]>::try_from(proof).map_err(|_| ApiError::unauthorized()))
+        .transpose()?;
     let redeemed = with_issuer(&server, |issuer| {
-        server.vault().redeem_pairing_link_pinned(
+        server.vault().redeem_pairing_link_with_possession(
             issuer,
             &request.code,
             &request.holder_ref,
             binding_key,
             &signature,
             machine.as_ref(),
+            possession.as_ref(),
         )
     })?;
     let slip = &redeemed.slip;
@@ -320,6 +343,7 @@ pub(super) async fn redeem(
         token,
         pin: redeemed.pin,
         home,
+        re_paired: redeemed.re_paired,
         comm: oneiron::authority::effective_slip_comm(redeemed.slip.claims.comm),
     }))
 }
@@ -444,17 +468,10 @@ pub(super) fn with_issuer<T>(
         }
         _ => renewal_error::renewal_refusal(&error).unwrap_or_else(ApiError::unauthorized),
     };
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return operation(issuer).map_err(refusal);
-    }
-    let secret = server
-        .config
-        .auth_secret
-        .as_deref()
-        .ok_or_else(ApiError::unauthorized)?;
-    let issuer =
-        HostSlipIssuer::from_secret(secret.as_bytes()).map_err(|_| ApiError::unauthorized())?;
-    operation(&issuer).map_err(refusal)
+    // The managed issuer, else this install's own self-host root issuer
+    // (FIX-LIST 3018); a host holding neither signs nothing.
+    let issuer = server.host_issuer().ok_or_else(ApiError::unauthorized)?;
+    operation(issuer).map_err(refusal)
 }
 
 /// Runs `operation` with the host's own slip issuer as [`with_issuer`] finds
@@ -464,15 +481,7 @@ pub(super) fn with_host_issuer<T>(
     server: &SyncServer,
     operation: impl FnOnce(Option<&HostSlipIssuer>) -> T,
 ) -> T {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return operation(Some(issuer));
-    }
-    let issuer = server
-        .config
-        .auth_secret
-        .as_deref()
-        .and_then(|secret| HostSlipIssuer::from_secret(secret.as_bytes()).ok());
-    operation(issuer.as_ref())
+    operation(server.host_issuer())
 }
 
 #[derive(Deserialize)]

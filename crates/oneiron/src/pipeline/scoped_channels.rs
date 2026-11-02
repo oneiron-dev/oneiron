@@ -67,7 +67,7 @@ impl PipelineBuilder<'_> {
             &self.read,
             rtxn,
             query,
-            scoped_vector_channel_limit(requested, narrowed),
+            scoped_vector_channel_limit(requested, narrowed, self.result_limit()),
             self.skip_vector_rescore,
             (claim_gate.private_note_ids.as_deref(), admission),
         )?;

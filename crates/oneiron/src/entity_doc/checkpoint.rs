@@ -19,7 +19,16 @@
 
 mod documents;
 mod loro;
+mod message_receipts;
 mod proposal;
+
+// The entity document family's Loro split and join (FIX 9126): a group is
+// its full snapshot, then its updates in replay order.
+#[allow(
+    unused_imports,
+    reason = "L03's sync checkpoint adapter calls these once CHECKPOINT_PAYLOADS_ENABLED is on"
+)]
+pub(crate) use self::loro::{join as join_entity_doc_loro, split as split_entity_doc_loro};
 
 use std::collections::BTreeMap;
 

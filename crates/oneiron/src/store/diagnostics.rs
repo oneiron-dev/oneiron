@@ -19,6 +19,7 @@ use crate::bm25::{Bm25Diagnostics, Bm25DiagnosticsSnapshot};
 use crate::failure_signals::FailureSignalCounts;
 use crate::gate::GateMetrics;
 
+use super::replay_only_commits::ReplayOnlyCommits;
 use super::{GroupCommitCounters, GroupCommitStats};
 
 /// The diagnostic counters of one open vault.
@@ -40,6 +41,9 @@ pub struct Diagnostics {
     pub(crate) failure_signals: FailureSignalCounts,
     /// Shared write transactions and the logical writes they carried.
     pub(crate) group_commit: GroupCommitCounters,
+    /// Recent commits that wrote only request-replay rows or the clock
+    /// floor, which a Dreamer read phase's guard passes over (FIX 11568).
+    pub(crate) replay_only_commits: ReplayOnlyCommits,
 }
 
 impl Diagnostics {

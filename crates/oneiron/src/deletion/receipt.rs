@@ -138,7 +138,6 @@ pub(super) const ATT_KEY_V: &str = "att_v";
 pub(super) const ATT_VERSION: &str = "1";
 /// MessagePack fixmap(0) — the empty `verification` the transcript tail
 /// carries in place of the four att_ entries.
-#[cfg(feature = "sync")]
 pub(crate) const ATT_EMPTY_MAP_BYTE: u8 = 0x80;
 
 /// The pinned 25 B REDACTION_AUDIT envelope header: receipts are point
@@ -263,7 +262,6 @@ pub(crate) fn decode_redaction_audit_receipt(body: &[u8]) -> Result<RedactionAud
     rmp_serde::from_slice(body).map_err(|_| Error::CorruptedIndex("redaction audit receipt body"))
 }
 
-#[cfg(feature = "sync")]
 fn hex_decode_lower(s: &str) -> Option<Vec<u8>> {
     if !s.len().is_multiple_of(2) || !super::receipt_grammar::is_lower_hex(s) {
         return None;
@@ -277,7 +275,6 @@ fn hex_decode_lower(s: &str) -> Option<Vec<u8>> {
 /// The attestation fields of a validated receipt body plus the byte offset
 /// of the `verification` VALUE — the splice point for transcript
 /// reconstruction (OD-6).
-#[cfg(feature = "sync")]
 pub(crate) struct ReceiptAttestationParts {
     pub(crate) client_id: u64,
     pub(crate) pubkey: [u8; 32],
@@ -289,38 +286,55 @@ pub(crate) struct ReceiptAttestationParts {
 /// The only low-level decode this module hand-rolls: rmpv reads whole
 /// values, and the verifier needs the byte OFFSET of the final entry's
 /// value, so the top-level header + per-entry walk track positions.
-#[cfg(feature = "sync")]
-fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
+fn read_msgpack_map_len(
+    cursor: &mut std::io::Cursor<&[u8]>,
+) -> std::result::Result<u64, AttestationSpliceFailure> {
     use std::io::Read;
     let mut first = [0u8; 1];
-    cursor.read_exact(&mut first).map_err(|_| {
-        Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "body is not valid MessagePack",
-        ))
-    })?;
+    cursor
+        .read_exact(&mut first)
+        .map_err(|_| AttestationSpliceFailure::NotMessagePack)?;
     match first[0] {
         b @ 0x80..=0x8f => Ok(u64::from(b & 0x0f)),
         0xde => {
             let mut len = [0u8; 2];
-            cursor.read_exact(&mut len).map_err(|_| {
-                Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "body is not valid MessagePack",
-                ))
-            })?;
+            cursor
+                .read_exact(&mut len)
+                .map_err(|_| AttestationSpliceFailure::NotMessagePack)?;
             Ok(u64::from(u16::from_be_bytes(len)))
         }
         0xdf => {
             let mut len = [0u8; 4];
-            cursor.read_exact(&mut len).map_err(|_| {
-                Error::Sync(SyncError::InvalidRedactionReceiptBody(
-                    "body is not valid MessagePack",
-                ))
-            })?;
+            cursor
+                .read_exact(&mut len)
+                .map_err(|_| AttestationSpliceFailure::NotMessagePack)?;
             Ok(u64::from(u32::from_be_bytes(len)))
         }
-        _ => Err(Error::Sync(SyncError::InvalidRedactionReceiptBody(
-            "body must be a string-keyed MessagePack map",
-        ))),
+        _ => Err(AttestationSpliceFailure::NotStringKeyedMap),
+    }
+}
+
+/// Why the shared attestation splice failed. The sync wrapper maps each to
+/// the `InvalidRedactionReceiptBody` message `receipt_attestation_parts`
+/// returns today, so the sync path behaves exactly as before.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttestationSpliceFailure {
+    /// The body is not valid MessagePack.
+    NotMessagePack,
+    /// The body is not a string-keyed MessagePack map.
+    NotStringKeyedMap,
+    /// The attestation fields failed re-parse.
+    AttestationReparse,
+}
+
+#[cfg(feature = "sync")]
+impl AttestationSpliceFailure {
+    fn error(self) -> Error {
+        Error::Sync(SyncError::InvalidRedactionReceiptBody(match self {
+            Self::NotMessagePack => "body is not valid MessagePack",
+            Self::NotStringKeyedMap => "body must be a string-keyed MessagePack map",
+            Self::AttestationReparse => "attestation fields failed re-parse",
+        }))
     }
 }
 
@@ -331,11 +345,10 @@ fn read_msgpack_map_len(cursor: &mut std::io::Cursor<&[u8]>) -> Result<u64> {
 /// because the validator pinned `verification` as the FINAL entry in bytes
 /// with no trailing bytes; a non-canonical re-encoding simply fails the
 /// signature (fail closed), never a false accept.
-#[cfg(feature = "sync")]
-pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestationParts> {
-    const MALFORMED: Error = Error::Sync(SyncError::InvalidRedactionReceiptBody(
-        "attestation fields failed re-parse",
-    ));
+fn receipt_attestation_splice_inner(
+    body: &[u8],
+) -> std::result::Result<ReceiptAttestationParts, AttestationSpliceFailure> {
+    const MALFORMED: AttestationSpliceFailure = AttestationSpliceFailure::AttestationReparse;
 
     let mut cursor = std::io::Cursor::new(body);
     let entry_count = read_msgpack_map_len(&mut cursor)?;
@@ -392,6 +405,20 @@ pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestatio
     parts.ok_or(MALFORMED)
 }
 
+/// The shared attestation splice for verifiers without the sync feature:
+/// `None` on any parse failure, which the caller reads as not attested. The
+/// same tail splice the sync lease path verifies over the stored bytes.
+pub(crate) fn receipt_attestation_splice(body: &[u8]) -> Option<ReceiptAttestationParts> {
+    receipt_attestation_splice_inner(body).ok()
+}
+
+/// The shared attestation splice for the sync lease path, with the
+/// `SyncError`s it returns today.
+#[cfg(feature = "sync")]
+pub(crate) fn receipt_attestation_parts(body: &[u8]) -> Result<ReceiptAttestationParts> {
+    receipt_attestation_splice_inner(body).map_err(AttestationSpliceFailure::error)
+}
+
 impl Vault {
     /// Writes a REDACTION_AUDIT receipt as a normal entity-envelope record
     /// (contracts.ts `redactionAuditReceipt.storage`), maintaining the same
@@ -440,6 +467,10 @@ impl Vault {
                 wtxn,
                 &holder,
             )?);
+            // The cloud registration slots an owner's erase took (G7).
+            ids.extend(crate::secret_custody::cloud_registration_erased_with(
+                &holder,
+            ));
         }
         input.scope.entity_ids = ids.iter().map(EntityId::to_hex).collect();
         // A classified corrupt CLAIM this erase took the audited exception for
@@ -458,6 +489,8 @@ impl Vault {
         // by now in this transaction, bound by name on its receipt and never
         // changed (FIX 5844). Missing proof later reads as pending.
         let erased: Vec<EntityId> = ids.into_iter().collect();
+        // An erase reaches the archive copies kept for removed Owners (FIX-LIST 2241).
+        self.scrub_removal_exports_in_txn(wtxn, &erased)?;
         let custody_retirements = self.store.erase_custody_retirements_in_txn(wtxn, &erased)?;
         let sweep_key = if let Some(queued_at) = input.sweep_queued_at {
             self.enqueue_hard_erase_sweep_in_txn(
@@ -505,5 +538,65 @@ impl Vault {
         let receipt = decode_redaction_audit_receipt(&body)?;
         finish_redaction_erase_in_txn(self, wtxn, receipt_id, &receipt, hard_purge_complete_at)?;
         Ok(sweep_key)
+    }
+
+    /// Records the privacy erase of the thread audience edit `edit` in the
+    /// write that rewrote it in place (FIX 10234): a content-free
+    /// REDACTION_AUDIT receipt naming the edit, with no hard-erase sweep, as
+    /// the edit stays live and made by no one. Where this vault keeps sync
+    /// windows, the erasure sweep is owed a compaction of the window that
+    /// carries the edit's earlier revisions, and the receipt completes when
+    /// that settles (`sweep::owed`); without them no window carries it, and
+    /// the receipt completes now. The device key must already be on the
+    /// handle (P6c).
+    pub(crate) fn record_audience_edit_erase_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        edit: &EntityId,
+        actor_principal: Option<EntityId>,
+        reason: DeleteReason,
+        requested_at: u64,
+    ) -> Result<super::DeleteEntityOutcome> {
+        let receipt_id = self.store.clock.entity_id()?;
+        let now = self.store.clock.now_recorded_at();
+        #[cfg(feature = "sync")]
+        let window = {
+            let raw = self.get_raw_in(wtxn, edit)?.ok_or(Error::EntityNotFound)?;
+            crate::sync::residence::residence_window_for_blob(&raw)?
+        };
+        let input = RedactionReceiptInput {
+            actor_principal,
+            room_authority: None,
+            request_id: uuid::Uuid::from_bytes(self.store.clock.ulid()?).to_string(),
+            scope: RedactionScope::entity(edit),
+            reason,
+            requested_at,
+            soft_complete_at: now,
+            hard_purge_complete_at: now,
+            sweep_queued_at: cfg!(feature = "sync").then_some(now),
+        };
+        let identity = crate::identity::ensure_device_identity_in_txn(self, wtxn)?;
+        let body =
+            encode_redaction_audit_receipt(input, Vec::new(), Vec::new(), &receipt_id, &identity)?;
+        self.put_redaction_audit_receipt_in_txn(wtxn, &receipt_id, now, &body)?;
+        #[cfg(feature = "sync")]
+        let sweep_key = crate::sweep::owed::owe_window_compaction_for_receipt_in_txn(
+            self,
+            wtxn,
+            &window,
+            &receipt_id,
+        )?;
+        #[cfg(not(feature = "sync"))]
+        let sweep_key = {
+            let receipt = decode_redaction_audit_receipt(&body)?;
+            finish_redaction_erase_in_txn(self, wtxn, &receipt_id, &receipt, now)?;
+            Vec::new()
+        };
+        Ok(super::DeleteEntityOutcome {
+            existed: true,
+            receipt_id: Some(receipt_id),
+            sweep_key: Some(sweep_key),
+            turn_program_details: Vec::new(),
+        })
     }
 }

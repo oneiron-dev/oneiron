@@ -14,14 +14,6 @@ use super::{PackKind, invalid};
 use crate::error::Result;
 use crate::skill_hub::HubFile;
 
-/// Most accounts one pack may ask the owner to hold.
-pub const MAX_SETUP_ACCOUNTS: usize = 16;
-/// Most connections one pack may declare.
-pub const MAX_SETUP_CONNECTIONS: usize = 16;
-/// Most permissions one connection may ask for.
-pub const MAX_SETUP_PERMISSIONS: usize = 32;
-/// Most credentials one connection may name.
-pub const MAX_SETUP_SECRETS: usize = 8;
 const MAX_SETUP_TOKEN_BYTES: usize = 64;
 const MAX_SETUP_REF_BYTES: usize = 256;
 const MAX_SETUP_LABEL_BYTES: usize = 256;
@@ -29,7 +21,7 @@ const MAX_SETUP_TEXT_BYTES: usize = 1024;
 const MAX_SETUP_LINK_BYTES: usize = 512;
 
 /// What a pack needs before it can work, as its PACK.md declares it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetup {
     /// The bundled skill folder, `skills/<skill>/SKILL.md`, that walks the
@@ -44,7 +36,7 @@ pub struct PackSetup {
 
 /// An account the owner must hold with a provider. Display text and a
 /// sign-up link only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupAccount {
     pub id: String,
@@ -58,7 +50,7 @@ pub struct PackSetupAccount {
 }
 
 /// One connection the pack makes to a provider.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupConnection {
     pub id: String,
@@ -83,7 +75,7 @@ pub struct PackSetupConnection {
 }
 
 /// How a connection signs in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum PackSetupAuth {
     Oauth,
@@ -126,7 +118,7 @@ impl PackSetupAuth {
 }
 
 /// One credential's custody name. Never its value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupSecret {
     /// The custody name the owner registers it under.
@@ -138,11 +130,30 @@ pub struct PackSetupSecret {
     /// Where the owner finds it, in plain words.
     #[serde(default)]
     pub hint: Option<String>,
+    /// The connection is ready without it: it serves only an optional
+    /// permission, and is stored when the owner allows that.
+    #[serde(default)]
+    pub optional: bool,
+}
+
+impl PackSetupConnection {
+    /// Whether every credential the connection needs is stored, by the
+    /// connection's state read in declared order; an optional one may be
+    /// absent.
+    #[must_use]
+    pub fn required_secrets_stored(&self, stored: &[super::PackSetupSecretState]) -> bool {
+        self.secrets.iter().all(|declared| {
+            declared.optional
+                || stored
+                    .iter()
+                    .any(|state| state.name == declared.name && state.stored)
+        })
+    }
 }
 
 /// One permission a connection asks for, shown to the owner like an app
 /// install shows it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PackSetupPermission {
     pub id: String,
@@ -163,7 +174,9 @@ pub struct PackSetupPermission {
     pub optional: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PackSetupRisk {
     Low,
@@ -227,11 +240,6 @@ impl PackSetup {
         if self.accounts.is_empty() && self.connections.is_empty() {
             return Err(invalid("setup declares no account and no connection"));
         }
-        if self.accounts.len() > MAX_SETUP_ACCOUNTS
-            || self.connections.len() > MAX_SETUP_CONNECTIONS
-        {
-            return Err(invalid("setup declares too many accounts or connections"));
-        }
         let mut accounts = BTreeSet::new();
         for account in &self.accounts {
             if !token(&account.id, MAX_SETUP_TOKEN_BYTES)
@@ -267,9 +275,6 @@ impl PackSetup {
             {
                 return Err(invalid("invalid or duplicate setup connection"));
             }
-            if connection.secrets.len() > MAX_SETUP_SECRETS {
-                return Err(invalid("setup connection names too many credentials"));
-            }
             for secret in &connection.secrets {
                 if !graphic(&secret.name, crate::secret_custody::SECRET_NAME_MAX_BYTES)
                     || !secrets.insert(secret.name.as_str())
@@ -283,12 +288,8 @@ impl PackSetup {
                     return Err(invalid("invalid or duplicate setup credential name"));
                 }
             }
-            if connection.permissions.is_empty()
-                || connection.permissions.len() > MAX_SETUP_PERMISSIONS
-            {
-                return Err(invalid(
-                    "a setup connection asks for no permission or too many",
-                ));
+            if connection.permissions.is_empty() {
+                return Err(invalid("a setup connection asks for no permission"));
             }
             let mut permissions = BTreeSet::new();
             let mut scopes = BTreeSet::new();

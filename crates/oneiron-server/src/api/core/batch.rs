@@ -4,7 +4,6 @@ use super::super::DagWriteError;
 use super::super::core_engine_error;
 use super::super::json_payload;
 use super::super::parse_entity_id_param;
-use super::write_shape::CORE_MAX_BATCH_ENTITIES;
 use super::write_shape::core_entity_timestamps;
 use super::write_shape::core_write_refusal;
 use super::write_shape::core_write_text;
@@ -128,6 +127,7 @@ pub(crate) struct CoreBatchResponse {
         (status = 400, description = "Malformed batch or invalid entity body.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Batch commit failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -140,13 +140,6 @@ pub(crate) async fn core_batch(
 ) -> Result<Json<CoreBatchResponse>, DagWriteError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
-    if req.entities.len() > CORE_MAX_BATCH_ENTITIES {
-        return Err(ApiError::bad_request(
-            format!("entities must contain at most {CORE_MAX_BATCH_ENTITIES} entries"),
-            Some("entities"),
-        )
-        .into());
-    }
     // The route's own refusals first; the row mints what the body omits.
     for entity in &req.entities {
         if let Some(id) = &entity.id {
@@ -168,7 +161,11 @@ pub(crate) async fn core_batch(
     // OF-181: `vault.batch`, as an action when the credential binds one,
     // else through the row's own door; both commit at the credential's grade.
     let receipt = match super::super::facade::action_routes::rest_action_bound(
-        &server, &auth, &headers, &input,
+        &server,
+        &auth,
+        &headers,
+        &extensions,
+        &input,
     )? {
         Some(bound) => {
             let row = AgentVerb::VaultBatch;

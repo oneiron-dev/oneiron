@@ -85,7 +85,7 @@ fn invalid() -> Error {
 
 /// The evidence for raising a calibration question. Both kinds have two
 /// explicit alternatives, so an uncertainty does not silently supply a label.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum JudgeAskReason {
     RevisionDisagreement,
@@ -100,13 +100,15 @@ pub enum JudgeAskReason {
 
 /// One question for the responsible human. `id` binds its complete immutable
 /// question; `delivered_at` is only a delivery marker, never an answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeAsk {
     pub id: [u8; 32],
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub skill: EntityId,
     #[serde(with = "crate::serialize::entity_ref")]
+    #[schemars(with = "String")]
     pub responsible: EntityId,
     pub campaign: String,
     pub evidence: String,
@@ -122,7 +124,7 @@ pub struct JudgeAsk {
 
 /// What a [`JudgeAskReason::RubricRecheck`] or
 /// [`JudgeAskReason::RubricRegrade`] ask is about.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeRegrade {
     /// The label's ask id.
@@ -137,6 +139,11 @@ pub struct JudgeRegrade {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct JudgeLabel {
+    /// The row's own id (FIX 12088), minted when the pick is recorded: the
+    /// witness a re-check names beside the rubric it checks against. Labels
+    /// are keyed by their ask id, a question digest, not an `EntityId`.
+    #[serde(with = "crate::serialize::entity_ref")]
+    pub row_id: EntityId,
     pub ask: JudgeAsk,
     pub chosen: String,
     pub picked_at: u64,
@@ -594,6 +601,7 @@ fn pick_in_txn(
     // first, so the edit's stamp reaches only the picks made before it.
     repin_before_pick_in_txn(vault, txn, at)?;
     let label = JudgeLabel {
+        row_id: vault.store.clock.entity_id()?,
         ask,
         chosen,
         picked_at: at,

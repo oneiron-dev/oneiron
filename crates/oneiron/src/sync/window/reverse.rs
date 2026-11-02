@@ -423,6 +423,7 @@ fn reverse_rematerialize_scan(
                 } else {
                     map_insert_bytes(&entities_map, hex_id.as_str(), raw.as_slice())?;
                 }
+                crate::sync::asset_body::references::mirror_ref(vault, doc, id, &raw)?;
                 // FIX 2902: a local re-authoring makes a peer's row this vault's own.
                 if edited {
                     crate::sync::ingest::forget_peer_origin(vault, doc, id, &raw)?;
@@ -492,6 +493,7 @@ fn reverse_rematerialize_scan(
                 && crate::sync::room_facts::mirror_room_facts(
                     vault,
                     doc,
+                    window_key,
                     id,
                     header.entity_type,
                     &[],

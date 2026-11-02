@@ -37,7 +37,7 @@ const DEFAULT_RESERVED_ACTOR_CENSUS_V1: SideTable<(), (), Raw> =
 
 /// `occurred`/`learned_at` for every seeded row, pinned so the six baseline
 /// rows are byte-identical across vaults (idiom: `DEFAULT_POLICY_MANIFEST_TIMESTAMP`).
-const SEEDED_AGENT_DEFINITION_TIMESTAMP: u64 = 0;
+pub(crate) const SEEDED_AGENT_DEFINITION_TIMESTAMP: u64 = 0;
 
 /// A 32-character lower-case hex `EntityId`, the manifest's only id spelling.
 #[derive(Debug)]
@@ -258,7 +258,7 @@ pub(super) fn parse_system_agent_definition_manifest(
         validate_text_field(
             &seed.logical_id,
             AGENT_LOGICAL_ID_MAX_BYTES,
-            "manifest logical id must be a non-empty string at most 256 bytes",
+            "manifest logical id must be a non-empty string",
         )?;
         if !seed.logical_id.starts_with(SYSTEM_LOGICAL_ID_PREFIX) {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
@@ -268,7 +268,7 @@ pub(super) fn parse_system_agent_definition_manifest(
         validate_text_field(
             &seed.display_name,
             AGENT_DISPLAY_NAME_MAX_BYTES,
-            "manifest display name must be a non-empty string at most 256 bytes",
+            "manifest display name must be a non-empty string",
         )?;
         // Schema v1: the gate classifier derives authority by reading the
         // entity stored AT the actor id, so a divergent actor id could never
@@ -470,6 +470,36 @@ pub(super) fn reconcile_system_agent_definitions_in(
     }
     RESERVED_ACTOR_CENSUS_V2.delete(store, wtxn, &())?;
     DEFAULT_RESERVED_ACTOR_CENSUS_V1.delete(store, wtxn, &())?;
+    Ok(())
+}
+
+/// Gives each seeded system agent its model PERSON in the caller's writer
+/// (FIX 12098): every row derives from the manifest and the pinned seed
+/// time, so each device writes the same bytes. A seed whose row is absent,
+/// deleted, erased or not an AGENT_DEF gets none.
+pub(crate) fn ensure_seeded_agent_persons_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    for seed in &system_agent_manifest()?.definitions {
+        let id = seed.entity_id.0;
+        if vault.archive_tombstone_in_txn(txn, &id)?.is_some() {
+            continue;
+        }
+        let crate::vault::LiveEntityRow::Live {
+            entity_type: ENTITY_TYPE_AGENT_DEF,
+            ..
+        } = crate::vault::live_entity_row_in_txn(&vault.store, txn, &id)?
+        else {
+            continue;
+        };
+        crate::context_board::ensure_seeded_agent_person_in_txn(
+            vault,
+            txn,
+            id,
+            &seed.display_name,
+        )?;
+    }
     Ok(())
 }
 

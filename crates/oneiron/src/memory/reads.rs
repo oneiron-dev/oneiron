@@ -21,6 +21,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
+mod receipt_page;
+
 const SNIPPET_MAX_CHARS: usize = 160;
 
 /// Claim ids read per lane read while listing: a bounded list stops early.
@@ -85,7 +87,8 @@ pub struct ClaimListFilter {
 /// One BM25 hit (engine index scores, never re-ranked app-side).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LexicalHit {
-    /// Short ref (hex fallback).
+    /// Short ref (hex fallback), pinned as `<ref>@<revision>` to the revision
+    /// whose text matched when the index names one: the snippet is read there.
     pub short_id: String,
     /// Registry kind string.
     pub kind: String,
@@ -393,13 +396,31 @@ impl Memory<'_> {
     }
 
     /// Lists gated writes parked for consent, newest lane state first. A
-    /// caller off this device sees none about a device-local claim, and none
-    /// takes a place in its page.
+    /// caller off this device sees none about a device-local claim, and a
+    /// handle bound to a read credential sees only the parked claims that
+    /// credential reads: each row by its claim id, a withheld row taking no
+    /// page place.
     pub fn pending_writes(&self, limit: usize) -> MemoryResult<Vec<PendingWrite>> {
         let off_device = self.locality == crate::claim::CallerLocality::OffDevice;
+        // A credential cut refills past withheld rows like the off-device one
+        // (FIX 9955): fetch all when either applies, then count the page.
+        let refill = off_device || self.read_proof.is_some();
         let mut records =
             self.vault
-                .pending_gate_consents(if off_device { usize::MAX } else { limit })?;
+                .pending_gate_consents(if refill { usize::MAX } else { limit })?;
+        // A credential-bound reader sees only the rows its read lane admits
+        // (OF-172 D2), judged in one lane read before any count.
+        if self.read_proof.is_some() && !records.is_empty() {
+            let ids: Vec<EntityId> = records
+                .iter()
+                .filter_map(|record| EntityId::from_bytes(record.claim_id).ok())
+                .collect();
+            if let Some(readable) = self.credential_readable_ids(&ids)? {
+                records.retain(|record| {
+                    EntityId::from_bytes(record.claim_id).is_ok_and(|id| readable.contains(&id))
+                });
+            }
+        }
         if off_device {
             let mut admitted = Vec::new();
             for record in records {
@@ -415,6 +436,8 @@ impl Memory<'_> {
                 }
             }
             records = admitted;
+        } else if refill {
+            records.truncate(limit);
         }
         Ok(records
             .into_iter()
@@ -426,90 +449,6 @@ impl Memory<'_> {
                 dreamer_run_id: record.dreamer_run_id,
             })
             .collect())
-    }
-
-    /// Lists gate decision receipts. A caller off this device sees none about
-    /// a device-local claim, and none takes a place in its page.
-    pub fn receipts(&self, limit: usize) -> MemoryResult<Vec<MemoryReceipt>> {
-        let mut records = Vec::new();
-        let mut before = None;
-        while records.len() < limit {
-            let page = self.vault.store.gate_decisions_page(before, limit)?;
-            let exhausted = page.len() < limit;
-            before = page.last().map(|record| record.decision_id);
-            for record in page {
-                if records.len() == limit {
-                    break;
-                }
-                let kept = self.destination.is_off_device()
-                    && match record.claim_id {
-                        Some(id) => self.vault.device_local_keeps_for(
-                            &EntityId::from_bytes(id)?,
-                            &self.destination,
-                        )?,
-                        None => false,
-                    };
-                if !kept {
-                    records.push(record);
-                }
-            }
-            if exhausted || before.is_none() {
-                break;
-            }
-        }
-        Ok(records
-            .into_iter()
-            .map(|record| MemoryReceipt {
-                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
-                kind: crate::receipt::ReceiptKind::Gate.as_str().to_owned(),
-                outcome: record.outcome,
-                created_at: record.created_at,
-                reason_codes: record.reason_codes,
-                actor_class: record.actor_class,
-                actor_ref: record.actor_ref,
-                content_kind: record.content_kind,
-                claim_ref: record.claim_id.map(|id| hex_string(&id)),
-                claim: record
-                    .claim_id
-                    .and_then(|id| EntityId::from_bytes(id).ok())
-                    .map(|id| crate::lens::RecordRef::from_id(ENTITY_TYPE_CLAIM, &id, None)),
-                fields: std::collections::BTreeMap::new(),
-            })
-            .collect())
-    }
-
-    /// `vault.receipts`: with no `kinds`, [`Self::receipts`], the gate
-    /// decision ledger. With kinds (`ReceiptKind` names: `gate`, `hook`,
-    /// `outbound`, ...), the unified receipt family's receipts of those
-    /// kinds, newest first, each in the same shape with its own fields. A
-    /// caller off this device sees none that names a device-local row,
-    /// judged on its family's explicit rows (its trigger, a hook run's reads,
-    /// a share's parties) before any takes a place in its page, which refills
-    /// past them (FIX 1119, FIX 1120). An unknown kind is refused.
-    pub fn receipts_of_kinds(
-        &self,
-        limit: usize,
-        kinds: &[String],
-    ) -> MemoryResult<Vec<MemoryReceipt>> {
-        if kinds.is_empty() {
-            return self.receipts(limit);
-        }
-        let mut query = crate::receipt::ReceiptQuery::new(limit);
-        for name in kinds {
-            let kind = crate::receipt::ReceiptKind::parse(name.trim()).ok_or_else(|| {
-                MemoryError::bad_request_with(
-                    format!("unknown receipt kind {name:?}"),
-                    &[
-                        "Use one of: outbound, gate, identity_lifecycle, scoped_read, share, artifact_settle, proposal_outcome, commitment_lifecycle, extraction, served_form, hook, reference_refusal, task_lifecycle.",
-                    ],
-                )
-            })?;
-            query = query.with_kind(kind);
-        }
-        let mut receipts = self.vault.receipts_for_caller(query, &self.destination)?;
-        // A world's name on the owner's own share receipt is his (FIX 5493).
-        crate::share_travel::screen_owner_notice_fields(self, &mut receipts);
-        Ok(receipts.into_iter().map(family_receipt).collect())
     }
 
     // ── query verbs (BRIDGE-02) ─────────────────────────────────────────
@@ -527,24 +466,43 @@ impl Memory<'_> {
             ));
         }
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
-        let hits = lane.filter_scored_entities(self.vault.search_text(query, limit)?)?;
-        self.lexical_hits(&lane, hits, |id| self.short_ref_of(id))
+        // The lane admits inside the posting scan, before the rank and the
+        // cut, so a row it withholds takes no place a readable match could
+        // fill (FIX 9955); each hit keeps the revision the index matched.
+        let found = lane.search_text_revisioned(query, limit, None)?;
+        let hits = ScopedReadResult {
+            value: found.hits,
+            receipt: found.receipt,
+        };
+        self.lexical_hits(&lane, hits, &found.revisions, |id| self.short_ref_of(id))
     }
 
     /// The admitted `hits` of one BM25 query on `lane`, read there and ranked
     /// by claim source as the pack ranks them, each with its snippet and the
     /// short ref `short_ref` names it by (a room's read names the room's).
+    /// A hit `revisions` names is read at the revision the index matched, and
+    /// its short id names that revision (FIX 9956); any other is read live.
     pub(super) fn lexical_hits(
         &self,
         lane: &crate::claim::ScopedRead<'_>,
         hits: ScopedReadResult<Vec<crate::pipeline::ScoredEntity>>,
+        revisions: &std::collections::HashMap<EntityId, crate::vault::RevisionRef>,
         short_ref: impl Fn(&EntityId) -> MemoryResult<Option<String>>,
     ) -> MemoryResult<ScopedReadResult<Vec<LexicalHit>>> {
         let ScopedReadResult {
             value: hits,
             mut receipt,
         } = hits;
-        let reads: Vec<_> = hits.iter().map(|hit| PointRead::id(hit.id)).collect();
+        let reads: Vec<_> = hits
+            .iter()
+            .map(|hit| {
+                let mode = revisions
+                    .get(&hit.id)
+                    .copied()
+                    .map_or(crate::vault::ReadMode::Live, crate::vault::ReadMode::Pinned);
+                PointRead::id(hit.id).at(mode)
+            })
+            .collect();
         let rows = lane.read(&reads, None)?;
         receipt.restrict_with(&rows.receipt);
         // Admitted hits rank by claim source, as the pack does.
@@ -577,6 +535,18 @@ impl Memory<'_> {
                     .map(|content| truncate_text(content, SNIPPET_MAX_CHARS))
             });
             let short = short_ref(&hit.id)?;
+            let short_id = match revisions.get(&hit.id) {
+                // A pinned ref carries the content hash of the revision it
+                // pins, the row this read admitted, never the live one.
+                Some(revision) => {
+                    let named = match short.as_deref().and_then(|short| short.rsplit_once(':')) {
+                        Some((name, _)) => format!("{name}:{:02x}", row.content_hash),
+                        None => hit.id.to_hex(),
+                    };
+                    format!("{named}@{}", revision.to_hex())
+                }
+                None => short.clone().unwrap_or_else(|| hit.id.to_hex()),
+            };
             out.push(LexicalHit {
                 record: Some(crate::lens::RecordRef::from_body(
                     row.entity_type,
@@ -584,7 +554,7 @@ impl Memory<'_> {
                     short.as_deref(),
                     body.as_ref(),
                 )),
-                short_id: short.unwrap_or_else(|| hit.id.to_hex()),
+                short_id,
                 kind: kind_string_for_type(row.entity_type),
                 score,
                 snippet,

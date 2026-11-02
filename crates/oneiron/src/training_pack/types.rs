@@ -14,14 +14,14 @@ use crate::skill_optimize::{EvalCohort, EvalExposure, EvalSeat};
 use super::TrainingTarget;
 
 /// A source is a repository and an immutable revision, never a moving branch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct SourcePin {
     pub repository: String,
     pub revision: String,
 }
 
 /// A particular version in the vault's existing blob custody.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ArtifactPin {
     pub artifact: EntityId,
     pub version: u64,
@@ -29,7 +29,7 @@ pub struct ArtifactPin {
     pub bytes: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum CheckpointFileKind {
     Weights,
@@ -39,7 +39,7 @@ pub enum CheckpointFileKind {
     AdapterConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CheckpointFilePin {
     pub name: String,
     pub kind: CheckpointFileKind,
@@ -49,7 +49,7 @@ pub struct CheckpointFilePin {
     pub declared_blake3: [u8; 32],
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PinnedCheckpoint {
     pub model: ModelId,
     pub files: Vec<CheckpointFilePin>,
@@ -82,6 +82,10 @@ pub struct ProbeCase {
 pub struct ProbeMeasurement {
     pub probe_id: String,
     pub input_blake3: [u8; 32],
+    /// The trainer's BLAKE3 of the probe's token ids, as the windows it fed
+    /// the encoder (FIX 7568); none from a trainer that reports none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens_blake3: Option<[u8; 32]>,
     pub training_argmax: u64,
     pub export_argmax: u64,
     pub max_logit_difference: f64,
@@ -132,6 +136,12 @@ pub struct CorpusSplit {
     pub cohort: EvalCohort,
     pub rows: Vec<SplitRow>,
     pub exact_hash_overlaps: u64,
+    /// The sources with other people the owner ticked "I obtained consent"
+    /// for this run (ARCH-0053 #training-inputs), sorted; such a source not
+    /// here stayed out of the corpus.
+    pub consented_sources: Vec<EntityId>,
+    /// The pairs the export left out before the split, by reason code.
+    pub excluded: BTreeMap<String, u64>,
     /// A question run's split and consent receipts, from its detector-row
     /// ingress; a role run's reservoir corpus has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -270,6 +280,17 @@ impl<'de> Deserialize<'de> for TrainingOwner {
     }
 }
 
+/// Its schema is its wire form: the actor's hex id, or [`ERASED_CALL_IDENTITY`].
+impl schemars::JsonSchema for TrainingOwner {
+    fn schema_name() -> String {
+        "TrainingOwner".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <String as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 /// The owner's yes on one prepared spec and declaration. It holds no
 /// credential, key, lease or permit; the host takes a fresh permit at dispatch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -290,7 +311,7 @@ pub struct TrainingHold {
     pub at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ExportCheck {
     pub hash_mismatches: Vec<String>,
     pub probe_coverage_matches: bool,
@@ -303,11 +324,41 @@ pub struct ExportCheck {
     /// A question head's own producer check; a role run has none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub question_check: Option<QuestionExportCheck>,
+    /// The host's Candle-side reproduction of a question head's probe
+    /// evidence (FIX 7568); a role run has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub candle_parity: Option<CandleParityCheck>,
+}
+
+/// What the host reproduced of a trained classifier's receipt on the stack
+/// that would serve it (FIX 7568), before it may serve: a check of our own
+/// artifact against the trainer's word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct CandleParityCheck {
+    /// Every probe's token ids, rendered and tokenized here with the
+    /// export's own pinned tokenizer and cut into its windows, hash to the
+    /// trainer's.
+    pub tokens_match: bool,
+    /// The probes whose ids did not reproduce, by id.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub token_mismatches: Vec<String>,
+    /// Whether the export's logits reproduced in Candle: `None` while no
+    /// Candle classifier loader is built here, so none was run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub logits_match: Option<bool>,
+}
+
+impl CandleParityCheck {
+    /// No half that ran failed.
+    #[must_use]
+    pub fn passed(&self) -> bool {
+        self.tokens_match && self.logits_match != Some(false)
+    }
 }
 
 /// What a question head's trainer also measured on its fixed probes: every
 /// logit finite, the export's tokens the training's, and its own verdict.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct QuestionExportCheck {
     pub finite: bool,
     pub tokens_match: bool,
@@ -328,14 +379,14 @@ pub struct TrainingResult {
     pub service_units: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalibrationResult {
     pub temperature: f64,
     pub brier_score: f64,
     pub calibration_error: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct HeldOutResult {
     pub exposure: EntityId,
     pub checkpoint_blake3: [u8; 32],
@@ -382,17 +433,21 @@ pub struct TrainingPackDraft {
     pub split: SplitPolicy,
     pub compute: ComputeChoice,
     pub quantity: u64,
+    /// The sources with other people the owner selects for this run, each
+    /// ticked "I obtained consent". The owner's own sources need no tick.
+    #[serde(default)]
+    pub consented_sources: Vec<EntityId>,
 }
 
 /// A separate owner decision; an override keeps the failed checks on its receipt.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SwapChoice {
     Evaluated,
     ExplicitOverride { reason: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct RoleSwapReceipt {
     pub id: EntityId,
     pub run: EntityId,

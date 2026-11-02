@@ -30,10 +30,10 @@ use oneiron::fanout_auto::FanoutDecisions;
 use oneiron::llm::decision::catalogue::{ASK_UP, IMAGE_PRESENCE, TASK_SURFACE, THINK_MORE};
 use oneiron::llm::decision::{
     AnswerContract, DecisionAnswer, DecisionAsks, DecisionBand, DecisionBandPolicy, DecisionCall,
-    DecisionDial, DecisionPack, DecisionProvider, DecisionQuestion, DecisionReadGate,
-    DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
+    DecisionDial, DecisionLadder, DecisionPack, DecisionProvider, DecisionQuestion,
+    DecisionReadGate, DecisionReadProvider, DecisionRung, GatedRead, HeldLadder, HostRuleProvider,
     ModelDecisionProvider, PersonThreshold, ProviderCapability, ProviderDecision, ProviderPin,
-    RemoteDecisionSeat, SeatPhase, SeatRequest,
+    RemoteDecisionSeat, SeatPhase, SeatRequest, ThinkThreshold,
 };
 use oneiron::llm::run_admission::{CallOutcome, HostAccount, PaidConnector, RunReceiptSink};
 use oneiron::llm::seat::{SeatCandidate, SeatDecisions, SeatNotes, SeatTask};
@@ -65,8 +65,12 @@ use crate::server::SyncServer;
 
 mod adapters;
 mod attach;
+mod claim_merge;
 mod doors;
+mod notes;
 mod refresh;
+
+pub(crate) use adapters::description_notes;
 pub(crate) use refresh::{spawn_person_threshold, spawn_person_threshold_admitted};
 
 /// The rule table's identity on this host: the vault's host rule rows, which the owner's
@@ -78,7 +82,8 @@ const OWNER_ASKS: &str = "owner-asks";
 const TASK_TAKE_WORDING: &str = "Should this agent take the proposed task? Yes only when the \
 task fits what the agent's definition says it does and what it may touch.";
 const TASK_DONE_MET_WORDING: &str = "Does this result meet the task's brief? Yes only when the \
-result meets every yes_if_all criterion and no no_if_any criterion holds.";
+result meets every state.criteria yes_if_all line and no state.criteria no_if_any line holds; \
+a state.criteria not_a_reason_to_say_no line is never a reason to say no.";
 const TASK_ASK_UP_WORDING: &str = "Should this task ask its owner now? Yes when the listed \
 escalation trigger needs a person's answer before the work goes on.";
 /// How long one task surface question may take.
@@ -166,7 +171,11 @@ pub struct DecisionHost {
     bands: DecisionBandPolicy,
     /// The configured start row, when the recipe names a person question.
     person_start: Option<PersonThreshold>,
-    /// One person-row refresh at a time, so an older read never lands last.
+    /// The configured ThinkThreshold start row, when the recipe names a
+    /// paired question with one (FIX 2437).
+    think_start: Option<ThinkThreshold>,
+    /// One threshold-row refresh at a time (the person row's or the think
+    /// row's), so an older read never lands last.
     person_refresh: Arc<std::sync::Mutex<()>>,
     auto_checker: Option<BoundedAutoChecker>,
     image_pick: Option<ImagePickSettings>,
@@ -181,11 +190,18 @@ pub struct DecisionHost {
     /// The big model on the Big rung, kept so one named model can be asked
     /// as it asks ([`Self::ladder_for_model`]).
     big_model: Option<Arc<crate::big_rung::BigModel>>,
+    /// The Big rung for a question whose posture keeps unit text on the
+    /// host: the same big model, sent only where its route keeps the text
+    /// (FIX 9525, [`Self::under_posture`]).
+    big_on_host: Option<Arc<dyn DecisionProvider>>,
     /// Each caller's `ai.verdict` spend this window, for its check (FIX 1123).
     verdict_spend: Arc<crate::decision_verdict::VerdictSpend>,
     /// The vault's credential-broker context, which a `key_secret` System
     /// One seat sends through; `None` until serve sets one.
     broker: Option<crate::models::BrokerContext>,
+    /// The notes beside decided answers: the big model's when one is bound,
+    /// else the template (FIX 3040, 654).
+    notes: notes::HostNotes,
 }
 
 impl DecisionHost {
@@ -211,6 +227,7 @@ impl DecisionHost {
             asks,
             bands: DecisionBandPolicy::default(),
             person_start: None,
+            think_start: None,
             person_refresh: Arc::default(),
             auto_checker: None,
             image_pick: None,
@@ -220,8 +237,10 @@ impl DecisionHost {
             wire_health: None,
             remote_opt_in: false,
             big_model: None,
+            big_on_host: None,
             verdict_spend: Arc::default(),
             broker: None,
+            notes: notes::HostNotes::default(),
         }
     }
 
@@ -245,13 +264,18 @@ impl DecisionHost {
         self.ladder.presence = None;
         self.bands = DecisionBandPolicy::default();
         self.person_start = None;
+        self.think_start = None;
         let Some((door, meter)) = read else {
+            // No house read: the ladder's paired is none, and the bound
+            // big model tracks it (FIX 11466).
+            self.update_big_paired(None);
             return self;
         };
         let Some(probe) = door.probe() else {
             tracing::warn!(
                 "the decision read's recipe names no paired question; the escalation rung stays empty"
             );
+            self.update_big_paired(None);
             return self;
         };
         // Q2: the house read asks it jointly; a generated read asks the
@@ -264,11 +288,14 @@ impl DecisionHost {
             }
         };
         let mut bands = DecisionBandPolicy::default();
-        // Q2's threshold home: a paired reading at the row climbs a rung.
-        if let Some(threshold) = door.think_threshold()
-            && let Err(error) = bands.set_think_threshold(threshold, THINK_THRESHOLD_VERSION)
-        {
-            tracing::warn!(%error, "the think threshold is invalid");
+        // Q2's threshold home: a paired reading at the row climbs a rung. An
+        // accepted Coach row replaces this start value with a higher version
+        // ([`Self::refresh_think_threshold`], FIX 2437).
+        if let Some(threshold) = door.think_threshold() {
+            match bands.set_think_threshold(threshold, THINK_THRESHOLD_VERSION) {
+                Ok(()) => self.think_start = bands.think_threshold(),
+                Err(error) => tracing::warn!(%error, "the think threshold is invalid"),
+            }
         }
         if let Some(wording) = &probe.person {
             match ASK_UP.question(&[], wording.clone(), AnswerContract::Noul) {
@@ -296,6 +323,9 @@ impl DecisionHost {
             }
         }
         self.ladder.paired.clone_from(&paired);
+        // The bound big model reads the rebuilt paired question jointly
+        // (FIX 1557); a rebuild binds it to the new one, or none (FIX 11466).
+        self.update_big_paired(paired.clone());
         let Some(paired) = paired else {
             return self;
         };
@@ -318,6 +348,15 @@ impl DecisionHost {
             }
         }
         self
+    }
+
+    /// The bound big model reads `paired` jointly from now on: a house-read
+    /// rebuild reaches the rung `with_big` bound, which keeps no copy of its
+    /// own (FIX 11466). Nothing bound, nothing to update.
+    fn update_big_paired(&self, paired: Option<DecisionQuestion>) {
+        if let Some(big) = self.big_model.as_ref() {
+            big.set_paired(paired);
+        }
     }
 
     /// The Local-vision seat on the Local rung, when
@@ -389,9 +428,14 @@ impl DecisionHost {
     ) -> Self {
         self.ladder.big = None;
         self.big_model = None;
+        self.big_on_host = None;
+        self.notes = notes::HostNotes::default();
         let Some(settings) = settings else {
             return self;
         };
+        // The house read's paired question, read jointly where the route
+        // reports token scores (FIX 1557).
+        let paired = self.ladder.paired.clone();
         let bound = crate::big_rung::BigModel::bind(
             settings,
             Arc::clone(models),
@@ -399,7 +443,7 @@ impl DecisionHost {
             default_units,
             runtime,
         )
-        .map(Arc::new)
+        .map(|model| Arc::new(model.with_paired(paired)))
         .and_then(|model| {
             let pin = model.pin();
             let provider = ModelDecisionProvider::new(pin, Arc::clone(&model) as _)
@@ -409,6 +453,11 @@ impl DecisionHost {
         match bound {
             Ok((model, rung)) => {
                 self.ladder.big = Some(Arc::new(rung));
+                self.big_on_host =
+                    ModelDecisionProvider::new(model.pin(), Arc::new(model.kept_on_host()))
+                        .ok()
+                        .map(|rung| Arc::new(rung) as Arc<dyn DecisionProvider>);
+                self.notes = notes::HostNotes::new(Some(Arc::clone(&model)));
                 self.big_model = Some(model);
             }
             Err(error) => tracing::warn!(%error, "the big model cannot fill its rung"),
@@ -488,7 +537,7 @@ impl DecisionHost {
                 dial: self.dial(DecisionRung::Big),
                 bands: self.bands.clone(),
                 wording: wording.to_owned(),
-                notes: Arc::new(LadderNotes),
+                notes: Arc::new(self.notes.clone()),
                 calibrated: None,
             })
         });

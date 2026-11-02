@@ -434,6 +434,21 @@ pub(super) fn wait_key(record: &CodeRunReplayRecord, wait: &SelfDurableWait) -> 
     }
 }
 
+/// The wait the run `record` holds is parked on now, read through the
+/// storage its rows are in, and the key its reply is delivered under:
+/// `None` once it resumed from its latest wait, or never parked (FIX 4284).
+/// It reads the record's latest terminal marker as an entry of the run
+/// does, and enters nothing.
+pub(crate) fn parked_wait_now(
+    storage: &ExecutorStorage<'_>,
+    record: &CodeRunReplayRecord,
+) -> EngineExecutorResult<Option<(WaitKey, SelfDurableWait)>> {
+    Ok(match load_terminal_status(storage, record)? {
+        Some(EngineExecutorStatus::Waiting(wait)) => Some((wait_key(record, &wait), wait)),
+        _ => None,
+    })
+}
+
 /// The wait a step's commit parks its run on, for the step writer's seal:
 /// its key, and the step's first bridge position.
 pub(super) fn parked_wait(

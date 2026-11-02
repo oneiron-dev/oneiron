@@ -24,9 +24,10 @@ pub trait PressGrants: Send {
 
 /// The session's book of presses: the grants' policy as last read, the
 /// sends a person's press over a reviewed batch covers, and the sends a
-/// batch press already paid, per class.
+/// batch press already paid, per class. A desktop session keeps the same
+/// book (FIX 12133).
 #[derive(Default)]
-pub(super) struct PressBook {
+pub(crate) struct PressBook {
     granted: SendPolicy,
     approved: BTreeMap<String, u32>,
     spent: BTreeMap<String, u32>,
@@ -34,16 +35,41 @@ pub(super) struct PressBook {
 }
 
 impl PressBook {
-    pub(super) fn new(granted: SendPolicy) -> Self {
+    pub(crate) fn new(granted: SendPolicy) -> Self {
         Self {
             granted,
             ..Self::default()
         }
     }
 
+    /// Gives the book the host's live read of the vault's grants.
+    pub(crate) fn set_live(&mut self, grants: Box<dyn PressGrants>) {
+        self.live = Some(grants);
+    }
+
+    /// Sets the grants' policy as they stand now. The sends a batch press
+    /// already paid stay paid (FIX 4615).
+    pub(crate) fn set_granted(&mut self, granted: SendPolicy) {
+        self.granted = granted;
+    }
+
+    /// The policy a classified send runs under now: the grants read again
+    /// where the host reads them live, less the sends already paid.
+    pub(crate) fn refresh(&mut self) -> SendPolicy {
+        if let Some(live) = &self.live {
+            self.granted = live.current();
+        }
+        self.policy()
+    }
+
+    /// Counts a send a batch press paid.
+    pub(crate) fn paid(&mut self, class: &str) {
+        *self.spent.entry(class.to_owned()).or_default() += 1;
+    }
+
     /// The policy the sends run under now: the grants' modes, each batch's
     /// budget with a person's approved sends, less the sends it paid.
-    fn policy(&self) -> SendPolicy {
+    pub(crate) fn policy(&self) -> SendPolicy {
         let mut policy = self.granted.clone();
         for (class, count) in &self.approved {
             let mode = policy.modes.entry(class.clone()).or_default();
@@ -64,14 +90,14 @@ impl BrowserSession {
     /// Gives the session the host's live read of the vault's grants: each
     /// classified send reads them again (FIX 4613).
     pub fn set_press_grants(&mut self, grants: Box<dyn PressGrants>) {
-        self.presses.live = Some(grants);
+        self.presses.set_live(grants);
     }
 
     /// Sets the grants' policy as they stand now. The sends a batch press
     /// already paid stay paid: a door that binds the session again never
     /// refills them (FIX 4615).
     pub fn set_policy(&mut self, policy: SendPolicy) {
-        self.presses.granted = policy;
+        self.presses.set_granted(policy);
         self.policy = self.presses.policy();
     }
 
@@ -86,16 +112,13 @@ impl BrowserSession {
     /// The policy a classified send runs under now: the grants read again
     /// where the host reads them live, less the sends already paid.
     pub(super) fn press_policy(&mut self) -> &mut SendPolicy {
-        if let Some(live) = &self.presses.live {
-            self.presses.granted = live.current();
-        }
-        self.policy = self.presses.policy();
+        self.policy = self.presses.refresh();
         &mut self.policy
     }
 
     /// Counts a send a batch press paid.
     pub(super) fn press_paid(&mut self, class: &str) {
-        *self.presses.spent.entry(class.to_owned()).or_default() += 1;
+        self.presses.paid(class);
     }
 }
 

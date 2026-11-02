@@ -13,16 +13,22 @@ pub use dissent::{
 };
 mod persistence;
 mod questions;
+pub(crate) use outcomes::rewrite_outcome_artifact_ids_in_txn;
 pub use outcomes::{record_review_outcome, recurring_findings};
 use persistence::*;
 pub(crate) use persistence::{
-    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn, trusted_review_in_txn,
+    DeclaredCritique, critique_review_refs_in_txn, declared_critiques_in_txn,
+    erase_review_session_in_txn, rewrite_verdict_artifact_ids_in_txn, trusted_review_in_txn,
 };
 pub use questions::{
     REVIEW_DIAL, ReviewDecisions, ReviewFinding, ReviewNote, ReviewNotes, ReviewWording,
 };
 mod submit;
 pub use submit::{CriticBinding, CriticReviewOutcome, CriticReviewSubmit};
+mod team_outcome;
+pub(crate) use team_outcome::{
+    name_deliverable_critics_in_txn, record_deliverable_outcomes_in_txn,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -44,6 +50,8 @@ pub struct CriticReviewInput {
     pub axis: String,
     pub run_id: String,
     pub branch_attempt: AttemptId,
+    /// The reviewed run's declared project; `None` is the vault (FIX 6038).
+    pub project: Option<EntityId>,
 }
 
 /// The stored lens skill and the actor executing it. Catalogue domains describe
@@ -73,6 +81,11 @@ pub struct ReviewRequest {
     /// review for. Kept on the stored review; not part of its identity, so a
     /// replayed review keeps the run first declared for it.
     pub spawn_attempt: Option<EntityId>,
+    /// The project the caller declares the reviewed run works in: the
+    /// scope of the critics' reliability cells (FIX 6038); `None` is the
+    /// vault. Part of the review's and its artifacts' identity when set, so
+    /// a review under another project never reuses this one's calibration.
+    pub project: Option<EntityId>,
 }
 
 #[derive(Debug, Clone)]
@@ -117,6 +130,7 @@ pub fn review_artifact(
             .executor(critic.actor.entity_ref().to_hex())
             .type_ref(request.type_ref.clone())
             .axis(request.axis.clone())
+            .project(request.project)
             .validate()?;
     }
     if !request.auto_resolve_threshold.is_finite()
@@ -160,6 +174,7 @@ pub fn review_artifact(
                 axis: request.axis.clone(),
                 run_id: request.run_id.clone(),
                 branch_attempt: request.branch_attempt,
+                project: request.project,
             })
         })
         .collect::<Result<Vec<_>>>()?;

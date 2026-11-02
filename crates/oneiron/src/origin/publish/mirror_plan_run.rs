@@ -13,6 +13,7 @@ use super::mirror_plan::{MirrorRunScope, MirrorSelection};
 use super::mirror_plan_dispatch::ref_outcomes;
 use super::mirror_plan_reconcile::MirrorReconcile;
 use super::mirror_plan_types::{MirrorBatchClaim, MirrorPushPlan, MirrorRefOutcome};
+use super::secret_hold::held_refs_failure;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -56,19 +57,34 @@ impl Vault {
     ) -> Result<Option<MirrorPlanSummary>> {
         let (plan_id, plan) = {
             let txn = self.store.env.read_txn()?;
-            let head = self.mirror_work_head_in_txn(&txn, scope.repo_id)?;
+            // A head that does not decode is rebuilt with no plan open, so
+            // the mirror plans afresh; it holds this run, once.
+            let head = match self.mirror_work_head_in_txn(&txn, scope.repo_id) {
+                Ok(head) => head,
+                Err(error)
+                    if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode =>
+                {
+                    drop(txn);
+                    self.rebuild_mirror_work_head(scope.repo_id, &error)?;
+                    return Err(error);
+                }
+                Err(error) => return Err(error),
+            };
             let Some(plan_id) = head.open else {
                 return Ok(None);
             };
-            (
-                plan_id,
-                self.mirror_plan_in_txn(&txn, scope.repo_id, plan_id),
-            )
+            let plan = self
+                .mirror_plan_in_txn(&txn, scope.repo_id, plan_id)
+                .and_then(|plan| match plan {
+                    Some(plan) => self.mirror_batches_in_txn(&txn, &plan).map(|_| Some(plan)),
+                    None => Ok(None),
+                });
+            (plan_id, plan)
         };
-        // A plan an actor scrub dropped, or whose row does not decode, can
-        // never send: it is forgotten and the mirror plans afresh. One that
-        // does not decode holds this run, once (`review_unavailable`, cause
-        // decode).
+        // A plan an actor scrub dropped, or whose plan or batch row does not
+        // decode, can never send: it is forgotten and the mirror plans
+        // afresh. One that does not decode holds this run, once
+        // (`review_unavailable`, cause decode).
         let plan = match plan {
             Ok(Some(plan)) => plan,
             Ok(None) => {
@@ -129,6 +145,7 @@ impl Vault {
         if summary.settled {
             self.close_mirror_plan_in_txn(&mut txn, plan, summary.landed, false)?;
             txn.commit()?;
+            self.release_mirror_plan_pins(scope.wire, scope.handle, plan);
         }
         Ok(summary)
     }
@@ -136,8 +153,9 @@ impl Vault {
 
 impl Vault {
     /// Closes an open plan that can never send: its row is gone (an actor
-    /// scrub dropped it) or does not decode, and is dropped here with its
-    /// pages and batches under a key-only WARN. The mirror plans again.
+    /// scrub dropped it), or it or one of its batch rows does not decode,
+    /// and is dropped here with its pages and batches under a key-only
+    /// WARN. The mirror plans again.
     pub(super) fn forget_open_mirror_plan(
         &self,
         repo_id: EntityId,
@@ -149,7 +167,15 @@ impl Vault {
             return Ok(());
         }
         match self.mirror_plan_in_txn(&txn, repo_id, plan_id) {
-            Ok(Some(_)) => return Ok(()),
+            Ok(Some(plan)) => match self.mirror_batches_in_txn(&txn, &plan) {
+                Ok(_) => return Ok(()),
+                Err(error)
+                    if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode =>
+                {
+                    self.drop_undecodable_mirror_plan_in_txn(&mut txn, repo_id, plan_id, &error)?;
+                }
+                Err(error) => return Err(error),
+            },
             Ok(None) => {}
             Err(error) if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode => {
                 self.drop_undecodable_mirror_plan_in_txn(&mut txn, repo_id, plan_id, &error)?;
@@ -209,10 +235,17 @@ impl Vault {
         Ok(())
     }
 
-    /// Whether a mirror has an open plan to settle.
+    /// Whether a mirror has an open plan to settle. A head that does not
+    /// decode counts as one: the run that reads it rebuilds it.
     pub(crate) fn origin_mirror_work_open(&self, repo_id: EntityId) -> Result<bool> {
         let txn = self.store.env.read_txn()?;
-        Ok(self.mirror_work_head_in_txn(&txn, repo_id)?.open.is_some())
+        match self.mirror_work_head_in_txn(&txn, repo_id) {
+            Ok(head) => Ok(head.open.is_some()),
+            Err(error) if OriginMirrorHoldCause::of(&error) == OriginMirrorHoldCause::Decode => {
+                Ok(true)
+            }
+            Err(error) => Err(error),
+        }
     }
 }
 
@@ -225,6 +258,7 @@ fn summarize(
     let mut vector = Vec::new();
     let (mut deleted, mut unproven, mut paused) = (0_u64, 0_u64, 0_u64);
     let (mut remote_moved, mut refused) = (Vec::new(), Vec::new());
+    let mut secret_held = Vec::new();
     for (plan_ref, outcome) in plan.refs.iter().zip(outcomes) {
         match &plan_ref.new {
             Some(new) => vector.push((
@@ -237,6 +271,7 @@ fn summarize(
             MirrorRefOutcome::RemoteMoved => remote_moved.push(plan_ref.ref_name.clone()),
             MirrorRefOutcome::Refused => refused.push(plan_ref.ref_name.clone()),
             MirrorRefOutcome::Paused => paused = paused.saturating_add(1),
+            MirrorRefOutcome::Held => secret_held.push(plan_ref.ref_name.clone()),
             outcome if !outcome.settled() => unproven = unproven.saturating_add(1),
             _ => {}
         }
@@ -245,6 +280,9 @@ fn summarize(
     let landed = outcomes.iter().all(|outcome| outcome.landed());
     let failure = (!landed).then(|| {
         let mut parts = Vec::new();
+        if !secret_held.is_empty() {
+            parts.push(held_refs_failure(&secret_held));
+        }
         if unproven > 0 {
             parts.push(format!(
                 "mirror_plan_unproven: {unproven} refs await a reconcile read"

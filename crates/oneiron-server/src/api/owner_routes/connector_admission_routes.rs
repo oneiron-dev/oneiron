@@ -26,15 +26,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use std::time::Instant;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::{get, post};
 use oneiron::connector_key::{
     ConnectorCallClass, ConnectorCatalogEntry, ConnectorGrantSlate, ConnectorKeyRecord,
     ConnectorKeySpec, ConnectorKeyStatus, ConnectorQualificationError, ConnectorSlateDrafter,
-    ProbeManifestQualifier, SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
+    OwnerAttestedManifestQualifier, ProbeManifestQualifier, ResolvedConnectorManifest,
+    SlateDisposition, SlateManifest, SlateOwnerOverride, SlateToolManifest,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::DecisionRung;
@@ -50,12 +49,15 @@ use reqwest::header::HeaderValue;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params, unix_seconds_now};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::{query_params, unix_seconds_now};
 use crate::auth::CoreAuth;
 use crate::config::connectors::normalize_name;
 use crate::connector_admission_host::{self as host, QualificationKit, ToolClass};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
+
+pub(crate) mod schema;
 
 /// A generic MCP catalog's entry-wide class: scoped-MCP tool calls,
 /// unbudgeted for sends (ARCH-0054).
@@ -64,19 +66,10 @@ const CATALOG_CALL_CLASS: ConnectorCallClass = ConnectorCallClass::ScopedMcp;
 /// Why an owner's off switch suspends a connector's key.
 const OWNER_OFF_REASON: &str = "switched off by the owner";
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/connectors/register", post(register))
-        .route("/connectors/setup", get(setup))
-        .route("/connectors/slate/accept", post(accept))
-        .route("/connectors/qualify", post(qualify))
-        .route("/connectors/refresh", post(refresh))
-        .route("/connectors/enabled", post(enabled))
-        .route("/connectors/proxy", post(proxy))
-        .route("/connectors/proxy/revoke-write", post(revoke_proxy_write))
-}
+mod table;
+pub(super) use self::table::owner_table;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RegisterRequest {
     /// The catalog name, as `[connectors.<name>]` installs it.
@@ -98,7 +91,7 @@ struct SetupQuery {
     connector: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AcceptRequest {
     pub(crate) connector: String,
@@ -117,14 +110,20 @@ pub(crate) struct AcceptRequest {
     pub(crate) all_manual: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct QualifyRequest {
     pub(crate) connector: String,
     pub(crate) kit: QualificationKit,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AttestRequest {
+    pub(crate) connector: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RefreshRequest {
     connector: String,
@@ -134,14 +133,14 @@ struct RefreshRequest {
     tools: BTreeMap<String, ToolClass>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct EnabledRequest {
     connector: String,
     enabled: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Refreshed {
     connector: String,
     /// The connector's tools or revision changed, and the key is Pending.
@@ -156,7 +155,7 @@ struct Refreshed {
     dropped: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct Registered {
     connector: String,
     endpoint: String,
@@ -164,6 +163,9 @@ struct Registered {
     status: &'static str,
     protocol_revision: Option<String>,
     slate: SlateView,
+    /// What registration took on the connector's word and could not check
+    /// (TP4, FIX 2607); empty when it took nothing.
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -288,10 +290,10 @@ fn unresolvable() -> OwnerError {
 async fn register(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RegisterRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RegisterRequest>,
 ) -> OwnerReply<Registered> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || register_connector(&server, &owner, request)).await?;
     Ok(Json(reply))
 }
@@ -372,6 +374,9 @@ fn register_connector(
         status: record.status.as_str(),
         protocol_revision: record.protocol_revision,
         slate: SlateView::new(vault, slate_id, &slate)?,
+        warnings: host::self_declared_hints_warning(&discovery.tools)
+            .into_iter()
+            .collect(),
     })
 }
 
@@ -414,10 +419,10 @@ async fn setup(
 async fn accept(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AcceptRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AcceptRequest>,
 ) -> OwnerReply<SlateView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || accept_slate(server.vault(), &owner, request, None)).await?;
     Ok(Json(reply))
 }
@@ -494,10 +499,10 @@ pub(crate) fn accept_slate(
 async fn qualify(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<QualifyRequest>, JsonRejection>,
+    payload: OwnerJsonBody<QualifyRequest>,
 ) -> OwnerReply<KeyView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || qualify_connector(&server, &owner, &request)).await?;
     Ok(Json(reply))
 }
@@ -542,16 +547,75 @@ pub(crate) fn qualify_connector(
 
 /// Stages the resolved manifest under the suite, then runs the suite again
 /// to activate the key: two full runs on the one surface the owner stamped.
-fn probe(
+/// `POST /v1/owner/connectors/attest`: CONNECTOR-QUALIFY = A (owner ruling
+/// 2026-10-30 05:52 JST). The owner attests a pending connector the probe
+/// suite cannot grade (one that returns no `oneiron/probe` evidence). Its
+/// tools are listed again and must match the slate he stamped; the manifest
+/// stages under his attestation and the key activates with an
+/// owner-attested receipt. Owner-only: no agent verb reaches it, and
+/// `/qualify` stays the default.
+async fn attest(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<AttestRequest>,
+) -> OwnerReply<KeyView> {
+    let owner = owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let reply = blocking(move || attest_connector(&server, &owner, &request)).await?;
+    Ok(Json(reply))
+}
+
+fn attest_connector(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    request: &AttestRequest,
+) -> OwnerResult<KeyView> {
+    let vault = server.vault();
+    let (name, endpoint) = installed(server, &request.connector)?;
+    let catalog = catalog(vault, &name)?;
+    let revision =
+        catalog.record.protocol_revision.clone().ok_or_else(|| {
+            OwnerError::Invalid("the connector pins no protocol revision".to_owned())
+        })?;
+    if catalog.record.status != ConnectorKeyStatus::Pending {
+        return Err(OwnerError::Refused(
+            "the connector is already admitted".to_owned(),
+        ));
+    }
+    let resolved =
+        host::with_credential(vault, catalog.record.secret_ref.as_deref(), &name, |auth| {
+            let client = host::client().map_err(engine)?;
+            listed_as_stamped(vault, &catalog, &client, &endpoint, &revision, auth)
+        })
+        .map_err(engine)??;
+    let now = unix_seconds_now();
+    vault
+        .stage_connector_manifest(
+            &catalog.key,
+            resolved,
+            &revision,
+            &OwnerAttestedManifestQualifier { owner },
+            now,
+        )
+        .map_err(engine)?;
+    vault
+        .attest_connector_key(owner, &catalog.key, &revision, now)
+        .map_err(engine)?;
+    let approved = approve(vault, owner, catalog.key)?;
+    Ok(KeyView::new(catalog.key, approved)?)
+}
+
+/// The connector's tools, listed again at `revision` and resolved, when
+/// they are still the ones the owner stamped on its slate.
+fn listed_as_stamped(
     vault: &Vault,
     catalog: &Catalog,
+    client: &reqwest::blocking::Client,
     endpoint: &str,
     revision: &str,
     auth: Option<&HeaderValue>,
-    kit: &QualificationKit,
-) -> OwnerResult<()> {
-    let client = host::client().map_err(engine)?;
-    let discovery = host::discover(&client, endpoint, auth, Some(revision)).map_err(engine)?;
+) -> OwnerResult<ResolvedConnectorManifest> {
+    let discovery = host::discover(client, endpoint, auth, Some(revision)).map_err(engine)?;
     let (_, slate) = slate_of(vault, &catalog.record)?;
     let resolved = host::resolve(&discovery.tools).map_err(|_| unresolvable())?;
     let classes = slate
@@ -563,6 +627,7 @@ fn probe(
                 ToolClass {
                     data_class: tool.data_class,
                     spends: tool.spends,
+                    price: tool.price.clone(),
                 },
             )
         })
@@ -573,6 +638,19 @@ fn probe(
             "the connector's tools changed since it was registered".to_owned(),
         ));
     }
+    Ok(resolved)
+}
+
+fn probe(
+    vault: &Vault,
+    catalog: &Catalog,
+    endpoint: &str,
+    revision: &str,
+    auth: Option<&HeaderValue>,
+    kit: &QualificationKit,
+) -> OwnerResult<()> {
+    let client = host::client().map_err(engine)?;
+    let resolved = listed_as_stamped(vault, catalog, &client, endpoint, revision, auth)?;
     let connector = host::HttpQualificationConnector::new(
         &client,
         endpoint,
@@ -617,10 +695,10 @@ fn probe(
 async fn refresh(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RefreshRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RefreshRequest>,
 ) -> OwnerReply<Refreshed> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || refresh_connector(&server, &owner, request)).await?;
     Ok(Json(reply))
 }
@@ -684,6 +762,7 @@ fn refresh_connector(
                 ToolClass {
                     data_class: tool.data_class,
                     spends: tool.spends,
+                    price: tool.price.clone(),
                 },
             )
         })
@@ -731,12 +810,12 @@ fn refresh_connector(
 async fn enabled(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<EnabledRequest>, JsonRejection>,
+    payload: OwnerJsonBody<EnabledRequest>,
 ) -> OwnerReply<KeyView> {
     // The owner's proof rides into the switch's own transaction and is
     // revalidated there (FIX 8197).
     let proof = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || switch_connector(server.vault(), &request, &proof)).await?;
     Ok(Json(reply))
 }
@@ -778,10 +857,10 @@ fn switch_connector(
 async fn proxy(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ProxyConnectorAdmitRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ProxyConnectorAdmitRequest>,
 ) -> OwnerReply<ProxyConnectorRegistration> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
         let admitted = server
@@ -800,10 +879,10 @@ async fn proxy(
 async fn revoke_proxy_write(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ProxyConnectorRevokeWriteRequest>, JsonRejection>,
+    payload: OwnerJsonBody<ProxyConnectorRevokeWriteRequest>,
 ) -> OwnerReply<ProxyConnectorRegistration> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ProxyConnectorRegistration> {
         let actor = entity_id("actor", &request.actor)?;
         let key = entity_id("key", &request.key)?;

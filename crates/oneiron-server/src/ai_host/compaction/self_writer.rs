@@ -30,11 +30,12 @@ use oneiron::code_run::{
 use oneiron::compaction::{
     CompactionBackend, CompactionCall, CompactionCheck, CompactionExecution, CompactionHomeRef,
     CompactionProduct, CompactionRefusal, CompactionRequest, CompactionTierClass,
-    SelfCompactionUnavailable, compaction_usage_projection,
+    SelfCompactionUnavailable, compaction_home_worn_rows, compaction_usage_projection,
 };
 use oneiron::llm::{
     ContentPart, ModelId, ModelLocality, SelfCompactionDefault, SelfCompactionSource,
 };
+use oneiron::skill_optimize::union_source_rows;
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::serve::{Admit, Served, product_of};
@@ -274,21 +275,26 @@ impl SelfCompactionBackend {
             return Err(SelfCompactionUnavailable::ModelNotServed.refusal());
         };
         let admit = Admit::Exact { model, locality };
-        self.route.serve(request, retry, &admit, |call, room| {
-            let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
-            let home = frozen.home.render(compaction_home_budget(
-                room.context,
-                room.input,
-                room.output,
-                frame,
-            ));
-            if let Some(system) = call.messages.first_mut() {
-                system.content.push(ContentPart::Text {
-                    text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
-                });
-            }
-            Ok(home.refs)
-        })
+        let sources = request
+            .window_read_from_sources
+            .then_some(request.sources.clone());
+        self.route
+            .serve(request, retry, sources, &admit, |call, room| {
+                let frame = oneiron::count_context_pack_tokens(SELF_WRITER_FRAME) as u64;
+                let home = frozen.home.render(compaction_home_budget(
+                    room.context,
+                    room.input,
+                    room.output,
+                    frame,
+                ));
+                if let Some(system) = call.messages.first_mut() {
+                    system.content.push(ContentPart::Text {
+                        text: format!("\n\n{SELF_WRITER_FRAME}\n\n{}", home.text),
+                    });
+                }
+                let home_rows = compaction_home_worn_rows(&home.refs).collect();
+                Ok((home.refs, Some(home_rows)))
+            })
     }
 
     /// One call of the frozen flight, and the source it ran on (FIX 6029).
@@ -337,6 +343,16 @@ impl SelfCompactionBackend {
 impl CompactionBackend for SelfCompactionBackend {
     fn backend_key(&self) -> &str {
         &self.key
+    }
+
+    /// Its house route's recovery count (FIX 1112).
+    fn recoveries(&self) -> u64 {
+        self.route.recoveries()
+    }
+
+    /// Its house route's payer read (FIX 3740).
+    fn funded(&self) -> bool {
+        self.route.funded()
     }
 
     /// The cheap compaction route, wearing the agent's home.
@@ -467,15 +483,16 @@ impl CompactionBackend for SelfCompactionBackend {
             calls: Vec::new(),
         };
         // The paid call, for its host to file in the model-step family on
-        // the run's captured route (FIX 4465 B), with the summary's own
-        // lineage: the request's sources, then each home part the call wore
-        // that they do not name (FIX 5977).
-        let mut sources = request.sources.clone();
-        for row in execution.home_dependencies() {
-            if !sources.contains(&row) {
-                sources.push(row);
-            }
-        }
+        // the run's captured route (FIX 4465 B), with the same complete
+        // witnessed set its admission carries. An unwitnessed window or live
+        // prefix leaves the sources unknown and the step unfiled (FIX 11937).
+        let sources = match (&execution.source, request.window_read_from_sources) {
+            (SelfCompactionSource::RetainedTurns, true) => union_source_rows([
+                Some(request.sources.clone()),
+                Some(execution.home_dependencies().collect::<Vec<_>>()),
+            ]),
+            _ => None,
+        };
         execution.calls = sent
             .map(|(request, response)| CompactionCall {
                 request,

@@ -243,6 +243,7 @@ pub struct SlideUnitRefused {
     pub target: PptxCommentTarget,
     pub reason: SlideUnitRefusalReason,
     pub offer: Option<PptxCommentTarget>,
+    pub judged_live: Option<crate::office_body::LivePin>,
 }
 
 /// One typed question over an artifact's units (ARCH-0076 §2): rows of a
@@ -438,7 +439,7 @@ fn json_field<T: serde::de::DeserializeOwned>(
 
 impl Memory<'_> {
     fn artifact_actor(&self) -> WriteActor {
-        WriteActor::new(self.actor(), self.actor_class())
+        self.write_actor()
     }
 
     fn artifact_moment(&self) -> (TimeRange, u64) {
@@ -799,6 +800,7 @@ impl Memory<'_> {
                     target: unit.target,
                     reason: unit.reason,
                     offer: unit.offer,
+                    judged_live: unit.judged_live,
                 })
                 .collect(),
         })
@@ -852,6 +854,11 @@ impl Memory<'_> {
             .iter()
             .map(|reference| entity(reference))
             .collect::<MemoryResult<Vec<_>>>()?;
+        // The caller's own lane reads the target and its evidence (FIX 1533).
+        let named: Vec<EntityId> = std::iter::once(artifact)
+            .chain(evidence.iter().copied())
+            .collect();
+        self.require_credential_reads(&named)?;
         let actor = self.artifact_actor();
         let (_, at) = self.artifact_moment();
         let started = std::time::Instant::now();
@@ -956,6 +963,7 @@ impl Memory<'_> {
                         "row": item.row,
                     }),
                     reason: "unreadable_file".into(),
+                    judged_live: None,
                 }));
                 run
             }
@@ -1000,7 +1008,8 @@ impl Memory<'_> {
     /// bound paired/person readings — before the proposal is held, so a
     /// measurement no listed provider took, a duplicate provider, a
     /// reading of the answered question itself, a zero version or an
-    /// out-of-range probability is refused and mints no proposal.
+    /// out-of-range probability is refused and mints no proposal. It lists
+    /// the rows its reads picked, as an ask does (FIX 5455, FIX 5814).
     pub fn artifacts_admit_through(
         &self,
         input: &ArtifactAdmitSubmit,
@@ -1013,9 +1022,9 @@ impl Memory<'_> {
         let decider = AdmittedDecider {
             decisions: std::sync::Mutex::new(input.decisions.iter().cloned().collect()),
         };
-        // An admission lists the rows it listed before FIX 5455.
-        self.artifacts_ask_run(&input.ask, &decider, dial, policy)
-            .map(|(outcome, _)| outcome)
+        let (outcome, read) = self.artifacts_ask_run(&input.ask, &decider, dial, policy)?;
+        self.produced_from(read);
+        Ok(outcome)
     }
 
     /// `vault.artifacts.waits`: the organ calls held beside one artifact

@@ -26,7 +26,7 @@ use super::super::{
     scoped_read_for_core_auth,
 };
 use super::{resolved_session_id, session_read_set};
-use crate::api::facade::host_doors::Listed;
+use crate::api::facade::host_doors::support::Listed;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError, ErrorCode};
 use crate::server::SyncServer;
@@ -265,6 +265,10 @@ fn explain_refusal(error: ApiError) -> MemoryError {
     let code = match error.code() {
         ErrorCode::BadRequest => MEMORY_CODE_BAD_REQUEST,
         ErrorCode::Unauthorized | ErrorCode::Forbidden => MEMORY_CODE_FORBIDDEN,
+        // The engine's own refusal codes keep their name (FIX 6032).
+        code @ (ErrorCode::HostActionRequiresSupportGrant | ErrorCode::OwnerBindingRequired) => {
+            code.as_str()
+        }
         ErrorCode::NotFound => MEMORY_CODE_NOT_FOUND,
         _ => MEMORY_CODE_INTERNAL,
     };

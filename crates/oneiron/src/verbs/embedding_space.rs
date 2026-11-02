@@ -1,9 +1,10 @@
 //! The inputs and answers of the owner's embedding-space rows (OF-370):
 //! `vault.embedding_spaces.*`, each a host door over the engine fns that
 //! `/v1/owner/embedding-spaces` (L05) runs. Every input and answer is that
-//! route's JSON. The route's own structs live in the server crate, which the
-//! generated SDK, remote and binding code cannot name, so the shapes are
-//! spelled here; the engine fns and their order are the route's.
+//! route's JSON, and the route answers with these types and fns (FIX 1951):
+//! one definition the generated SDK, remote and binding code name too. A
+//! route-only piece stays the route's: its `running` answer to a check still
+//! going, and its refused-document reads.
 //!
 //! The proof each fn here asks for is the door's admission: a server mints it
 //! from the request, as `/v1/owner` does, and an embedded handle acts as the
@@ -17,14 +18,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::embed::{
-    EmbeddingSpace, InputKind, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome, SpaceProbe, SpaceRef,
+    EmbeddingSpace, InputKind, PendingEmbedderBinding, SpaceMove, SpaceMoveCheck, SpaceMoveOutcome,
+    SpaceProbe, SpaceRef,
 };
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
 use crate::{EntityId, Vault};
 
 /// Every declared space, where each kind slot reads, and every move: what
 /// `GET /v1/owner/embedding-spaces` and each space change answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpacesView {
     pub spaces: Vec<EmbeddingSpace>,
     /// The vault's own text vector index, which an unbound text slot reads.
@@ -34,6 +36,12 @@ pub struct EmbeddingSpacesView {
     pub moves: Vec<SpaceMove>,
     /// Stored probes per kind.
     pub probes: BTreeMap<InputKind, usize>,
+    /// Documents each space's model refused by their content, by space id; a
+    /// space with none is absent.
+    pub refused: BTreeMap<String, usize>,
+    /// Each owner-approved embedder binding a space move stages: waiting,
+    /// filling, applied, not applied or undone.
+    pub binding_moves: Vec<PendingEmbedderBinding>,
 }
 
 /// `vault.embedding_spaces.declare`'s input: one space, the body
@@ -87,7 +95,7 @@ pub struct EmbeddingSpaceCandidateRequest {
 }
 
 /// What a move's check did.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum EmbeddingSpaceMoveOutcome {
     /// The candidate still lacks a vector of some moving document; no probe
@@ -104,7 +112,7 @@ pub enum EmbeddingSpaceMoveOutcome {
 
 /// `vault.embedding_spaces.move_check`'s answer, as
 /// `POST /v1/owner/embedding-spaces/move/check` gives it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceMoveChecked {
     pub outcome: EmbeddingSpaceMoveOutcome,
     /// The paired probe run, unless the candidate is still filling.
@@ -129,7 +137,7 @@ impl From<SpaceMoveOutcome> for EmbeddingSpaceMoveChecked {
 }
 
 /// One stored probe with its id.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbe {
     /// 32 hex.
     pub id: String,
@@ -138,7 +146,7 @@ pub struct EmbeddingSpaceProbe {
 }
 
 /// `vault.embedding_spaces.probes.list`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbes {
     pub probes: Vec<EmbeddingSpaceProbe>,
 }
@@ -162,6 +170,10 @@ pub struct EmbeddingSpaceProbePutRequest {
     /// Every document that answers it, as 32 hex; the family's when absent.
     #[serde(default)]
     pub targets: Vec<EntityId>,
+    /// Every other stored row the query was written from, as 32 hex (FIX 9829): erasing any
+    /// of them, the family or the media query erases the probe. Empty when absent.
+    #[serde(default)]
+    pub source_refs: Vec<EntityId>,
     /// Who wrote the query.
     pub author: String,
 }
@@ -175,7 +187,7 @@ pub struct EmbeddingSpaceProbeDeleteRequest {
 }
 
 /// `vault.embedding_spaces.probes.delete`'s answer: whether a probe went.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct EmbeddingSpaceProbeDeleted {
     pub ok: bool,
 }
@@ -191,7 +203,7 @@ fn refused(error: crate::error::Error) -> MemoryError {
 }
 
 /// The view each space change answers with.
-fn view(vault: &Vault) -> MemoryResult<EmbeddingSpacesView> {
+pub fn embedding_spaces_view(vault: &Vault) -> MemoryResult<EmbeddingSpacesView> {
     let bindings = vault.kind_slot_bindings()?;
     let slots = InputKind::ALL
         .into_iter()
@@ -207,6 +219,8 @@ fn view(vault: &Vault) -> MemoryResult<EmbeddingSpacesView> {
         slots,
         moves: vault.space_moves()?,
         probes,
+        refused: vault.media_refusal_counts()?,
+        binding_moves: vault.embedder_binding_moves()?,
     })
 }
 
@@ -215,7 +229,7 @@ pub fn read_embedding_spaces(
     vault: &Vault,
     _owner: &AuthenticatedOwner,
 ) -> MemoryResult<EmbeddingSpacesView> {
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.declare`: declares or widens one space.
@@ -227,7 +241,7 @@ pub fn declare_embedding_space_as(
     vault
         .declare_embedding_space(owner, input.0)
         .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.bind`: binds one kind slot, or returns it to its
@@ -242,7 +256,7 @@ pub fn bind_embedding_slot_as(
         None => vault.unbind_kind_slot(owner, input.kind),
     }
     .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.one_space`: the one-space preset.
@@ -254,7 +268,7 @@ pub fn bind_one_embedding_space_as(
     vault
         .bind_one_space_for_all(owner, &input.space)
         .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.retire`: drops a space no slot binds and no open
@@ -267,7 +281,7 @@ pub fn retire_embedding_space_as(
     vault
         .retire_embedding_space(owner, &input.space)
         .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.move`: starts moving every slot the incumbent
@@ -327,7 +341,7 @@ pub fn approve_embedding_space_move_admitted_as(
     vault
         .approve_space_move_admitted(owner, &input.candidate, egress)
         .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.move_undo`: binds a swapped-in move's incumbent
@@ -340,7 +354,7 @@ pub fn undo_embedding_space_move_as(
     vault
         .undo_space_move(owner, &input.candidate)
         .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.move_abandon`: ends an open move with no swap.
@@ -352,7 +366,7 @@ pub fn abandon_embedding_space_move_as(
     vault
         .abandon_space_move(owner, &input.candidate)
         .map_err(refused)?;
-    view(vault)
+    embedding_spaces_view(vault)
 }
 
 /// `vault.embedding_spaces.probes.list`.
@@ -385,6 +399,8 @@ pub fn put_embedding_space_probe_as(
         query: input.query,
         query_media: input.query_media,
         family: input.family,
+        written_from: None,
+        source_refs: input.source_refs.into_iter().collect(),
         targets,
         author: input.author,
         written_at: vault.now_recorded_at(),

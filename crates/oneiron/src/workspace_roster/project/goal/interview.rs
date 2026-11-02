@@ -8,7 +8,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::registry::ENTITY_TYPE_MESSAGE;
 use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
-use crate::workspace_roster::rooms::{RoomTurn, require_member, turn_in};
+use crate::workspace_roster::rooms::{RoomTurn, require_member, room_thread_turns_in_txn, turn_in};
 use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -205,7 +205,15 @@ impl Vault {
             {
                 return Err(invalid());
             }
-            let id = self.write_project_goal_in_txn(txn, owner, project_id, &record, now)?;
+            // The thread the human confirmed in scopes the goal limits the
+            // record is counted against; a thread that cannot be read
+            // scopes none, and the record is counted at the project's.
+            let thread = room_thread_turns_in_txn(self, txn, room, turns.confirmation)
+                .ok()
+                .flatten()
+                .and_then(|selection| selection.root);
+            let id =
+                self.write_project_goal_in_txn(txn, owner, project_id, thread, &record, now)?;
             CONFIRMATIONS.put(&self.store, txn, &turns.confirmation, &id)?;
             Ok(id)
         })

@@ -1,7 +1,7 @@
 //! Host-interpreted workflow skill at the Dreamer wake boundary.
 //! Skill bytes supply behavior, never actor identity, read rights or gate authority.
 
-use crate::attempt_queue::AttemptId;
+use crate::attempt_queue::{AttemptId, ReadSetProducer};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -135,7 +135,8 @@ fn cited(pin: &WeaveRecipePin, source: ClaimSource) -> Value {
 }
 fn claim_hash(body: &ClaimBody) -> Result<[u8; 32]> {
     // The owner may approve or decline a held output, and revert an applied
-    // one, without changing it.
+    // one, without changing it; an owner act that rewrites more of the body
+    // is accepted on replay without this hash (FIX 9295).
     let mut original = body.clone();
     original.approval = ClaimApprovalStatus::Proposed;
     original.lifecycle = ClaimLifecycleStatus::Active;
@@ -166,16 +167,27 @@ fn cached_result(
                 provenance(pin, attempt, result.evidence_hash)?,
                 ClaimApprovalStatus::Proposed,
             );
+            // An owner's act since the commit (FIX 9295, L07-A 02:15): an
+            // output reverted, or a held one approved or declined. The
+            // Dreamer makes none of these. The owner's door may rewrite more
+            // of the body than its lifecycle, validity and approval, so its
+            // content is not compared again: the result row, the id derived
+            // from this attempt, the subject and the source still bind it.
+            let owner_act = body.lifecycle == ClaimLifecycleStatus::Retracted
+                || matches!(
+                    body.approval,
+                    ClaimApprovalStatus::Approved | ClaimApprovalStatus::Rejected
+                );
             if result.version != 1
                 || result.pin_hash != pin.binding_hash()
                 || result.actor != actor.entity_ref().to_hex()
                 || body.subject != ClaimSubject::Entity(pin.subject)
                 || body.source != Some(source)
-                // An applied output the owner reverted is retracted, and is
-                // still this attempt's committed output.
+                // An output the owner reverted is retracted, and is still
+                // this attempt's committed output.
                 || !matches!(
-                    (body.lifecycle, result.applied),
-                    (ClaimLifecycleStatus::Active, _) | (ClaimLifecycleStatus::Retracted, true)
+                    body.lifecycle,
+                    ClaimLifecycleStatus::Active | ClaimLifecycleStatus::Retracted
                 )
                 // The owner may have decided a held proposal since; a declined
                 // one is still this attempt's committed output.
@@ -186,14 +198,16 @@ fn cached_result(
                         | ClaimApprovalStatus::Approved
                         | ClaimApprovalStatus::Rejected
                 )
-                || claim_evidence_taint(&body) != Some(source)
-                // The Dreamer's MACHINE signature binds these same bytes.
-                || crate::authority::evidence_without_machine_signature(&body)
-                    != Some(crate::write_envelope::write_envelope_evidence(
-                        &stamped,
-                        Some(cited(pin, source)),
-                    ))
-                || result.claim_hash != claim_hash(&body)?
+                || (!owner_act
+                    && (claim_evidence_taint(&body) != Some(source)
+                        // The Dreamer's MACHINE signature binds these same
+                        // bytes.
+                        || crate::authority::evidence_without_machine_signature(&body)
+                            != Some(crate::write_envelope::write_envelope_evidence(
+                                &stamped,
+                                Some(cited(pin, source)),
+                            ))
+                        || result.claim_hash != claim_hash(&body)?))
             {
                 return Err(invalid());
             }
@@ -288,7 +302,10 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
         {
             let txn = vault.store.env.read_txn()?;
             if cached_result(vault, &txn, attempt, &pin, actor, &id)? {
-                return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units: 0,
+                    step_hashes: Vec::new(),
+                });
             }
         }
         let stored = vault.get_skill_record(&pin.skill)?.ok_or_else(invalid)?;
@@ -307,6 +324,16 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             .lease_owner
             .as_deref()
             .ok_or_else(invalid)?;
+        // The draft reads the recipe's SKILL and its one evidence row: both
+        // producers are declared before either reads (FIX 7019, 7073).
+        crate::dreamer_consolidation::declare_attempt_reads(
+            vault,
+            attempt.status.attempt.id,
+            &[
+                ReadSetProducer::SKILL_PACK,
+                ReadSetProducer::DREAMER_RECIPE_EVIDENCE,
+            ],
+        );
         let loaded = vault.load_attempt_skill_pack(
             attempt.status.attempt.id,
             &pin.skill,
@@ -337,6 +364,12 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
             let txn = vault.store.env.read_txn()?;
             read_evidence(vault, &txn, actor, pin.evidence)?
         };
+        crate::dreamer_consolidation::record_attempt_reads(
+            vault,
+            attempt.status.attempt.id,
+            ReadSetProducer::DREAMER_RECIPE_EVIDENCE,
+            Some(vec![pin.evidence]),
+        );
         if evidence.project.is_none() {
             // Today's placement stands: the output is born in the default
             // project, as before projects were inherited.
@@ -345,6 +378,17 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
                 attempt = ?attempt.status.attempt.id,
                 "a recipe's evidence sits in no single project; its output keeps the default project"
             );
+        }
+        // The recipe's pack closes attributed (FIX 1875), bound while its
+        // lease holds; a bind that fails leaves the receipt unattributed and
+        // the recipe runs on.
+        if let Err(error) = crate::skill_attribution::bind_dreamer_weave_attribution(
+            vault,
+            attempt.status.attempt.id,
+            lease_owner,
+            evidence.project,
+        ) {
+            tracing::warn!(kind = ?error.kind(), "a weave recipe's pack attribution did not bind");
         }
         let draft = self.runtime.draft(text, &evidence.bytes)?;
         let candidate = ClaimCandidate::new(
@@ -370,7 +414,10 @@ impl<E: DreamerAttemptExecutor, R: WeaveRecipeRuntime> DreamerAttemptExecutor
                 },
             },
         )?;
-        Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+        Ok(DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_hashes: Vec::new(),
+        })
     }
 }
 

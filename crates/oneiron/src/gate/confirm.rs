@@ -237,7 +237,8 @@ impl Vault {
 
     /// Applies the folded answer in the caller's writer. An owner ceremony
     /// supplies its revalidated person for the settlement fact; replay uses
-    /// the signing key's existing actor binding.
+    /// the signing key's existing actor binding. A timeout demotion records
+    /// a `Demoted` settlement, settled by the engine (FIX 1093).
     pub(crate) fn settle_critical_write_confirm_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -320,6 +321,7 @@ impl Vault {
         }
         let Some(state) = fold.critical_write_confirms.get(&confirm_id) else {
             return Ok(Ok(if expired && !deferred {
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 CriticalWriteConfirmResolution::DemotedToProposed
             } else {
                 CriticalWriteConfirmResolution::AlreadySettled
@@ -330,6 +332,7 @@ impl Vault {
             .contains(&confirm_id)
         {
             return Ok(Ok(if expired && !deferred {
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 CriticalWriteConfirmResolution::DemotedToProposed
             } else {
                 CriticalWriteConfirmResolution::AlreadySettled
@@ -339,6 +342,7 @@ impl Vault {
             return Ok(Ok(if deferred {
                 CriticalWriteConfirmResolution::AlreadySettled
             } else {
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 CriticalWriteConfirmResolution::DemotedToProposed
             }));
         }
@@ -391,7 +395,17 @@ impl Vault {
                             header.learned_at,
                         )?;
                     }
-                    self.complete_deferred_claim_in_txn(wtxn, &binding.claim_id, true, now)?;
+                    // A local ceremony's revalidated owner closes it (FIX 11039).
+                    let closer = answered_by.map(|owner| {
+                        crate::WriteActor::new(owner, crate::edge::EdgeActorClass::Human)
+                    });
+                    self.complete_deferred_claim_in_txn(
+                        wtxn,
+                        &binding.claim_id,
+                        true,
+                        now,
+                        closer,
+                    )?;
                 }
                 self.store
                     .remove_pending_gate_consent_in_txn(wtxn, &binding.claim_id, removal)?;
@@ -503,6 +517,8 @@ impl Vault {
         Ok(self.expire_critical_write_confirms_impl(Some(now))?.demoted)
     }
 
+    /// Demotes every expired confirm the page reaches, recording each
+    /// demotion as a `Demoted` settlement settled by the engine (FIX 1093).
     fn expire_critical_write_confirms_impl(&self, at: Option<u64>) -> Result<ConfirmExpiryPage> {
         self.with_write_txn_grouped(|wtxn| {
             let now = at.unwrap_or_else(|| self.store.clock.now_recorded_at());
@@ -565,6 +581,7 @@ impl Vault {
                 timed_out.reason_codes = vec![GATE_REASON_CRITICAL_CONFIRM_TIMEOUT.to_owned()];
                 self.store
                     .put_pending_gate_consent_in_txn(wtxn, &timed_out)?;
+                crate::runtime_hooks::record_timeout_demotion_in_txn(self, wtxn, binding.claim_id)?;
                 demoted += 1;
             }
             Ok(ConfirmExpiryPage {
@@ -611,20 +628,19 @@ pub enum CriticalWriteConfirmResolution {
 }
 
 /// Reconciles replicated claim input against the claim's owner-answer
-/// obligation. A replica overwrite never closes the obligation: the claim stays
-/// held, and the put shows its owner an item for the peer's revision. A live
-/// confirm binds only the earlier body, so a changed or missing body closes its
-/// row; an exact replay keeps it. Returns whether the peer's revision lands
-/// demoted: after a peer overwrote a confirm this device attached, as before
-/// obligations, until a fresh local confirm. A hold this device attached on
-/// sync, or an item it showed its owner, binds only an earlier peer body: the
-/// peer's bytes land unchanged.
+/// obligation (FIX 9603). The peer's bytes always land unchanged: a replica
+/// overwrite never closes the obligation, which holds the claim from every
+/// consolidation and effect reader ([`claim_critical_confirm_settled_in_txn`])
+/// on this device alone, and the put shows its owner an item for the peer's
+/// revision. A live confirm binds only the earlier body, so a changed or
+/// missing body closes its row, and the obligation stays open on the claim; an
+/// exact replay keeps the row.
 pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     claim_id: &EntityId,
     body_changed_or_missing: bool,
-) -> Result<bool> {
+) -> Result<()> {
     let pending = store.pending_gate_consent_in_txn(wtxn, claim_id)?;
     // Strictly parse a critical-marked row before every marker decision. This
     // keeps malformed attachments fail-closed.
@@ -633,19 +649,14 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
         .filter(|row| pending_row_holds_critical_confirm(row))
         .map(critical_write_confirm_binding)
         .transpose()?;
-    if store
-        .owner_answer_obligation_in_txn(wtxn, claim_id)?
-        .is_some_and(|obligation| obligation.demotes_peer_revisions)
-    {
-        return Ok(true);
-    }
     let (Some(_), Some(pending)) = (live_binding, pending) else {
-        return Ok(false);
+        return Ok(());
     };
     if !body_changed_or_missing {
-        return Ok(false);
+        return Ok(());
     }
-    // The put shows the item for the new revision; this close shows none.
+    // The put shows the item for the new revision; this close shows none. A
+    // removal with no owner answer records the claim's obligation.
     store.close_pending_gate_consent_as_in_txn(
         wtxn,
         claim_id,
@@ -655,11 +666,7 @@ pub(crate) fn reconcile_critical_write_confirm_on_replicated_overwrite(
         None,
         crate::store::TrayRemoval::Silent,
     )?;
-    if critical_confirm_has_no_deadline(&pending) {
-        return Ok(false);
-    }
-    super::owner_answer::demote_peer_revisions_in_txn(store, wtxn, claim_id)?;
-    Ok(true)
+    Ok(())
 }
 
 /// Whether a claim may lend authority beyond being read: its owner-answer

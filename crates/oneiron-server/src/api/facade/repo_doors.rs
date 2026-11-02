@@ -79,7 +79,7 @@ where
         };
         let proof = auth.verified_slip().cloned().ok_or_else(refused)?;
         let (server, auth) = (Arc::clone(server), auth.clone());
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             let lease = held.proof();
             let vault = server.vault();
             let reader = vault.credential_read_key(&proof)?.ok_or_else(refused)?;

@@ -10,6 +10,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::IDENTITY_TOPOLOGY_SEQ, CONTENT),
     (&t::IDENTITY_TOPOLOGY_ZERO_HEAD_SEEN, CONTENT),
     (&t::ENTITY_TEXT_INDEXED_IDLE_DELAY_MS, CONTENT),
+    // FIX 9970: a turn's unpersisted-wake label stands with the turn as the
+    // image holds it, as the wakes its landing did record do.
+    (&t::MEMORY_TURN_WAKE_UNPERSISTED, CONTENT),
     (&t::MERGE_QUEUE_BATCH, CONTENT),
     // A restore never revives a revoked approval: the live one stands.
     (&t::MERGE_QUEUE_CHECK_CONFIG, LIVE),
@@ -17,6 +20,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     // A restore never revives a cleared review policy: the live one stands.
     (&t::MERGE_QUEUE_REVIEW_POLICY, LIVE),
     (&t::MERGE_QUEUE_STATE, CONTENT),
+    // Content-owned audit, never authority (FIX 10260).
+    (&t::MESSAGE_REPLY_ASSERTIONS, CONTENT),
     (&t::MESSAGE_STREAM_ACTIVE, CONTENT),
     (&t::MESSAGE_STREAM_POLICY, LIVE),
     (&t::MESSAGE_STREAM_RECEIPT, CONTENT),
@@ -90,6 +95,8 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::OUTBOUND_INTENT_ATTEMPT_INDEX, LIVE),
     (&t::OUTBOUND_INTENT_ATTEMPT_FORMAT, LIVE),
     (&t::OUTBOUND_INTENT_LEDGER_RECORD, LIVE),
+    (&t::OUTBOUND_INTENT_SETTLEMENT, LIVE),
+    (&t::OUTBOUND_INTENT_UNAVAILABLE, LIVE),
     (&t::OUTBOUND_PINNED_APPROVAL, LIVE),
     (&t::OUTBOUND_SUPPRESSION_INDEX, LIVE),
     (&t::OUTBOUND_SUPPRESSION_RECEIPT, LIVE),
@@ -120,9 +127,12 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::SKILL_HUB_PACK_SETUP, LIVE),
     (&t::SKILL_HUB_PACK_SKILL_ALIAS, CONTENT),
     (&t::SKILL_HUB_PACK_SKILL_REMOVED, CONTENT),
+    (&t::SKILL_HUB_PACK_SLACK_INSTALL, LIVE),
     (&t::SKILL_HUB_PACK_SOURCE_ALIAS, CONTENT),
     (&t::PACK_BYTE_MAP_LOCAL_HEAD, CONTENT),
     (&t::PEOPLE_ABOUT, CONTENT),
+    // A restore never revives a withdrawn filing: the PERSON's live one stands.
+    (&t::PERSON_BILLING_ACCOUNT, LIVE),
     (&t::PERSONA_SNAPSHOT_COPY, CONTENT),
     (&t::POLICY_HOLD_QUEUE, CONTENT),
     (&t::PORTS_CHANGE, CONTENT),
@@ -168,6 +178,9 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::PROPOSAL_ACTOR_COUNT, CONTENT),
     (&t::PROPOSAL_RECEIPT_HISTORY, CONTENT),
     (&t::PROPOSAL_SUBMISSION, CONTENT),
+    // A cached stamp token follows the image's token claims (FIX 10930): the restore's
+    // actor sweep drops an erased actor's again, and a writer checks its claim on each read.
+    (&t::PROVENANCE_ACTOR_STAMP_TOKEN, CONTENT),
     (&t::PROVENANCE_BIRTH_BY_TRIGGER, CONTENT),
     (&t::PROVENANCE_BODY, CONTENT),
     (&t::PROVENANCE_BODY_DIGEST, CONTENT),
@@ -204,6 +217,7 @@ pub(super) static PART: &[(&SideTableDecl, Class)] = &[
     (&t::RECOVERY_KIT, LIVE),
     (&t::IDENTITY_REDIRECT, CONTENT),
     (&t::REPO_CONFLICT_RECONCILIATION_INDEX, CONTENT),
+    (&t::REPO_DERIVED_INDEX_COPY, CONTENT),
     (&t::REPO_MUTATION_OPLOG, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL, CONTENT),
     (&t::REPO_MUTATION_PROPOSAL_OP, CONTENT),

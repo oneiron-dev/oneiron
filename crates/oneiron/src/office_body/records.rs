@@ -95,9 +95,16 @@ pub struct OfficeBodyFork {
     pub commits: u64,
     pub opened_at: u64,
     pub state: ForkState,
-    /// The run the fork belongs to, whose approve-all scope covers it.
+    /// The run its opener named when it opened the fork: a label, never
+    /// what a scope matches (FIX 3551).
     #[serde(default)]
     pub run_root: Option<EntityId>,
+    /// The try the fork was opened from, which the host bound the opening
+    /// surface to and the opening writer proved live (FIX 3551): the run
+    /// whose approve-all scope covers it. `None` for an owner's or a direct
+    /// opening, which belongs to no run.
+    #[serde(default)]
+    pub origin: Option<crate::attempt_queue::AttemptId>,
 }
 
 pub struct OfficeBodyExportRequest<'a> {
@@ -118,7 +125,7 @@ pub struct OfficeBodyExportRequest<'a> {
 /// NOW() at, as the caller's device knows it: its offset east of UTC now,
 /// and the IANA zone it read that from, kept as a label. The vault keeps no
 /// owner zone; a caller that names none gets the default, UTC (FIX 790).
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OfficeRecalcZone {
     pub utc_offset_minutes: i16,
     pub iana_timezone: Option<String>,
@@ -173,11 +180,23 @@ pub struct OfficeBodyExportRecord {
     /// The engine that recalculated an XLSX export and the local time it
     /// read; `None` when the file recalculates on open, and for DOCX.
     pub recalc: Option<String>,
+    /// The zone its caller named for TODAY() and NOW(); `None` for a deck
+    /// export (FIX 12183).
+    pub recalc_zone: Option<OfficeRecalcZone>,
     /// What the projection adapted, as Excel would, so the file stays one
     /// its application opens: a pivot cache whose source went keeps its
     /// cached results, a picture whose cells were deleted collapses, a note
     /// goes with its cell. One line each; none for DOCX.
     pub effects: Vec<String>,
+}
+
+impl OfficeBodyExportRecord {
+    /// The export's own recalculation clock: the time it exported at, in
+    /// the zone its caller named. `None` for a deck export, which keeps
+    /// no zone (FIX 12183).
+    pub(super) fn recalc_clock(&self) -> Option<(u64, OfficeRecalcZone)> {
+        self.recalc_zone.clone().map(|zone| (self.at, zone))
+    }
 }
 
 /// `version` is `None` when the body equals its import: a no-op keeps the

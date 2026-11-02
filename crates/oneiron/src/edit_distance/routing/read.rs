@@ -2,10 +2,14 @@
 
 use std::collections::BTreeMap;
 
-use super::keys::{AGGREGATE, StoredAggregate, aggregate_key, task_class_prefix};
+use super::keys::{
+    AGGREGATE, AggregateKey, StoredAggregate, peer_prefix, routing_scope, version_prefix,
+};
 use super::ladder::{rollout_rung, rung_in_txn};
+use super::prior::{carried_prior, head_mean, mean_of};
 use super::scope::{RolloutRung, RoutingScopeKey, RoutingScopeStats, WeightHint};
 use crate::Vault;
+use crate::edit_distance::attribution::UNKNOWN_EXECUTOR;
 use crate::error::Result;
 
 // ---------------------------------------------------------------------------
@@ -13,7 +17,15 @@ use crate::error::Result;
 // ---------------------------------------------------------------------------
 
 /// What routing may be told about `key` — `None` unless the task class has
-/// GRADUATED, and `None` when the scope has no runs to speak from.
+/// GRADUATED, and `None` when the head has neither own runs nor a carried
+/// prior to speak from.
+///
+/// A head with no own runs reads from the most recent other executor's head
+/// of its task class and task type, marked UNTESTED (ARCH-0056 §8).
+///
+/// A typed `key` reads its exact head. An untyped one reads each executor's
+/// heads across every task type of its task class and measurement version as
+/// one head, as routing read them before heads were typed.
 ///
 /// # Errors
 ///
@@ -23,17 +35,35 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
     if rollout_rung(vault, &key.task_class)? != RolloutRung::Graduated {
         return Ok(None);
     }
-    let aggregate_key = aggregate_key(key)?;
     let rtxn = vault.store.env.read_txn()?;
-    let Some(own) = AGGREGATE.get(&vault.store, &rtxn, &aggregate_key)? else {
-        return Ok(None);
-    };
-    let peers = peer_totals(vault, &rtxn, &key.task_class)?;
-    Ok(hint_of(own, peers))
+    let peers = peers_in_txn(vault, &rtxn, key)?;
+    Ok(hint_of(&key.executor, &peers))
 }
 
-/// Every scope a task class has promoted to at least [`RolloutRung::DataBar`],
-/// in task-class then model-version order.
+/// Every executor's head the read of `key` compares: its task type's heads,
+/// or for an untyped `key` each executor's heads in every task type folded
+/// into one.
+fn peers_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: &RoutingScopeKey,
+) -> Result<Vec<(String, StoredAggregate)>> {
+    if key.type_ref.is_some() {
+        return Ok(AGGREGATE
+            .scan_from(&vault.store, txn, &peer_prefix(key)?)?
+            .into_iter()
+            .map(|(key, aggregate)| (key.executor, aggregate))
+            .collect());
+    }
+    let mut heads: BTreeMap<String, StoredAggregate> = BTreeMap::new();
+    for (key, aggregate) in AGGREGATE.scan_from(&vault.store, txn, &version_prefix(key)?)? {
+        heads.entry(key.executor).or_default().absorb(&aggregate);
+    }
+    Ok(heads.into_iter().collect())
+}
+
+/// Every head of a task class promoted to at least [`RolloutRung::DataBar`],
+/// in task-class, measurement-version, task-type, then executor order.
 ///
 /// Shadow scopes are absent on purpose: their numbers exist and reach nothing,
 /// which is what shadow MEANS. Graduated scopes stay listed — a scope that
@@ -44,99 +74,87 @@ pub fn routing_weight_hint(vault: &Vault, key: &RoutingScopeKey) -> Result<Optio
 /// Storage errors; [`Error::CorruptedIndex`](crate::Error::CorruptedIndex) on an undecodable row.
 pub fn routing_data_bar(vault: &Vault) -> Result<Vec<RoutingScopeStats>> {
     let rtxn = vault.store.env.read_txn()?;
-    let rows = aggregates(vault, &rtxn)?;
-    let mut peers: BTreeMap<String, (f64, u64)> = BTreeMap::new();
-    for (key, aggregate) in &rows {
-        let totals = peers.entry(key.task_class.clone()).or_default();
-        totals.0 += aggregate.d_norm_sum;
-        totals.1 += aggregate.runs;
+    let mut groups: BTreeMap<(String, String, String), Vec<(String, StoredAggregate)>> =
+        BTreeMap::new();
+    for (key, aggregate) in AGGREGATE.scan(&vault.store, &rtxn)? {
+        groups
+            .entry((key.task_class, key.measurement_version, key.type_ref))
+            .or_default()
+            .push((key.executor, aggregate));
     }
 
     let mut out = Vec::new();
-    for (key, aggregate) in rows {
-        let rung = rung_in_txn(vault, &rtxn, &key.task_class)?;
+    for ((task_class, measurement_version, type_ref), peers) in &groups {
+        let rung = rung_in_txn(vault, &rtxn, task_class)?;
         if rung == RolloutRung::Shadow {
             continue;
         }
-        let totals = peers.get(&key.task_class).copied().unwrap_or_default();
-        let Some(hint) = hint_of(aggregate, totals) else {
-            continue;
-        };
-        out.push(RoutingScopeStats {
-            key,
-            rung,
-            runs: aggregate.runs,
-            hint,
-        });
+        for (executor, _) in peers {
+            let Some(hint) = hint_of(executor, peers) else {
+                continue;
+            };
+            let key = routing_scope(&AggregateKey {
+                task_class: task_class.clone(),
+                measurement_version: measurement_version.clone(),
+                type_ref: type_ref.clone(),
+                executor: executor.clone(),
+            })?;
+            out.push(RoutingScopeStats { key, rung, hint });
+        }
     }
     Ok(out)
 }
 
-/// The pair, computed against a task class's whole peer distribution.
-///
-/// The peer set INCLUDES the scope itself: a lone generation is then exactly at
-/// par, which is the truthful reading of "no peer has ever done this work".
-/// Excluding self would leave it dividing by nothing and inventing a verdict.
-fn hint_of(own: StoredAggregate, peers: (f64, u64)) -> Option<WeightHint> {
-    if own.runs == 0 {
-        return None;
-    }
-    let own_mean = own.d_norm_sum / runs_as_f64(own.runs);
-    let peer_mean = if peers.1 == 0 {
-        0.0
-    } else {
-        peers.0 / runs_as_f64(peers.1)
-    };
-    // A task class nobody has ever had to edit is at par by every reading, and
-    // the alternative is a division that means nothing.
-    let relative = if peer_mean > 0.0 {
-        own_mean / peer_mean
-    } else {
-        1.0
-    };
-    // The outcome is the sound share of what the judge could attribute: an
-    // unclear share holds, so it weighs neither for nor against the scope.
-    let judged = own.judged_weight();
-    let outcome = if judged > 0.0 {
-        own.sound / judged
-    } else {
-        0.0
-    };
+/// The hint for `executor`'s head among `peers`, every head of its task
+/// class, task type and measurement version.
+fn hint_of(executor: &str, peers: &[(String, StoredAggregate)]) -> Option<WeightHint> {
+    let own = peers
+        .iter()
+        .find(|(peer, _)| peer == executor)
+        .map(|(_, row)| row)
+        .filter(|row| row.runs > 0);
+    let runs = own.map_or(0, |row| row.runs);
+    let prior = carried_prior(executor, runs, peers);
+    let edit_cost = head_mean(own, prior.as_ref())?;
+    let untested = prior.as_ref().is_some_and(|prior| runs < prior.weight_runs);
     Some(WeightHint {
-        relative_edit_cost: relative as f32,
-        outcome_score: outcome as f32,
+        relative_edit_cost: relative_cost(edit_cost, peers).map(|relative| relative as f32),
+        edit_cost: edit_cost as f32,
+        runs,
+        prior,
+        untested,
+        outcomes: own
+            .filter(|row| !row.outcomes.is_empty())
+            .map(|row| row.outcomes.clone()),
+        // The sound share of what the judge could attribute: an unclear share
+        // holds, so it weighs neither for nor against the head.
+        sound_share: own.and_then(|row| {
+            let judged = row.judged_weight();
+            (judged > 0.0).then(|| (row.sound / judged) as f32)
+        }),
+        on_judge_model: own.map_or(0, |row| row.on_judge_model),
     })
 }
 
-/// Run counts live far below `f64`'s exact-integer range, so this cast is the
-/// identity every caller here means by it.
-fn runs_as_f64(runs: u64) -> f64 {
-    runs as f64
-}
-
-fn peer_totals(vault: &Vault, rtxn: &heed::RoTxn<'_>, task_class: &str) -> Result<(f64, u64)> {
-    let prefix = task_class_prefix(task_class)?;
-    let mut sum = 0.0;
-    let mut runs = 0_u64;
-    for (_, aggregate) in AGGREGATE.scan_from(&vault.store, rtxn, &prefix)? {
-        sum += aggregate.d_norm_sum;
-        runs += aggregate.runs;
+/// `mean` against the task type's observed floor and ceiling: the cheapest
+/// and dearest own mean of any executor in it (FIX 7827). A degenerate range
+/// — one executor, or floor equal to ceiling — is no signal and reads as
+/// `None`. The unknown-executor head is no executor, so it sets no bound.
+fn relative_cost(mean: f64, peers: &[(String, StoredAggregate)]) -> Option<f64> {
+    let mut floor = f64::INFINITY;
+    let mut ceiling = f64::NEG_INFINITY;
+    let mut count = 0;
+    for (peer, row) in peers {
+        if row.runs == 0 || peer == UNKNOWN_EXECUTOR {
+            continue;
+        }
+        let peer_mean = mean_of(row);
+        floor = floor.min(peer_mean);
+        ceiling = ceiling.max(peer_mean);
+        count += 1;
     }
-    Ok((sum, runs))
-}
-
-fn aggregates(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-) -> Result<Vec<(RoutingScopeKey, StoredAggregate)>> {
-    Ok(AGGREGATE
-        .scan(&vault.store, rtxn)?
-        .into_iter()
-        .map(|(key, aggregate)| {
-            (
-                RoutingScopeKey::new(key.model_version, key.task_class),
-                aggregate,
-            )
-        })
-        .collect())
+    if count <= 1 || !(ceiling > floor) {
+        return None;
+    }
+    Some(((mean - floor) / (ceiling - floor)).clamp(0.0, 1.0))
 }

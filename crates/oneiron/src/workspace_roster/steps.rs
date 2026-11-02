@@ -352,69 +352,26 @@ pub(super) fn birth_companion(
 /// annexed; the member's existing companion-profile grant must already name
 /// her. The work facet is the one association made here. The workspace's
 /// `work_companion` policy and the member's consent are read in the
-/// transaction that binds her, never taken from the caller.
+/// transaction that binds her, never taken from the caller, by the same
+/// check her first binding passed ([`verify_brought_companion_in_txn`]).
 pub(super) fn bring_companion(
     vault: &Vault,
     intent: &MemberOnboardingIntent,
     writer: &WriteActor,
 ) -> Result<()> {
     let CompanionChoice::Bring {
-        person,
-        actor,
-        work_facet,
-        proof,
+        person, work_facet, ..
     } = &intent.companion
     else {
         return Err(invalid("only a brought companion is bound here"));
     };
-    let now = vault.store.clock.now_recorded_at();
-    // Substrate is a settled fact about her, read before the writer opens.
-    if vault.person_substrate(person, now)? != Some(crate::subject_model::PersonSubstrate::Model) {
-        return Err(invalid("a brought companion must be a model-backed PERSON"));
-    }
     let authorized_at = vault.store.authorization_now()?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |txn| {
         let policy = PRESET
             .get(&vault.store, txn, &intent.workspace.workspace_ref)?
             .ok_or_else(|| invalid("workspace preset is not settled"))?
             .work_companion;
-        if !policy.admits(&intent.companion) {
-            return Err(Error::Record(
-                crate::error::RecordError::WorkCompanionRequired,
-            ));
-        }
-        if proof.revalidate_person_in_txn(vault, txn)? != intent.person_ref {
-            return Err(Error::Gate(
-                crate::error::GateError::ConsentOwnerNotAuthenticated(
-                    "a brought companion needs her member's own authenticated consent",
-                ),
-            ));
-        }
-        let anchor = crate::subject_model::actor_subject_anchor_in_txn(vault, txn, actor, now)?;
-        if anchor.is_none_or(|anchor| {
-            anchor.subject_ref != *person
-                || anchor.subject_kind != crate::subject_model::SubjectKind::Person
-        }) {
-            return Err(invalid(
-                "a brought companion's actor must be anchored to her PERSON",
-            ));
-        }
-        // Her member's profile grant over her, person-wide or at the work
-        // facet she wears here.
-        if crate::gate::companion_profile_access_grant(
-            &vault.store,
-            txn,
-            &intent.person_ref,
-            person,
-            Some(work_facet),
-            authorized_at,
-        )?
-        .is_none()
-        {
-            return Err(invalid(
-                "a brought companion must already be her member's companion",
-            ));
-        }
+        verify_brought_companion_in_txn(vault, txn, intent, Some(policy), authorized_at)?;
         if vault
             .store
             .port_edge_get(txn, person, EdgeKind::HasFacet, work_facet)?

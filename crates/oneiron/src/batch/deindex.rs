@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use heed::RwTxn;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, RegistryError, Result};
+use crate::error::{Error, RegistryError, Result};
 use crate::ports::EntityStoreStaging;
 use crate::ppr;
 use crate::registry::ENTITY_TYPE_SKILL;
@@ -89,6 +89,43 @@ pub(crate) fn deindex_entity_with_machine_history(
     Ok((existed, had_vector, had_graph_mutation, neighbors))
 }
 
+/// Stages the tombstone a cascade deindex owes its replicas: the same wire
+/// value a delete publishes, so the window's next load publishes it and a
+/// replica drops its copy. The cascade already removed the row, so the marker
+/// lands in the current window. Without `sync` there is no window to publish
+/// to and the helper does nothing — the same no-op as the tombstone writer's
+/// non-sync stub.
+#[cfg(feature = "sync")]
+pub(crate) fn stage_cascade_tombstone_in_txn(
+    store: &Store,
+    wtxn: &mut RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let now = store.clock.now_recorded_at();
+    crate::deletion::stage_engine_row_hard_erasure_in_txn(
+        store,
+        wtxn,
+        id,
+        now,
+        &crate::deletion::TombstoneValueV2 {
+            reason: crate::deletion::TombstoneReason::UserHardDelete,
+            deleted_at: now,
+            request_id: *id.as_bytes(),
+        },
+    )
+}
+
+/// The same helper without `sync`: nothing propagates, so no marker is
+/// staged.
+#[cfg(not(feature = "sync"))]
+pub(crate) fn stage_cascade_tombstone_in_txn(
+    _store: &Store,
+    _wtxn: &mut RwTxn<'_>,
+    _id: &EntityId,
+) -> Result<()> {
+    Ok(())
+}
+
 pub(crate) fn deindex_entity(
     store: &Store,
     wtxn: &mut RwTxn<'_>,
@@ -114,6 +151,8 @@ pub(crate) fn deindex_entity(
     crate::skill_hub::erase_claim_refinement_in_txn(store, wtxn, id)?;
     crate::skill_hub::erase_refinement_custody_in_txn(store, wtxn, id)?;
     crate::skill_hub::remove_refinement_carrier_in_txn(store, wtxn, id)?;
+    // OF-272: the write unit re-keys the identity a deleted head leaves.
+    crate::channel_identity::note_claim_delete_for_rekey(store, wtxn, id, None)?;
     let (mut had_vector, mut had_graph_mutation, mut neighbors) =
         deindex_lexical_query_hints_for_target(store, wtxn, id)?;
 
@@ -170,12 +209,14 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     // The shared physical tear is reached by facade deletes, public batch
     // deletes and lexical-hint cascades. Every one must erase claim decisions
     // and the pending tray before the entity bytes leave this transaction.
+    // A tear is a delete's: the claim's decision key stays for the restore
+    // window; an erase redacted and retired it before it tore (FIX 7955).
     store.redact_gate_decisions_for_claim_in_txn(
         wtxn,
         id.as_bytes(),
         store.clock.now_recorded_at(),
+        false,
     )?;
-    #[cfg(feature = "sync")]
     crate::entity_doc::erase_in_txn(store, wtxn, id)?;
     // A tear keeps body keys: an erase stages its retirements before it
     // reaches here (KS-2A).
@@ -186,6 +227,9 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::tagging::tear_in_txn(store, wtxn, id)?;
     crate::store::turn_missing::tear_in_txn(store, wtxn, id)?;
     crate::dreamer_wake::erase_in_txn(store, wtxn, id)?;
+    // Every hard tear takes the requests kept for the entity (FIX 6711);
+    // the actor scrub stays with erase.
+    crate::self_heal::blocked_reports::drop_blocked_source_steps_in_txn(store, wtxn, id)?;
     store
         .l2_base_cache
         .lock()
@@ -274,21 +318,13 @@ pub(super) fn deindex_entity_without_lexical_query_hint_cascade(
     crate::compaction::raise_epoch_floor_in_txn(store, wtxn, &entity_record)?;
     if entity_type == ENTITY_TYPE_SKILL {
         let body = &entity_record[ENTITY_METADATA_HEADER_LEN..];
-        match crate::skill::decode_skill_record(body) {
-            Ok(record) => {
-                if let Some(content_hash) = record.content_hash {
-                    crate::skill_hub::maintain_skill_content_hash_index_for_delete(
-                        store,
-                        wtxn,
-                        id,
-                        content_hash,
-                    )?;
-                }
-            }
-            Err(error)
-                if error.kind() == ErrorKind::InvalidSkillBody
-                    && crate::skill::is_legacy_opaque_skill_body(body) => {}
-            Err(error) => return Err(error),
+        if let Some(content_hash) = crate::skill::decode_skill_record(body)?.content_hash {
+            crate::skill_hub::maintain_skill_content_hash_index_for_delete(
+                store,
+                wtxn,
+                id,
+                content_hash,
+            )?;
         }
     }
     crate::channel_identity::clear_assignment_for_delete(store, wtxn, id, entity_type)?;

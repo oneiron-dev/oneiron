@@ -47,14 +47,12 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> Result<Vec<(AttemptId, EntityId)>> {
         let queue = AttemptQueue::new(self.vault);
-        let rows = queue.list_kind_bounded(
-            DREAMER_RUNNER_ATTEMPT_KIND,
-            crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        )?;
         let txn = self.vault.store.env.read_txn()?;
+        let rows = queue.ready_rows_in_txn(&txn)?;
         let mut ready = Vec::new();
         for row in rows {
-            if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+            if row.kind != DREAMER_RUNNER_ATTEMPT_KIND
+                || !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
                 || row
                     .scheduled_at
                     .or(row.backoff_until)
@@ -103,6 +101,13 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         }
         self.dispatchable_definition_in_txn(&txn, &run.input.target)?;
+        // FIX 11592: a requester whose authority was withdrawn ends the try
+        // unrun, on the TASK runner's turn; this pump claims nothing.
+        if self.requester_withdrawn_in_txn(&txn, &run.input).is_some() {
+            drop(txn);
+            self.end_withdrawn(id, lease_owner, now)?;
+            return Ok(None);
+        }
         let qa_thread_ref = self.run_thread_in(&queue, &txn, &row)?;
         let ClaimOutcome::Claimed(attempt) = crate::ports::JobQueue::port_job_claim_id(
             self.vault,
@@ -161,6 +166,30 @@ impl AgentDispatcher<'_> {
             return Ok(task);
         }
         EntityId::from_bytes(*root.id.as_bytes())
+    }
+}
+
+impl AgentDispatcher<'_> {
+    /// Whether attempt `id` is a run the native agent pump would take at
+    /// `now` (FIX 4929): queued or scheduled, resting on no schedule or
+    /// backoff past `now`, and an agent run of this pump's by
+    /// [`Self::ready_agent_runs`]'s rule, so no saved workflow's leaf and no
+    /// orphaned child. A status read asks it; it decides and changes nothing.
+    pub fn is_ready_native_run(&self, id: AttemptId, now: u64) -> Result<bool> {
+        let queue = AttemptQueue::new(self.vault);
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(row) = queue.get_in_txn(&txn, id)? else {
+            return Ok(false);
+        };
+        if !matches!(row.state, AttemptState::Queued | AttemptState::Scheduled)
+            || row
+                .scheduled_at
+                .or(row.backoff_until)
+                .is_some_and(|at| at > now)
+        {
+            return Ok(false);
+        }
+        Ok(agent_run_row(&queue, &txn, &row)?.is_some())
     }
 }
 

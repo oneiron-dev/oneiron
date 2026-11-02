@@ -4,7 +4,7 @@ use heed::RwTxn;
 
 use super::EntityMetadataHeader;
 use crate::entity_id::EntityId;
-use crate::error::{ArtifactError, Error, ErrorKind, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::store::Store;
 
@@ -12,10 +12,6 @@ use crate::store::Store;
 ///
 /// Extracted from [`apply_put`] rather than inlined: this arm answers one
 /// question ("may this body replace that one?") and three doors ask it.
-///
-/// A legacy-opaque prior body is the one exemption, as it has always been —
-/// there is no decoded predecessor to judge an update against, so the upgrade
-/// is admitted and the record's shape is validated on its own terms.
 ///
 /// # Errors
 ///
@@ -50,12 +46,6 @@ pub(super) fn validate_skill_body_overwrite(
             crate::skill_optimize::check_optimizer_admission_in_txn(
                 id, &prior, updated, replicated, proof,
             )
-        }
-        Err(error)
-            if error.kind() == ErrorKind::InvalidSkillBody
-                && crate::skill::is_legacy_opaque_skill_body(prior_body) =>
-        {
-            Ok(())
         }
         Err(error) => Err(error),
     }

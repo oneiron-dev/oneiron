@@ -3,9 +3,12 @@
 //!
 //! `[ORCB | 1 | claim_id:16 | decision_id:16 | nonce:12 | AES-256-GCM(
 //! zstd-dict(MessagePack(record)), AAD=header)]`; a rotated generation `g`
-//! is version 2 with `g` (u64be) after the nonce, inside the AAD. The
-//! dictionary consists only of fixed field markers and closed enum tokens; no
-//! live value can train it.
+//! is version 2 with `g` (u64be) after the nonce, inside the AAD. A
+//! claim-free policy row (FIX 7806) is version 3, sealed in the same custody
+//! under [`POLICY_PARTITION`] where a claim's id would stand, generation 0:
+//! an id no CLAIM can carry, so no claim's erase or retirement reads it as
+//! one of that claim's rows or retires its key. The dictionary consists only
+//! of fixed field markers and closed enum tokens; no live value can train it.
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -20,6 +23,11 @@ use super::types::{GateDecisionId, GateDecisionRecord};
 const MAGIC: &[u8; 4] = b"ORCB";
 const VERSION: u8 = 1;
 const ROTATED_VERSION: u8 = 2;
+const POLICY_VERSION: u8 = 3;
+/// The custody item claim-free policy rows are sealed under: the all-0xFF
+/// id, which `EntityId` reserves (`EntityId::from_bytes` refuses it), so no
+/// CLAIM's id is it and no claim's erase retires its key.
+const POLICY_PARTITION: [u8; 16] = [0xFF; 16];
 const HEADER_LEN: usize = 4 + 1 + 16 + 16 + 12;
 const ROTATED_HEADER_LEN: usize = HEADER_LEN + 8;
 const MAX_PLAINTEXT: usize = 16 * 1024 * 1024;
@@ -57,9 +65,37 @@ pub(super) fn encode_hot_at(
     generation: u64,
 ) -> Result<Vec<u8>> {
     let claim_id = record.claim_id.ok_or_else(corrupt)?;
-    // The first claim-bound append publishes and syncs the key before LMDB
-    // may commit ciphertext under it.
-    let key = custody.get_or_create(&claim_subject(custody, &claim_id)?.at(generation))?;
+    let version = if generation == 0 {
+        VERSION
+    } else {
+        ROTATED_VERSION
+    };
+    seal(custody, record, claim_id, version, generation)
+}
+
+/// Seals a claim-free policy row under [`POLICY_PARTITION`] (FIX 7806).
+pub(super) fn encode_policy(
+    custody: LocalCustody<'_>,
+    record: &GateDecisionRecord,
+) -> Result<Vec<u8>> {
+    if record.claim_id.is_some() {
+        return Err(corrupt());
+    }
+    seal(custody, record, POLICY_PARTITION, POLICY_VERSION, 0)
+}
+
+/// `record` sealed under custody item `item` at `generation`, with header
+/// `version`.
+fn seal(
+    custody: LocalCustody<'_>,
+    record: &GateDecisionRecord,
+    item: [u8; 16],
+    version: u8,
+    generation: u64,
+) -> Result<Vec<u8>> {
+    // The first sealed append publishes and syncs the key before LMDB may
+    // commit ciphertext under it.
+    let key = custody.get_or_create(&claim_subject(custody, &item)?.at(generation))?;
     let plain = encode_gate_decision(record)?;
     if plain.len() > MAX_PLAINTEXT {
         return Err(Error::InvariantViolation("gate decision ORCB size"));
@@ -71,17 +107,13 @@ pub(super) fn encode_hot_at(
         .map_err(|_| Error::InvariantViolation("gate decision ORCB compress"))?;
     let mut header = Vec::with_capacity(ROTATED_HEADER_LEN + compressed.len() + 16);
     header.extend_from_slice(MAGIC);
-    header.push(if generation == 0 {
-        VERSION
-    } else {
-        ROTATED_VERSION
-    });
-    header.extend_from_slice(&claim_id);
+    header.push(version);
+    header.extend_from_slice(&item);
     header.extend_from_slice(&record.decision_id.as_bytes());
     let mut nonce = [0; 12];
     rand::rngs::OsRng.fill_bytes(&mut nonce);
     header.extend_from_slice(&nonce);
-    if generation != 0 {
+    if version == ROTATED_VERSION {
         header.extend_from_slice(&generation.to_be_bytes());
     }
     let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
@@ -103,6 +135,9 @@ pub(super) fn decode_hot(
     decision_id: GateDecisionId,
     raw: &[u8],
 ) -> Result<GateDecisionRecord> {
+    if is_policy_sealed(raw) {
+        return decode_policy(custody, decision_id, raw);
+    }
     if !raw.starts_with(MAGIC) || raw.len() < HEADER_LEN + 16 {
         return Err(corrupt());
     }
@@ -149,6 +184,43 @@ pub(super) fn decode_hot(
     Ok(record)
 }
 
+/// Opens a claim-free policy row (FIX 7806): its header names the policy
+/// partition at generation 0, and its record names no claim.
+fn decode_policy(
+    custody: LocalCustody<'_>,
+    decision_id: GateDecisionId,
+    raw: &[u8],
+) -> Result<GateDecisionRecord> {
+    if raw.len() < HEADER_LEN + 16
+        || raw[5..21] != POLICY_PARTITION
+        || raw[21..37] != decision_id.as_bytes()
+    {
+        return Err(corrupt());
+    }
+    let key = custody.read(&claim_subject(custody, &POLICY_PARTITION)?.at(0))?;
+    let cipher = Aes256Gcm::new_from_slice(key.expose()).map_err(|_| corrupt())?;
+    let nonce: [u8; 12] = raw[37..49].try_into().map_err(|_| corrupt())?;
+    let compressed = cipher
+        .decrypt(
+            &Nonce::from(nonce),
+            Payload {
+                msg: &raw[HEADER_LEN..],
+                aad: &raw[..HEADER_LEN],
+            },
+        )
+        .map_err(|_| corrupt())?;
+    let mut decompressor =
+        zstd::bulk::Decompressor::with_dictionary(SYNTHETIC_DICTIONARY).map_err(|_| corrupt())?;
+    let plain = decompressor
+        .decompress(&compressed, MAX_PLAINTEXT)
+        .map_err(|_| corrupt())?;
+    let record = decode_gate_decision(&plain)?;
+    if record.claim_id.is_some() || record.decision_id != decision_id {
+        return Err(corrupt());
+    }
+    Ok(record)
+}
+
 /// Whether the key an ORCB header names is retired in `custody`. No custody
 /// retires nothing.
 pub(super) fn raw_key_retired(custody: Option<LocalCustody<'_>>, raw: &[u8]) -> Result<bool> {
@@ -160,7 +232,8 @@ pub(super) fn raw_key_retired(custody: Option<LocalCustody<'_>>, raw: &[u8]) -> 
     }
 }
 
-/// The claim and key generation an ORCB header names, read without a key.
+/// The claim and key generation an ORCB header names, read without a key;
+/// `None` for a policy row, which names no claim.
 pub(super) fn raw_claim_generation(raw: &[u8]) -> Option<([u8; 16], u64)> {
     if !is_orcb(raw) || raw.len() < HEADER_LEN + 16 {
         return None;
@@ -176,8 +249,32 @@ pub(super) fn raw_claim_generation(raw: &[u8]) -> Option<([u8; 16], u64)> {
     Some((claim, generation))
 }
 
+/// The custody item and key generation any sealed ORCB header names, read
+/// without a key: a v1 or v2 row's claim and generation, a v3 policy row's
+/// [`POLICY_PARTITION`] at generation 0. Checkpoint admission and custody
+/// planning read rows through this; claim discovery reads
+/// [`raw_claim_generation`].
+pub(super) fn raw_custody_item_generation(raw: &[u8]) -> Option<([u8; 16], u64)> {
+    if !is_policy_sealed(raw) {
+        return raw_claim_generation(raw);
+    }
+    (raw.len() >= HEADER_LEN + 16 && raw[5..21] == POLICY_PARTITION)
+        .then_some((POLICY_PARTITION, 0))
+}
+
+/// Whether custody item `item` is the policy partition, which names no claim.
+pub(super) fn is_policy_partition(item: &[u8; 16]) -> bool {
+    *item == POLICY_PARTITION
+}
+
 pub(super) fn is_orcb(raw: &[u8]) -> bool {
     raw.starts_with(MAGIC)
+}
+
+/// Whether `raw` is a claim-free policy row sealed under the policy
+/// partition (FIX 7806).
+pub(super) fn is_policy_sealed(raw: &[u8]) -> bool {
+    is_orcb(raw) && raw.get(4) == Some(&POLICY_VERSION)
 }
 
 #[cfg(test)]

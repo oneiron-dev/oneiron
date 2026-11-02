@@ -41,6 +41,7 @@ pub(crate) use dependent_walk::{
 };
 mod integrity;
 mod lmdb_aux;
+pub(crate) use lmdb_aux::erase_change_log_actor_in_txn;
 mod lmdb_claim;
 #[cfg(test)]
 pub(crate) use lmdb_claim::MAX_PREDICATE_LIST_ROWS;
@@ -52,10 +53,12 @@ mod mutation;
 mod records;
 pub(crate) use mutation::{
     EntityPutAudit, MutationAudit, audit_entity_put_in_txn, audit_mutation_in_txn,
+    storage_service_principal,
 };
 mod regeneration;
 mod safe_read;
 mod time;
+mod vault_read;
 pub(crate) use safe_read::{
     BodyStale, body_readable_in_txn, raw_readable_apart_from_use_in_txn, raw_readable_in_txn,
     withdrawn_in_txn,
@@ -70,7 +73,8 @@ mod tests;
 pub use contracts::*;
 #[cfg(feature = "sync")]
 pub(crate) use integrity::{
-    holds_withdrawn_generation_in, withdraw_received_epoch_generation_in_txn,
+    holds_withdrawn_generation_in, mark_received_withdrawn_in_txn,
+    withdraw_received_epoch_generation_in_txn,
 };
 pub(crate) use integrity::{
     invalidate_source_in_txn, keep_deleted_worlds_in_txn, keep_worlds_of_unmade_epoch_in_txn,
@@ -79,7 +83,7 @@ pub(crate) use integrity::{
     withdraw_from_lost_source_in_txn, withdrawn_worlds_in,
 };
 pub use records::*;
-pub(crate) use regeneration::dependency_sources_in;
+pub(crate) use regeneration::{dependency_sources_in, remove_dependency_rows_for_dependent_in_txn};
 pub(crate) use time::{
     CLOCK_FLOOR, authorization_floor_in_txn, job_recorded_at_in_txn, observe_clock_floor_in_txn,
     persist_id_floor_in_txn, recorded_at_in_txn,

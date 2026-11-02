@@ -72,6 +72,22 @@ impl<'v> RoomTurnHandle<'v> {
         crate::task_verb::sdk::invoke(&self.memory, verb, input)
     }
 
+    /// The record-ref check `verb`'s engine fn runs before its call, run
+    /// alone on this turn's own memory (FIX 1210, 10634): a host door that
+    /// refused one of the turn's refs before reaching the fn receipts that
+    /// refusal as the fn would have. A verb the turn does not serve checks
+    /// nothing, as its call would run nothing.
+    ///
+    /// # Errors
+    ///
+    /// As [`crate::task_verb::sdk::receipt_declared_refs`].
+    pub fn receipt_declared_refs(&self, verb: &str, input: serde_json::Value) -> MemoryResult<()> {
+        if !Self::serves(verb) {
+            return Ok(());
+        }
+        crate::task_verb::sdk::receipt_declared_refs(&self.memory, verb, input)
+    }
+
     pub fn recall(
         &self,
         query: &str,
@@ -235,12 +251,14 @@ impl<'v> Memory<'v> {
                 invocation_slip: self.invocation_slip.clone(),
                 transport_invocation: self.transport_invocation,
                 task_grant: self.task_grant,
+                kept_requester: self.kept_requester.clone(),
                 origin_conversation: self.origin_conversation,
                 task_host: None,
                 task_decisions: self.task_decisions.clone(),
                 off_record_session: self.off_record_session.clone(),
                 credential: self.credential,
                 credential_instrument: self.credential_instrument.clone(),
+                attested_owner: self.attested_owner,
                 credential_door: self.credential_door.clone(),
                 rewrite_admit: self.rewrite_admit.clone(),
                 task_work_turn: self.task_work_turn.clone(),

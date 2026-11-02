@@ -182,6 +182,15 @@ pub struct CompactionHomeRef {
     pub state: String,
 }
 
+/// Every home row a call wore whole. A cut or absent part is not an input.
+pub fn compaction_home_worn_rows(
+    home: &[CompactionHomeRef],
+) -> impl Iterator<Item = EntityId> + '_ {
+    home.iter()
+        .filter(|part| part.state == HOME_PART_WORN)
+        .filter_map(|part| part.row)
+}
+
 /// What ran one self-written epoch or fold call: the host's record, beside
 /// the summary the agent wrote.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -247,8 +256,9 @@ pub struct CompactionCall {
     /// Every record the call's words were read from: its request's sources
     /// and each home part it wore, the summary's own lineage. Its filed step
     /// and any response artifact derive from each (FIX 5977), so withdrawing
-    /// one withdraws them as it withdraws the summary.
-    pub sources: Vec<EntityId>,
+    /// one withdraws them as it withdraws the summary. `None` means the whole
+    /// input was not witnessed: the call stays unfiled (FIX 11937).
+    pub sources: Option<Vec<EntityId>>,
 }
 
 /// The name of a filed compaction step's response artifact: an answer over
@@ -354,10 +364,7 @@ impl CompactionExecution {
     /// a diary entry, a lesson or the voice it wore withdraws what it shaped.
     /// A part cut for room never reached the call.
     pub fn home_dependencies(&self) -> impl Iterator<Item = EntityId> + '_ {
-        self.home
-            .iter()
-            .filter(|part| part.state == HOME_PART_WORN)
-            .filter_map(|part| part.row)
+        compaction_home_worn_rows(&self.home)
     }
 
     /// The accepted snapshot, when the gate accepted this pass.

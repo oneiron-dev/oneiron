@@ -12,7 +12,9 @@
 //! scheduled run rewrites windows only for a due obligation, since dropping
 //! history is an erase, and the owner's run rewrites every window. The lease
 //! sweep also retries a bounded number of files a revoke or an expiry could
-//! not remove then.
+//! not remove then. The found-key drain raises one write's share of due
+//! notices a page, each page its own write, and stops between pages at the
+//! deadline.
 
 use super::{Deadline, HardEraseWork, HousekeepingSweep, SecretLiftWork, SweepWork};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -136,6 +138,16 @@ pub(super) fn run(
             noticed: count(vault.notify_matured_shared_acts()?),
         },
         HousekeepingSweep::SecretLiftHistory => return secret_lift(vault, deadline),
+        HousekeepingSweep::ClaimVadDebt => {
+            let (settled, failed, left) = vault.drain_owed_claim_vads(now, || deadline.passed())?;
+            return Ok(Run {
+                work: SweepWork::ClaimVadDebt { settled, failed },
+                complete: left == 0,
+                cursor: None,
+                covered_until: None,
+            });
+        }
+        HousekeepingSweep::FoundKeyNotices => return found_key_notices(vault, deadline),
         HousekeepingSweep::EsignReminders
         | HousekeepingSweep::ConsultSettlement
         | HousekeepingSweep::PolicyHoldPrune
@@ -192,7 +204,8 @@ fn confirm_walk_began(bytes: &[u8]) -> Option<u64> {
     Some(u64::from_be_bytes(bytes.try_into().ok()?))
 }
 
-/// Finishes staged key retirements, then ages out decisions past the owner's
+/// Finishes staged key retirements, a left env's owed body collection and
+/// the retained peer work's turns, then ages out decisions past the owner's
 /// horizon a pass at a time until a pass removes nothing or the deadline
 /// passes. A vault with no horizon prunes nothing.
 fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
@@ -205,9 +218,25 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     vault.finish_connector_resume_retirements_after_commit();
     // An erased credential's discovery and keys (KS-6 part 2), retried here.
     vault.finish_credential_retirements_after_commit();
+    // An erased or evicted inference snapshot's body and key (FIX 10466),
+    // retried here.
+    vault.finish_inference_snapshot_retirements_after_commit();
+    // An erased actor's erasable keys (FIX 8875), retried here.
+    vault.finish_erasable_retirements_after_commit();
+    // An erased owner's checkpoint payload leaves (KS7-4), retried here.
+    vault
+        .store
+        .finish_checkpoint_payload_retirements_after_commit();
+    // A restore's credentials pending on their source's evidence (FIX 10671).
+    vault.resolve_pending_credential_restores_logged();
     // Body instances nothing needs any longer, by the one policy (FIX 6022).
     #[cfg(unix)]
     vault.sweep_body_retention_after_commit();
+    // A left shared env's body files its purge left unnamed (FIX 2413).
+    super::sync_work::collect_left_env_bodies(vault);
+    // Retained peer work takes its turn or ends with its receipt (FIX 7997,
+    // 8565).
+    super::sync_work::drain_retained_sync_work(vault);
     let mut removed = 0;
     let mut complete = true;
     if vault.gate_decision_retention_secs()?.is_some() {
@@ -282,6 +311,26 @@ fn secret_lift(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     })
 }
 
+/// Raises the found-key notices writes left due a page at a time, each page
+/// its own short write, until none is due or the deadline passes (FIX 2648).
+/// The due rows are the queue, so the schedule keeps no cursor. A page that
+/// takes no record while some stay due ends the run unfinished.
+fn found_key_notices(vault: &Vault, deadline: &Deadline) -> Result<Run> {
+    let mut records = 0;
+    loop {
+        let (page, more) = crate::secret_custody::raise_found_key_notices_page(vault)?;
+        records += count(page);
+        if !more || page == 0 || deadline.passed() {
+            return Ok(Run {
+                work: SweepWork::FoundKeyNotices { records },
+                complete: !more,
+                cursor: None,
+                covered_until: None,
+            });
+        }
+    }
+}
+
 /// The envelope the host lapses an overdue instance under: the vault owner's,
 /// as the owner-typed lifecycle doors act, observing that a due time passed.
 /// The instance is the projector's signed birth, which only an ordinary
@@ -313,14 +362,18 @@ fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
     } else {
         crate::sweep::run_scheduled_hard_erase_sweep(vault)?
     };
+    // Views of a source this sweep erased, or a pass that failed (FIX 9722).
+    crate::code_view::collect_after_sweep(vault, run.jobs_processed > 0);
     Ok(HardEraseWork {
         jobs_processed: run.jobs_processed,
         jobs_deferred: run.jobs_deferred,
+        jobs_deferred_signer_unavailable: run.jobs_deferred_signer_unavailable,
         windows_unloaded,
         jobs_failed: run.jobs_failed,
         windows_compacted: run.windows_compacted,
         windows_deferred_live: run.windows_deferred_live,
         windows_deferred_raced: run.windows_deferred_raced,
+        windows_deferred_unproved: run.windows_deferred_unproved,
         windows_deferred_held: run.windows_deferred_held,
         receipts_finalized: run.receipts_finalized,
         deadline_breaches: run.deadline_breaches,

@@ -98,6 +98,7 @@ where
                     connector,
                     task_ref: request.task_ref.map(|task| task.to_hex()),
                     parent_attempt: request.parent_attempt_id.map(|id| *id.as_bytes()),
+                    dev_refs: request.dev_refs,
                     run_id: request.run_id,
                     dedupe_key: request.dedupe_key,
                     now: request.now,

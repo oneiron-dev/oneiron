@@ -1,10 +1,12 @@
 //! The agent's doors: `reveal`, `wait` and `describe` on a handle.
 
+use super::notice::{notify_reveal_ask_in_txn, settle_reveal_notices_in_txn};
+use super::replay::RevealCollection;
 use super::{
     HandleReveal, READER_AGENT, REVEAL_ASK_TTL_SECS, REVEAL_LEASE_TTL_SECS, REVEALS, RevealAct,
     RevealAsker, RevealAuthority, RevealRow, SecretHandleCard, SecretProvenance,
     SecretRevealDecision, SecretRevealState, SecretRevealWait, append_reveal_decision_in_txn,
-    checked_text, covering_grant, resolve_handle_in_txn, reveal_bound, unknown,
+    checked_text, resolve_handle_in_txn, reveal_class, unknown,
 };
 use crate::consent::{
     approve_once_authorization_in_txn, approve_once_decision_in_txn, load_active_standing_grants,
@@ -87,11 +89,20 @@ impl Vault {
                 lease: None,
                 delivered_at: None,
                 file: None,
+                notices: Vec::new(),
+                closed: None,
+                task: asker.task.clone(),
+                attempt: asker.attempt,
+                scope: None,
+                collected: None,
             };
             row.once_digest = Some(*row.ask_digest(&reveal).as_bytes());
             let grants = load_active_standing_grants(&self.store, txn)?;
-            match covering_grant(&row.bound()?, row.project, &grants)? {
-                Some(grant_ref) => row.answered_by = Some(standing(&grant_ref)),
+            match row.covering(&grants)? {
+                Some((scope, grant_ref)) => {
+                    row.answered_by = Some(standing(&grant_ref));
+                    row.scope = Some(scope);
+                }
                 None => file_ask_in_txn(self, txn, &reveal, &mut row, now)?,
             }
             REVEALS.put(&self.store, txn, &reveal, &row)?;
@@ -107,8 +118,11 @@ impl Vault {
     /// out with a quiet use receipt; a grant revoked meanwhile files the ask
     /// now. An approved-once reveal spends its marker. Delivery stamps the T1
     /// lease, receipt first, in this same transaction, so a failure writes
-    /// nothing and spends nothing. A delivered reveal answers `granted` with
-    /// its receipt and no value.
+    /// nothing and spends nothing; the row keeps the durable step that
+    /// collected it. A delivered reveal answers `granted` with its receipt
+    /// and no value, except to a live re-attempt of that step, which reads
+    /// the value again under the reveal's lease, or `expired` once it lapsed
+    /// (FIX 11683).
     pub(crate) fn wait_secret_reveal(
         &self,
         asker: &RevealAsker,
@@ -134,6 +148,18 @@ impl Vault {
                     receipt: Some(row.receipt(*reveal)?),
                 })
             };
+            // An approve-once covers the provider the owner saw. When the
+            // host now binds another, the reveal asks again for it, before
+            // the marker is spent; the old marker stays unspent (FIX 7991).
+            if row.state == SecretRevealState::ApprovedOnce
+                && now < row.expires_at
+                && row.provider != asker.provider
+            {
+                row.provider.clone_from(&asker.provider);
+                file_ask_in_txn(self, txn, reveal, &mut row, now)?;
+                REVEALS.put(&self.store, txn, reveal, &row)?;
+                return answer(SecretRevealDecision::Pending, &row);
+            }
             // A PERSON claim is re-admitted in this writer before any grant
             // is spent or receipt is written. A changed claim needs a new ask.
             let person_value = if row.person.is_some()
@@ -149,19 +175,34 @@ impl Vault {
             };
             let state = row.state;
             match state {
-                SecretRevealState::Delivered => return answer(SecretRevealDecision::Granted, &row),
+                SecretRevealState::Delivered => {
+                    // A live re-attempt of the step that collected it reads
+                    // again; a refused re-read answers as before (FIX 11683).
+                    if row.collected_by(asker) {
+                        match self.reread_delivered_in(txn, asker, reveal, &row) {
+                            Ok(wait) => return Ok(wait),
+                            Err(Error::Secret(_) | Error::Gate(_) | Error::EntityNotFound) => {}
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    return answer(SecretRevealDecision::Granted, &row);
+                }
                 SecretRevealState::Denied => return answer(SecretRevealDecision::Denied, &row),
                 SecretRevealState::Expired => return answer(SecretRevealDecision::Expired, &row),
+                SecretRevealState::Unavailable => {
+                    return answer(SecretRevealDecision::Unavailable, &row);
+                }
                 _ if now >= row.expires_at => {
                     row.state = SecretRevealState::Expired;
+                    // An expired ask leaves no open notice (FIX 2355).
+                    settle_reveal_notices_in_txn(self, txn, &mut row)?;
                     REVEALS.put(&self.store, txn, reveal, &row)?;
                     return answer(SecretRevealDecision::Expired, &row);
                 }
                 SecretRevealState::Asked => return answer(SecretRevealDecision::Pending, &row),
                 SecretRevealState::Covered | SecretRevealState::ApprovedStanding => {
                     let grants = load_active_standing_grants(&self.store, txn)?;
-                    let Some(grant_ref) = covering_grant(&row.bound()?, row.project, &grants)?
-                    else {
+                    let Some((scope, grant_ref)) = row.covering(&grants)? else {
                         file_ask_in_txn(self, txn, reveal, &mut row, now)?;
                         REVEALS.put(&self.store, txn, reveal, &row)?;
                         return answer(SecretRevealDecision::Pending, &row);
@@ -174,6 +215,7 @@ impl Vault {
                     if state == SecretRevealState::Covered {
                         row.answered_by = Some(standing(&grant_ref));
                     }
+                    row.scope = Some(scope);
                     row.decision = Some(used.decision_id());
                 }
                 SecretRevealState::ApprovedOnce => {
@@ -189,8 +231,12 @@ impl Vault {
                 }
             }
             if let Some(value) = person_value {
+                // A PERSON reveal keeps its own lease on its row, with a T1
+                // reveal lease's life, for its step's replay (FIX 11683).
                 row.state = SecretRevealState::Delivered;
                 row.delivered_at = Some(now);
+                row.lease = Some(self.store.clock.entity_id()?);
+                row.collected = Some(RevealCollection::person(asker, now));
                 REVEALS.put(&self.store, txn, reveal, &row)?;
                 Ok(SecretRevealWait {
                     decision: SecretRevealDecision::Granted,
@@ -198,6 +244,7 @@ impl Vault {
                     receipt: Some(row.receipt(*reveal)?),
                 })
             } else {
+                row.collected = Some(RevealCollection::custody(asker));
                 deliver_in_txn(self, txn, reveal, row)
             }
         })
@@ -238,12 +285,12 @@ impl Vault {
             Ok(()) => match asker {
                 None => HandleReveal::Asks,
                 Some(asker) => {
-                    let bound =
-                        reveal_bound(&asker.connection(), rec.class, asker.project.as_ref())?;
                     let grants = load_active_standing_grants(&self.store, &txn)?;
-                    covering_grant(&bound, asker.project, &grants)?
-                        .map_or(HandleReveal::Asks, |grant_ref| HandleReveal::Hydrates {
-                            grant_ref,
+                    asker
+                        .reach()
+                        .covering_grant(&asker.connection(), &reveal_class(rec.class), &grants)?
+                        .map_or(HandleReveal::Asks, |(_, grant_ref)| {
+                            HandleReveal::Hydrates { grant_ref }
                         })
                 }
             },
@@ -260,7 +307,8 @@ impl Vault {
 }
 
 /// Files the owner's ask for `row`, now: its window, the digest an answer
-/// must carry, and the pending Gate record that names both.
+/// must carry, the pending Gate record that names both, and one inbox Ask
+/// per live owner (FIX 2355). A re-ask settles the old ask's notices first.
 pub(super) fn file_ask_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -268,6 +316,7 @@ pub(super) fn file_ask_in_txn(
     row: &mut RevealRow,
     now: u64,
 ) -> Result<()> {
+    settle_reveal_notices_in_txn(vault, txn, row)?;
     row.state = SecretRevealState::Asked;
     row.answered_by = None;
     row.expires_at = now.saturating_add(REVEAL_ASK_TTL_SECS);
@@ -281,6 +330,7 @@ pub(super) fn file_ask_in_txn(
         RevealAct::Asked,
         digest.as_bytes().to_vec(),
     )?);
+    notify_reveal_ask_in_txn(vault, txn, reveal, row)?;
     Ok(())
 }
 

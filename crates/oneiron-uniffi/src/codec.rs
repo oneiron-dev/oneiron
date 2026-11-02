@@ -14,7 +14,7 @@
 //! `BAD_REQUEST`, an engine value past the foreign width an `INTERNAL`.
 
 use base64::Engine as _;
-use oneiron::claim::{ScopedReadReceipt, ScopedReadResult};
+use oneiron::claim::{ConfidenceDetails, ScopedReadReceipt, ScopedReadResult};
 use oneiron::dreamer_runner::maintenance::identity;
 use oneiron::memory as engine;
 use oneiron::retrieval_quality as quality;
@@ -24,14 +24,15 @@ use crate::dto::{
     AdmitImportedClaimInput, BlobArtifactInput, BlobVersionView, CitedMessage, ClaimInput,
     ClaimListFilter, ClaimView, ClaimViews, CommitOutcome, CommitReceipt, ConsolidationJobInput,
     DeleteReceipt, DeleteRequestState, DreamerJobRef, DreamerJobView, Effort, EntityRead,
-    EntityRefReceipt, EntityView, EntityViews, FacadeReceipt, ForgetSelector, HabitCheckinInput,
-    LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance, MemoryStaleStamp,
-    MentionProvenance, NeighborHit, NeighborHits, NeighborOpts, OutboundDraftInput,
-    OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt, ReadScope,
-    RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource, RecallScope,
-    RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation, RetrievalMeta,
-    RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput, TemporalHint, WireJson,
-    WitnessAuthor, WitnessMessage, WitnessReceipt, WitnessTurn,
+    EntityRefReceipt, EntityView, EntityViews, ExportReceipt, FacadeReceipt, ForgetSelector,
+    HabitCheckinInput, LexicalHit, LexicalHits, MemoryItem, MemoryPack, MemoryProvenance,
+    MemoryStaleStamp, MentionProvenance, NeighborHit, NeighborHits, NeighborOpts,
+    OutboundDraftInput, OutboundIntentReceipt, PendingWrite, QueryAffect, QuoteSpan, ReadReceipt,
+    ReadScope, RecallMedia, RecallResidence, RecallResidenceHit, RecallResidenceSource,
+    RecallScope, RecordRefusal, RefusalReason, RerankReport, RerankSkip, RetrievalDegradation,
+    RetrievalMeta, RetrievalQuality, SafeDeleteReason, ScopeHonesty, StructuralPutInput,
+    TemporalHint, TurnProgramWakeOutcome, UnpersistedWakeReason, WireJson, WitnessAuthor,
+    WitnessMessage, WitnessReceipt, WitnessTurn,
 };
 use crate::error::OneironError;
 
@@ -56,6 +57,10 @@ fn failure(code: &str, message: String, suggestion: &str) -> OneironError {
         replacement: None,
         schema_ref: None,
         pending: None,
+        retry_after: None,
+        resets_at: Vec::new(),
+        reason_codes: Vec::new(),
+        legal_hold: None,
     }
 }
 
@@ -69,6 +74,12 @@ fn internal(message: String) -> OneironError {
         message,
         "This is an Oneiron SDK bug; please report it.",
     )
+}
+
+pub(crate) fn lift_legal_hold_notice(
+    notice: oneiron::error::LegalHoldNotice,
+) -> Result<crate::facade_types_generated::LegalHoldNotice, OneironError> {
+    lift_record("legal_hold", &notice)
 }
 
 // ── the WireJson leaf ───────────────────────────────────────────────────
@@ -141,6 +152,134 @@ impl<'de> serde::Deserialize<'de> for WireJson {
             .map(|canonical_json| Self { canonical_json })
             .map_err(serde::de::Error::custom)
     }
+}
+
+// ── the tuple leaf ────────────────────────────────────────────────────
+//
+// UniFFI has no tuple, so the generator (FIX 3298) mirrors each tuple a
+// facade row reaches as a record with positional fields (`item0`, ...).
+// The record's serde is the engine tuple's: one JSON array, written and
+// read here, so a row still converts through the shared wire shape
+// (`lower_record` / `lift_record`).
+
+/// Writes a two-tuple record's fields as the JSON array the engine writes
+/// a tuple as.
+pub(crate) fn ser_tuple2<S, A, B>(item0: &A, item1: &B, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    A: serde::Serialize,
+    B: serde::Serialize,
+{
+    use serde::ser::SerializeTuple;
+    let mut tuple = serializer.serialize_tuple(2)?;
+    tuple.serialize_element(item0)?;
+    tuple.serialize_element(item1)?;
+    tuple.end()
+}
+
+/// Reads the JSON array the engine writes a two-tuple as into the
+/// generated record `make` builds.
+pub(crate) fn de_tuple2<'de, D, A, B, R>(
+    deserializer: D,
+    make: impl FnOnce(A, B) -> R,
+) -> Result<R, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    A: serde::Deserialize<'de>,
+    B: serde::Deserialize<'de>,
+{
+    struct Pair<A, B, R, F>(F, std::marker::PhantomData<fn(A, B) -> R>);
+
+    impl<'de, A, B, R, F> serde::de::Visitor<'de> for Pair<A, B, R, F>
+    where
+        A: serde::Deserialize<'de>,
+        B: serde::Deserialize<'de>,
+        F: FnOnce(A, B) -> R,
+    {
+        type Value = R;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a two-element array")
+        }
+
+        fn visit_seq<S: serde::de::SeqAccess<'de>>(self, mut seq: S) -> Result<R, S::Error> {
+            let item0: A = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+            let item1: B = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+            Ok((self.0)(item0, item1))
+        }
+    }
+
+    deserializer.deserialize_tuple(2, Pair(make, std::marker::PhantomData))
+}
+
+/// Writes a three-tuple record's fields as the JSON array the engine
+/// writes a tuple as.
+pub(crate) fn ser_tuple3<S, A, B, C>(
+    item0: &A,
+    item1: &B,
+    item2: &C,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+    A: serde::Serialize,
+    B: serde::Serialize,
+    C: serde::Serialize,
+{
+    use serde::ser::SerializeTuple;
+    let mut tuple = serializer.serialize_tuple(3)?;
+    tuple.serialize_element(item0)?;
+    tuple.serialize_element(item1)?;
+    tuple.serialize_element(item2)?;
+    tuple.end()
+}
+
+/// Reads the JSON array the engine writes a three-tuple as into the
+/// generated record `make` builds.
+pub(crate) fn de_tuple3<'de, D, A, B, C, R>(
+    deserializer: D,
+    make: impl FnOnce(A, B, C) -> R,
+) -> Result<R, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    A: serde::Deserialize<'de>,
+    B: serde::Deserialize<'de>,
+    C: serde::Deserialize<'de>,
+{
+    struct Triple<A, B, C, R, F>(F, std::marker::PhantomData<fn(A, B, C) -> R>);
+
+    impl<'de, A, B, C, R, F> serde::de::Visitor<'de> for Triple<A, B, C, R, F>
+    where
+        A: serde::Deserialize<'de>,
+        B: serde::Deserialize<'de>,
+        C: serde::Deserialize<'de>,
+        F: FnOnce(A, B, C) -> R,
+    {
+        type Value = R;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("a three-element array")
+        }
+
+        fn visit_seq<S: serde::de::SeqAccess<'de>>(self, mut seq: S) -> Result<R, S::Error> {
+            let item0: A = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(0, &self))?;
+            let item1: B = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
+            let item2: C = seq
+                .next_element()?
+                .ok_or_else(|| serde::de::Error::invalid_length(2, &self))?;
+            Ok((self.0)(item0, item1, item2))
+        }
+    }
+
+    deserializer.deserialize_tuple(3, Triple(make, std::marker::PhantomData))
 }
 
 // ── generated records ───────────────────────────────────────────────────
@@ -318,13 +457,18 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
                     .collect::<Result<std::collections::BTreeSet<_>, OneironError>>()
             })
             .transpose()?;
+        // The generated record shares the engine's wire shape.
+        let assertions: Option<engine::WitnessAssertions> = self
+            .assertions
+            .map(|assertions| lower_record("vault.witness", assertions))
+            .transpose()?;
         Ok(engine::WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             thread_audience,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
-            assertions: Default::default(),
+            assertions: assertions.unwrap_or_default(),
         })
     }
 }
@@ -351,6 +495,31 @@ impl Lift<engine::WitnessReceipt> for WitnessReceipt {
             turn_short_id: value.turn_short_id,
             message_short_ids: value.message_short_ids,
             receipt_ref: value.receipt_ref,
+            wake_outcome: value
+                .wake_outcome
+                .map(TurnProgramWakeOutcome::lift)
+                .transpose()?,
+        })
+    }
+}
+
+impl Lift<engine::TurnProgramWakeOutcome> for TurnProgramWakeOutcome {
+    fn lift(value: engine::TurnProgramWakeOutcome) -> Result<Self, OneironError> {
+        Ok(match value {
+            engine::TurnProgramWakeOutcome::NotArmed => Self::NotArmed,
+            engine::TurnProgramWakeOutcome::Evaluated { newly_recorded } => {
+                Self::Evaluated { newly_recorded }
+            }
+            engine::TurnProgramWakeOutcome::Unpersisted { reason } => Self::Unpersisted {
+                reason: match reason {
+                    engine::UnpersistedWakeReason::NoAuthority => {
+                        UnpersistedWakeReason::NoAuthority
+                    }
+                    engine::UnpersistedWakeReason::StorageFailure => {
+                        UnpersistedWakeReason::StorageFailure
+                    }
+                },
+            },
         })
     }
 }
@@ -374,6 +543,16 @@ impl Lower<engine::ClaimInput> for ClaimInput {
             occurred_at: optional_seconds("occurred_at", self.occurred_at)?,
             learned_at: optional_seconds("learned_at", self.learned_at)?,
             salience: self.salience,
+            confidence_details: ConfidenceDetails::from_names(
+                self.confidence_band.as_deref(),
+                self.confidence_basis.as_deref(),
+            )
+            .map_err(|reason| {
+                bad_request(
+                    reason.to_owned(),
+                    "Pass both confidence_band and confidence_basis, or neither.",
+                )
+            })?,
         })
     }
 }
@@ -462,6 +641,10 @@ impl Lift<engine::RecordRefusal> for RecordRefusal {
             message: value.message,
             suggestions: value.suggestions,
             field: value.field,
+            legal_hold: value
+                .legal_hold
+                .map(|notice| lift_legal_hold_notice(*notice))
+                .transpose()?,
         })
     }
 }
@@ -611,7 +794,7 @@ impl Lower<sdk::NeighborsRequest> for (String, NeighborOpts) {
 impl Lift<oneiron::claim::ReadScope> for ReadScope {
     fn lift(scope: oneiron::claim::ReadScope) -> Result<Self, OneironError> {
         Ok(Self {
-            entity_types: scope.entity_types.map(|types| types.into_iter().collect()),
+            entity_types: scope.entity_kinds(),
             max_sensitivity_band: scope.max_sensitivity_band,
             include_stale: scope.include_stale,
             min_confidence: scope.min_confidence,
@@ -1019,6 +1202,7 @@ impl Lift<engine::MemoryItem> for MemoryItem {
             value_text: item.value_text,
             confidence: item.confidence,
             hedge_bucket: item.hedge_bucket,
+            confidence_basis: item.confidence_basis.map(|basis| basis.as_str().to_owned()),
             provenance: MemoryProvenance {
                 source: item.provenance.source,
                 source_revision_ids: item.provenance.source_revision_ids,
@@ -1166,6 +1350,16 @@ impl Lift<engine::RecallResidence> for RecallResidence {
                     window: hit.window,
                 })
                 .collect(),
+        })
+    }
+}
+
+impl Lift<engine::MemoryExportReceipt> for ExportReceipt {
+    fn lift(receipt: engine::MemoryExportReceipt) -> Result<Self, OneironError> {
+        Ok(Self {
+            format: receipt.format,
+            bytes: receipt.bytes,
+            digest: receipt.digest,
         })
     }
 }

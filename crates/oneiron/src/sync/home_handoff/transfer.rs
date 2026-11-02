@@ -4,8 +4,10 @@
 
 use heed::{RoTxn, RwTxn};
 
-use super::envelope::{self, SealedHandoff, TableSection, VerifiedHandoff, VerifiedHomeAck};
+use super::actor_content::{self, SectionExport};
+use super::envelope::{self, SealedHandoff, VerifiedHandoff, VerifiedHomeAck};
 use super::lineage::{check_source, lineage_admits};
+use super::routes;
 use super::store::{self, HandoffHead, HandoffRole, HandoffTransfer, HeadFloor, MoveRequest};
 use super::table::{HomeTableRegistration, TableAdopt, check_registry};
 use super::{
@@ -20,8 +22,13 @@ use crate::side_table::SideTableDbs;
 /// to `to`. It reads and writes the head row only: no export, signing or
 /// sealing runs here, so the election's commit never fails for one. The
 /// drain freezes and exports later ([`freeze_export`]). A move to the node
-/// it left records nothing. A new move drops the route captured for the
-/// last one.
+/// it left records nothing.
+///
+/// FIX 6459: the move's route is captured here, in the election's own
+/// writer, from the routes the host last fed ([`super::routes`]); none fed
+/// yet, the next feed captures it. A node that holds its state and has not
+/// frozen it for the move it recorded keeps that move's source when the
+/// home moves on to a third node first: the state goes from here.
 pub(crate) fn request_move_in_txn(
     dbs: &impl SideTableDbs,
     txn: &mut RwTxn<'_>,
@@ -32,8 +39,23 @@ pub(crate) fn request_move_in_txn(
         return Ok(());
     }
     let mut head = store::head_in_txn(dbs, txn)?;
+    let node = crate::identity::read_client_id_from(dbs, txn)?;
+    let from = match head.request {
+        Some(pending)
+            if node.is_some()
+                && head.holds_state()
+                && pending.from == node
+                && pending.to != node
+                && to != node =>
+        {
+            pending.from
+        }
+        _ => from,
+    };
     head.request = Some(MoveRequest { from, to });
-    head.route = None;
+    head.route = to
+        .filter(|to| Some(*to) != node)
+        .and_then(|to| routes::route_for(&head, to));
     store::put_head_in_txn(dbs, txn, &head)
 }
 
@@ -41,16 +63,26 @@ pub(crate) fn request_move_in_txn(
 /// that froze its state for a move refuses both kinds: its rows are history
 /// now. A node draining its state toward a move refuses a new admission and
 /// lets an admitted one settle, so its tables go quiescent. Every other
-/// node, a new home still waiting for its handoff included, writes as today.
+/// node, a new home still waiting for its handoff included, writes as today,
+/// as does one whose state no move exports (FIX 6575).
 pub(crate) fn guard_in_txn(vault: &Vault, txn: &RoTxn<'_>, mode: HomeWrite) -> Result<()> {
     let head = store::head_in_txn(vault, txn)?;
     if !head.holds_state() {
         return Err(refused("this node froze its home state for a move"));
     }
-    if mode == HomeWrite::Admit && draining(vault, txn, &head)? {
+    if mode == HomeWrite::Admit && holds_lineage_state(&head) && draining(vault, txn, &head)? {
         return Err(refused("this node is draining its home state for a move"));
     }
     Ok(())
+}
+
+/// FIX 6575: whether the state this node holds is the lineage's, the state
+/// a move from here exports. It is not where it is only the local opening of
+/// a move that carried nothing here (Incomplete) with no adopted floor under
+/// it: [`super::delivery_plan`] never exports that, so nothing is held back
+/// for a move there.
+pub(super) fn holds_lineage_state(head: &HandoffHead) -> bool {
+    head.holds_state() && (head.incomplete.is_none() || head.floor.is_some())
 }
 
 /// Whether the last move this node's election recorded leaves this node.
@@ -64,11 +96,13 @@ pub(super) fn draining(vault: &Vault, txn: &RoTxn<'_>, head: &HandoffHead) -> Re
 
 /// The source's final writer for `movement`. While any registered table is
 /// not quiescent it returns `None` and writes nothing. Otherwise, in that one
-/// writer, every table exports from the same view, the manifest is signed
-/// and sealed to the target, and the frozen status and the sealed parts
-/// commit together: from then on this node's rows are history
-/// ([`guard_in_txn`] refuses them). Asked again for the move it froze, it
-/// returns the same sealed bytes, never a second export.
+/// writer, every table exports from the same view, each actor's content is
+/// sealed under a key minted for it and this export's incarnation (FIX
+/// 8875), the manifest is signed and sealed to the target, and the frozen
+/// status, the keys' refs and the sealed parts commit together: from then on
+/// this node's rows are history ([`guard_in_txn`] refuses them). Asked again
+/// for the move it froze, it returns the same sealed bytes, never a second
+/// export.
 ///
 /// The move must start at this install and node, in this vault, take the
 /// next generation of the state this node holds, and name another of the
@@ -109,11 +143,14 @@ pub(super) fn freeze_in_txn(
             return Ok(None);
         }
     }
+    // FIX 8875: the incarnation is drawn before any table exports, so every
+    // actor's key minted for this export names it.
+    let wire = actor_content::draw_wire()?;
     let fence = HomeFence::new(*movement);
-    let mut sections = Vec::with_capacity(tables.len());
+    let mut exports = Vec::with_capacity(tables.len());
     for table in tables {
-        sections.push(TableSection {
-            table_id: table.table_id().to_owned(),
+        exports.push(SectionExport {
+            table_id: table.table_id(),
             schema_version: table.schema_version(),
             rows: table.export(vault, view, &fence)?,
         });
@@ -128,7 +165,9 @@ pub(super) fn freeze_in_txn(
         None => None,
     };
     let key = vault.door_signing_key_in_txn(view, movement.source.machine)?;
-    let (sealed, signed) = envelope::seal_handoff(movement, &key, &target, lineage, &sections)?;
+    let (sections, keys) = actor_content::seal_sections(vault, txn, movement, &wire, exports)?;
+    let (sealed, signed) =
+        envelope::seal_handoff(movement, &key, &target, lineage, &sections, wire)?;
     let parts = store::put_parts_in_txn(vault, txn, &sealed.id, &sealed.sealed)?;
     let transfer = HandoffTransfer {
         role: HandoffRole::Source,
@@ -142,6 +181,7 @@ pub(super) fn freeze_in_txn(
             .route
             .clone()
             .filter(|route| route.to == movement.target.node_id),
+        keys,
     };
     store::put_transfer_in_txn(vault, txn, &sealed.id, &transfer)?;
     let floor = HeadFloor {
@@ -204,9 +244,11 @@ impl From<Error> for Abort {
 /// is a Conflict; while this node's own election does not name it home the
 /// move is Pending; a generation at or below this node's floor is Stale; a
 /// lineage that does not chain is Pending and recorded Incomplete. Then
-/// every table adopts in that one transaction, and an error or a table's
-/// Conflict drops the writer, so nothing partial lands. The signed ack, the
-/// new floor and the status commit with the rows.
+/// every table adopts in that one transaction, with the content of each
+/// actor whose key opens here (FIX 8875), and an error or a table's Conflict
+/// drops the writer, so nothing partial lands. An actor's content that does
+/// not open here lands as its rows' facts alone, never a Conflict. The
+/// signed ack, the new floor and the status commit with the rows.
 pub(crate) fn adopt(
     vault: &Vault,
     handoff: VerifiedHandoff,
@@ -288,7 +330,8 @@ fn adopt_in_txn(
             .iter()
             .find(|section| section.table_id == table.table_id())
             .ok_or_else(|| refused("a registered table has no section"))?;
-        if table.adopt(vault, txn, &fence, &section.rows)? == TableAdopt::Conflict {
+        let actors = actor_content::open_section(vault, movement, handoff.wire(), section)?;
+        if table.adopt(vault, txn, &fence, &section.rows, actors)? == TableAdopt::Conflict {
             return Err(Abort::Conflict);
         }
     }
@@ -303,6 +346,7 @@ fn adopt_in_txn(
         digest: handoff.digest,
         parts: 0,
         route: None,
+        keys: Vec::new(),
     };
     store::put_transfer_in_txn(vault, txn, &handoff.id, &transfer)?;
     let floor = HeadFloor {
@@ -324,7 +368,8 @@ fn adopt_in_txn(
 
 /// Whether `handoff` carries exactly one section per registered table, at
 /// the version this build registers. A section that does not decode as its
-/// table's rows at a matching version is refused.
+/// table's rows at a matching version, or names an actor part's key in
+/// another spelling, is refused.
 fn sections_match(handoff: &VerifiedHandoff, tables: &[HomeTableRegistration]) -> Result<bool> {
     if handoff.sections.len() != tables.len() {
         return Ok(false);
@@ -341,6 +386,7 @@ fn sections_match(handoff: &VerifiedHandoff, tables: &[HomeTableRegistration]) -
             return Ok(false);
         }
         table.check(&section.rows)?;
+        actor_content::check_parts(section)?;
     }
     Ok(true)
 }
@@ -394,6 +440,7 @@ fn record_unadopted(
         digest: handoff.digest,
         parts: 0,
         route: None,
+        keys: Vec::new(),
     };
     store::put_transfer_in_txn(vault, txn, &handoff.id, &transfer)
 }

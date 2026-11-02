@@ -11,10 +11,10 @@
 //! `reader_parent_for_wake`, `ReaderSeats::seat_with_parent`); nothing here
 //! makes a second clock, queue or store.
 
+mod generation;
 mod ports;
 mod profile;
 
-use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Weak};
 
 use oneiron::claim::CallerLocality;
@@ -28,12 +28,14 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::{ModelId, ModelLocality, Vault};
 
+use self::generation::GenerationCount;
 use self::ports::ThingChildPorts;
 use self::profile::{CountedBackend, ThingSession};
 use super::dreamer::QuestionTimer;
 use super::scoped_child::{enqueue_scoped_child, reader_parent_for_wake};
 use crate::mcp::McpCodeModeProvider;
 use crate::models::{ModelRuntime, OfferLadder, RunBackend};
+use crate::runtime::wall_clock_ms as unix_millis_now;
 use crate::server::SyncServer;
 
 /// The run an agent's own generation is admitted under, on its parent's
@@ -163,11 +165,18 @@ impl ThingChildHost for ServedThingChildHost {
         let task = scoped_child_task(parent_run, &intent_key)?;
         let (calls, received) = tokio::sync::mpsc::unbounded_channel();
         let stop = ScopedChildStop::default();
-        let units = Arc::new(AtomicU64::new(0));
+        // Counted against the attempt's own line, where a call that settles
+        // after its parent stopped is owed and charged (FIX 9015).
+        let count = Arc::new(GenerationCount::new(
+            Arc::clone(&self.vault),
+            ctx.budget_id.to_owned(),
+            leased.id,
+            parent_run,
+        ));
         let run = self.runtime.undeclared_run(THING_CHILD_RUN, guard.clone());
         let backend = CountedBackend::new(
             RunBackend::new(Arc::clone(&self.route.ladder), run),
-            Arc::clone(&units),
+            Arc::clone(&count),
             stop.clone(),
         );
         // Registered before the child is queued: the runner may claim it at
@@ -194,7 +203,7 @@ impl ThingChildHost for ServedThingChildHost {
             parent_run,
             received,
             stop,
-            units,
+            count,
         );
         let queued = enqueue_scoped_child(
             &ReaderJobs::canonical(vault),
@@ -220,13 +229,4 @@ impl ThingChildHost for ServedThingChildHost {
 fn not_launched(reason: &'static str, code: &'static str) -> ThingChildStart {
     tracing::info!(reason, code, "a thing branch's agent was not launched");
     ThingChildStart::Unavailable(reason)
-}
-
-/// The wall clock in unix milliseconds, as reader rows keep their times.
-fn unix_millis_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }

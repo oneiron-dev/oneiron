@@ -27,13 +27,17 @@ use oneiron::task_verb::sdk::{
     self, VoiceBankInspectRequest, VoiceBankInspection, VoiceBankPackPutRequest,
     VoiceBankPackReceipt, VoiceRenderConsentReceipt, VoiceRenderConsentRequest,
     VoiceRenderEventView, VoiceRenderLineageRequest, VoiceTargetEvictReceipt,
-    VoiceTargetEvictRequest, VoiceTargetProvisionRequest, VoiceTargetReceipt,
+    VoiceTargetEvictRequest, VoiceTargetProvisionRequest, VoiceTargetReceipt, VoiceTargetRender,
 };
 use oneiron::voice_identity::ref_bank::VoiceBankActor;
 
+use super::clock_ingress;
 use super::host_doors::support::{MaybeListed, internal};
 use super::shared_act_doors::{as_person_naming, person};
-use crate::api::ai::{VoiceBankRefusal, evict_answer, provision_clone, render_consent_answer};
+use crate::api::ai::{
+    CloneRequest, VoiceBankRefusal, clone_payer, evict_answer, provision_clone_funded,
+    render_consent_answer,
+};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -163,7 +167,7 @@ pub(crate) async fn vault_voices_render_consent(
     };
     let named = acting(server, &actor);
     let held = Arc::clone(server);
-    let recorded = tokio::task::spawn_blocking(move || {
+    let recorded = clock_ingress::run_blocking(move || {
         sdk::record_voice_render_decision_as(held.vault(), &actor, input)
     })
     .await
@@ -180,7 +184,9 @@ pub(crate) async fn vault_voices_render_consent(
 
 /// `vault.voices.targets.provision`: the actor's own voice cloned at a
 /// configured hosted target, or its current clone there. The render consent
-/// must reach the target's locality before any provider call.
+/// must reach the target's locality before any provider call. The clone's
+/// vendor calls bill the calling live run's scope funding, when one funds
+/// them, and run on the vault's run otherwise (FIX 10630).
 pub(crate) async fn vault_voices_targets_provision(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -192,13 +198,16 @@ pub(crate) async fn vault_voices_targets_provision(
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
     let named = acting(server, &actor);
-    let answer = provision_clone(
+    let answer = provision_clone_funded(
         server,
         Some(&actor),
-        &input.voice_id,
-        &input.target,
-        input.include_generated,
-        input.language.as_deref(),
+        clone_payer(),
+        CloneRequest {
+            voice_id: &input.voice_id,
+            target: &input.target,
+            include_generated: input.include_generated,
+            language: input.language.as_deref(),
+        },
     )
     .await
     .map_err(memory_refusal);
@@ -221,7 +230,7 @@ pub(crate) async fn vault_voices_targets_evict(
     let named = acting(server, &actor);
     let (voice_id, target) = (input.voice_id.clone(), input.target.clone());
     let held = Arc::clone(server);
-    let evicted = tokio::task::spawn_blocking(move || {
+    let evicted = clock_ingress::run_blocking(move || {
         sdk::evict_own_voice_target(held.vault(), &actor, &input)
     })
     .await
@@ -237,9 +246,13 @@ pub(crate) async fn vault_voices_targets_evict(
 }
 
 /// `vault.voices.inspect`: the actor's own voice as the bank holds it, for
-/// one configured hosted target at the locality its clone wire states:
-/// identity, pack metadata without audio or transcripts, the current render
-/// decision and the target's current clone. No provider call.
+/// one target as this host renders it (FIX 4394): identity, pack metadata
+/// without audio or transcripts, the current render decision, and a hosted
+/// target's current clone at the locality its clone wire states, or a
+/// reference target's fence at the locality its provider states. A target
+/// this host does not render reads the same metadata and says so. No
+/// provider call. It lists the actor it is of; an actor that no longer
+/// reads as this vault's entity names no row, so it lists none (FIX 6080).
 pub(crate) async fn vault_voices_inspect(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -250,27 +263,32 @@ pub(crate) async fn vault_voices_inspect(
         Ok(actor) => actor,
         Err(refusal) => return (Err(refusal), Some(Vec::new())),
     };
-    let Some(cloner) = server
-        .ai
-        .model_runtime()
-        .media()
-        .voice_cloner(&input.target)
-    else {
-        return (
-            Err(memory_refusal(VoiceBankRefusal::NoCloneTarget)),
-            Some(Vec::new()),
-        );
-    };
-    let locality = cloner.locality();
+    let render = target_render(server, &input.target);
     let named = acting(server, &actor);
     as_person_naming(
         server,
         VERB,
         Ok(actor),
-        move |server, actor| sdk::inspect_voice_bank_as(server.vault(), &actor, &input, locality),
-        move |_| named.map(|named| vec![named]),
+        move |server, actor| sdk::inspect_voice_bank_as(server.vault(), &actor, &input, render),
+        move |_| Some(named.into_iter().collect()),
     )
     .await
+}
+
+/// How this host renders `target`: a hosted clone wire's, a reference
+/// target's seated provider's, or neither.
+fn target_render(server: &SyncServer, target: &str) -> VoiceTargetRender {
+    let media = server.ai.model_runtime().media();
+    if let Some(cloner) = media.voice_cloner(target) {
+        return VoiceTargetRender::HostedClone {
+            locality: cloner.locality(),
+        };
+    }
+    media
+        .reference_target_locality(target)
+        .map_or(VoiceTargetRender::Unconfigured, |locality| {
+            VoiceTargetRender::Reference { locality }
+        })
 }
 
 /// `vault.voices.lineage`: the actor's own voice's render history (FIX

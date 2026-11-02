@@ -7,8 +7,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use oneiron::VaultPageSeal;
-use oneiron::recovery::checkpoint::{CheckpointKey, CustodyRecovery, SideRestoreSource};
-use oneiron::world_keys::VaultKeyUnlock;
+use oneiron::recovery::checkpoint::{
+    CheckpointKey, CustodyRecovery, HostOrderHolds, SideRestoreSource,
+};
 use serde::Serialize;
 
 use super::super::stamp::{file_stamp, now_unix_ms};
@@ -33,6 +34,10 @@ pub(crate) struct Restored {
     /// brought no training link key (FIX 5892).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The home tables the restore took from the image because the live
+    /// vault's rows did not read (FIX 5661 C2b).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) home_table_notes: Vec<String>,
     /// The world key pads the restore did not land at rest (KS-5): erased
     /// since the backup, withheld by their world's sealed copies setting, or
     /// pending as in the vault it replaced.
@@ -42,6 +47,10 @@ pub(crate) struct Restored {
     /// handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the restore did not carry of its source's current pad objects
+    /// (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// Restores `backup` over the stopped vault at `vault_path`.
@@ -61,8 +70,8 @@ pub(crate) struct Restored {
 /// directory after it is reported in `durability_warning`, never as an error
 /// that would hide where the previous vault went.
 ///
-/// The backup opens with `keystore`, the install's configured one, or the
-/// platform's at its defaults when there is none.
+/// The backup opens with `keystore`, the install's configured one; with
+/// none it refuses, naming the platform backend (FIX 12225).
 pub(crate) fn restore_over(
     backup: &Path,
     vault_path: &Path,
@@ -92,12 +101,9 @@ pub(super) fn restore_over_syncing(
     sync_after_swap: impl FnOnce(&Path) -> anyhow::Result<()>,
 ) -> anyhow::Result<Restored> {
     // This install's keystore unlocks the key from the device wrap the backup
-    // carries, and trusts the signers it holds.
-    let open_key = |vault_path: &Path| match keystore {
-        Some(keystore) => CheckpointKey::unlock(backup, &VaultKeyUnlock::Device(keystore.as_ref()))
-            .map(|key| key.trusting_device(keystore)),
-        None => CheckpointKey::unlock_on_this_device(backup, vault_path),
-    };
+    // carries, and trusts the signers it holds; with none it refuses (FIX 12225).
+    let open_key =
+        |_vault_path: &Path| CheckpointKey::unlock_on_this_device(backup, keystore.as_ref());
     restore_over_with(
         backup,
         vault_path,
@@ -295,9 +301,19 @@ fn restore_over_with(
         kinds,
         durability_warning,
         training_note: report.training_note,
+        home_table_notes: report
+            .home_table_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         credential_notes: report
             .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        pad_object_notes: report
+            .pad_object_notes
             .iter()
             .map(ToString::to_string)
             .collect(),
@@ -327,6 +343,10 @@ pub(crate) struct RestoredFresh {
     /// brought no training link key (FIX 5892).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The home tables the restore took from the image because the live
+    /// vault's rows did not read (FIX 5661 C2b).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) home_table_notes: Vec<String>,
     /// The world key pads the restore did not land at rest (KS-5): erased
     /// since the backup, withheld by their world's sealed copies setting, or
     /// pending as in the vault it replaced.
@@ -336,6 +356,10 @@ pub(crate) struct RestoredFresh {
     /// handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the restore did not carry of its source's current pad objects
+    /// (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// Why a new-host restore of a backup that names no custody head left a
@@ -363,6 +387,9 @@ pub(crate) fn restore_fresh(
     custody: &CustodyRecovery<'_>,
     finish: impl FnOnce(&oneiron::Vault) -> oneiron::Result<()>,
 ) -> anyhow::Result<(oneiron::Vault, RestoredFresh)> {
+    // An owner's key carries no host-order family: the engine's `finish`
+    // argument for one is always none here (FIX 6817).
+    let finish = |vault: &oneiron::Vault, _: Option<&HostOrderHolds>| finish(vault);
     let path = std::path::absolute(vault_path)?;
     anyhow::ensure!(
         !path.join("data.mdb").exists(),
@@ -393,9 +420,19 @@ pub(crate) fn restore_fresh(
             dropped_gate_decisions: report.dropped_gate_decisions,
             custody_note: report.custody_note,
             training_note: report.training_note,
+            home_table_notes: report
+                .home_table_notes
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
             pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
             credential_notes: report
                 .credential_notes
+                .iter()
+                .map(ToString::to_string)
+                .collect(),
+            pad_object_notes: report
+                .pad_object_notes
                 .iter()
                 .map(ToString::to_string)
                 .collect(),
@@ -425,6 +462,10 @@ pub(crate) struct Activated {
     /// its training link key did not come with it (FIX 5892, FIX 6033).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The home tables the activation took from the image because the live
+    /// vault's rows did not read (FIX 5661 C2b).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) home_table_notes: Vec<String>,
     /// The world key pads the activation took out because the vault that
     /// replaced it erased them since (KS-5).
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -433,6 +474,10 @@ pub(crate) struct Activated {
     /// by handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the activation did not carry of its source's current pad
+    /// objects (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// Activates the archived vault a restore over `vault_path` set aside at
@@ -458,9 +503,19 @@ pub(crate) fn activate(
         dropped_gate_decisions: report.dropped_gate_decisions,
         custody_note: report.custody_note,
         training_note: report.training_note,
+        home_table_notes: report
+            .home_table_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         credential_notes: report
             .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        pad_object_notes: report
+            .pad_object_notes
             .iter()
             .map(ToString::to_string)
             .collect(),

@@ -110,6 +110,7 @@ pub use self::distill::{
     actor_distill_call_purpose, pending_session_actor_distills, run_session_end_actor_distill,
 };
 pub use self::evidence::ActorClaimEvidence;
+pub(crate) use self::evidence::KEY_ENGINE_VER;
 pub use self::rows::{
     ACTOR_CLAIM_LINEAGE_KEY, ACTOR_DISTILL_CALL_PURPOSE_NAME, ACTOR_EDIT_COST_SCOPE_KEY,
     ACTOR_EDIT_COST_SCOPE_MAX_BYTES, ACTOR_NOTE_MAX_BYTES, ACTOR_SKILL_FIT_SCOPE_KEY,

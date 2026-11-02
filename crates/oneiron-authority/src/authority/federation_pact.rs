@@ -7,9 +7,15 @@ use rmpv::Value;
 
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::federation::{FederationDirectionScope, FederationPactScope};
+use crate::federation::{FederationDirectionScope, FederationPactScope, ScopeAxis};
 
 use super::*;
+
+mod scope_key;
+
+pub use self::scope_key::{
+    ScopeOpeningAad, keyed_scope_digest, open_scope_opening, seal_scope_opening,
+};
 
 /// Federation relationship lifecycle kind (OF-156, option B).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -138,17 +144,19 @@ pub struct FederationPactState {
     pub peer_owner_key: AuthorityKey,
     /// Current pact consent epoch.
     pub pact_epoch: u64,
-    /// Dual-signed scope commitment for the current ceiling.
+    /// Dual-signed scope commitment for the current ceiling. A pact that
+    /// ended keeps it, the one trace of its scope.
     pub scope_digest: [u8; 32],
-    /// Dual-signed ceiling scope pair.
+    /// Dual-signed ceiling scope pair; ⊥ in both directions once the pact
+    /// ends ([`Self::erase_scope`]).
     pub pact_scope: FederationPactScope,
     /// OUR outbound overlay, always ⊑ our half of the ceiling: the ceiling
-    /// met with every standing narrowing below.
+    /// met with every standing narrowing below. ⊥ once the pact ends.
     pub effective_scope: FederationDirectionScope,
     /// Each standing narrowing of our outbound half, by the entry that made it
     /// (FIX 7933). A party's later narrowing supersedes its own earlier ones;
     /// concurrent ones all stand and meet. Another party's stays until a
-    /// dual-signed re-pact clears them all.
+    /// dual-signed re-pact clears them all. Empty once the pact ends.
     pub narrowings: std::collections::BTreeMap<AuthorityEntryHash, FederationNarrowing>,
     /// Every narrowing a later one by its own party saw: it never stands
     /// again, whichever branch still carries it.
@@ -157,6 +165,31 @@ pub struct FederationPactState {
     pub successor_vault_id: Option<AuthorityVaultId>,
     /// Epoch at which the pact went terminal.
     pub terminal_epoch: Option<u64>,
+}
+
+impl FederationPactState {
+    /// Drops the plaintext scope of a pact that ended (FIX 7907): the
+    /// ceiling, the effective overlay and every standing narrowing become ⊥,
+    /// so the fold keeps only the keyed `scope_digest` of what the pact
+    /// shared. The fold calls it at every terminal transition; a terminal
+    /// pact confers nothing, so no reader loses a scope it could use.
+    pub fn erase_scope(&mut self) {
+        self.pact_scope = FederationPactScope {
+            lo_to_hi: bottom_direction_scope(),
+            hi_to_lo: bottom_direction_scope(),
+        };
+        self.effective_scope = bottom_direction_scope();
+        self.narrowings.clear();
+    }
+}
+
+/// The direction scope that shares nothing: ⊥ on every axis.
+fn bottom_direction_scope() -> FederationDirectionScope {
+    FederationDirectionScope {
+        worlds: ScopeAxis::Bottom,
+        facets: ScopeAxis::Bottom,
+        bands: ScopeAxis::Bottom,
+    }
 }
 
 /// One standing narrowing of a pact's outbound half (FIX 7933).
@@ -268,20 +301,19 @@ pub fn federation_pact_transcript(
     Ok(transcript)
 }
 
-/// Domain-separated nonce commitment over canonical pact scope bytes.
-///
-/// `blake3(FEDERATION_SCOPE_COMMIT_DOMAIN || pact_nonce || canonical_scope)`;
-/// the gesture transcript carries only this digest, so a gesture shown to a
-/// third party does not disclose scope contents.
+/// The scope commitment both pact owners sign, keyed by the grant's
+/// erasable opening key `key` (FIX 7907, 7958): keyed BLAKE3 over a domain,
+/// the pact nonce and the canonical scope bytes. The gesture transcript
+/// carries only this digest, never the key, so a gesture shown to a third
+/// party does not disclose scope contents, and once the key is erased at
+/// revocation no one can test a guessed scope against it.
 #[must_use]
-pub fn federation_scope_digest(pact_nonce: &[u8; 16], canonical_scope: &[u8]) -> [u8; 32] {
-    let mut material = Vec::with_capacity(
-        FEDERATION_SCOPE_COMMIT_DOMAIN.len() + pact_nonce.len() + canonical_scope.len(),
-    );
-    material.extend_from_slice(FEDERATION_SCOPE_COMMIT_DOMAIN);
-    material.extend_from_slice(pact_nonce);
-    material.extend_from_slice(canonical_scope);
-    *blake3::hash(&material).as_bytes()
+pub fn federation_scope_digest(
+    key: &[u8; 32],
+    pact_nonce: &[u8; 16],
+    canonical_scope: &[u8],
+) -> [u8; 32] {
+    keyed_scope_digest(key, pact_nonce, canonical_scope)
 }
 
 /// Builds a peer gesture by signing the pact transcript with `signer`.

@@ -30,12 +30,10 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::{get, post};
 use oneiron::dreamer_runner::maintenance::action_mode::ActionModePolicy;
 use oneiron::dreamer_runner::maintenance::code_fix::{CodeFixSettled, MAX_CODE_FIX_WORK};
 use oneiron::dreamer_runner::maintenance::digest::ProactivityDigestView;
@@ -54,47 +52,19 @@ use oneiron::skill_optimize::{OfferAnswer, OfferAnswerRecord, OfferSwitchReceipt
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
+pub(crate) mod schema;
 mod training_runs;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/proactivity/digest", get(read_digest))
-        .route("/proactivity/digest/assemble", post(assemble_digest))
-        .route(
-            "/proactivity/action-mode",
-            get(action_mode).post(set_action_mode),
-        )
-        .route("/stewardship", get(stewardship).post(set_stewardship))
-        .route("/representation", get(review_representation))
-        .route("/representation/approve", post(approve_representation))
-        .route("/representation/decline", post(decline_representation))
-        .route("/coach/training-offers", get(training_offers))
-        .route("/coach/training-offers/answer", post(answer_training_offer))
-        .route(
-            "/coach/training-offers/undo",
-            post(undo_training_offer_switch),
-        )
-        .merge(training_runs::routes())
-        .route("/coach/code-fixes", get(code_fixes))
-        .route(
-            "/coach/judge-asks/minutes",
-            get(judge_ask_minutes).post(fund_judge_asks),
-        )
-        .route("/coach/judge-asks/pick", post(pick_judge_ask))
-        .route("/coach/judge-asks/regrade", post(regrade_judge_label))
-        .route("/identity/asks", get(identity_asks))
-        .route("/identity/asks/answer", post(answer_identity_ask))
-        .route("/self-heal/findings", get(self_heal_findings))
-        .route("/self-heal/findings/label", post(label_self_heal_finding))
-        .route("/self-heal/minted", get(self_heal_minted))
-}
+mod table;
+pub(super) use self::table::owner_table;
 
 fn now_secs() -> u64 {
     now_unix_ms() / 1_000
@@ -126,7 +96,7 @@ struct DigestQuery {
     id: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct DigestView {
     /// The digest's stable locator (FIX 2332), as 64 hex: what its inbox
     /// NOTIFICATION names. Not a hash of what this reply shows.
@@ -208,7 +178,7 @@ async fn action_mode(
     Ok(Json(policy))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetActionMode {
     /// None clears the policy, and no night refreshes an index for it.
@@ -219,10 +189,10 @@ struct SetActionMode {
 async fn set_action_mode(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetActionMode>, JsonRejection>,
+    payload: OwnerJsonBody<SetActionMode>,
 ) -> OwnerReply<Option<ActionModePolicy>> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let policy = blocking(move || {
         Ok(server
             .vault()
@@ -242,7 +212,7 @@ async fn stewardship(
     Ok(Json(rules))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetStewardship {
     rules: Vec<StewardshipRule>,
@@ -252,10 +222,10 @@ struct SetStewardship {
 async fn set_stewardship(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetStewardship>, JsonRejection>,
+    payload: OwnerJsonBody<SetStewardship>,
 ) -> OwnerReply<StewardshipRules> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let rules = blocking(move || {
         Ok(server
             .vault()
@@ -309,7 +279,7 @@ async fn review_representation(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ApproveRepresentation {
     /// A proposal id from `GET /v1/owner/representation`. The id is the
@@ -322,7 +292,7 @@ struct ApproveRepresentation {
     iana_timezone: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ApprovedView {
     proposal: String,
     intent_ref: String,
@@ -335,10 +305,10 @@ struct ApprovedView {
 async fn approve_representation(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ApproveRepresentation>, JsonRejection>,
+    payload: OwnerJsonBody<ApproveRepresentation>,
 ) -> OwnerReply<ApprovedView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || -> OwnerResult<ApprovedView> {
         let vault = server.vault();
         let id = entity_id("proposal", &request.proposal)?;
@@ -367,7 +337,7 @@ async fn approve_representation(
     Ok(Json(view))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct DeclineRepresentation {
     proposal: String,
@@ -377,10 +347,10 @@ struct DeclineRepresentation {
 async fn decline_representation(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<DeclineRepresentation>, JsonRejection>,
+    payload: OwnerJsonBody<DeclineRepresentation>,
 ) -> OwnerReply<()> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     blocking(move || -> OwnerResult<()> {
         let vault = server.vault();
         let id = entity_id("proposal", &request.proposal)?;
@@ -425,10 +395,10 @@ struct AnswerTrainingOffer {
 async fn answer_training_offer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerTrainingOffer>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerTrainingOffer>,
 ) -> OwnerReply<OfferAnswerRecord> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let record = blocking(move || -> OwnerResult<OfferAnswerRecord> {
         let offer = entity_id("offer", &request.offer)?;
         let training = request
@@ -462,10 +432,10 @@ struct UndoTrainingOfferSwitch {
 async fn undo_training_offer_switch(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<UndoTrainingOfferSwitch>, JsonRejection>,
+    payload: OwnerJsonBody<UndoTrainingOfferSwitch>,
 ) -> OwnerReply<OfferSwitchReceipt> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let receipt = blocking(move || -> OwnerResult<OfferSwitchReceipt> {
         let offer = entity_id("offer", &request.offer)?;
         Ok(oneiron::skill_optimize::undo_training_offer_switch(
@@ -508,10 +478,10 @@ async fn judge_ask_minutes(
 async fn fund_judge_asks(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<JudgeAskMinutes>, JsonRejection>,
+    payload: OwnerJsonBody<JudgeAskMinutes>,
 ) -> OwnerReply<JudgeAskMinutes> {
     let owner = owner(&auth, &server)?;
-    let JudgeAskMinutes { minutes } = json_payload(payload)?;
+    let JudgeAskMinutes { minutes } = payload.read(&server).await?;
     blocking(move || {
         Ok(oneiron::skill_optimize::set_judge_digest_minutes(
             server.vault(),
@@ -552,10 +522,10 @@ struct JudgeLabelView {
 async fn pick_judge_ask(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PickJudgeAsk>, JsonRejection>,
+    payload: OwnerJsonBody<PickJudgeAsk>,
 ) -> OwnerReply<JudgeLabelView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let label = blocking(move || -> OwnerResult<JudgeLabelView> {
         let ask = digest_id(&request.ask)
             .ok_or_else(|| OwnerError::Invalid("ask must be a 64-hex ask id".into()))?;
@@ -602,10 +572,10 @@ struct JudgeRegradeView {
 async fn regrade_judge_label(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RegradeJudgeLabel>, JsonRejection>,
+    payload: OwnerJsonBody<RegradeJudgeLabel>,
 ) -> OwnerReply<JudgeRegradeView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let regrade = blocking(move || -> OwnerResult<JudgeRegradeView> {
         let ask = digest_id(&request.ask)
             .ok_or_else(|| OwnerError::Invalid("ask must be a 64-hex ask id".into()))?;
@@ -689,7 +659,7 @@ async fn identity_asks(
     Ok(Json(asks))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerIdentityAsk {
     /// An ask, as 64 hex.
@@ -705,12 +675,14 @@ struct AnswerIdentityAsk {
 async fn answer_identity_ask(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerIdentityAsk>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerIdentityAsk>,
 ) -> OwnerReply<IdentitySettled> {
     let owner = owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
+    let request = payload.read(&server).await?;
     // The ask and the chosen candidate through the request's own lane (FIX
     // 8711).
     let settled = blocking(move || -> OwnerResult<Result<IdentitySettled, ApiError>> {
@@ -838,7 +810,7 @@ async fn self_heal_minted(
     ))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct LabelFinding {
     family: String,
@@ -912,10 +884,10 @@ async fn code_fixes(
 async fn label_self_heal_finding(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<LabelFinding>, JsonRejection>,
+    payload: OwnerJsonBody<LabelFinding>,
 ) -> OwnerReply<ReviewedFinding> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let label = blocking(move || -> OwnerResult<ReviewedFinding> {
         let event = entity_id("event", &request.event)?;
         Ok(server

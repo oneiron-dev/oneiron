@@ -34,15 +34,11 @@ pub const GENERATED_LENS_ATOM_KINDS: &[&str] = &[
     "self_ui",
     "media",
     "result_set",
+    "component",
 ];
 
 /// Wire name of the selectable result-set atom minted at catalog version 3.
 pub const RESULT_SET_ATOM_KIND: &str = "result_set";
-
-/// The single rejection a surface below catalog 3 — or one whose primitive list omits
-/// [`GeneratedUiPrimitive::ResultSet`](crate::lens::GeneratedUiPrimitive::ResultSet) — gets. A result set never lowers to fallback
-/// text: a degraded selection surface would offer rows the host cannot resolve.
-pub const LENS_RESULT_SET_UNSUPPORTED: &str = "result_set requires lens atom catalog version 3";
 
 pub(in crate::lens) const MAX_LENS_TEXT_BYTES: usize = 16 * 1024;
 
@@ -58,6 +54,27 @@ impl LensText {
             )));
         }
         Ok(Self(value))
+    }
+
+    /// `value` as the lens texts it frames into (FIX 11257): each at most
+    /// [`MAX_LENS_TEXT_BYTES`], cut on a character boundary, in order, so a
+    /// text of any length is carried whole across them. An empty value is
+    /// one empty text.
+    #[must_use]
+    pub fn frames(value: &str) -> Vec<Self> {
+        let mut frames = Vec::new();
+        let mut rest = value;
+        while rest.len() > MAX_LENS_TEXT_BYTES {
+            let mut cut = MAX_LENS_TEXT_BYTES;
+            while !rest.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            let (head, tail) = rest.split_at(cut);
+            frames.push(Self(head.to_owned()));
+            rest = tail;
+        }
+        frames.push(Self(rest.to_owned()));
+        frames
     }
 
     #[must_use]

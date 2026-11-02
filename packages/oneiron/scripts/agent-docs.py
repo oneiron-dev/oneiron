@@ -23,6 +23,7 @@ def artifacts():
     readme = (ROOT / "packages/oneiron/README.md").read_text()
     ts = (ROOT / "packages/oneiron/src/types.ts").read_text()
     py = (ROOT / "crates/oneiron-py/python/oneiron/__init__.pyi").read_text()
+    facade_ts = (ROOT / "packages/oneiron/src/facade-types.ts").read_text()
     manifest = json.loads((ROOT / "scripts/sdk/agent-verbs.json").read_text())
     verbs = [row["name"] for row in manifest["verbs"] if row.get("context", "memory") == "memory"]
     errors = (ROOT / "crates/oneiron-contracts/src/memory/error.rs").read_text()
@@ -37,12 +38,14 @@ def artifacts():
         "OFF_RECORD_SESSION_DOOR": "Use the owning off-record session handle. The canonical witness door is not that handle.",
         "OFF_RECORD_ROOM_MANAGEMENT_CONSENT_UNAVAILABLE": "No record holds a room's consent to one caller managing its whole off-record stretch, on any host. Act as a member instead: status and witness, and save or export your own copy through the room's routes.",
         "OWNER_BINDING_REQUIRED": "An owner device must bind this human actor in the authority log. Scope changes do not grant ownership.",
+        "AUTHORITY_CLOCK_CORRUPT": "The vault's authority clock floor is damaged, so no authority reading stands on it. The owner runs `vault.authority.clock.repair`, then retries.",
         "VAULT_LOCKED_SINGLE_WRITER": "Connect to the process that owns this vault. Do not remove lock files or open a second writer.",
         "INVENTED_REFERENCE": "Name only records this writer can read, by the ref the engine issued. The write was refused and receipted.",
         "HOST_ACTION_REQUIRES_SUPPORT_GRANT": "A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none.",
         "IDENTITY_UNSETTLED": "The effect named a person through a mention that is not settled yet. Settle it with `self.identity.settle`, then act.",
         "BUDGET_SPENT": "The line a paid call spends on is spent, or the vault's budget policy refuses it. Use light or medium recall, or ask the owner to raise the line.",
         "MODEL_UNAVAILABLE": "The model the request needs did not answer usably; nothing stands in for it. Use light or medium recall, or ask the owner to check the model route.",
+        "MODEL_PIN_UNAVAILABLE": "The owner pinned a model that no offered seat serves; nothing stands in for it. Offer a seat for that model, or ask the owner to change or clear the pin.",
         "WRONG_ROOT": "The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries.",
         "PENDING_ASK": "A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation.",
         "WORLD_RECIPIENT_LIMIT": "The owner's read setting for a row's world keeps it from where this answer goes; the message names his choice, never the world. Read it where his choice admits, or ask him to change that setting. The row is there: do not treat this as not found.",
@@ -69,7 +72,7 @@ def artifacts():
     }
     if set(server_codes) != server_remedies.keys():
         raise ValueError("Document remediation for each added/removed server refusal code")
-    error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
+    error_doc = "# Memory Wire typed errors\n\nEvery SDK failure carries `code`, `message`, and nonempty `suggestions`.\nA refusal whose producer named stable reason codes also carries them, in that\nproducer's order (FIX 7398): `reasonCodes` on a JS `MemoryError` and in an HTTP\nerror body, `reason_codes` on a Python `MemoryError` and in an MCP error's\n`data.reason_codes`. Read them there, never out of `message`.\nUse the returned suggestions; do not parse message prose. No adapter swallows\nor downgrades the engine's refusal. Future remote codes pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {remedies[code]} |\n" for code in codes)
     error_doc += "\n## Server refusal codes\n\nA server door refuses with these too; they pass through verbatim.\n\n| Code | Response |\n|---|---|\n"
     error_doc += "".join(f"| `{code}` | {server_remedies[code]} |\n" for code in server_codes)
@@ -79,9 +82,10 @@ def artifacts():
     return {
         "docs/agent-sdk/quickstart.md": mirrored(readme, "packages/oneiron/README.md", "docs/agent-sdk/quickstart.md"),
         "docs/agent-sdk/types.md": "# Memory Wire type contract\n\n## JavaScript / TypeScript\n\n```ts\n" + ts + "```\n\n## Python\n\n```python\n" + py + "```\n",
+        "docs/agent-sdk/facade-types.md": "# Memory Wire facade types\n\nThe Python stubs carry the same names in the generated `facade_types.pyi`.\n\n```ts\n" + facade_ts + "```\n",
         "docs/agent-sdk/errors.md": error_doc,
         "docs/agent-sdk/verbs.md": census,
-        "llms.txt": "# Oneiron — Memory Wire\n\n> Actor-bound memory for agents. Start with vault.witness, vault.recall and vault.receipts.\n> The mirror below is full fidelity, generated from shipped SDK sources.\n\n## Memory Wire SDK\n\n- [Complete quickstarts and API](docs/agent-sdk/quickstart.md): JS/Python, embedded/remote, complete imports and typed errors.\n- [Type declarations](docs/agent-sdk/types.md): full TypeScript DTOs and Python stubs.\n- [Error catalogue](docs/agent-sdk/errors.md): stable codes, suggestions and remediation.\n- [Verb census](docs/agent-sdk/verbs.md): authoritative shipped facade and stable names.\n- [Vercel AI SDK tools](packages/oneiron-ai-sdk/README.md): thin three-verb satellite and runnable agent sample.\n- [LangGraph BaseStore](packages/oneiron-langgraph/README.md): exact actor-owned long-term keyed memory, not checkpoints.\n- [HTTP API](oneiron.skills.md): endpoint activation index, endpoint details and error schemas.\n",
+        "llms.txt": "# Oneiron — Memory Wire\n\n> Actor-bound memory for agents. Start with vault.witness, vault.recall and vault.receipts.\n> The mirror below is full fidelity, generated from shipped SDK sources.\n\n## Memory Wire SDK\n\n- [Complete quickstarts and API](docs/agent-sdk/quickstart.md): JS/Python, embedded/remote, complete imports and typed errors.\n- [Type declarations](docs/agent-sdk/types.md): full TypeScript DTOs and Python stubs.\n- [Facade types](docs/agent-sdk/facade-types.md): generated verb wire types.\n- [Error catalogue](docs/agent-sdk/errors.md): stable codes, suggestions and remediation.\n- [Verb census](docs/agent-sdk/verbs.md): authoritative shipped facade and stable names.\n- [Vercel AI SDK tools](packages/oneiron-ai-sdk/README.md): thin three-verb satellite and runnable agent sample.\n- [LangGraph BaseStore](packages/oneiron-langgraph/README.md): exact actor-owned long-term keyed memory, not checkpoints.\n- [HTTP API](oneiron.skills.md): endpoint activation index, endpoint details and error schemas.\n",
     }
 
 if __name__ == "__main__":

@@ -10,6 +10,11 @@ use crate::gate::RetrievalFilter;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct ReadScope {
+    /// Admitted entity types; absent means every registered type. On the
+    /// wire each is its registry kind (`CLAIM`, `MESSAGE`, ...), one spelling
+    /// for every binding (FIX 10762).
+    #[serde(default, with = "crate::serialize::type_kinds")]
+    #[schemars(with = "Option<Vec<String>>")]
     pub entity_types: Option<BTreeSet<u8>>,
     pub max_sensitivity_band: u8,
     pub include_stale: bool,
@@ -48,6 +53,20 @@ pub struct ScopedReadReceipt {
 }
 
 impl ReadScope {
+    /// The admitted entity types as the wire spells them (FIX 10762): each
+    /// registry kind, or a pack type's decimal byte; `None` admits every
+    /// registered type.
+    #[must_use]
+    pub fn entity_kinds(&self) -> Option<Vec<String>> {
+        self.entity_types.as_ref().map(|types| {
+            types
+                .iter()
+                .copied()
+                .map(crate::serialize::type_kinds::kind)
+                .collect()
+        })
+    }
+
     /// Reuse the already-applied scalar/type intersection for a later read.
     #[must_use]
     pub fn as_filter(&self) -> RetrievalFilter {

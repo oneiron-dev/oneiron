@@ -57,8 +57,10 @@ pub struct ArtifactHost {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ArtifactLabelRefusal {
-    /// The vault (a managed vault's public slug) is not a DNS label free of
-    /// [`APP_SEPARATOR`].
+    /// The vault is not a DNS label free of [`APP_SEPARATOR`]: a plain
+    /// serve's vault name, or on the edge's side a managed vault's public
+    /// slug. The engine names a managed vault on its internal authority
+    /// ([`ArtifactInternalHost`]) and never reads that slug.
     InvalidVault,
     /// The app is not an app label.
     InvalidApp,

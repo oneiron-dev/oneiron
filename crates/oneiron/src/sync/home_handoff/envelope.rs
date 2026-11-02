@@ -7,6 +7,11 @@
 //! before any transaction, and signs an ack of the id, the sealed bytes'
 //! digest, the generation and itself.
 //!
+//! FIX 8875: each actor's content in a section is sealed apart under that
+//! actor's erasable key (`super::actor_content`), so this machine-key seal
+//! carries it only as sealed bytes named by a key ref; the header's wire
+//! incarnation names the keys' incarnation.
+//!
 //! FIX 5932 (Rule 5): the manifest seals in pieces of at most
 //! [`MAX_PLAINTEXT_LEN`] bytes, one envelope each, back to back in order. Each
 //! piece's key id binds the handoff id, its index and the piece count, so a
@@ -23,6 +28,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
+use super::actor_content::SealedActorPart;
 use super::{HandoffId, HomeGeneration, HomeIdentity, HomeMove, refused};
 use crate::Vault;
 use crate::authority::{AuthorityFold, AuthorityView};
@@ -44,8 +50,12 @@ const KEM: SuiteId = SuiteId::KEM_X25519_MLKEM1024_V1;
 pub(super) struct TableSection {
     pub(super) table_id: String,
     pub(super) schema_version: u16,
+    /// The table's content-free facts.
     #[serde(with = "super::bin")]
     pub(super) rows: Vec<u8>,
+    /// FIX 8875: each actor's content among the rows, sealed under that
+    /// actor's erasable key, in the order the table exported it.
+    pub(super) actors: Vec<SealedActorPart>,
 }
 
 /// What the source signs.
@@ -54,6 +64,9 @@ pub(super) struct HandoffHeader {
     pub(super) movement: HomeMove,
     /// The digest of the encoded sections.
     pub(super) sections: [u8; 32],
+    /// FIX 6574: random per export, so a new export never takes the id of
+    /// one its target fenced, even for the same move, evidence and rows.
+    pub(super) incarnation: [u8; 16],
 }
 
 /// A header as its source signed it: the exact bytes and the signature. A
@@ -158,6 +171,12 @@ impl VerifiedHandoff {
     pub(crate) fn movement(&self) -> &HomeMove {
         &self.header.movement
     }
+
+    /// The wire incarnation its source signed: what its actors' keys and
+    /// their sealed content are bound to (FIX 8875).
+    pub(super) fn wire(&self) -> &[u8; 16] {
+        &self.header.incarnation
+    }
 }
 
 /// The target's signed ack of one adopted handoff.
@@ -182,18 +201,24 @@ impl VerifiedHomeAck {
 
 /// Signs `movement` over `sections` with the source's install key and seals
 /// the manifest to `target`'s key. Returns the sealed handoff and its signed
-/// header, which a later move carries as its lineage.
+/// header, which a later move carries as its lineage. Each export signs the
+/// fresh incarnation `incarnation` its freeze drew before its tables
+/// exported and its actors' keys minted (FIX 8875), so each export has its
+/// own id; a frozen export asked for again is read back from its parts,
+/// never sealed again.
 pub(super) fn seal_handoff(
     movement: &HomeMove,
     key: &SigningKey,
     target: &HybridPublicKey,
     lineage: Option<SignedHeader>,
     sections: &[TableSection],
+    incarnation: [u8; 16],
 ) -> Result<(SealedHandoff, SignedHeader)> {
     let sections = encode(sections)?;
     let header = HandoffHeader {
         movement: *movement,
         sections: *blake3::hash(&transcript(SECTIONS_DOMAIN, &sections)).as_bytes(),
+        incarnation,
     };
     let signed = SignedHeader::sign(&header, key)?;
     let id = signed.id();

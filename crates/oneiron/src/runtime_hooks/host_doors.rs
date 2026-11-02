@@ -115,14 +115,14 @@ pub fn admit_trigger(vault: &Vault, verb: &str, args: &Value) -> MemoryResult<()
     Ok(())
 }
 
-/// Host-owned arguments are immutable, except for add-only compaction pins.
-/// Every transport uses this check beside its ordinary rewrite admission.
+/// Host-owned arguments are immutable, except for add-only compaction pins
+/// and add-only wake material (FIX 8722). Every transport uses this check
+/// beside its ordinary rewrite admission.
 pub fn check_rewrite(verb: &str, before: &Value, after: &Value) -> Result<(), String> {
     match verb {
         "host.compact" => crate::compaction::check_host_compact_rewrite(before, after),
-        "host.wake" | "host.budget.hit" if before != after => {
-            Err("a host verb's args are the host's".to_owned())
-        }
+        "host.wake" => crate::dreamer_wake::check_host_wake_rewrite(before, after),
+        "host.budget.hit" if before != after => Err("a host verb's args are the host's".to_owned()),
         _ => Ok(()),
     }
 }

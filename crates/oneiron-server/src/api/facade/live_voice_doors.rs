@@ -8,7 +8,7 @@ use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::*;
 use oneiron::{EdgeActorClass, EntityId};
 
-use super::host_doors::support::{Listed, MaybeListed, owner_proof};
+use super::host_doors::support::{Listed, MaybeListed, credential_listing, owner_proof};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -56,19 +56,19 @@ pub(crate) async fn ai_voice_audio(
 /// turn (FIX 4778): the answering agent's definition, the history each turn
 /// heard, the memories it heard and its tool contexts' rows, the policy
 /// row a notice names and the rows a memories read found. The person's
-/// words and the control events list none. A page one of whose turns kept
-/// no complete set lists unknown (`None`), never `[]`.
+/// words and the control events list none, and so does a refusal (FIX
+/// 6080).
 pub(crate) async fn ai_voice_events(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: LiveVoiceEventsRequest,
-) -> MaybeListed<LiveVoiceEvents> {
+) -> Listed<LiveVoiceEvents> {
     let answer = owner_proof(auth, server, "ai.voice.events")
         .and_then(|_| server.live_voice.get(auth, &input.session_ref))
         .and_then(|session| session.events(input));
     match answer {
         Ok((page, rows)) => (Ok(page), rows),
-        Err(error) => (Err(error), None),
+        Err(error) => (Err(error), Vec::new()),
     }
 }
 
@@ -111,40 +111,101 @@ pub(crate) async fn ai_voice_usage(
     (answer, Vec::new())
 }
 
+/// `ai.voice.tool` (`host_door_lists`): the caller's connector call under
+/// its own grant, whose delivered result enters the brain before the next
+/// utterance, always foreign. Beside it, the rows its reads listed and the
+/// rows the call's passes picked (FIX 5815, as `connector.call` answers
+/// them): the catalog route key, each standing grant read, the governing
+/// key, each slate read and the custody record its send presented; unknown
+/// when they are not known. The live session takes the reply whole, with
+/// the listed rows, as it did before. For a caller off this device whose
+/// reply names or lists a row that stays here, only the answer narrows: a
+/// connector's questions as `connector.call` narrows them, beside the
+/// session's processing (FIX 11725), and any other reply to the word that
+/// it ran.
 pub(crate) async fn ai_voice_tool(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     caller: (EntityId, EdgeActorClass),
     invocation: Option<InvocationId>,
     input: LiveVoiceToolRequest,
-) -> Listed<LiveVoiceToolReply> {
+) -> MaybeListed<ActAnswer<LiveVoiceToolReply>> {
     let session = match owner_proof(auth, server, "ai.voice.tool")
         .and_then(|_| server.live_voice.get(auth, &input.session_ref))
     {
         Ok(session) => session,
-        Err(error) => return (Err(error), Vec::new()),
+        Err(error) => return (Err(error), Some(Vec::new())),
     };
     if let Err(error) = session.require_tool_context() {
-        return (Err(error), Vec::new());
+        return (Err(error), Some(Vec::new()));
     }
-    let (reply, rows) = super::connector_call_doors::connector_call_reply(
-        server, auth, caller, invocation, input.call,
+    let (answer, mut listed) = credential_listing(
+        server,
+        auth,
+        caller,
+        "connector.call",
+        move |server, _, memory| {
+            let memory = match invocation {
+                Some(invocation) => memory.with_invocation(invocation),
+                None => memory,
+            };
+            super::connector_call_doors::connector_call_listing_as(server, &memory, input.call)
+        },
     )
     .await;
-    let result = match reply {
-        Ok(reply) => {
-            let processed = match &reply {
-                ConnectorCallReply::Delivered {
-                    result: Some(result),
-                    ..
-                } => session.tool(result.clone(), rows.clone()).await,
-                _ => session.processed(),
-            };
-            processed.map(|processed| LiveVoiceToolReply { processed, reply })
-        }
-        Err(error) => Err(error),
+    let (reply, picked) = match answer {
+        Ok(answer) => answer,
+        Err(refusal) => return (Err(refusal), Some(listed)),
     };
-    (result, rows)
+    // The session reads what it read before: the rows the call's reads
+    // listed.
+    let result = match &reply {
+        ConnectorCallReply::Delivered {
+            result: Some(result),
+            ..
+        } => session.tool(result.clone(), listed.clone()).await,
+        _ => session.processed(),
+    };
+    // The rows the call's passes picked ride beside them in the answer, as
+    // `connector.call` answers them; unknown when they are not known.
+    let rows = picked.map(move |mut picked| {
+        listed.append(&mut picked);
+        listed
+    });
+    let whole = |processed: LiveVoiceProcessed, reply: ConnectorCallReply| LiveVoiceToolReply {
+        processed,
+        reply: LiveVoiceToolCallReply::Done(reply),
+    };
+    match result {
+        Ok(processed) if super::connector_call_doors::answers_as_before(&reply) => {
+            (Ok(ActAnswer::Done(whole(processed, reply))), rows)
+        }
+        // FIX 11725: the connector's questions narrow only their text, as
+        // `connector.call`'s do, and the session's processing rides beside
+        // them.
+        Ok(processed) if matches!(reply, ConnectorCallReply::AwaitingInput { .. }) => {
+            let (answer, rows) = super::connector_call_doors::narrowed_questions(
+                server.vault(),
+                &auth.destination(),
+                reply,
+                rows,
+            );
+            let answer = answer.map(|answer| match answer {
+                ActAnswer::Done(reply) => ActAnswer::Done(whole(processed, reply)),
+                ActAnswer::QuestionsNarrowed(questions) => ActAnswer::Done(LiveVoiceToolReply {
+                    processed,
+                    reply: LiveVoiceToolCallReply::QuestionsNarrowed(questions),
+                }),
+                ActAnswer::DetailsOnDevice(_) => ActAnswer::details_on_device(),
+            });
+            (answer, rows)
+        }
+        result => crate::device_local::act_answer_maybe(
+            server.vault(),
+            &auth.destination(),
+            (result.map(|processed| whole(processed, reply)), rows),
+        ),
+    }
 }
 
 /// `ai.voice.end` (`host_door_lists`): the reply is the processing cursor

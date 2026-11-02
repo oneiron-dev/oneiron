@@ -6,8 +6,10 @@
 //! caller's evidence through the caller's own capture door, under the host
 //! origin the call came in on.
 //!
-//! The source that does today is a library run of a filed program that met
-//! its filled postcondition: its type and subgoal are the program record's.
+//! The sources that do today are a library run of a filed program that met
+//! its filled postcondition, its type and subgoal the program record's, and
+//! an agent's TASK run that ended (CUA E8b), its checks and question its
+//! TASK's done-means and its type the run's recorded stamp.
 //! A draft names its checks but no recorded type, and a raw batch names
 //! neither, so they capture nothing and say why in the log. A capture that
 //! fails is logged with its cause and never fails the call.
@@ -15,6 +17,7 @@
 use super::*;
 use oneiron::browser_library::{SolvedCaptureReceipt, SolvedRunCapture, SolvedSource, workflow};
 use oneiron::learning::TypeRef;
+use oneiron::task_verb::DoneMeans;
 use oneiron_browser::{
     DraftInput, ExpectInput, LibraryRunInput, SOLVED_PAST_PRESS, SubgoalStatus, filled_checks,
 };
@@ -42,7 +45,9 @@ impl BrowserCapture<'_, '_> {
     /// Keeps what `verb`'s call with `input` reached on `session` (its
     /// answer `output`, its history's latest entry before it `mark`), as
     /// the caller's evidence, when it names its checks and type. Logs what
-    /// it came to; never fails the call.
+    /// it came to; never fails the call. A capture that failed gives its
+    /// caller a note for the call's answer (FIX 10509, the
+    /// `solved_capture` note); anything else gives none.
     pub(super) fn after_call(
         &self,
         session: &mut BrowserSession,
@@ -50,19 +55,23 @@ impl BrowserCapture<'_, '_> {
         input: &Value,
         output: &Value,
         mark: Option<u64>,
-    ) {
+    ) -> Option<String> {
         let span = match checked_span(self.vault, verb, input, output, mark) {
             Ok(Some(span)) => span,
-            Ok(None) => return,
+            Ok(None) => return None,
             Err(cause) => {
                 tracing::info!(verb = verb.as_str(), %cause, "browser call captured no solved run");
-                return;
+                return None;
             }
         };
         match self.capture_checked_run(session, span) {
-            Ok(note) => tracing::info!(verb = verb.as_str(), %note, "browser solved-run capture"),
+            Ok(note) => {
+                tracing::info!(verb = verb.as_str(), %note, "browser solved-run capture");
+                None
+            }
             Err(cause) => {
                 tracing::warn!(verb = verb.as_str(), %cause, "browser solved-run capture failed");
+                Some(format!("solved-run capture failed: {cause}"))
             }
         }
     }
@@ -79,7 +88,9 @@ impl BrowserCapture<'_, '_> {
             subgoal: span.subgoal.clone(),
             postcondition: span.checks,
             after_seq: span.after_seq,
-            through_seq: None,
+            // A span its goal reached before a granted press ends there
+            // (FIX 10511), not on the press.
+            through_seq: session.pre_press_through(span.after_seq),
             past_press: SOLVED_PAST_PRESS,
         };
         let snapshot = session
@@ -105,7 +116,7 @@ impl BrowserCapture<'_, '_> {
             secret_slots: snapshot.secret_slots,
             replay_ready: snapshot.replay_ready,
             source: span.source,
-            captured_at_ms: self.vault.now_recorded_at().saturating_mul(1000),
+            captured_at_ms: self.vault.now_recorded_ms(),
         };
         let receipt = self
             .memory
@@ -117,6 +128,61 @@ impl BrowserCapture<'_, '_> {
             }
             SolvedCaptureReceipt::Unavailable(gap) => format!("unavailable: {gap:?}"),
         })
+    }
+}
+
+/// The subgoal a TASK run's solved span is grouped under (CUA E8b, CALLS
+/// row "TASK-run subgoal"): its done-means' question, exactly.
+fn task_run_subgoal(goal: &DoneMeans) -> String {
+    goal.question.clone()
+}
+
+impl RunGuests {
+    /// Keeps what this run's browser reached for TASK `task` as the
+    /// caller's solved-run evidence (CUA E8b; the E8 pair trigger): the
+    /// done-means' browser checks read again on the page the run left,
+    /// under its seat lock, the span from the run's first act, grouped under
+    /// the run's recorded type and the done-means' question. A goal that
+    /// names no browser check, or a run whose browser never started,
+    /// captures nothing. Logs what it came to; never fails the run.
+    pub(crate) fn capture_task_run(
+        &self,
+        server: &SyncServer,
+        memory: &Memory<'_>,
+        origin: &HostWriteOrigin,
+        task: oneiron::EntityId,
+        type_ref: TypeRef,
+        goal: &DoneMeans,
+    ) {
+        if goal.browser_checks.is_empty() {
+            tracing::info!("a TASK run's done-means names no browser check; no solved run kept");
+            return;
+        }
+        let Some(run) = &self.browser else {
+            return;
+        };
+        let mut session = run.session.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(driver) = session.as_mut() else {
+            tracing::info!("a TASK run's browser never started; no solved run kept");
+            return;
+        };
+        let capture = BrowserCapture {
+            vault: &server.vault,
+            memory,
+            origin,
+            run_id: run.run_id,
+        };
+        let span = CheckedSpan {
+            subgoal: task_run_subgoal(goal),
+            checks: goal.browser_checks.clone(),
+            type_ref,
+            source: SolvedSource::TaskRun { task },
+            after_seq: None,
+        };
+        match capture.capture_checked_run(driver, span) {
+            Ok(note) => tracing::info!(%note, "TASK run solved-run capture"),
+            Err(cause) => tracing::warn!(%cause, "TASK run solved-run capture failed"),
+        }
     }
 }
 

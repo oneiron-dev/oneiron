@@ -22,7 +22,17 @@
 //! whole and opaque (FIX 6227): its descriptor says so, a live instance
 //! lands its exact bytes, and a retired one leaves the explicit erased
 //! marker (a claim, its shell).
+//!
+//! A decoded replay row whose spawns reached resolved targets travels as its
+//! parts instead, each bound and carried on its own ([`replay`], FIX 9180).
+//!
+//! What an erase after the image's cut took that no obligation names, a
+//! restore takes again ([`removals`]).
 
+pub(super) mod removals;
+mod replay;
+
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 
 use heed::RoTxn;
@@ -35,7 +45,7 @@ use crate::attempt_queue::AttemptId;
 use crate::store::{
     RESPONSE_BINDINGS, ResponseBinding, ResponseCarriage, ResponseDb, ResponseFamily, Store,
     bind_response_in_txn, carrier_row, release_response_in_txn, response_binding_in_txn,
-    response_carrier, response_owed_to_all_in_txn,
+    response_carrier, response_owed_to_all_in_txn, stamp_opaque_erased,
 };
 use crate::vault_cleanup::refresh_archived_attempt_in_rows;
 use crate::{Error, Result};
@@ -55,6 +65,9 @@ pub(super) enum Noted {
         digest: [u8; 32],
         opaque: bool,
     },
+    /// A replay row travelling as its parts (FIX 9180): the skeleton its
+    /// image row holds, and each part's descriptor and bytes.
+    Parts(Vec<u8>, Vec<(CarriedInline, Vec<u8>)>),
 }
 
 /// The responses a snapshot's rows hold, and the bindings it read.
@@ -94,6 +107,11 @@ impl ResponseCensus {
         let Some(family) = ResponseFamily::of_row(db, key, value) else {
             return Ok(Noted::Not);
         };
+        if family == ResponseFamily::Replay
+            && let Some(noted) = replay::note_row(self, store, txn, key, value)?
+        {
+            return Ok(noted);
+        }
         let Some((carriage, opaque)) = family.scan(key, value).carriage() else {
             return Ok(Noted::Not);
         };
@@ -149,10 +167,15 @@ pub(super) fn carry(
     (carriage, instance, digest, opaque): (ResponseCarriage, [u8; 16], [u8; 32], bool),
 ) -> Result<(CarriedInline, Vec<u8>, Vec<u8>)> {
     let body = value[carriage.keep..].to_vec();
-    // A queue row lands unleased (FIX 7115): the length it lands at.
-    let landed_len = (database == ResponseDb::Attempts.name())
-        .then(|| rebuild::unlease_attempt(key, value).map(|row| row.len() as u64))
-        .transpose()?;
+    // A queue row lands unleased (FIX 7115): the length it lands at. An
+    // opaque one the strict reader refuses lands as it rested (FIX 9390).
+    let landed_len = if database != ResponseDb::Attempts.name() {
+        None
+    } else if opaque {
+        rebuild::unlease_opaque_attempt(key, value)?.map(|row| row.len() as u64)
+    } else {
+        Some(rebuild::unlease_attempt(key, value)?.len() as u64)
+    };
     let carried = CarriedInline {
         database: database.to_owned(),
         key: key.to_vec(),
@@ -165,6 +188,7 @@ pub(super) fn carry(
         landed_len,
         opaque,
         superseded: false,
+        replay: None,
     };
     Ok((carried, body, carriage.stub))
 }
@@ -198,6 +222,10 @@ pub(super) fn bind_in_txn(
     carrier: &[u8],
     instance: [u8; 16],
 ) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    // A replay part's carrier names no row (FIX 9180).
+    if let Some(history) = replay::bind_in_txn(store, txn, carrier, instance)? {
+        return Ok(history);
+    }
     let Some((db, key)) = carrier_row(carrier) else {
         return Ok(Vec::new());
     };
@@ -265,13 +293,17 @@ pub(super) fn release_stale_in_txn(
         let Some(carrier) = full.strip_prefix(RESPONSE_BINDINGS.decl().prefix) else {
             continue;
         };
-        let holds = match carrier_row(carrier) {
-            Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
-                ResponseFamily::of_row(db, key, &value)
-                    .and_then(|family| family.scan(key, &value).carriage())
-                    .is_some()
-            }),
-            None => false,
+        // A replay part's carrier names no row (FIX 9180).
+        let holds = match replay::holds_in_txn(store, txn, carrier)? {
+            Some(holds) => holds,
+            None => match carrier_row(carrier) {
+                Some((db, key)) => row_in_txn(store, txn, db, key)?.is_some_and(|value| {
+                    ResponseFamily::of_row(db, key, &value)
+                        .and_then(|family| family.scan(key, &value).carriage())
+                        .is_some()
+                }),
+                None => false,
+            },
         };
         if !holds {
             release_response_in_txn(store, txn, carrier)?;
@@ -328,6 +360,12 @@ pub(super) fn retire_carried(
         let caller = (family == ResponseFamily::Http)
             .then(|| crate::store::http_erase_drop_caller(value))
             .flatten();
+        // An opaque one's erased marker takes the time it retired, as a live
+        // prune stamps it, so a restored vault's marker expires as a live
+        // one's does (FIX 10710); a row its family drops goes all the same.
+        if let Cow::Owned(stamped) = stamp_opaque_erased(value) {
+            *value = stamped;
+        }
         // An attempt's archive mark bound its carried bytes: it follows the
         // row to its text-free form (FIX 7115).
         if family == ResponseFamily::AttemptPayload {
@@ -356,7 +394,8 @@ pub(super) fn retire_carried(
 /// they land and before any row does, as a snapshot unleases every other
 /// (FIX 7115): the instance seals the row as it stood, so its image row is
 /// normalized only here. Its archive mark follows it when it bound the bytes
-/// carried. A Landing attempt refuses, as at the snapshot.
+/// carried. A Landing attempt refuses, as at the snapshot. An opaque one the
+/// strict reader refuses keeps its exact bytes (FIX 9390).
 ///
 /// # Errors
 ///
@@ -366,7 +405,7 @@ pub(super) fn unlease_carried_attempts(
     image: &mut CheckpointImage,
     retired: &BTreeSet<[u8; 16]>,
 ) -> Result<()> {
-    let landed: Vec<(Vec<u8>, [u8; 32])> = image
+    let landed: Vec<(Vec<u8>, [u8; 32], bool)> = image
         .inline_bodies
         .iter()
         .filter(|carried| {
@@ -374,15 +413,22 @@ pub(super) fn unlease_carried_attempts(
                 && !carried.superseded
                 && !retired.contains(&carried.instance)
         })
-        .map(|carried| (carried.key.clone(), carried.digest))
+        .map(|carried| (carried.key.clone(), carried.digest, carried.opaque))
         .collect();
-    for (key, digest) in landed {
+    for (key, digest, opaque) in landed {
         let rows = image
             .databases
             .get_mut(ResponseDb::Attempts.name())
             .ok_or_else(codec_error)?;
         let value = row_mut(rows, &key)?;
-        *value = rebuild::unlease_attempt(&key, value)?;
+        if opaque {
+            match rebuild::unlease_opaque_attempt(&key, value)? {
+                Some(unleased) => *value = unleased,
+                None => continue,
+            }
+        } else {
+            *value = rebuild::unlease_attempt(&key, value)?;
+        }
         let after = *blake3::hash(value).as_bytes();
         if let (Ok(id), Some(rows)) = (
             AttemptId::from_bytes(&key),

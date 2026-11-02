@@ -12,8 +12,10 @@
 //! principal, a credential) and in arrival order within one key, so a fleet
 //! that shares one credential takes one turn in each round, as every other
 //! credential does, and no key needs a cap of its own. Each wait has a
-//! deadline, sized as a request timeout rather than as a limit. The host's
-//! own background work waits behind every caller.
+//! deadline, sized as a request timeout rather than as a limit; task work's
+//! is its own request's deadline, and without one it waits for its turn
+//! however long the line. The host's own background work waits behind every
+//! caller.
 //!
 //! When work has to wait and nobody waited before it, the line is crossed:
 //! its [`LineCrossing`] hears it once per crossing (a host's OF-520 "is
@@ -22,7 +24,7 @@
 //! Task work (`can`, `ask`, `wait`, `tasks.answer`; Rule 5) takes its turn
 //! from one line per vault ([`Vault::admit_task_work`]), whichever door it
 //! came in by: a served route, the embedded SDK, a code run's own ask and
-//! wait, or a pumped agent.
+//! wait, or a pumped agent. It never runs without its turn (FIX 10015).
 
 use std::collections::{HashMap, VecDeque};
 use std::hash::Hash;
@@ -308,21 +310,100 @@ impl<K: Eq + Hash + Clone + Send + 'static> WorkLine<K> {
             Entry::Queued(place) => place,
         };
         let deadline = Instant::now() + wait.unwrap_or_else(|| *lock(&self.pool.wait));
-        let waiter = Arc::clone(&place.waiter);
-        let mut granted = lock(&waiter.granted);
-        while !*granted {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break;
-            }
-            granted = waiter
-                .woken_blocking
-                .wait_timeout(granted, left)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
-        }
-        drop(granted);
+        place.wait_granted(Some(deadline));
         place.settle().ok_or(WaitTimedOut)
+    }
+
+    /// A permit for `key`'s work at its turn, however long the line: the
+    /// line's own wait never ends it. The same line, order and permit as
+    /// [`Self::admit_in_line_observed`], and the same observation.
+    fn admit_in_line_untimed(
+        &self,
+        key: K,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> impl Future<Output = LinePermit> + Send + 'static {
+        let entry = self.enter(Some(key));
+        if let Some(observer) = &observer {
+            match &entry {
+                Entry::Admitted(_) => observer.held(),
+                Entry::Queued(_) => observer.queued(),
+            }
+        }
+        async move {
+            let mut place = match entry {
+                Entry::Admitted(permit) => return permit,
+                Entry::Queued(place) => place,
+            };
+            let waiter = Arc::clone(&place.waiter);
+            waiter.granted().await;
+            let permit = place
+                .settle()
+                .expect("a place whose permit was handed over settles with it");
+            if let Some(observer) = observer {
+                observer.held();
+            }
+            permit
+        }
+    }
+
+    /// [`Self::admit_in_line_untimed`] until `deadline`: past it with no
+    /// permit, the work leaves the line, and nothing was started. A deadline
+    /// already past puts nothing in line, and a permit that comes at or past
+    /// it goes on to the next waiter. Held is observed only with the permit
+    /// the work keeps.
+    fn admit_in_line_until(
+        &self,
+        key: K,
+        deadline: Instant,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> impl Future<Output = Result<LinePermit, WaitTimedOut>> + Send + 'static {
+        let entry = (Instant::now() < deadline).then(|| self.enter(Some(key)));
+        if let (Some(observer), Some(Entry::Queued(_))) = (&observer, &entry) {
+            observer.queued();
+        }
+        async move {
+            let permit = match entry.ok_or(WaitTimedOut)? {
+                Entry::Admitted(permit) => permit,
+                Entry::Queued(mut place) => {
+                    let waiter = Arc::clone(&place.waiter);
+                    let until = tokio::time::Instant::from_std(deadline);
+                    let _ = tokio::time::timeout_at(until, waiter.granted()).await;
+                    place.settle().ok_or(WaitTimedOut)?
+                }
+            };
+            let permit = before(deadline, permit)?;
+            if let Some(observer) = observer {
+                observer.held();
+            }
+            Ok(permit)
+        }
+    }
+
+    /// [`Self::admit_in_line_untimed`] on this thread.
+    fn admit_blocking_untimed(&self, key: K) -> LinePermit {
+        let mut place = match self.enter(Some(key)) {
+            Entry::Admitted(permit) => return permit,
+            Entry::Queued(place) => place,
+        };
+        place.wait_granted(None);
+        place
+            .settle()
+            .expect("a place whose permit was handed over settles with it")
+    }
+
+    /// [`Self::admit_in_line_until`] on this thread.
+    fn admit_blocking_until(&self, key: K, deadline: Instant) -> Result<LinePermit, WaitTimedOut> {
+        if Instant::now() >= deadline {
+            return Err(WaitTimedOut);
+        }
+        let permit = match self.enter(Some(key)) {
+            Entry::Admitted(permit) => permit,
+            Entry::Queued(mut place) => {
+                place.wait_granted(Some(deadline));
+                place.settle().ok_or(WaitTimedOut)?
+            }
+        };
+        before(deadline, permit)
     }
 
     /// Takes a free permit, or puts the work in line. `None` is the host's
@@ -396,6 +477,32 @@ struct Place<K: Eq + Hash + Clone + Send + 'static> {
 }
 
 impl<K: Eq + Hash + Clone + Send + 'static> Place<K> {
+    /// Waits on this thread until the permit is handed over, or until
+    /// `deadline` when there is one.
+    fn wait_granted(&self, deadline: Option<Instant>) {
+        let mut granted = lock(&self.waiter.granted);
+        while !*granted {
+            granted = match deadline {
+                None => self
+                    .waiter
+                    .woken_blocking
+                    .wait(granted)
+                    .unwrap_or_else(PoisonError::into_inner),
+                Some(deadline) => {
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() {
+                        break;
+                    }
+                    self.waiter
+                        .woken_blocking
+                        .wait_timeout(granted, left)
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .0
+                }
+            };
+        }
+    }
+
     fn settle(&mut self) -> Option<LinePermit> {
         if self.settled {
             return None;
@@ -515,6 +622,16 @@ impl<K: Eq + Hash + Clone + Send + 'static> Release for Pool<K> {
     }
 }
 
+/// `permit`, unless `deadline` passed by the time it came: then it goes on
+/// to the next waiter, and the work it was for never starts.
+fn before(deadline: Instant, permit: LinePermit) -> Result<LinePermit, WaitTimedOut> {
+    if Instant::now() < deadline {
+        Ok(permit)
+    } else {
+        Err(WaitTimedOut)
+    }
+}
+
 /// Hands `waiter` its permit, under the queue lock.
 fn grant(waiter: &Waiter) {
     *lock(&waiter.granted) = true;
@@ -550,33 +667,19 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 /// sets its own (`limits.task_work`): past ten times a fleet's 200 agents.
 pub const TASK_WORK_BOUND: usize = 2_048;
 
-/// How long task work waits for its turn before it runs anyway, until a host
-/// sets its own (`limits.queue_wait_timeout_ms`).
+/// The task-work line's own wait, until a host sets its own
+/// (`limits.queue_wait_timeout_ms`): how long other work in that line that
+/// names no wait of its own (a recovery's pages) waits for its turn, and
+/// the wait other lines start with. Task work itself waits for its turn
+/// however long the line, or until its own request deadline (FIX 10015).
 pub const TASK_WORK_WAIT: Duration = Duration::from_secs(300);
 
 /// One piece of task work's turn on a vault ([`Vault::admit_task_work`]):
-/// dropping it hands the turn to the next caller in line. Work that waited
-/// out its turn holds none.
+/// dropping it hands the turn to the next caller in line. Task work runs
+/// only while it holds its turn.
 #[must_use = "task work keeps its turn only while it is held"]
 pub struct TaskWorkTurn {
-    _permit: Option<LinePermit>,
-}
-
-impl TaskWorkTurn {
-    fn after(caller: EntityId, admitted: Result<LinePermit, WaitTimedOut>) -> Self {
-        match admitted {
-            Ok(permit) => Self {
-                _permit: Some(permit),
-            },
-            Err(WaitTimedOut) => {
-                tracing::info!(
-                    caller = %caller.to_hex(),
-                    "task work waited out its turn; it runs past the task-work bound"
-                );
-                Self { _permit: None }
-            }
-        }
-    }
+    _permit: LinePermit,
 }
 
 impl Vault {
@@ -595,10 +698,11 @@ impl Vault {
     /// `caller`'s turn to run one piece of task work on this vault (`can`,
     /// `ask`, `wait`, `tasks.answer`; Rule 5): at once while fewer than the
     /// bound run, else in a fair line, one caller's work after another's,
-    /// each caller's oldest first. Work is never refused: past the wait it
-    /// runs without a turn. Hold the turn until the work ends; take it
-    /// before the engine opens a transaction, and only where no turn is held
-    /// for the same work already.
+    /// each caller's oldest first. Work is never refused: it keeps its place
+    /// until its turn comes, however long, and never runs without one (FIX
+    /// 10015). Hold the turn until the work ends; take it before the engine
+    /// opens a transaction, and only where no turn is held for the same work
+    /// already.
     pub fn admit_task_work(
         &self,
         caller: EntityId,
@@ -613,23 +717,50 @@ impl Vault {
         caller: EntityId,
         observer: Option<Arc<dyn LineObserver>>,
     ) -> impl Future<Output = TaskWorkTurn> + Send + 'static {
-        let admitted = self
-            .task_work
-            .admit_in_line_observed(caller, observer.clone());
+        let permit = self.task_work.admit_in_line_untimed(caller, observer);
         async move {
-            let admitted = admitted.await;
-            if admitted.is_err()
-                && let Some(observer) = observer
-            {
-                observer.held();
+            TaskWorkTurn {
+                _permit: permit.await,
             }
-            TaskWorkTurn::after(caller, admitted)
+        }
+    }
+
+    /// [`Self::admit_task_work_observed`] for work that carries a request
+    /// deadline of its own: in the same line, until `deadline`. Past it with
+    /// no turn, the work leaves the line and [`WaitTimedOut`] says nothing
+    /// was started; a deadline already past starts nothing.
+    pub fn admit_task_work_until(
+        &self,
+        caller: EntityId,
+        deadline: Instant,
+        observer: Option<Arc<dyn LineObserver>>,
+    ) -> impl Future<Output = Result<TaskWorkTurn, WaitTimedOut>> + Send + 'static {
+        let permit = self
+            .task_work
+            .admit_in_line_until(caller, deadline, observer);
+        async move {
+            Ok(TaskWorkTurn {
+                _permit: permit.await?,
+            })
         }
     }
 
     /// [`Self::admit_task_work`] on this thread: for the embedded SDK, a
     /// code run's own calls and other work off the runtime.
     pub fn admit_task_work_blocking(&self, caller: EntityId) -> TaskWorkTurn {
-        TaskWorkTurn::after(caller, self.task_work.admit_blocking(caller))
+        TaskWorkTurn {
+            _permit: self.task_work.admit_blocking_untimed(caller),
+        }
+    }
+
+    /// [`Self::admit_task_work_until`] on this thread.
+    pub fn admit_task_work_blocking_until(
+        &self,
+        caller: EntityId,
+        deadline: Instant,
+    ) -> Result<TaskWorkTurn, WaitTimedOut> {
+        Ok(TaskWorkTurn {
+            _permit: self.task_work.admit_blocking_until(caller, deadline)?,
+        })
     }
 }

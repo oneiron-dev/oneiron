@@ -6,7 +6,7 @@ use super::{
     ReviewBundleExplanation, ReviewBundleInput, ReviewComplexity, ReviewExplainerCallReceipt,
     ReviewExplainerEscalation, ReviewExplainerOutput, ReviewExplainerReceipt,
 };
-use crate::attempt_queue::AttemptRecord;
+use crate::attempt_queue::{AttemptId, AttemptRecord, ReadSetProducer};
 use crate::llm::{
     BudgetDenied, BudgetGuard, BudgetLease, CallClass, CallEnvelope, CallPurpose, ContentPart,
     FinishReason, HostInferenceContext, LlmBackend, LlmCapability, LlmError, LlmMessage,
@@ -28,6 +28,16 @@ pub enum ReviewExplainerError {
 }
 
 type Result<T> = std::result::Result<T, ReviewExplainerError>;
+
+/// Records the review bundle's complete row set, or None on any parse or
+/// storage failure. Capture only: it never changes generation.
+fn record_review_bundle_rows(vault: &Vault, attempt: AttemptId, rows: Option<Vec<EntityId>>) {
+    if let Err(error) = vault.record_attempt_sources(attempt, ReadSetProducer::REVIEW_BUNDLE, rows)
+    {
+        tracing::warn!(kind = ?error.kind(), "review bundle input rows were not recorded");
+        let _ = vault.record_attempt_sources(attempt, ReadSetProducer::REVIEW_BUNDLE, None);
+    }
+}
 
 /// Resolved by the host's ordinary model-role/route machinery, never by model name here.
 pub struct ReviewExplainerRoute<'a> {
@@ -58,7 +68,23 @@ pub async fn explain_review_bundle(
     execution: &ReviewExplainerExecution<'_>,
     at: u64,
 ) -> Result<ReviewBundleExplanation> {
+    if let Err(error) = vault.declare_attempt_read_producers(
+        execution.attempt.id,
+        &[ReadSetProducer::SKILL_PACK, ReadSetProducer::REVIEW_BUNDLE],
+    ) {
+        tracing::warn!(kind = ?error.kind(), "review bundle read producers were not declared");
+    }
     let input = vault.review_bundle_input(proposal)?;
+    let source_rows = (|| -> std::result::Result<Vec<EntityId>, Error> {
+        let mut rows = vec![*proposal];
+        for fork in &input.forks {
+            rows.push(EntityId::from_hex(&fork.record.fork)?);
+            rows.push(EntityId::from_hex(&fork.record.entity)?);
+        }
+        Ok(rows)
+    })()
+    .ok();
+    record_review_bundle_rows(vault, execution.attempt.id, source_rows);
     let loaded = vault.load_leased_callable_skill_pack(
         execution.attempt,
         &execution.skill,
@@ -88,7 +114,7 @@ pub async fn explain_review_bundle(
             .map(|fork| fork.record.fork.clone())
             .collect(),
         input_hash: blake3::hash(&input_bytes).to_hex().to_string(),
-        skill: execution.skill,
+        skill: loaded.entity,
         skill_version: loaded.record.version.clone(),
         skill_content_hash: hash.to_hex(),
         calls: Vec::new(),
@@ -137,7 +163,7 @@ pub async fn explain_review_bundle(
                 receipt.escalation = ReviewExplainerEscalation::Completed;
             }
             Err(ReviewExplainerError::Budget(
-                BudgetDenied::Exhausted | BudgetDenied::AdmissionDenied,
+                BudgetDenied::Exhausted | BudgetDenied::AdmissionDenied | BudgetDenied::HostCheck,
             )) => {
                 receipt.escalation = ReviewExplainerEscalation::BudgetLimited;
                 break;
@@ -195,6 +221,7 @@ async fn generate(
                 ResponseFormat::Text
             },
             locality: route.locality,
+            host_keyless: false,
             seat_effort: Some(effort),
         },
         messages: vec![

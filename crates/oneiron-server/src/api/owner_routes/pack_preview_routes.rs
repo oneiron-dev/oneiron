@@ -7,9 +7,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EntityId;
@@ -17,19 +15,27 @@ use oneiron::skill_hub::pack_catalog::PackImportPreview;
 use oneiron::task_verb::sdk::{PackFileInput, decode_pack_files};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerError;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/packs/preview", post(preview))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/packs/preview",
+            summary: "What installing a pack folder would land, and each world it would land in that this machine's setting does not cover; stages and writes nothing (FIX 5493).",
+            row: None,
+        },
+        post(preview),
+    )]
 }
 
 /// The folder `POST /v1/owner/packs` would take, and the world the owner
 /// would pick for an agent held for its world.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct PreviewPack {
     /// An absolute folder on this host.
@@ -43,16 +49,28 @@ struct PreviewPack {
     world: Option<String>,
 }
 
+/// The OpenAPI schema of `POST /v1/owner/packs/preview`'s body (FIX 11611):
+/// [`PreviewPack`].
+pub(crate) fn preview_pack_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PreviewPack>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/packs/preview`'s answer (FIX 11611):
+/// [`PackImportPreview`].
+pub(crate) fn pack_import_preview_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PackImportPreview>()
+}
+
 /// `POST /v1/owner/packs/preview`: what installing the folder would land,
 /// and each world it would land in that this machine's setting does not
 /// cover.
 async fn preview(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<PreviewPack>, JsonRejection>,
+    payload: OwnerJsonBody<PreviewPack>,
 ) -> OwnerReply<PackImportPreview> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let preview = blocking(move || {
         let files = match (request.path, request.files) {
             (Some(path), None) => super::pack_routes::read_folder(&path)?,

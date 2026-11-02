@@ -272,3 +272,14 @@ impl Vault {
         )
     }
 }
+
+/// Removes an erased export's accepted copy, if any. Registered in
+/// `deletion/derived_rows.rs`.
+pub(crate) fn erase_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    COPIES.delete(store, txn, id)?;
+    Ok(())
+}

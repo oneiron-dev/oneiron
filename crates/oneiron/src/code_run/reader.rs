@@ -619,6 +619,10 @@ pub enum ReaderRunEnd {
     /// latest finding, or failed with none, its reason the code, never a
     /// generic run failure.
     Trapped(String),
+    /// Its room-paid scope's payer must first say yes (FIX 3740): before any
+    /// call, it waits queued, out of the claim queue, until its funding reads
+    /// yes or its cutoff ends it. Nothing was spent.
+    PayerParked,
 }
 
 impl ReaderRunEnd {
@@ -629,6 +633,7 @@ impl ReaderRunEnd {
             Self::Failed(reason) | Self::Trapped(reason) => reason,
             Self::Cutoff => "cutoff",
             Self::SpendExhausted => "spend",
+            Self::PayerParked => "payer_needed",
         }
     }
 }

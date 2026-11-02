@@ -33,6 +33,8 @@ use super::core::SyncServer;
 use super::media_embedding::{MediaEgress, MediaEmbedRefusal, RuntimeMediaEmbedder};
 use crate::ai_host::CHAT_ROLE;
 
+mod repo_index_derivation;
+
 /// How long an undecided move waits before its probes run again.
 const SPACE_MOVE_RECHECK: Duration = Duration::from_secs(6 * 60 * 60);
 /// The media type a probe query is sent as.
@@ -238,6 +240,7 @@ impl ServerProbeAuthor<'_> {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality,
+                host_keyless: false,
             },
             operation: AiOperation::Transcribe,
             parts,
@@ -262,6 +265,7 @@ impl ServerProbeAuthor<'_> {
                 class: CallClass::BestEffort,
                 response_format: ResponseFormat::Text,
                 locality: self.locality,
+                host_keyless: false,
             },
             messages: vec![
                 LlmMessage {
@@ -301,6 +305,7 @@ impl ServerProbeAuthor<'_> {
             binding: HostInferenceBinding::Advertised {
                 model: model.clone(),
                 locality: *locality,
+                keyless: false,
             },
             extraction_egress: self.server.extraction_egress.as_deref(),
         };
@@ -315,7 +320,12 @@ impl ServerProbeAuthor<'_> {
         // The owner's space move, which no room launched, bills the owner.
         let response = self
             .runtime
-            .block_on(self.server.ai.model_runtime().media().run(request, None))
+            .block_on(self.server.ai.model_runtime().media().run(
+                request,
+                None,
+                // The audio is read from the document's own rows (FIX 11311).
+                document.source_rows.map(<[oneiron::EntityId]>::to_vec),
+            ))
             .map_err(|error| {
                 Error::InvalidConfig(format!("space probe transcription failed: {error}"))
             })?;

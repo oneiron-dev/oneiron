@@ -43,6 +43,10 @@ pub struct GeneratedClaimInput {
     pub supersedes: Option<String>,
     pub valid_from: Option<u64>,
     pub valid_to: Option<u64>,
+    /// The band and basis a calibrated producer gave `confidence`; absent
+    /// means the house band of the number (FIX 7761).
+    #[serde(default)]
+    pub confidence_details: Option<crate::claim::ConfidenceDetails>,
 }
 
 /// Promote explicitly named candidates in an already admitted consolidation
@@ -420,21 +424,22 @@ impl Memory<'_> {
                     rmpv::Value::from(band),
                 )]));
             }
-            match &input.scope.scope_relationship_id {
-                super::ClaimRelationships::All(super::AllRelationships::All) => {}
-                super::ClaimRelationships::Relationships(refs) if refs.len() == 1 => {
-                    candidate = candidate.with_relationship(self.resolve_ref(&refs[0])?);
-                }
-                _ => {
-                    return Err(MemoryError::bad_request(
-                        "a claim relationship position is all or exactly one relationship",
-                    ));
-                }
+            if let super::ClaimRelationships::Relationships(refs) =
+                &input.scope.scope_relationship_id
+            {
+                candidate = candidate.with_relationships(Some(
+                    refs.iter()
+                        .map(|r| self.resolve_ref(r))
+                        .collect::<MemoryResult<std::collections::BTreeSet<_>>>()?,
+                ));
             }
             candidate = candidate.with_evidence(rmpv::Value::Map(vec![(
                 rmpv::Value::from("evidence_refs"),
                 public_evidence_value(&input.evidence_refs)?,
             )]));
+            if let Some(details) = input.confidence_details {
+                candidate = candidate.with_confidence_details(details);
+            }
             let mut evidence_refs = input
                 .claim_evidence_refs
                 .iter()

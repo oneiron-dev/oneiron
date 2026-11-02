@@ -1,51 +1,31 @@
 //! The restore's two pipes and the plan on the input pipe: each descriptor
-//! proven the right end of a pipe before either is taken over, the plan read
-//! to EOF and parsed strictly, and every binding it names checked against
-//! this start's argv before anything is touched.
+//! proven the right end of a pipe before either is taken over (FIX 6580,
+//! [`crate::pipe_proof::pipe_end`]), the plan read to EOF and parsed strictly,
+//! and every binding it names checked against this start's argv, and in a
+//! vault VM its carrier, before anything is touched.
 
-use std::io::Read as _;
-use std::os::fd::{BorrowedFd, FromRawFd as _, RawFd};
+use std::io::{ErrorKind, Read as _};
+use std::os::fd::{FromRawFd as _, RawFd};
+use std::path::PathBuf;
 
 use oneiron_vault_contract::restore::framing::identity_fits;
 use oneiron_vault_contract::restore::{
-    EscrowRole, ManagedRestoreIdentity, ManagedRestoreInput, ManagedRestorePlan,
+    EscrowRole, FreshRecipient, ManagedRestoreIdentity, ManagedRestoreInput, ManagedRestorePlan,
     RESTORE_INPUT_SCHEMA_VERSION,
 };
 
 use crate::managed::ManagedArgs;
+#[cfg(target_os = "linux")]
+use crate::managed::state_serve::carrier_recipient;
 
 /// An SLH-DSA-SHA2-256s public key's length in bytes.
 const SLHDSA_PUBLIC_LEN: usize = 64;
 
-/// Whether `fd` is the read end (`write` false) or the write end of a pipe,
-/// told from its type and access mode before it is taken over; why not
-/// otherwise. A file, socket or tty never carries the restore.
-pub(in crate::managed) fn pipe_end(fd: RawFd, write: bool) -> Result<(), &'static str> {
-    use rustix::fs::{FileType, OFlags};
-    if fd < 0 {
-        return Err("it is not a file descriptor");
-    }
-    // SAFETY: `fd` arrives on argv from the supervisor and is this process's
-    // to own: nothing else in the process holds or closes it. It is borrowed
-    // for these two reads only, before it is taken over.
-    let borrowed = unsafe { BorrowedFd::borrow_raw(fd) };
-    let stat = rustix::fs::fstat(borrowed).map_err(|_| "it is not an open descriptor")?;
-    if FileType::from_raw_mode(stat.st_mode) != FileType::Fifo {
-        return Err("it is not a pipe");
-    }
-    let mode = rustix::fs::fcntl_getfl(borrowed).map_err(|_| "its access mode did not read")?
-        & OFlags::ACCMODE;
-    match (write, mode == OFlags::WRONLY, mode == OFlags::RDONLY) {
-        (true, true, _) | (false, _, true) => Ok(()),
-        (true, ..) => Err("it is not a pipe's write end"),
-        (false, ..) => Err("it is not a pipe's read end"),
-    }
-}
-
-/// Takes `fd` over, once, after [`pipe_end`] proved it.
+/// Takes `fd` over, once, after [`pipe_end`](crate::pipe_proof::pipe_end)
+/// proved it.
 pub(in crate::managed) fn adopt(fd: RawFd) -> std::fs::File {
     // SAFETY: `fd` arrives on argv from the supervisor and is this process's
-    // to own; [`pipe_end`] proved it open, and nothing else takes it over.
+    // to own; `pipe_end` proved it open, and nothing else takes it over.
     // The `File` closes it on drop, which is the EOF its reader waits for.
     unsafe { std::fs::File::from_raw_fd(fd) }
 }
@@ -63,16 +43,30 @@ pub(super) fn read(mut pipe: std::fs::File) -> Result<ManagedRestoreInput, &'sta
     Ok(input)
 }
 
+/// The argv escrow recipient bytes a cold restore's begin-check read and
+/// verified against the plan (FIX 11988): the start seals these, never the
+/// files again, so a file swapped in between is not sealed unchecked. A
+/// role argv names no file for holds none; a vault VM's carrier bytes are
+/// not carried, since the carrier watch re-runs the plan check at its
+/// first look before it seals (FIX 11851).
+pub(in crate::managed) struct CheckedRecipients {
+    pub(in crate::managed) managed: Option<Vec<u8>>,
+    pub(in crate::managed) break_glass: Option<Vec<u8>>,
+}
+
 /// Checks each binding the plan names against this start: its vault and
 /// owners, its tier, the artifact's path, its signer pins, that its
 /// identity rides a result frame, and that each escrow recipient argv names
 /// is one of the plan's fresh recipients of that role, never a released
-/// one or one the plan did not authorize.
+/// one or one the plan did not authorize. In a vault VM a role argv names
+/// no file for is checked the same way against the carrier's file for it,
+/// as it stands now ([`vm_carrier_recipient`]). Returns the argv bytes it
+/// read and verified, for the start to seal (FIX 11988).
 pub(super) fn check(
     plan: &ManagedRestorePlan,
     managed: &ManagedArgs,
     maximum_tier: bool,
-) -> Result<(), &'static str> {
+) -> Result<CheckedRecipients, &'static str> {
     let checks = [
         (
             plan.vault_name == managed.vault_name,
@@ -117,23 +111,71 @@ pub(super) fn check(
     if let Some((_, refusal)) = checks.into_iter().find(|(holds, _)| !holds) {
         return Err(refusal);
     }
+    let mut checked = CheckedRecipients {
+        managed: None,
+        break_glass: None,
+    };
     for (role, file) in [
         (EscrowRole::Managed, &managed.escrow_recipient),
         (EscrowRole::BreakGlass, &managed.break_glass_recipient),
     ] {
-        let Some(file) = file else {
+        let (public_key, from_carrier) = if let Some(file) = file {
+            (
+                std::fs::read(file)
+                    .map_err(|_| "an escrow recipient file argv names did not read")?,
+                false,
+            )
+        } else if let Some(file) = vm_carrier_recipient(managed, role) {
+            match std::fs::read(file) {
+                Ok(public_key) => (public_key, true),
+                Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                Err(_) => return Err("the carrier's escrow recipient file did not read"),
+            }
+        } else {
             continue;
         };
-        let public_key =
-            std::fs::read(file).map_err(|_| "an escrow recipient file argv names did not read")?;
-        if !plan
-            .request
-            .fresh
-            .iter()
-            .any(|fresh| fresh.role == role && fresh.public_key == public_key)
-        {
-            return Err("an escrow recipient argv names is not one of the plan's fresh recipients");
+        if !fresh_authorizes(&plan.request.fresh, role, &public_key) {
+            return Err(if from_carrier {
+                "the carrier's escrow recipient is not one of the plan's fresh recipients"
+            } else {
+                "an escrow recipient argv names is not one of the plan's fresh recipients"
+            });
+        }
+        if !from_carrier {
+            let slot = match role {
+                EscrowRole::Managed => &mut checked.managed,
+                EscrowRole::BreakGlass => &mut checked.break_glass,
+            };
+            *slot = Some(public_key);
         }
     }
-    Ok(())
+    Ok(checked)
+}
+
+/// Whether the plan authorizes `public_key` as a fresh escrow recipient of
+/// `role`: one of the plan's fresh recipients of that role, never a
+/// released one or one the plan did not authorize. The carrier watch's
+/// first look runs this same check again before it seals (FIX 11851).
+pub(in crate::managed) fn fresh_authorizes(
+    fresh: &[FreshRecipient],
+    role: EscrowRole,
+    public_key: &[u8],
+) -> bool {
+    fresh
+        .iter()
+        .any(|fresh| fresh.role == role && fresh.public_key.as_slice() == public_key)
+}
+
+/// The file a vault VM's carrier delivers `role`'s escrow recipient in, for
+/// a role argv names no file for: the host may send one after this start's
+/// argv was built, and the carrier watch seals to it once the vault serves
+/// (FIX 11078). `None` outside a vault VM.
+fn vm_carrier_recipient(managed: &ManagedArgs, role: EscrowRole) -> Option<PathBuf> {
+    #[cfg(target_os = "linux")]
+    if managed.vsock_guest {
+        return Some(carrier_recipient(role));
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = (managed, role);
+    None
 }

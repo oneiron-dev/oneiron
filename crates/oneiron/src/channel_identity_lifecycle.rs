@@ -17,9 +17,10 @@ use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::channel_identity::{
     ChannelIdentity, ChannelIdentityFulfillment, ChannelIdentityState, ChannelIdentityStep,
-    IdentityTransition, InboundDisposition, admit_channel_identity_transition_in_txn,
-    channel_identity_facts_in_txn, decode_channel_identity_body, encode_channel_identity_body,
-    resolve_quarantine_floor_in_txn, step_channel_identity_in_txn,
+    IdentityTransition, InboundDisposition, REASON_QUARANTINE_SHIPPED_WAIT_POLICY,
+    admit_channel_identity_transition_in_txn, channel_identity_facts_in_txn,
+    decode_channel_identity_body, encode_channel_identity_body, resolve_quarantine_window_in_txn,
+    step_channel_identity_in_txn,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
@@ -354,7 +355,7 @@ impl Vault {
         // txn, so it is always admitted for execution.
         let (gate_decision_id, decision, _effector_charge) =
             gate::check_external_effect_policy(&self.store, &mut wtxn, &effect, &policy, true)?;
-        let reason_codes = decision
+        let mut reason_codes = decision
             .reason_codes()
             .iter()
             .map(|code| code.as_str().to_owned())
@@ -370,6 +371,7 @@ impl Vault {
                 &mut wtxn,
                 &request.intent,
                 request.requested_at,
+                &mut reason_codes,
             )?,
             GateOutcome::Pending => AppliedLifecycle {
                 identity: Some(snapshot.clone()),
@@ -515,11 +517,14 @@ impl Vault {
         })
     }
 
+    /// Applies an intent the Gate allowed. A policy fallback the apply took
+    /// lands in `reason_codes`, the receipt's own.
     fn apply_allowed_lifecycle_intent(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         intent: &ChannelIdentityLifecycleIntent,
         at: u64,
+        reason_codes: &mut Vec<String>,
     ) -> Result<AppliedLifecycle> {
         match intent {
             ChannelIdentityLifecycleIntent::Provision(intent) => {
@@ -604,15 +609,19 @@ impl Vault {
                 let next = if released.is_delegated() {
                     released
                 } else {
-                    // The hold floor is manifest policy resolved in THIS write
+                    // The hold window is manifest policy resolved in THIS write
                     // transaction, so the second half of the release act runs
                     // under the same snapshot the first half admitted against.
+                    let resolved = resolve_quarantine_window_in_txn(&self.store, wtxn, &released)?;
+                    if resolved.shipped {
+                        reason_codes.push(REASON_QUARANTINE_SHIPPED_WAIT_POLICY.to_owned());
+                    }
                     released.step_with_wait(
                         ChannelIdentityStep::Quarantine {
                             until: intent.quarantine_until,
                         },
                         at,
-                        resolve_quarantine_floor_in_txn(&self.store, wtxn, &released)?,
+                        resolved.window,
                     )?
                 };
                 let outcome = next.state().as_str();

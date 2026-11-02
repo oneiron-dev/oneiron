@@ -61,6 +61,12 @@ pub(crate) struct GateProvenanceHandles {
     /// one-shot digest only. Never an authority source; no Grant reads it.
     pub(crate) approval_target: Option<super::effect::ApprovalTarget>,
     pub(crate) dreamer_run_id: Option<String>,
+    /// FIX 11921: the agent-dispatch attempt whose run makes this effect, by
+    /// its 16 id bytes ([`crate::WriteActor::run_attempt`]), filled where a
+    /// run's actor builds the effect. The external-effect door meets that
+    /// run's live delegation chain with it, as the claim door does. Never an
+    /// authority source; no digest reads it.
+    pub(crate) run_attempt: Option<[u8; 16]>,
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

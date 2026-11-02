@@ -25,6 +25,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
 
 mod engine_scan;
+mod engine_scan_table;
 pub use engine_scan::EngineScan;
 
 /// Rows one engine scan reads past which it asks whether everything is
@@ -179,6 +180,15 @@ impl PendingScanChecks {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .entry(key)
             .or_insert(check);
+    }
+
+    /// Whether a crossing waits to be kept (FIX 11664).
+    pub(crate) fn any_waiting(&self) -> bool {
+        !self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
     }
 
     fn waiting(&self) -> BTreeMap<CheckKey, ScanCheck> {

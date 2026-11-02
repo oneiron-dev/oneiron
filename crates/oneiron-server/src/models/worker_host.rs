@@ -20,34 +20,52 @@
 //! V2-R1): its provider's calls to it go there ([`native_route`],
 //! `models/native_exl3`), its qualification asks there, and its activity
 //! poll reads its stats there.
+//!
+//! The media workers, VoxCPM2 speech and local ASR, are supervised the same
+//! way (FIX 8318, `media_worker`): a media rung's call holds its worker's
+//! lease from before its admission through its renders, its partial
+//! settlement or its cancellation, and the worker runs one inference at a
+//! time.
 mod bundle;
 mod install;
 mod launch_manifest;
 mod launcher;
+mod media_worker;
 mod probe;
 #[cfg(unix)]
 mod process;
 mod session;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock, PoisonError};
 use std::time::Duration;
 
-use oneiron::llm::{WorkerKind, WorkerMode, WorkerStatus};
+use oneiron::llm::run_admission::WorkContext;
+use oneiron::llm::{
+    CallSchedule, InferenceCallReceipt, SchedulingCapability, WorkClass, WorkerKind, WorkerMode,
+    WorkerStatus,
+};
 use oneiron_driver::{
-    DeclaredEnvelope, DeviceLedger, InferenceWorker, WorkerPolicy, WorkerProbe, WorkerSpec,
+    AdmissionStop, DeclaredEnvelope, DeviceAdmission, DeviceGrant, DeviceLedger,
+    ExecutorRegistration, InferenceWorker, PressureDecision, UnloadOutcome, WorkEnvelope,
+    WorkRequest, WorkTicket, WorkerActivity, WorkerPolicy, WorkerProbe, WorkerSpec,
 };
 
 use crate::config::models::{ProviderConfig, WorkerConfig, WorkerEnvelope};
+use futures_util::future::select_all;
 use launch_manifest::LaunchSlot;
 use launcher::{ProcessLauncher, Stores};
 use probe::HouseProbe;
+use serde_json::Value as JsonValue;
 
 #[cfg(unix)]
 pub(super) use session::open_turn;
-pub(crate) use session::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+pub(crate) use session::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 /// The process's one worker host, made when the first worker is configured
 /// or the process is marked as the one that launches them.
@@ -60,6 +78,7 @@ struct WorkerHost {
     workers: Mutex<BTreeMap<String, Hosted>>,
     stores: Arc<Stores>,
     ledgers: Mutex<BTreeMap<String, Arc<DeviceLedger>>>,
+    admissions: Mutex<BTreeMap<String, Arc<DeviceAdmission>>>,
     /// The sessions on its managed EXL3 workers (DESIGN-V2 R2).
     #[cfg(unix)]
     sessions: session::Registry,
@@ -105,6 +124,144 @@ impl NativeRoute {
             record.manifest_sha256.clone(),
         ))
     }
+
+    /// The scheduling capability the qualifying hello proved for this launch.
+    pub(super) fn scheduling_capability(&self) -> Option<SchedulingCapability> {
+        self.slot
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .as_ref()
+            .and_then(|record| record.scheduling.clone())
+    }
+}
+
+/// One native call's ticket and eventual grant. An early exit cancels an
+/// unused ticket; once granted, `Call` owns the release/reap custody.
+pub(super) struct BoundWork {
+    ticket: Option<WorkTicket>,
+    context: WorkContext,
+    armed: bool,
+}
+
+impl BoundWork {
+    #[must_use]
+    pub(super) fn device(&self) -> Option<&str> {
+        self.ticket.as_ref().map(|ticket| ticket.device.as_str())
+    }
+
+    #[must_use]
+    pub(super) fn is_foreground(&self) -> bool {
+        self.ticket.as_ref().map_or_else(
+            || self.context.class == WorkClass::Foreground,
+            |ticket| ticket.request.class == WorkClass::Foreground,
+        )
+    }
+
+    pub(super) async fn wait_runnable(&self) -> Result<(), AdmissionStop> {
+        match &self.ticket {
+            Some(ticket) => ticket.wait_runnable().await,
+            None => Ok(()),
+        }
+    }
+
+    pub(super) async fn execution_grant(&mut self) -> Result<Option<DeviceGrant>, AdmissionStop> {
+        let Some(ticket) = &self.ticket else {
+            self.armed = false;
+            return Ok(None);
+        };
+        let mut tried = BTreeSet::new();
+        let mut victim_changes = Vec::new();
+        loop {
+            match ticket.resolve_pressure_excluding(&tried) {
+                PressureDecision::Grant(grant) => {
+                    self.armed = false;
+                    return Ok(Some(grant));
+                }
+                PressureDecision::Stop(stop) => return Err(stop),
+                PressureDecision::UnloadIdle(worker) => {
+                    if let Some(victim) = hosted_worker(&worker) {
+                        victim_changes.push(victim.subscribe_changed());
+                    }
+                    let _ = unload_idle_worker(&worker).await;
+                    tried.insert(worker);
+                    continue;
+                }
+                PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
+            }
+
+            // Arm every wake before the final no-room check. A deferred
+            // victim whose own demand drops is heard through its worker watch;
+            // admission hears grants, releases, loads and fresh idle rows.
+            let changed = ticket.pressure_change();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            match ticket.resolve_pressure_excluding(&tried) {
+                PressureDecision::Grant(grant) => {
+                    self.armed = false;
+                    return Ok(Some(grant));
+                }
+                PressureDecision::Stop(stop) => return Err(stop),
+                PressureDecision::UnloadIdle(_) => continue,
+                PressureDecision::ApprovedSmallerProfile(_) | PressureDecision::Wait => {}
+            }
+            let victim_wake = async move {
+                if victim_changes.is_empty() {
+                    std::future::pending::<()>().await;
+                } else {
+                    select_all(victim_changes.into_iter().map(|mut receiver| {
+                        Box::pin(async move {
+                            let _ = receiver.changed().await;
+                        })
+                    }))
+                    .await;
+                }
+            };
+            tokio::pin!(victim_wake);
+            let deadline = ticket.deadline();
+            tokio::select! {
+                () = changed.as_mut() => {},
+                _ = victim_wake => {},
+                () = async {
+                    if let Some(deadline) = deadline {
+                        tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)).await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    ticket.cancel();
+                    return Err(AdmissionStop::Deadline);
+                }
+            }
+            tried.clear();
+            victim_changes = Vec::new();
+        }
+    }
+
+    #[must_use]
+    pub(super) fn schedule(&self, grant: Option<&DeviceGrant>) -> CallSchedule {
+        CallSchedule {
+            work_class: self
+                .ticket
+                .as_ref()
+                .map_or(self.context.class, |ticket| ticket.request.class),
+            priority: self.context.priority,
+            deadline: self
+                .ticket
+                .as_ref()
+                .map_or_else(|| self.context.deadline, |ticket| ticket.request.deadline),
+            admission: grant.map(DeviceGrant::admission),
+        }
+    }
+}
+
+impl Drop for BoundWork {
+    fn drop(&mut self) {
+        if self.armed {
+            if let Some(ticket) = &self.ticket {
+                ticket.cancel();
+            }
+        }
+    }
 }
 
 /// The process's worker host, made on first use.
@@ -128,6 +285,190 @@ pub(crate) fn permit_worker_launch() {
     for worker in managed {
         worker.start();
     }
+}
+
+/// Attaches this process's snapshot port to `vault` (V2-R3): its lock
+/// waits for every session of it here to be released, under the owner's
+/// bound, and its erases drop them. Off Unix no session runs, so none is
+/// attached and a lock only closes the vault's own admission.
+pub(crate) fn install_snapshot_runtime(vault: &Arc<oneiron::Vault>) {
+    #[cfg(unix)]
+    session::install_snapshots(vault);
+    #[cfg(not(unix))]
+    let _ = vault;
+}
+
+/// Takes up the configured `[models.snapshots]` policy.
+pub(super) fn snapshot_policy(policy: &crate::config::models::snapshots::SnapshotPolicy) {
+    #[cfg(unix)]
+    session::set_snapshot_policy(policy);
+    #[cfg(not(unix))]
+    let _ = policy;
+}
+
+/// The device ledger of the device managed worker `worker_id` launches on,
+/// when its launch names one: what a snapshot transfer may take there.
+#[cfg(unix)]
+fn device_ledger(worker_id: &str) -> Option<Arc<DeviceLedger>> {
+    let host = HOST.get()?;
+    let device = host
+        .lock()
+        .get(worker_id)?
+        .row
+        .launch
+        .as_ref()?
+        .device
+        .clone()?;
+    host.ledgers
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .get(&device)
+        .cloned()
+}
+
+/// Runs the driver-owned restartable idle unload for one pressure victim.
+async fn unload_idle_worker(worker_id: &str) -> UnloadOutcome {
+    let worker = HOST.get().and_then(|host| {
+        host.lock()
+            .get(worker_id)
+            .map(|hosted| hosted.worker.clone())
+    });
+    match worker {
+        Some(worker) => worker.unload_if_idle().await,
+        None => UnloadOutcome::NotRunning,
+    }
+}
+
+/// Returns one hosted supervisor by id for a victim-watch subscription.
+fn hosted_worker(worker_id: &str) -> Option<InferenceWorker> {
+    HOST.get().and_then(|host| {
+        host.lock()
+            .get(worker_id)
+            .map(|hosted| hosted.worker.clone())
+    })
+}
+
+/// Takes a device ticket for one bound call before its worker acquire. No
+/// device means the route keeps its existing unmediated path. `envelope` is
+/// the call's incremental charge beyond the worker's steady declaration.
+pub(super) fn admit_bound_work(
+    worker: &InferenceWorker,
+    context: WorkContext,
+    envelope: WorkEnvelope,
+) -> BoundWork {
+    let ticket = HOST.get().and_then(|host| {
+        let hosted = host.lock();
+        let hosted = hosted.get(&worker.spec().worker_id)?;
+        let device = hosted.row.launch.as_ref()?.device.as_deref()?;
+        let admission = host.admission(device);
+        let mut request = WorkRequest::new(
+            hosted.row.id.clone(),
+            worker.resource_class(),
+            hosted.row.id.clone(),
+        );
+        request.envelope = envelope;
+        request.class = context.class;
+        request.priority = context.priority;
+        request.deadline = context.deadline;
+        request.parent = context.parent;
+        request.cancel = context.cancel.shared();
+        Some(admission.enqueue(request))
+    });
+    BoundWork {
+        ticket,
+        context,
+        armed: true,
+    }
+}
+
+/// Retains a sanitized physical receipt on the worker that made it.
+pub(super) fn report_receipt(worker_id: &str, epoch: &str, receipt: InferenceCallReceipt) {
+    if let Some(host) = HOST.get() {
+        if let Some(hosted) = host.lock().get(worker_id) {
+            hosted.worker.record_receipt(epoch, receipt);
+        }
+    }
+}
+
+/// Registers or refreshes one executor's idle row. Managed custody exists
+/// only when this process may launch that worker; other work is recorded as
+/// external and is never an unload target.
+pub(super) fn register_device_executor(worker_id: &str, idle: bool) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Some((device, external)) = host.lock().get(worker_id).and_then(|hosted| {
+        let device = hosted.row.launch.as_ref()?.device.clone()?;
+        let managed =
+            hosted.row.mode == WorkerMode::Managed && host.launch_permitted.load(Ordering::SeqCst);
+        Some((device, !managed))
+    }) else {
+        return;
+    };
+    host.admission(&device)
+        .register_executor(ExecutorRegistration {
+            worker_id: worker_id.to_owned(),
+            external,
+            idle,
+        });
+}
+
+/// Publishes one worker-reported activity snapshot to both admission and
+/// the supervisor without deriving either side from the other.
+pub(super) fn report_device_activity(worker: &InferenceWorker, activity: WorkerActivity) {
+    register_device_executor(&worker.spec().worker_id, activity.is_idle());
+    worker.report(activity);
+}
+
+/// Cross-checks a worker's own device capacity report with the pre-load
+/// query. The first valid report fills an unknown; a mismatch keeps the
+/// device query and logs rather than silently rewriting capacity.
+pub(super) fn report_device_stats(worker_id: &str, stats: &JsonValue) {
+    let Some(host) = HOST.get() else {
+        return;
+    };
+    let Some(device) = host
+        .lock()
+        .get(worker_id)
+        .and_then(|hosted| hosted.row.launch.as_ref()?.device.clone())
+    else {
+        return;
+    };
+    let ledger = host.ledger(&device);
+    let rows = stats.get("devices").and_then(JsonValue::as_array);
+    let cuda_device = format!("cuda:{device}");
+    let row = rows.and_then(|rows| {
+        rows.iter()
+            .find(|row| {
+                row.get("device")
+                    .and_then(JsonValue::as_str)
+                    .is_some_and(|name| name == device.as_str() || name == cuda_device.as_str())
+            })
+            .or_else(|| (rows.len() == 1).then(|| rows.first()).flatten())
+    });
+    let Some(bytes) = row
+        .and_then(|row| row.get("capacity_bytes"))
+        .and_then(JsonValue::as_u64)
+    else {
+        return;
+    };
+    let capacity = bytes.saturating_add((1_u64 << 20) - 1) / (1_u64 << 20);
+    match ledger.capacity() {
+        None => ledger.set_capacity(Some(capacity)),
+        Some(existing) if existing != capacity => {
+            tracing::warn!(worker = worker_id, device = %device, existing, reported = capacity, "worker and host device capacities differ");
+        }
+        Some(_) => {}
+    }
+}
+
+/// Sealed snapshot parking as this process stands; `None` off Unix.
+pub(super) fn snapshot_status() -> Option<super::SnapshotStatus> {
+    #[cfg(unix)]
+    let status = Some(session::snapshot_status());
+    #[cfg(not(unix))]
+    let status = None;
+    status
 }
 
 /// Puts `rows` under the process's supervisors, starting what is new, and
@@ -198,6 +539,25 @@ pub(super) fn refresh(statuses: &mut [WorkerStatus]) {
             *status = hosted.worker.status();
         }
     }
+}
+
+/// Copies every device queue and ledger into owner-facing status. No probe.
+pub(super) fn refresh_devices(statuses: &mut Vec<super::status::DeviceStatus>) {
+    let Some(host) = HOST.get() else {
+        statuses.clear();
+        return;
+    };
+    let admissions = host
+        .admissions
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .values()
+        .cloned()
+        .collect::<Vec<_>>();
+    *statuses = admissions
+        .into_iter()
+        .map(|admission| super::status::DeviceStatus::from_snapshot(admission.snapshot()))
+        .collect();
 }
 
 /// The managed worker a rung on `provider` calling `wire_model` is bound
@@ -282,10 +642,24 @@ impl WorkerHost {
     /// The device ledger for `device`, shared by every worker on it.
     fn ledger(&self, device: &str) -> Arc<DeviceLedger> {
         let mut ledgers = self.ledgers.lock().unwrap_or_else(PoisonError::into_inner);
+        Arc::clone(ledgers.entry(device.to_owned()).or_insert_with(|| {
+            Arc::new(DeviceLedger::new(
+                format!("cuda:{device}"),
+                query_capacity(device),
+            ))
+        }))
+    }
+
+    /// The one admission queue for `device`, sharing its memory ledger.
+    fn admission(&self, device: &str) -> Arc<DeviceAdmission> {
+        let mut admissions = self
+            .admissions
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         Arc::clone(
-            ledgers
+            admissions
                 .entry(device.to_owned())
-                .or_insert_with(|| Arc::new(DeviceLedger::new(format!("cuda:{device}"), None))),
+                .or_insert_with(|| Arc::new(DeviceAdmission::new(device, self.ledger(device)))),
         )
     }
 
@@ -326,10 +700,21 @@ impl WorkerHost {
                     .device
                     .as_deref()
                     .map(|device| (self.ledger(device), declared(launch.envelope)));
-                (
-                    InferenceWorker::managed(spec, launcher, probe, policy, device),
-                    Some(slot),
-                )
+                let worker = InferenceWorker::managed(spec, launcher, probe, policy, device);
+                if let Some(device) = launch.device.as_deref() {
+                    let admission = self.admission(device);
+                    worker.with_admission(Arc::clone(&admission));
+                    let managed_here = self.launch_permitted.load(Ordering::SeqCst);
+                    if !managed_here {
+                        self.ledger(device).note_unmediated(&row.id, None);
+                    }
+                    admission.register_executor(ExecutorRegistration {
+                        worker_id: row.id.clone(),
+                        external: !managed_here,
+                        idle: true,
+                    });
+                }
+                (worker, Some(slot))
             }
             _ => {
                 let probe = Arc::new(HouseProbe::new(
@@ -342,6 +727,34 @@ impl WorkerHost {
             }
         }
     }
+}
+
+/// Total MiB for the configured CUDA device, without pooling or remapping
+/// cards. Any unavailable query leaves capacity unknown, which admits today.
+fn query_capacity(device: &str) -> Option<u64> {
+    let device = device.trim();
+    if device.is_empty() {
+        return None;
+    }
+    let output = std::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=memory.total",
+            "--format=csv,noheader,nounits",
+            "--id",
+            device,
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout)
+        .ok()?
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
 }
 
 fn declared(envelope: WorkerEnvelope) -> DeclaredEnvelope {

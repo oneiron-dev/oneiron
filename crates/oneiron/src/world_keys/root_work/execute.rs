@@ -283,7 +283,8 @@ impl Vault {
     /// An activation's first step: a kit for a fresh root, drawn before the
     /// transaction, and its pending row listed in it, naming the request
     /// (FIX 5585). The pieces go to this caller only, and the request stays
-    /// pending.
+    /// pending. A kit whose row did not commit keeps no piece pending here
+    /// (FIX 12046).
     fn run_kit_issue(
         &self,
         owner: &AuthenticatedOwner,
@@ -293,11 +294,14 @@ impl Vault {
         let kit = self.draw_world_kit(owner, issue)?;
         let listed = self.answer_root_request(asked, Answer::Pending, |txn| {
             self.list_issued_kit_in_txn(txn, owner, &kit, Some(asked.hash))
-        })?;
-        Ok(match listed.done() {
-            Ok(()) => RootWorkDone::KitIssued(Box::new(kit)),
-            Err(report) => report,
-        })
+        });
+        let report = match listed.map(Answered::done) {
+            Ok(Ok(())) => return Ok(RootWorkDone::KitIssued(Box::new(kit))),
+            Ok(Err(report)) => Ok(report),
+            Err(error) => Err(error),
+        };
+        self.drop_unlisted_kit_piece(&kit.manifest);
+        report
     }
 
     /// An activation's second step: the pieces rebuild a pending kit's
@@ -328,6 +332,14 @@ impl Vault {
                 escrow,
             })
         })?;
+        // A kit the answer made current: its piece leaves its pending key
+        // slots while it is still current, and the kits it replaced keep none
+        // pending (FIX 11977, 12046, 12135, 12136).
+        let settled = match &confirmed {
+            Answered::Done(kit) => Some(kit.kit),
+            Answered::Refused(_) | Answered::AwaitsBasis => None,
+        };
+        self.settle_pending_kit_pieces(settled);
         let mirror_pending = match transition.finish() {
             Ok(()) => false,
             Err(error) => {
@@ -426,12 +438,13 @@ impl Vault {
     }
 
     /// The seed `secret` names: the caller's own, or the one its kit's
-    /// pieces rebuild here.
+    /// pieces rebuild here, with this machine's own piece of the kit when it
+    /// keeps one (FIX 2063).
     fn held_seed<'a>(&self, secret: RootSecret<'a>) -> Result<HeldSeed<'a>> {
         Ok(match secret {
             RootSecret::Seed(seed) => HeldSeed::Supplied(seed),
             RootSecret::Kit { pieces, passphrase } => {
-                HeldSeed::Rebuilt(Box::new(self.kit_seed(pieces, passphrase)?))
+                HeldSeed::Rebuilt(Box::new(self.kit_seed_here(pieces, passphrase)?))
             }
         })
     }

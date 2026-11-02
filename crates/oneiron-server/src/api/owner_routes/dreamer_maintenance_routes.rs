@@ -12,8 +12,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -23,8 +22,9 @@ use oneiron::dreamer_runner::maintenance::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
@@ -33,14 +33,36 @@ use crate::server::SyncServer;
 /// The most applied writes one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/dreamer/maintenance/applied", get(applied))
-        .route("/dreamer/maintenance/revert", post(revert))
-        .route(
-            "/dreamer/maintenance/action-mode/apply",
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/maintenance/applied",
+                summary: "Every applied write, reverted ones too, newest first.",
+                row: None,
+            },
+            get(applied),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/maintenance/revert",
+                summary: "The owner's revert of one applied write.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/maintenance/action-mode/apply",
+                summary: "The owner's apply of one action-mode finding's explicit agent-ceiling patch (FIX 1786): `finding` (32 hex), and the `agent` (32 hex) and `ceiling` (`proposed` or `auto`) the finding's patch names, as shown. The ceiling moves through the owner's definition writer, fenced on the definition revision the finding read; the finding's revert puts it back. Answers the applied write.",
+                row: None,
+            },
             post(apply_action_mode),
-        )
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,7 +73,7 @@ struct AppliedQuery {
 
 /// One applied write: its finding, the identity ask it kept separate, or
 /// the project and fork of a project tree fork.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertMaintenance {
     /// The applied write's finding, as 32 hex.
@@ -70,7 +92,7 @@ struct RevertMaintenance {
 }
 
 /// The owner's apply of one action-mode finding's patch, as it was shown.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ApplyActionMode {
     /// The action-mode finding, as 32 hex.
@@ -81,7 +103,7 @@ struct ApplyActionMode {
     ceiling: ActionModeCeiling,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AppliedView {
     /// The finding, as 32 hex; none for an identity ask or a project tree
     /// fork.
@@ -106,7 +128,7 @@ struct AppliedView {
     reverted: Option<RevertView>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct RevertView {
     finding: Option<String>,
     ask: Option<String>,
@@ -129,6 +151,30 @@ struct RevertView {
     /// finding's 32 hex (a reach-out whose revert withdrew this follow-up
     /// plan); none for the owner's own revert.
     parent: Option<String>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/revert`'s body (FIX 11611):
+/// [`RevertMaintenance`].
+pub(crate) fn revert_maintenance_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertMaintenance>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/revert`'s answer (FIX 11611):
+/// [`RevertView`].
+pub(crate) fn maintenance_revert_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/action-mode/apply`'s body
+/// (FIX 11611): [`ApplyActionMode`].
+pub(crate) fn apply_action_mode_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ApplyActionMode>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/maintenance/action-mode/apply`'s answer
+/// (FIX 11611): [`AppliedView`].
+pub(crate) fn applied_maintenance_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AppliedView>()
 }
 
 /// The target as the views spell it: `(finding, ask)`.
@@ -222,10 +268,10 @@ async fn applied(
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertMaintenance>, JsonRejection>,
+    payload: OwnerJsonBody<RevertMaintenance>,
 ) -> OwnerReply<RevertView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reverted = blocking(move || -> OwnerResult<RevertView> {
         let target = match (
             &request.finding,
@@ -268,10 +314,10 @@ async fn revert(
 async fn apply_action_mode(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ApplyActionMode>, JsonRejection>,
+    payload: OwnerJsonBody<ApplyActionMode>,
 ) -> OwnerReply<AppliedView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let applied = blocking(move || -> OwnerResult<AppliedView> {
         let finding = entity_id("finding", &request.finding)?;
         let approved = ActionModeEffect {

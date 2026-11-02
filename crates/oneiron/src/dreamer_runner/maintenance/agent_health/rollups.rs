@@ -28,7 +28,7 @@ use super::trend_policy::{SECONDS_PER_DAY, TrendPeriods};
 use super::{
     COACH_AGENT_HEALTH_FACET, Dispatched, WAIT_PERSON, covered, entity, read_dials, settled,
 };
-use crate::agent_dispatch::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatcher, SpendScope, SpendState};
+use crate::agent_dispatch::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::attempt_queue::{AttemptId, AttemptRecord, AttemptState, decode_record};
 use crate::dreamer_runner::maintenance::MAINTENANCE_QUEUE_KIND;
 use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
@@ -42,6 +42,10 @@ use crate::self_heal::{
 };
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault};
+
+mod spend;
+
+use spend::{Spend, read_spend};
 
 /// The call receipt ledger, read in place.
 const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
@@ -111,8 +115,8 @@ pub struct TrendSignalTally {
 }
 
 /// Own-scope launch spend in one unit: each scope once across its retries,
-/// on its newest attempt, its closed children's spend taken out. An open
-/// scope's spend is unknown.
+/// on its newest counted attempt, its closed children's spend taken out. An
+/// open scope's spend is unknown.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TrendSpendTally {
     /// Own spend over the closed scopes; known closed, eligible every scope.
@@ -193,6 +197,8 @@ pub struct HealthTrendRollups {
     pub unreadable_attempts: u64,
     /// DIAGNOSTIC rows deleted or undecodable: each may have been a finding.
     pub withheld_diagnostics: u64,
+    /// Call receipts that did not read: each may have witnessed a member.
+    pub withheld_calls: u64,
     /// Agent-health findings that name no attempt, so join no day.
     pub unjoined_diagnostics: u64,
 }
@@ -246,7 +252,8 @@ pub fn health_trend_rollups(
 
     let failed = &mut out.failed;
     let calls = read_calls(vault, rtxn, &ledger.agents, &members, &index, earliest);
-    if let Some(calls) = soft(failed, TrendSource::Calls, calls) {
+    if let Some((calls, withheld)) = soft(failed, TrendSource::Calls, calls) {
+        out.withheld_calls = withheld;
         for (facts, calls) in facts.iter_mut().zip(calls) {
             facts.calls = calls;
         }
@@ -394,24 +401,6 @@ fn cohort(
     members
 }
 
-/// One member's spend.
-#[derive(Debug, Clone, Default)]
-enum Spend {
-    /// The spend read failed: nothing counted.
-    #[default]
-    Unread,
-    /// It launched with no scope: its spend is unknown.
-    Unmetered,
-    /// Its scope is counted on a newer try of the same launch.
-    Shared,
-    /// Its scope, counted here: own spend once closed, else unknown.
-    Scope {
-        id: String,
-        unit: LeaseUnit,
-        own: Option<u64>,
-    },
-}
-
 /// What one member adds to each bucket it counts in.
 #[derive(Default)]
 struct Facts {
@@ -450,9 +439,10 @@ fn wait_of(record: &AttemptRecord) -> Option<(u64, u64, BTreeMap<String, u64>)> 
 }
 
 /// Each member's witnessed call receipts, by the attempt each names, newest
-/// first back to the earliest member's creation. A member whose actor is no
-/// longer live reads `None`: an erased actor's receipts no longer name their
-/// attempts.
+/// first back to the earliest member's creation, and how many receipts did
+/// not read: each is withheld, never read as no call. A member whose actor is
+/// no longer live reads `None`: an erased actor's receipts no longer name
+/// their attempts.
 fn read_calls(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -460,7 +450,7 @@ fn read_calls(
     members: &[Member],
     index: &BTreeMap<[u8; 16], usize>,
     earliest: u64,
-) -> Result<Vec<Option<Vec<EntityId>>>> {
+) -> Result<(Vec<Option<Vec<EntityId>>>, u64)> {
     let mut live: BTreeMap<EntityId, bool> = BTreeMap::new();
     let mut calls = Vec::with_capacity(members.len());
     for member in members {
@@ -477,9 +467,13 @@ fn read_calls(
         calls.push(alive.then(Vec::new));
     }
     let mut read: u64 = 0;
+    let mut withheld: u64 = 0;
     for row in CALL_RECEIPTS.iter_rev_from(&vault.store, rtxn, &[])? {
         read += 1;
-        let (id, receipt) = row?;
+        let Ok((id, receipt)) = row else {
+            withheld += 1;
+            continue;
+        };
         if receipt.at < earliest {
             break;
         }
@@ -493,7 +487,7 @@ fn read_calls(
         }
     }
     let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, read);
-    Ok(calls)
+    Ok((calls, withheld))
 }
 
 /// The agent-health findings on each member.
@@ -561,73 +555,6 @@ fn read_findings(
     }
     let _ = vault.measure_limit(EngineLimit::MaintenanceScanRows, read);
     Ok(found)
-}
-
-/// Each member's launch spend. A launch's retries share one scope, counted
-/// once on its newest try; a member that is not that try is `Shared`. Every
-/// child a member's scope spawned was created after it, so the scopes of the
-/// agent attempts created from the earliest member on hold every child to
-/// take out.
-fn read_spend(
-    vault: &Vault,
-    rtxn: &heed::RoTxn<'_>,
-    agents: &[(AttemptRecord, Dispatched)],
-    members: &[Member],
-    earliest: u64,
-) -> Result<Vec<Spend>> {
-    let dispatcher = AgentDispatcher::new(vault);
-    let mut scopes: BTreeMap<String, SpendScope> = BTreeMap::new();
-    let mut scope_of: BTreeMap<usize, String> = BTreeMap::new();
-    let mut newest: BTreeMap<String, usize> = BTreeMap::new();
-    for (at, (record, _)) in agents.iter().enumerate() {
-        if record.created_at < earliest {
-            continue;
-        }
-        let Some(scope) = dispatcher.attempt_spend_scope_in_txn(rtxn, record.id)? else {
-            continue;
-        };
-        let name = scope.scope.to_string();
-        let newer = newest.get(&name).is_none_or(|held| {
-            let held = &agents[*held].0;
-            (held.updated_at, held.id.as_bytes()) <= (record.updated_at, record.id.as_bytes())
-        });
-        if newer {
-            newest.insert(name.clone(), at);
-        }
-        scope_of.insert(at, name.clone());
-        scopes.entry(name).or_insert(scope);
-    }
-    let mut children: BTreeMap<String, u64> = BTreeMap::new();
-    for scope in scopes.values() {
-        if scope.state == SpendState::Closed
-            && let Some(parent) = &scope.parent
-        {
-            let spent = children.entry(parent.to_string()).or_default();
-            *spent = spent.saturating_add(scope.spent_units);
-        }
-    }
-    let mut spend = Vec::with_capacity(members.len());
-    for member in members {
-        let Some(name) = scope_of.get(&member.index) else {
-            spend.push(Spend::Unmetered);
-            continue;
-        };
-        if newest.get(name) != Some(&member.index) {
-            spend.push(Spend::Shared);
-            continue;
-        }
-        let scope = &scopes[name];
-        spend.push(Spend::Scope {
-            id: name.clone(),
-            unit: scope.unit.clone(),
-            own: (scope.state == SpendState::Closed).then(|| {
-                scope
-                    .spent_units
-                    .saturating_sub(children.get(name).copied().unwrap_or(0))
-            }),
-        });
-    }
-    Ok(spend)
 }
 
 /// Whether a review covered each member: its scope's review is on, and a

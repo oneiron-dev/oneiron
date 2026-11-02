@@ -115,7 +115,10 @@ pub trait LensRegenerator {
 /// fail-blank is impossible at this boundary.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LensRegenOutcome {
+    /// `last_good` is the revision the decision was made against, carried so
+    /// that enacting it compares that selection, not a later one (FIX 9897).
     AutoAdopt {
+        last_good: LensEvaluatedRevision,
         candidate: LensEvaluatedRevision,
         diff: LensBehaviorDiff,
     },
@@ -139,6 +142,16 @@ impl LensRegenOutcome {
             Self::NeedsHumanStamp { last_good, .. } | Self::RolledBack { last_good, .. } => {
                 last_good
             }
+        }
+    }
+
+    /// The revision the decision was made against, in every outcome.
+    #[must_use]
+    pub const fn last_good(&self) -> &LensEvaluatedRevision {
+        match self {
+            Self::AutoAdopt { last_good, .. }
+            | Self::NeedsHumanStamp { last_good, .. }
+            | Self::RolledBack { last_good, .. } => last_good,
         }
     }
 
@@ -218,6 +231,10 @@ pub fn regenerate_lens<R: LensRegenerator + ?Sized>(
             diff,
         }
     } else {
-        LensRegenOutcome::AutoAdopt { candidate, diff }
+        LensRegenOutcome::AutoAdopt {
+            last_good,
+            candidate,
+            diff,
+        }
     }
 }

@@ -8,7 +8,8 @@
 //! one signed repair event is appended and the marker below binds the exact
 //! header it saw, in one commit. A later hard erase of that same version takes
 //! the exception: its world is unknown, so its tombstone also goes to every
-//! world window of its month this vault holds; the cached provenance stamps it
+//! world window of its month this vault holds, queues sends for or knows from
+//! its home's thin index (FIX 9388); the cached provenance stamps it
 //! may have supported are derived again from the surviving Claims; and its
 //! receipt and sweep record `capture_failed`, the sweep then taking every
 //! carrier. The marker goes in the commit that writes that receipt and sweep.
@@ -94,6 +95,25 @@ impl CorruptCapture {
     pub(in crate::deletion) fn failure(&self) -> CaptureFailure {
         CaptureFailure::new(&self.id, &self.repair_receipt)
     }
+}
+
+/// Whether `id`, whose stored row is `raw`, is a classified corrupt CLAIM
+/// whose hard erase is owed: its marker binds this exact header. A walk that
+/// folds survivors passes over it, as it does a bodiless shell (FIX 9387).
+///
+/// # Errors
+///
+/// Storage faults, and a marker that does not decode.
+pub(crate) fn classified_corrupt_claim_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<bool> {
+    let Some(mark) = CORRUPT_CAPTURE.get(store, txn, id)? else {
+        return Ok(false);
+    };
+    Ok(raw.get(..ENTITY_METADATA_HEADER_LEN) == Some(mark.header.as_slice()))
 }
 
 /// The classification a hard erase's capture of `id`, whose stored row is
@@ -328,11 +348,13 @@ impl Vault {
 
     /// Stages `tombstone`'s pending marker for `id` in every world window of
     /// the month `window_label` names that this vault holds persisted state
-    /// for, when `id` is a classified corrupt CLAIM of this exact version: a
-    /// CLAIM of a world rides that world's windows, and this one's world does
-    /// not read. Returns those windows, for the caller to publish once its
-    /// purge commits, as it does an erased world's pad tombstones; empty for
-    /// every other erase.
+    /// for, holds queued sends for, or knows only from its home's thin index
+    /// (FIX 9388), when `id` is a classified corrupt CLAIM of this exact
+    /// version: a CLAIM of a world rides that world's windows, and this one's
+    /// world does not read, so a peer may hold its valid bytes in any of them.
+    /// Returns those windows, for the caller to publish once its purge
+    /// commits, as it does an erased world's pad tombstones; empty for every
+    /// other erase.
     pub(in crate::deletion) fn stage_corrupt_world_tombstones_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -374,6 +396,20 @@ impl Vault {
             {
                 windows.insert(label.to_owned());
             }
+        }
+        #[cfg(feature = "sync")]
+        {
+            let queued = crate::sync::queue::queued_window_labels_in_txn(self, wtxn)?;
+            windows.extend(
+                queued
+                    .into_iter()
+                    .filter(|label| label.starts_with(&prefix)),
+            );
+            windows.extend(crate::sync::residence::indexed_windows_in_txn(
+                &self.store,
+                wtxn,
+                &prefix,
+            )?);
         }
         let value = tombstone.encode().to_vec();
         for window in &windows {

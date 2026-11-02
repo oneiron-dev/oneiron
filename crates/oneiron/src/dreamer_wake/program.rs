@@ -25,6 +25,12 @@
 //! until it stands again, each resumed as the same try before a selection
 //! (`dreamer_runner::program`'s resumer). Nothing restarts it from scratch,
 //! and nothing reports it complete.
+//!
+//! A managed vault's attested owner's program runs only while the vault
+//! records him as its live owner (FIX 11090): the owner refusal its entry's
+//! binding or a write's reservation raises ends that try Failed, never held
+//! for his standing to return. A withdrawal refusal ends its try the same
+//! way, on the withdrawal's reason (FIX 11593).
 
 use std::future::Future;
 use std::pin::Pin;
@@ -32,14 +38,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::attempt_queue::{AttemptId, AttemptRecord};
+use crate::authority::ManagedOwnerCheckError;
 use crate::code_run::{AgentVerbDoor, HostSelfDispatcher};
 use crate::dreamer_runner::{
-    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause, ProgramHold,
-    ProgramRecipePin, TurnProgramBinding, TurnProgramBound, TurnProgramEntered,
+    DREAMER_TURN_PROGRAM_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
+    DreamerRunnerStore, ProgramHold, ProgramRecipePin, TurnProgramBinding, TurnProgramBound,
+    TurnProgramEntered, is_withdrawal_refusal,
 };
 use crate::engine_executor::{
-    EngineExecutorConfig, EngineExecutorResult, EngineExecutorStatus, EngineNativeExecutor,
-    JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
+    EngineExecutorConfig, EngineExecutorError, EngineExecutorResult, EngineExecutorStatus,
+    EngineNativeExecutor, JsCodeModeRuntime, PinnedProgramEntry, PinnedProgramRun,
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -88,12 +96,15 @@ pub struct TurnProgramHost {
 }
 
 /// One program entry a host is asked to bind: the program's leased try, the
-/// waking actor it runs as, its code run and its task.
+/// waking actor it runs as, its code run and its task, and, for a slip's
+/// turn, that slip's live, verified view: the door the host lends binds
+/// every row it serves to it (FIX 8717).
 pub struct TurnProgramRequest<'r> {
     pub attempt: &'r AttemptRecord,
     pub actor: WriteActor,
     pub code_run: EntityId,
     pub task: &'r str,
+    pub proof: Option<&'r crate::authority::VerifiedSlip>,
 }
 
 /// A host's binding of turn program entries to its runtime and credential
@@ -172,6 +183,24 @@ fn hold(
     })
 }
 
+/// The try of an attested owner who is no longer the vault's live owner,
+/// ended Failed with what it spent (FIX 11090).
+fn owner_not_live(completed_units: u64) -> DreamerAttemptExecution {
+    DreamerAttemptExecution::Failed {
+        reason: crate::authority::OWNER_NOT_LIVE.to_owned(),
+        completed_units,
+    }
+}
+
+/// The try whose original authorization was positively withdrawn, ended
+/// Failed with what it spent (FIX 11593).
+fn withdrawn(completed_units: u64, reason: &str) -> DreamerAttemptExecution {
+    DreamerAttemptExecution::Failed {
+        reason: reason.to_owned(),
+        completed_units,
+    }
+}
+
 /// The program's task, as its host binds its run's config and seat from it:
 /// its pinned callable entry, exactly as pinned. The entry runs as pinned
 /// with no model writing its call.
@@ -200,6 +229,8 @@ async fn run_program(
     let binding = match vault.bind_turn_program_execution(attempt.id)? {
         TurnProgramBound::Bound(binding) => binding,
         TurnProgramBound::Lapsed(held) => return hold(ctx, attempt, held),
+        TurnProgramBound::OwnerNotLive => return Ok(owner_not_live(0)),
+        TurnProgramBound::Withdrawn { reason } => return Ok(withdrawn(0, reason)),
     };
     let task = program_task(&binding.pin);
     let request = TurnProgramRequest {
@@ -207,6 +238,7 @@ async fn run_program(
         actor: binding.actor,
         code_run: binding.code_run,
         task: &task,
+        proof: binding.proof.as_ref(),
     };
     let Some(host) = runtime.bind(vault, &request) else {
         return hold(ctx, attempt, ProgramHold::Unbound);
@@ -238,6 +270,9 @@ async fn run_program(
             return Err(error);
         }
     };
+    // The driver settles what this line charges if the program fails or
+    // parks before it reports its spend (SCAN C012).
+    ctx.meter_run_line(&meter);
     let entered = vault.enter_turn_program_run(
         attempt,
         &binding.admission,
@@ -252,7 +287,10 @@ async fn run_program(
             // Settled before its try closed: the result stands, and the
             // try completes on it without running again.
             repay(shared, &loan.lease, 0);
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         // A cut run resumes from its pinned entry as this same try, unless an
         // effect of it is not settled or its actor is gone (DOOR-141 PR3b).
@@ -287,12 +325,13 @@ fn repay(shared: &BudgetGuard, loan: &BudgetLease, used: u64) {
     }
 }
 
-/// How one entry's run ended, and why the program's model seam stopped it,
-/// when it did.
+/// How one entry's run ended, why the program's model seam stopped it when
+/// it did, and the steps it finished fresh.
 struct Ran {
     outcome: EngineExecutorResult<PinnedProgramRun>,
     stop: Option<SeamStop>,
     pinned_finished: bool,
+    step_hashes: Vec<[u8; 32]>,
 }
 
 /// Runs one entry of the program's code run on the host's runtime, through
@@ -333,6 +372,7 @@ async fn enter(
         format!("turn-program:{}", binding.code_run.to_hex()),
         attempt,
         binding.pin.skill,
+        binding.proof.clone(),
     )?
     .with_callable_skills(lent)?
     .with_agent_verb_door(door);
@@ -348,6 +388,7 @@ async fn enter(
         reactor: &*reactor,
         occurrence: AtomicU64::new(0),
         stop: Mutex::new(None),
+        step_hashes: Mutex::new(Vec::new()),
     };
     let js: &mut dyn JsCodeModeRuntime = &mut *runtime;
     let mut executor = EngineNativeExecutor::new(vault, &seam, lease, js, &dispatcher);
@@ -363,6 +404,7 @@ async fn enter(
         outcome,
         stop: seam.stop(),
         pinned_finished,
+        step_hashes: seam.step_hashes(),
     })
 }
 
@@ -390,7 +432,10 @@ fn pinned_entry(
 
 /// What one entry's end means for the program's try. An entry that stops
 /// short is held by the program runtime, its spend settled on the pass's
-/// meter all the same.
+/// meter all the same. One that stopped on the owner refusal its attested
+/// owner's authority check raised ends Failed on that refusal, carried as it
+/// was raised (FIX 11090), never held. One that stopped on a withdrawal
+/// refusal ends Failed on the withdrawal's reason (FIX 11593).
 fn settle(
     vault: &Vault,
     binding: &TurnProgramBinding,
@@ -399,11 +444,32 @@ fn settle(
     ran: Result<Ran>,
     used: u64,
 ) -> Result<DreamerAttemptExecution> {
+    // A write's reservation met the withdrawal refusal (FIX 11593).
+    if let Err(error) = &ran
+        && let Some(reason) = is_withdrawal_refusal(error)
+    {
+        return Ok(withdrawn(used, reason));
+    }
+    let ran = match ran {
+        Ok(ran) => ran,
+        Err(error) if ManagedOwnerCheckError::is_owner_refusal(&error) => {
+            return Ok(owner_not_live(used));
+        }
+        Err(error) => {
+            return Ok(DreamerAttemptExecution::ParkWithSpend {
+                reason: format!("the turn program did not enter: {error}"),
+                cause: DreamerParkCause::Checkpoint,
+                completed_units: used,
+                step_hashes: Vec::new(),
+            });
+        }
+    };
+    let step_hashes = ran.step_hashes.clone();
     let stopped = |reason: String| DreamerAttemptExecution::ParkWithSpend {
         reason,
         cause: DreamerParkCause::Checkpoint,
         completed_units: used,
-        step_hashes: Vec::new(),
+        step_hashes: step_hashes.clone(),
     };
     let held = |kind: ProgramHold| -> Result<DreamerAttemptExecution> {
         vault.hold_turn_program(attempt.id, kind, ctx.now_ms / 1_000)?;
@@ -411,12 +477,8 @@ fn settle(
             reason: kind.reason().to_owned(),
             cause: DreamerParkCause::Other,
             completed_units: used,
-            step_hashes: Vec::new(),
+            step_hashes: step_hashes.clone(),
         })
-    };
-    let ran = match ran {
-        Ok(ran) => ran,
-        Err(error) => return Ok(stopped(format!("the turn program did not enter: {error}"))),
     };
     let outcome = match ran.outcome {
         Ok(PinnedProgramRun::Ran(outcome)) => outcome,
@@ -425,12 +487,26 @@ fn settle(
             return held(ProgramHold::Diverged);
         }
         Err(error) => {
+            // A write's reservation met the withdrawal refusal (FIX 11593).
+            if let EngineExecutorError::Engine(engine) = &error
+                && let Some(reason) = is_withdrawal_refusal(engine)
+            {
+                return Ok(withdrawn(used, reason));
+            }
             return Ok(match ran.stop {
                 // The step layer parked the try in its trap's own commit.
                 Some(SeamStop::Trapped) => DreamerAttemptExecution::Park {
                     reason: TRAPPED_REASON.to_owned(),
                     cause: DreamerParkCause::Signal,
                 },
+                // A write's reservation met the owner refusal (FIX 11090).
+                _ if matches!(
+                    &error,
+                    EngineExecutorError::Engine(error) if ManagedOwnerCheckError::is_owner_refusal(error)
+                ) =>
+                {
+                    owner_not_live(used)
+                }
                 Some(SeamStop::Deadline) => stopped(format!(
                     "the pass's deadline cut the turn program; {RESUMES}"
                 )),
@@ -451,6 +527,7 @@ fn settle(
             )?;
             Ok(DreamerAttemptExecution::Completed {
                 completed_units: used,
+                step_hashes: step_hashes.clone(),
             })
         }
         EngineExecutorStatus::Complete => held(ProgramHold::Unfinished),
@@ -489,6 +566,7 @@ struct ProgramModelSeam<'s> {
     reactor: &'s dyn TurnProgramReactor,
     occurrence: AtomicU64,
     stop: Mutex<Option<SeamStop>>,
+    step_hashes: Mutex<Vec<[u8; 32]>>,
 }
 
 impl ProgramModelSeam<'_> {
@@ -496,11 +574,43 @@ impl ProgramModelSeam<'_> {
         *self.stop.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    fn step_hashes(&self) -> Vec<[u8; 32]> {
+        self.step_hashes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     /// Keeps the first reason the seam stopped the run.
     fn note(&self, stop: SeamStop) {
         let mut held = self.stop.lock().unwrap_or_else(PoisonError::into_inner);
         if held.is_none() {
             *held = Some(stop);
+        }
+    }
+
+    /// Keeps `step_hash` for the settlement when it finished fresh this run:
+    /// once, and never when a checkpoint already charged it, as
+    /// `StepChargeTally::record_terminal` keeps its steps. A charge that
+    /// cannot be read keeps today's empty pin.
+    fn note_fresh(&self, step_hash: [u8; 32]) {
+        let mut held = self
+            .step_hashes
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if held.contains(&step_hash) {
+            return;
+        }
+        match DreamerRunnerStore::new(self.vault).checkpoint_step_charged(self.attempt, &step_hash)
+        {
+            Ok(true) => {}
+            Ok(false) => held.push(step_hash),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a turn program's fresh step was not tallied"
+                );
+            }
         }
     }
 
@@ -559,7 +669,12 @@ impl ProgramModelSeam<'_> {
         })
         .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
         match outcome {
-            Some(Ok(StepOutcome::Finished { response, .. })) => {
+            Some(Ok(StepOutcome::Finished {
+                response, memoized, ..
+            })) => {
+                if !memoized {
+                    self.note_fresh(request_hash);
+                }
                 if let Some(digest) = response_digest(&response)
                     && let Err(error) = self.vault.record_turn_program_model_step(
                         self.attempt,

@@ -21,9 +21,10 @@ pub struct OpenedServedVault {
 /// Opens the vault `config` names the way serve does before it builds its
 /// server: dictionary paths resolved, the page seal prepared (a sealed vault
 /// unlocks with `host`'s `vault_password` when it holds one), this device's
-/// keys installed, embedding slots applied and result bodies collected. An
-/// app's embedded engine opens its vault here too, handed no custody anchor
-/// credential: a door its config names is not called.
+/// keys installed, embedding slots applied and result bodies collected,
+/// handed no custody anchor credential: a door its config names is not
+/// called. An app's embedded engine opens through
+/// `open_served_vault_anchored` with the one its keychain keeps.
 pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
     host: &mut H,
     config: &ServeConfig,
@@ -33,7 +34,7 @@ pub fn open_served_vault<H: oneiron_vault_contract::host::Host>(
 
 /// [`open_served_vault`], its custody anchor door called with `anchor`, the
 /// owner credential plain serve was handed on its pipe.
-pub(super) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
+pub(crate) fn open_served_vault_anchored<H: oneiron_vault_contract::host::Host>(
     host: &mut H,
     config: &ServeConfig,
     anchor: Option<Arc<CustodyAnchorCredentials>>,

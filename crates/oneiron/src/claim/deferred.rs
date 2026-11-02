@@ -278,8 +278,9 @@ impl Vault {
             let decision = crate::batch::ClaimMaterialization::apply_deferred_auto_grant(
                 self, txn, id, checker,
             )?;
-            let closure_decision =
-                self.complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker)?;
+            // An auto grant names no caller principal, so its close names no one.
+            let closure_decision = self
+                .complete_deferred_claim_with_checker_in_txn(txn, id, false, now, checker, None)?;
             // FIX 5993: a granted commitment series projects from its grant.
             self.index_consented_commitment_series_in_txn(txn, &body, id, now)?;
             // A Dreamer replacement granted Auto is an Auto write like any the
@@ -363,15 +364,25 @@ impl Vault {
     }
 
     /// Called only by explicit local approval/authority settlement doors, never reads/replay.
+    /// `closer` is the door's verified actor, whom a supersession's close
+    /// names (FIX 11039); `None` names no one, as before.
     pub(crate) fn complete_deferred_claim_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         critical_confirmed: bool,
         now: u64,
+        closer: Option<crate::WriteActor>,
     ) -> Result<()> {
-        self.complete_deferred_claim_with_checker_in_txn(txn, id, critical_confirmed, now, None)
-            .map(|_| ())
+        self.complete_deferred_claim_with_checker_in_txn(
+            txn,
+            id,
+            critical_confirmed,
+            now,
+            None,
+            closer,
+        )
+        .map(|_| ())
     }
 
     fn complete_deferred_claim_with_checker_in_txn(
@@ -381,6 +392,7 @@ impl Vault {
         critical_confirmed: bool,
         now: u64,
         checker: Option<&crate::llm::BoundedAutoChecker>,
+        closer: Option<crate::WriteActor>,
     ) -> Result<Option<crate::gate::RecordedClaimGateDecision>> {
         let Some(proposal) = load(self, txn, id)? else {
             return Ok(None);
@@ -434,8 +446,8 @@ impl Vault {
                 ) {
                     return Err(Error::InvalidClaimBody("closure has no approval grant"));
                 }
-                let decision =
-                    self.supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker)?;
+                let decision = self
+                    .supersede_granted_deferred_claim_in_txn(txn, id, &old, now, checker, closer)?;
                 self.store.close_pending_gate_consent_in_txn(
                     txn,
                     id,
@@ -561,6 +573,7 @@ fn park(
         grant_ref: None,
         diff_handle: diff_handle.clone(),
         read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &record)?;
@@ -575,6 +588,7 @@ fn park(
             read_frontier_hash,
             reason_codes: vec![reason.to_owned()],
             dreamer_run_id: parker.run,
+            predicate: Some(body.predicate.clone()),
         },
     )?;
     DEFERRED.put(&vault.store, txn, id, &proposal)?;

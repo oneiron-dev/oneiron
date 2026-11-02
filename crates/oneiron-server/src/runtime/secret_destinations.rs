@@ -29,7 +29,7 @@ use oneiron::error::SecretError;
 use oneiron::secret_lease::{
     NoSecretHostDelivery, SecretCleanup, SecretGrantHolder, SecretHostDelivery,
 };
-use oneiron::{AttemptId, Error, Result};
+use oneiron::{AttemptId, EntityId, Error, Result};
 use zeroize::Zeroizing;
 
 /// The prefix of an environment destination's name, `env:<VARIABLE>`
@@ -182,7 +182,8 @@ pub struct RunSecretDestinations {
 struct Slot {
     variable: String,
     effector: String,
-    value: Option<Zeroizing<Vec<u8>>>,
+    // FIX 7954: the delivering grant's id beside its copy.
+    value: Option<(EntityId, Zeroizing<Vec<u8>>)>,
 }
 
 impl fmt::Debug for RunSecretDestinations {
@@ -208,10 +209,11 @@ impl RunSecretDestinations {
     pub fn apply_env(&self, command: &mut Command) {
         for slot in lock(&self.slots).values() {
             // Delivery admits only text with no NUL byte.
+            // FIX 7954: the slot's first half is the delivering grant's id.
             if let Some(text) = slot
                 .value
-                .as_deref()
-                .and_then(|value| std::str::from_utf8(value).ok())
+                .as_ref()
+                .and_then(|(_, value)| std::str::from_utf8(value).ok())
             {
                 command.env(&slot.variable, text);
             }
@@ -224,7 +226,7 @@ impl RunSecretDestinations {
             .map(|slot| slot.effector.clone())
     }
 
-    fn fill(&self, destination: &str, value: &[u8]) -> Result<()> {
+    fn fill(&self, grant: &EntityId, destination: &str, value: &[u8]) -> Result<()> {
         if value.contains(&0) || std::str::from_utf8(value).is_err() {
             return Err(refused(
                 destination,
@@ -238,14 +240,17 @@ impl RunSecretDestinations {
                 "the caller's run host registered no such destination",
             )
         })?;
-        slot.value = Some(Zeroizing::new(value.to_vec()));
+        // FIX 7954: the slot records which grant delivered this copy.
+        slot.value = Some((*grant, Zeroizing::new(value.to_vec())));
         Ok(())
     }
 
-    fn withdraw(&self, destination: &str) -> SecretCleanup {
+    fn withdraw(&self, grant: &EntityId, destination: &str) -> SecretCleanup {
+        // FIX 7954: only this grant's copy clears; a newer one stays, absent
+        // for this grant.
         let taken = lock(&self.slots)
             .get_mut(destination)
-            .and_then(|slot| slot.value.take());
+            .and_then(|slot| slot.value.take_if(|(id, _)| id == grant));
         match taken {
             Some(_) => SecretCleanup::Removed,
             None => SecretCleanup::Absent,
@@ -277,19 +282,25 @@ impl SecretHostDelivery for ServedSecretDelivery<'_> {
     fn deliver(
         &mut self,
         holder: &SecretGrantHolder,
+        grant: &EntityId, // FIX 7954: the delivering grant, recorded beside its copy.
         destination: &str,
         value: &[u8],
     ) -> Result<()> {
         match self.destinations.of(holder) {
-            Some(run) => run.fill(destination, value),
-            None => NoSecretHostDelivery.deliver(holder, destination, value),
+            Some(run) => run.fill(grant, destination, value),
+            None => NoSecretHostDelivery.deliver(holder, grant, destination, value),
         }
     }
 
-    fn withdraw(&mut self, holder: &SecretGrantHolder, destination: &str) -> Result<SecretCleanup> {
+    fn withdraw(
+        &mut self,
+        holder: &SecretGrantHolder,
+        grant: &EntityId, // FIX 7954: only this grant's copy clears.
+        destination: &str,
+    ) -> Result<SecretCleanup> {
         match self.destinations.of(holder) {
-            Some(run) => Ok(run.withdraw(destination)),
-            None => NoSecretHostDelivery.withdraw(holder, destination),
+            Some(run) => Ok(run.withdraw(grant, destination)),
+            None => NoSecretHostDelivery.withdraw(holder, grant, destination),
         }
     }
 }

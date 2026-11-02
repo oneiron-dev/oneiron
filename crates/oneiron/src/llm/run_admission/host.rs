@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::super::{BudgetExhaustionPolicy, BudgetGuard, DispatchBinding, ModelId, ModelLocality};
 use super::declaration::LeaseUnit;
+use super::resident::{ResidentLedger, Residents};
 use crate::EntityId;
 use crate::agent_dispatch::SpendScopeId;
 
@@ -142,6 +143,67 @@ impl OfferRoute {
     pub(super) fn key(&self) -> String {
         format!("{}@{}", self.adapter, self.origin)
     }
+}
+
+/// The one route id every model input mints (FIX 11768): `model@place`,
+/// the model's full [`ModelId`] and the place [`offer_place`] names for
+/// its locality and origin. A [`ModelId`] already holds `@` (its revision
+/// separator), so an id holds two (`acme/gpt@7@api.example.com`): callers
+/// compare whole strings, never parse. The ladder and the seat birth both
+/// mint through this one fn, so the ids they judge against a world's order
+/// are byte-identical.
+///
+/// Over the 128-byte route cap the id keeps its head and names its tail by
+/// digest (lead pick under Engine delegation, rule 5: never drop the
+/// host): a prefix cut on a char boundary to at most 119 bytes, then `-`,
+/// then the first 8 lowercase hex chars of `blake3` over the full id
+/// bytes. Deterministic: the same model and place always mint the same id,
+/// truncated or not.
+#[must_use]
+pub fn offer_id(model: &ModelId, place: &str) -> String {
+    let full = format!("{}@{}", model.as_str(), place);
+    if full.len() <= 128 {
+        return full;
+    }
+    let mut end = 119.min(full.len());
+    while end > 0 && !full.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}-{}",
+        &full[..end],
+        &blake3::hash(full.as_bytes()).to_hex()[..8]
+    )
+}
+
+/// The place an [`offer_id`] names for a binding (FIX 11768): one fn, so
+/// the ladder's full ids and the seat's pre-filter spell every place the
+/// same way. An on-device binding names `on_device`
+/// ([`ModelLocality::as_str`]). Anywhere else names the origin's
+/// authority: the scheme dropped (everything through `://`), cut at the
+/// first `/`, `?` or `#`, kept host[:port] byte-for-byte (no case folding;
+/// an `@` keeps only what follows its last run, as userinfo would). Real
+/// origins today are the `[models]` providers' `base_url` origins
+/// (`reqwest::Url::origin().ascii_serialization()`, so
+/// `scheme://host[:port]`), `mesh:<hex>` mesh peers, `gpu:<region>` pod
+/// pools, `host` host-injected and trainer routes, and `https://...`
+/// web-connector providers. An empty origin on a non-local offer falls back
+/// to the locality wire spelling, a place the receipt cannot name better.
+#[must_use]
+pub fn offer_place(locality: ModelLocality, origin: &str) -> String {
+    if locality == ModelLocality::OnDevice || origin.is_empty() {
+        return locality.as_str().to_owned();
+    }
+    let authority = origin.split_once("://").map_or(origin, |(_, rest)| rest);
+    let end = authority.find(['/', '?', '#']).unwrap_or(authority.len());
+    let authority = &authority[..end];
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    if authority.is_empty() {
+        return locality.as_str().to_owned();
+    }
+    authority.to_owned()
 }
 
 /// Schemes whose origin is a host and a port, and whose path a URL parser
@@ -347,6 +409,9 @@ pub enum AllocationGrantError {
 #[derive(Debug, Default)]
 pub struct HostAccount {
     state: Mutex<AccountState>,
+    /// Each resident's share of the allocation (FIX 7767), when the host
+    /// keeps them.
+    residents: Option<Arc<Residents>>,
 }
 
 #[derive(Debug, Default)]
@@ -367,6 +432,21 @@ impl HostAccount {
     #[must_use]
     pub fn new() -> Arc<Self> {
         Arc::new(Self::default())
+    }
+
+    /// An account whose residents each hold a share of its allocation, kept
+    /// in `ledger` (FIX 7767): a soft share by default, which a call may
+    /// overdraw with a receipt, or one the owner pinned.
+    #[must_use]
+    pub fn with_residents(ledger: Arc<dyn ResidentLedger>) -> Arc<Self> {
+        Arc::new(Self {
+            residents: Some(Residents::new(ledger)),
+            ..Self::default()
+        })
+    }
+
+    pub(super) fn residents(&self) -> Option<&Arc<Residents>> {
+        self.residents.as_ref()
     }
 
     /// Installs a fresh allocation. Leases on the one it replaces still

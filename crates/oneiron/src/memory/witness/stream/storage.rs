@@ -4,7 +4,7 @@ use super::*;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
 use crate::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use serde::{Deserialize, Serialize};
 
 /// In-flight streamed message recovery seed. Key: id16 (message id).
@@ -58,6 +58,19 @@ pub(super) struct Seed {
     /// whose source stopped being readable mid-stream is refused there.
     /// `None` on a continuation, which keeps its MESSAGE's birth quote.
     pub quote: Option<crate::conversation_dag::QuoteSpan>,
+    /// The verified read proof the stream's opener held, when a host bound
+    /// one (FIX 1667): the terminal reads its links under that same proof,
+    /// after a restart too. `None` is an opener with no bound proof. Every
+    /// seed writes the field, so a stored seed without it does not decode.
+    #[serde(deserialize_with = "required_read_proof")]
+    pub read_proof: Option<crate::authority::StoredReadProof>,
+}
+/// Decodes [`Seed::read_proof`] whether it holds a proof or `None`; a seed
+/// missing the field is refused, never read as an opener with no proof.
+fn required_read_proof<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> std::result::Result<Option<crate::authority::StoredReadProof>, D::Error> {
+    Option::deserialize(deserializer)
 }
 impl Seed {
     pub(super) fn class(&self) -> Result<EdgeActorClass> {
@@ -108,6 +121,68 @@ pub(crate) fn erase_stream_seeds_in_txn(
     Ok(())
 }
 
+/// The erase of `actor` takes the signed instrument out of each Retry seed
+/// whose action `actor` asked (FIX 10668): the seed, its saved text and its
+/// reply stay, and the action no longer stands. A seed that does not decode
+/// names no requester and stays. MESSAGE_STREAM_ACTIVE's actor scrub.
+pub(crate) fn scrub_stream_seed_actor_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> Result<()> {
+    if crate::deletion::names_no_actor(vault, txn, actor)? {
+        return Ok(());
+    }
+    let mut scrubbed = Vec::new();
+    for row in ACTIVE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, bytes) = row?;
+        let Some(message) = <EntityId as SideKey>::decode_key(&key) else {
+            continue;
+        };
+        let Ok(mut seed) = ACTIVE.decode_value(&bytes) else {
+            continue;
+        };
+        if seed
+            .action
+            .as_mut()
+            .is_some_and(|action| action.scrub_actor_instrument(actor))
+        {
+            scrubbed.push((message, seed));
+        }
+    }
+    for (message, seed) in scrubbed {
+        ACTIVE.put(&vault.store, txn, &message, &seed)?;
+    }
+    Ok(())
+}
+
+/// Takes the reply assertions off `message`'s stream receipts, its latest
+/// and each generation's, when an erase of it reaches them (FIX 10258): the
+/// receipts stay, naming no record. Registered with the reply assertions'
+/// eraser.
+pub(crate) fn redact_receipt_assertions_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    message: &EntityId,
+) -> Result<()> {
+    if let Some(mut latest) = RECEIPT.get(store, txn, message)?
+        && !latest.reply_assertions.is_empty()
+    {
+        latest.reply_assertions = crate::llm::ReplyAssertions::default();
+        RECEIPT.put(store, txn, message, &latest)?;
+    }
+    let generations: Vec<(String, MessageStreamReceipt)> = RECEIPT_BY_REF
+        .scan(store, txn)?
+        .into_iter()
+        .filter(|(_, done)| done.message_id == *message && !done.reply_assertions.is_empty())
+        .collect();
+    for (reference, mut done) in generations {
+        done.reply_assertions = crate::llm::ReplyAssertions::default();
+        RECEIPT_BY_REF.put(store, txn, &reference, &done)?;
+    }
+    Ok(())
+}
+
 pub(super) fn receipt(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -152,6 +227,25 @@ pub(super) fn checkpoint(vault: &Vault, txn: &mut heed::RwTxn<'_>, row: &Seed) -
         .ok_or(Error::CorruptedIndex("stream recovery metadata missing"))?;
     if stored.generation != row.generation {
         return Err(Error::ConcurrentWrite("message stream generation changed"));
+    }
+    // The erase of a Retry's requester took the slip out of the stored seed
+    // (FIX 10668): the stream's own copy, read before it, never puts it back.
+    let erased = stored
+        .action
+        .as_ref()
+        .is_some_and(|action| action.slip_erased());
+    if erased
+        && row
+            .action
+            .as_ref()
+            .is_some_and(|action| action.holds_slip())
+    {
+        let mut row = row.clone();
+        if let Some(action) = row.action.as_mut() {
+            let requester = action.actor;
+            action.scrub_actor_instrument(&requester);
+        }
+        return ACTIVE.put(&vault.store, txn, &row.message_id, &row);
     }
     ACTIVE.put(&vault.store, txn, &row.message_id, row)
 }

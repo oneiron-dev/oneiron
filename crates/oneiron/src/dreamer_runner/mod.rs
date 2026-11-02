@@ -8,11 +8,13 @@ mod admission;
 mod claim_authoring;
 mod codec;
 mod constants;
+mod deferral;
 mod free_time;
 mod home;
 mod lease_fence;
 mod milestone;
 pub mod observation;
+mod outage_due;
 mod owner_doors;
 mod program;
 #[cfg(feature = "sync")]
@@ -42,10 +44,12 @@ pub use crate::dreamer_plugin_suggest::DREAMER_PLUGIN_SUGGEST_ATTEMPT_TYPE;
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;
+pub(crate) use self::deferral::{SELECTION_DEFERRED_REASON, selection_deferred};
 pub use self::free_time::*;
 pub(crate) use self::home::reelect_home_in_txn;
 pub(crate) use self::lease_fence::DreamerTryLease;
 pub use self::milestone::*;
+pub use self::outage_due::{outage_park_reason, outage_retry_after};
 pub use self::owner_doors::*;
 pub use self::program::{
     ArmTurnProgram, DisarmTurnProgram, LandedTurnRef, ProgramRecipePin,
@@ -56,9 +60,9 @@ pub(crate) use self::program::{
     ProgramHold, ProgramWrite, TurnProgramAuthority, TurnProgramBinding, TurnProgramBound,
     TurnProgramEntered, arm_turn_program_in_txn, bind_program_write_in_txn,
     disarm_turn_program_in_txn, drain_turn_program_wakes, erase_turn_program_actor_in_txn,
-    join_program_checkpoint_in_txn, note_program_write_uncertain, program_milestone_envelope,
-    record_turn_program_wakes_in_txn, settle_program_outbound_in_txn, settle_program_write_in_txn,
-    turn_program_erase_details, turn_programs_armed_in_txn,
+    is_withdrawal_refusal, join_program_checkpoint_in_txn, note_program_write_uncertain,
+    program_milestone_envelope, record_turn_program_wakes_in_txn, settle_program_outbound_in_txn,
+    settle_program_write_in_txn, turn_program_erase_details, turn_programs_armed_in_txn,
 };
 // KS-2B1: a turn program's STEP bodies and run actor, for body custody.
 pub(crate) use self::program::{
@@ -80,6 +84,8 @@ pub use self::program::{
     ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
     release_turn_program_hold_as_owner,
 };
+// FIX 11429: the waking actor's rebind of a turn program to a live slip.
+pub use self::program::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 #[cfg(feature = "sync")]
 pub use self::progress::*;
 pub use self::recipe::*;

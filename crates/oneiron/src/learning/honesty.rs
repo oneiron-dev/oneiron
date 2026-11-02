@@ -93,9 +93,11 @@ pub(crate) fn project_seal_check_in_txn(
     let outcome = check.outcome.as_ref().ok_or(Error::InvariantViolation(
         "seal projection requires checked findings",
     ))?;
+    // The run's project as the seal froze it (FIX 6038), never the subject's.
     let cell = LearningCell::new(LearningPredicate::Reliability, receipt.confession.subject)
         .executor(&receipt.executor)
-        .type_ref(receipt.confession.type_ref.clone());
+        .type_ref(receipt.confession.type_ref.clone())
+        .project(receipt.project);
     let attempt = crate::entity_id::bytes_to_hex_lower(receipt.confession.attempt.as_bytes());
     for finding in &outcome.findings {
         let objective = receipt

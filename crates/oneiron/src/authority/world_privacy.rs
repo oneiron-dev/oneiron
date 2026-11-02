@@ -49,7 +49,9 @@ use super::world_strength::{full_strength, read_under, world_meet};
 use super::*;
 
 /// Where a world may be read, after every live edit is met.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectiveRead {
     Everywhere,
@@ -62,7 +64,9 @@ pub enum EffectiveRead {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum EffectiveModelOrder {
     Inherit,
@@ -72,7 +76,9 @@ pub enum EffectiveModelOrder {
 }
 
 /// One world's settings as the fold decides them.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub struct EffectiveWorldPrivacy {
     pub read: EffectiveRead,
@@ -458,32 +464,37 @@ pub(super) fn folded_worlds(
     state
         .worlds
         .iter()
-        .map(|(world, frontier)| {
-            let roster_read = read_under(&standing, *world, MachineAdmitter::Roster);
-            let local_read = match standing.local() {
-                MachineAdmitter::Roster => roster_read.clone(),
-                local => read_under(&standing, *world, local),
-            };
-            (
-                *world,
-                FoldedWorld {
-                    live: frontier
-                        .live
-                        .iter()
-                        .map(|(hash, edit)| (*hash, edit.machine))
-                        .collect(),
-                    live_settings: frontier
-                        .live
-                        .iter()
-                        .map(|(hash, edit)| (*hash, edit.settings.clone()))
-                        .collect(),
-                    effective: world_meet(&standing, *world, StandingView::Install).effective(),
-                    roster_read,
-                    local_read,
-                },
-            )
-        })
+        .map(|(world, frontier)| (*world, folded_world(&standing, *world, frontier)))
         .collect()
+}
+
+/// One world of [`folded_worlds`], `frontier` being its edits in
+/// `standing`'s state.
+pub(super) fn folded_world(
+    standing: &Standing<'_>,
+    world: EntityId,
+    frontier: &WorldFrontier,
+) -> FoldedWorld {
+    let roster_read = read_under(standing, world, MachineAdmitter::Roster);
+    let local_read = match standing.local() {
+        MachineAdmitter::Roster => roster_read.clone(),
+        local => read_under(standing, world, local),
+    };
+    FoldedWorld {
+        live: frontier
+            .live
+            .iter()
+            .map(|(hash, edit)| (*hash, edit.machine))
+            .collect(),
+        live_settings: frontier
+            .live
+            .iter()
+            .map(|(hash, edit)| (*hash, edit.settings.clone()))
+            .collect(),
+        effective: world_meet(standing, world, StandingView::Install).effective(),
+        roster_read,
+        local_read,
+    }
 }
 
 /// The world's settings revision in `state`: a digest of its live edits,
@@ -610,6 +621,7 @@ pub(super) fn live_edits_by(fold: &AuthorityFold, machine: EntityId) -> Vec<Auth
         ))
         .chain(fold.conversation_training.live_choices_by(machine))
         .chain(fold.conversation_training_vault.live_choices_by(machine))
+        .chain(fold.policy_settings.live_choices_by(machine))
         .chain(super::machine_profile::live_answers_by(fold, machine))
         .chain(super::owner_work::pending_carried_by(fold, machine))
         .collect()

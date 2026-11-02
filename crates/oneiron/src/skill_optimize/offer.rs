@@ -34,8 +34,8 @@ mod snapshot;
 
 pub use self::snapshot::{
     ComputeDestination, OfferAnswer, OfferAnswerRecord, OfferCandidate, OfferCheck,
-    OfferCheckInput, OfferCost, OfferEvidence, OfferIntent, OfferModelPin, OfferOption,
-    SeatWorkload, TrainingOffer, TrainingOfferDraft, union_source_rows,
+    OfferCheckInput, OfferCheckOutcome, OfferCost, OfferEvidence, OfferIntent, OfferModelPin,
+    OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft, union_source_rows,
 };
 use self::snapshot::{amount, digest, invalid, measure_offer, named, refs};
 
@@ -122,6 +122,9 @@ pub fn record_training_offer(
         super::offer_pilot::validate_snapshot_in_txn(vault, txn, &offer)?;
         measure_offer(vault, &offer);
         OFFER.put(&vault.store, txn, &offer.id, &offer)?;
+        if let Some(previous) = &offer.previous {
+            crate::task_verb::void_training_offer_asks_in(vault, txn, previous, None, at)?;
+        }
         Ok(offer)
     })
 }
@@ -382,6 +385,7 @@ pub fn record_offer_check(
             observed_monthly_cost: input.observed_monthly_cost,
             observed_score: input.observed_score,
             held: input.held,
+            outcome: input.outcome,
             note: input.note,
             at,
             source_rows: live_source_rows_in(vault, txn, input.source_rows)?,

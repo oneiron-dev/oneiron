@@ -36,7 +36,7 @@ pub struct HostedLensRender {
 /// What a hosted lens render answers: the card's id, the exact render its
 /// host lowered (and, on a server, holds the frame of), and the lens tree.
 /// It carries no frame.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct LensFrameCard {
     /// The card an event names, and the path a server takes its events at
     /// (`POST /v1/core/lens-frames/{card_id}/events`).
@@ -88,14 +88,16 @@ impl HostedLensRender {
 
 impl Memory<'_> {
     /// `vault.lenses.default` where no host keeps the frame: the same card,
-    /// lowered for the whole atom kit. Its events need a server, which holds
-    /// the frame of each card it answers.
+    /// lowered for the surface the call names, else for the whole atom kit.
+    /// Its events need a server, which holds the frame of each card it
+    /// answers.
     pub fn lenses_default(
         &self,
         input: LensDefaultRequest,
     ) -> MemoryResult<ScopedReadResult<LensFrameCard>> {
+        let surface = input.surface.clone().unwrap_or_default();
         let ScopedReadResult { value, receipt } = self.lenses_default_framed(input)?;
-        let (_, card) = value.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        let (_, card) = value.lower(&surface)?;
         Ok(ScopedReadResult {
             value: card,
             receipt,

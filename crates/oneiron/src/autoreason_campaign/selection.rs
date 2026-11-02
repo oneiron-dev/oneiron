@@ -389,18 +389,21 @@ pub(crate) fn decide_experiment(
     })
 }
 
+/// Counts the children of `node` and of every node under it, on a heap
+/// stack (FIX 10603).
 fn collect_children<'a>(
     node: &'a RunTreeNode,
     counts: &mut BTreeMap<&'a str, usize>,
 ) -> SelectionResult<()> {
-    if counts
-        .insert(&node.attempt_id, node.children.len())
-        .is_some()
-    {
-        return Err(SelectionError::Invalid("duplicate run-tree node"));
-    }
-    for child in &node.children {
-        collect_children(child, counts)?;
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        if counts
+            .insert(&node.attempt_id, node.children.len())
+            .is_some()
+        {
+            return Err(SelectionError::Invalid("duplicate run-tree node"));
+        }
+        pending.extend(node.children.iter().rev());
     }
     Ok(())
 }

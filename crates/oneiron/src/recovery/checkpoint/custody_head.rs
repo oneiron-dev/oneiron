@@ -20,6 +20,8 @@
 //! kit's recovery root, or an admitted machine's key (FIX 9178): a world's
 //! pads open only with the kit or a machine that world admits.
 
+mod drain;
+mod home_fetch;
 mod pad_worlds;
 mod status;
 
@@ -31,8 +33,9 @@ use oneiron_crypto::HybridSecretKey;
 
 pub use self::status::{
     CUSTODY_ANCHOR_PENDING, CUSTODY_FENCED, CUSTODY_NONE, CUSTODY_PUBLISHED,
-    CUSTODY_RETIREMENT_COMPLETE, CUSTODY_RETIREMENT_PENDING, CUSTODY_TARGET_PENDING,
-    CustodyPendingStep, CustodyRetirement, CustodyStatus, CustodyTargetState, DeclaredTarget,
+    CUSTODY_REMOTE_RETIREMENT_PENDING, CUSTODY_RETIREMENT_COMPLETE, CUSTODY_RETIREMENT_PENDING,
+    CUSTODY_TARGET_PENDING, CustodyPendingStep, CustodyRetirement, CustodyStatus,
+    CustodyTargetState, DeclaredTarget,
 };
 use super::{
     CheckpointKey, Custody, RestoreReason, RestoreReport, codec_error, read_image_required,
@@ -44,8 +47,8 @@ use crate::store::custody_protocol::{
 };
 use crate::store::{
     CUSTODY_HEAD_WRAP_CONTEXT, CustodyKind, CustodyRecipients, CustodyRoute, CustodySourceAt,
-    FileAnchor, FolderTarget, OutboxTarget, Publication, TargetRecipients, route_custody,
-    standing_retirements_in_txn,
+    FileAnchor, FolderTarget, OutboxTarget, Publication, TakeoverRefusal, TargetRecipients,
+    route_custody, standing_retirements_in_txn,
 };
 use crate::{EntityId, Result, Vault, VaultConfig};
 
@@ -56,6 +59,8 @@ use crate::{EntityId, Result, Vault, VaultConfig};
 /// one is given.
 pub struct CustodyRecovery<'a> {
     folder: PathBuf,
+    /// Read in place of the folder when the owner named a home (FIX 5846).
+    fetched: Option<crate::store::custody_protocol::FetchedCustodySource>,
     anchor: Option<Box<dyn AnchorStore + 'a>>,
     root: Option<&'a HybridSecretKey>,
     machine: Option<(EntityId, &'a HybridSecretKey)>,
@@ -69,6 +74,7 @@ impl<'a> CustodyRecovery<'a> {
                 .parent()
                 .filter(|parent| !parent.as_os_str().is_empty())
                 .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+            fetched: None,
             anchor: None,
             root: None,
             machine: None,
@@ -119,6 +125,7 @@ impl<'a> CustodyRecovery<'a> {
     pub(super) fn source(&self) -> CustodySourceAt<'_> {
         CustodySourceAt {
             folder: &self.folder,
+            fetched: self.fetched.as_ref(),
             anchor: self.anchor(),
             root: self.root,
             machine: self.machine,
@@ -314,8 +321,9 @@ impl Vault {
     ) -> Result<CustodyStatus> {
         // The policy each head follows is read, journaled when it changed
         // and sealed under one lock held for the pass: no pass seals an
-        // older policy at a newer log position (KS-5, FIX 7191).
-        let _policy = self.store.custody_policy_guard()?;
+        // older policy at a newer log position (KS-5, FIX 7191). A lock or
+        // frame fault is warned and the pass still seals (FIX 7314).
+        let policy = self.store.custody_policy_guard();
         let recipients = match self.custody_target_recipients()? {
             Ok(recipients) => recipients,
             // Nothing is noted, sealed or shipped under a policy this pass
@@ -325,7 +333,7 @@ impl Vault {
                 return self.custody_status_of(publication);
             }
         };
-        self.store.note_custody_policy(&recipients)?;
+        self.store.note_custody_policy(&recipients, &policy)?;
         let shipped: Vec<OutboxTarget> = declared
             .iter()
             .filter(|spec| spec.kind() == TargetKind::Hosted(HostedKind::HypnosOutbox))
@@ -377,8 +385,13 @@ impl Vault {
 
     fn custody_status_of(&self, publication: Publication) -> Result<CustodyStatus> {
         let standing = standing_retirements_in_txn(&self.store, &self.store.env.read_txn()?)?;
-        let retirement =
-            status::retirement(self.store.custody_retirement()?, standing, &publication);
+        let remote = self.store.erasable_holders_pending()?;
+        let retirement = status::retirement(
+            self.store.custody_retirement()?,
+            standing,
+            remote,
+            &publication,
+        );
         Ok(CustodyStatus::of(publication, retirement))
     }
 
@@ -411,7 +424,7 @@ impl Vault {
     pub fn custody_batch_for(&self, spec: &TargetSpec) -> Result<Option<CustodyBatch>> {
         // As a publication pass: the policy read, journaled when it changed
         // and sealed under the policy lock (KS-5, FIX 7191).
-        let _policy = self.store.custody_policy_guard()?;
+        let policy = self.store.custody_policy_guard();
         let recipients = match self.custody_target_recipients()? {
             Ok(recipients) => recipients,
             Err(pending) => {
@@ -423,7 +436,7 @@ impl Vault {
                 return Ok(None);
             }
         };
-        self.store.note_custody_policy(&recipients)?;
+        self.store.note_custody_policy(&recipients, &policy)?;
         self.store.custody_batch_for(spec, recipients.of(spec))
     }
 
@@ -473,6 +486,16 @@ impl Vault {
             };
             owed.subject(&self.store, txn, &subject)?;
             owed.credential(&self.store, txn, record);
+            // An erased actor's erasable keys (FIX 8875): each one's
+            // retirement, then each holder whose copy is not verified
+            // retired. The erase never waits on them.
+            for (key, holders) in self.store.erasable_holders_of(record)? {
+                owed.subject(&self.store, txn, &key)?;
+                owed.found = true;
+                for holder in holders {
+                    owed.remote(holder.to_hex());
+                }
+            }
             if let Some(history) = self
                 .store
                 .custody_subject(CustodyKind::KnownValueEntry, record)?
@@ -541,7 +564,7 @@ impl Vault {
         config: VaultConfig,
         restored_at: u64,
         recovery: &CustodyRecovery<'_>,
-        finish: impl FnOnce(&Self) -> Result<()>,
+        finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         Self::restore_keeping_custody(
             path,
@@ -558,6 +581,11 @@ impl Vault {
     /// wake, a migration, an engine restore), an image whose custody is not
     /// on this host drops and names its claim-bound rows whose keys stayed
     /// behind, and completes; none refuses for it (Engine 10-20 05:2x).
+    /// `finish` gets the host-order family `key` carries from the artifact's
+    /// member where its tag names the member this image carries (FIX 6817).
+    /// A landed head's takeover fence publishes last, as an admitted
+    /// restore's does (FIX 6782): an advance that failed may have happened,
+    /// so the destination and its custody stay.
     pub(super) fn restore_keeping_custody(
         path: &Path,
         key: &CheckpointKey,
@@ -565,10 +593,11 @@ impl Vault {
         config: VaultConfig,
         (reason, restored_at): (RestoreReason, u64),
         recovery: Option<&CustodyRecovery<'_>>,
-        finish: impl FnOnce(&Self) -> Result<()>,
+        finish: impl FnOnce(&Self, Option<&super::HostOrderHolds>) -> Result<()>,
     ) -> Result<(Self, RestoreReport)> {
         let (mut image, checkpoint_id, bodies, required) = read_image_required(path, key)?;
         image.drop_machine_identity();
+        let artifact_holds = super::host_holds::artifact_host_holds(&mut image, key);
         let anchor = recovery.and_then(|recovery| recovery.anchor());
         let source = recovery.map(CustodyRecovery::source);
         let route = route_custody(
@@ -581,12 +610,12 @@ impl Vault {
             key.custody_wrap(),
             source.as_ref(),
         )?;
-        let (custody, landing) = match route {
+        let (custody, mut landing) = match route {
             CustodyRoute::Local => (Custody::Keep, None),
             CustodyRoute::Landed(landing) => (Custody::Landed, Some(landing)),
             CustodyRoute::Absent => (Custody::NewHost, None),
         };
-        let (made, forked, mut vault, mut report) = Self::restore_image(
+        let (mut made, forked, mut vault, mut report) = Self::restore_image(
             image,
             checkpoint_id,
             bodies,
@@ -598,12 +627,29 @@ impl Vault {
             &BTreeSet::new(),
             &write_budget::Unfloored,
         )?;
-        finish(&vault)?;
+        finish(&vault, artifact_holds.as_ref())?;
         if let Some(landing) = &landing {
-            landing.fence(anchor)?;
             report.custody_note = landing.note().map(str::to_owned);
+            super::credential_custody::note_landed_access(
+                &mut report.credential_notes,
+                landing.owner_compartment_unopened(),
+            );
         }
+        let prepared = match &landing {
+            Some(landing) => landing.prepare_takeover(&vault.store)?,
+            None => None,
+        };
+        made.preserve(true);
         forked.keep();
+        if let (Some(landing), Some(anchor), Some(prepared)) =
+            (landing.as_mut(), anchor, prepared.as_ref())
+            && let Err(refusal) = landing.publish_takeover(anchor, prepared)
+        {
+            if matches!(refusal, TakeoverRefusal::Definitive(_)) {
+                made.preserve(false);
+            }
+            return Err(refusal.into_rejected().into());
+        }
         made.keep(&mut vault);
         if let Some(landing) = landing {
             landing.keep();
@@ -668,6 +714,16 @@ struct EraseOwed {
 }
 
 impl EraseOwed {
+    /// Notes `holder`'s copy owed once (FIX 8875).
+    fn remote(&mut self, holder: String) {
+        if !self.steps.iter().any(|step| {
+            step.state == CUSTODY_REMOTE_RETIREMENT_PENDING
+                && step.target_id.as_deref() == Some(holder.as_str())
+        }) {
+            self.steps.push(status::remote_step(holder));
+        }
+    }
+
     /// Notes `state` once.
     fn step(&mut self, state: &'static str) {
         if self.steps.iter().all(|step| step.state != state) {

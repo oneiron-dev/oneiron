@@ -13,8 +13,9 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|---|
 | `src/dispatch.rs` | src | m | 1 struct · 7 fn | VaultLinearOutboundDoor | Linear mutations through the vault's replay-first outbound dispatch door |
 | `src/egress.rs` | src | s | 2 struct · 1 trait · 2 fn · 2 crate-vis | LinearHostEgress, LinearMutation, LinearOutboundDoor | Outbound mutation mapping; host door enforces policy and replay custody |
-| `src/http.rs` | src | s | 2 struct · 2 enum · 2 trait · 4 fn · 1 const · 2 crate-vis | GraphQlBody, GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient, LinearBodyLine | Host-owned GraphQL transport; credentials never enter the engine |
-| `src/journal.rs` | src | m | 10 crate-vis | — | Host delivery state beneath the engine outbound dispatch, not a second gate |
+| `src/http.rs` | src | s | 2 struct · 2 enum · 2 trait · 4 fn · 1 const · 1 re-export · 3 crate-vis | GraphQlBody, GraphQlCall, GraphQlExecutor, GraphQlTransportError, HttpLinearClient, LinearBodyLine | Host-owned GraphQL transport; credentials never enter the engine |
+| `src/http/decode.rs` | src | s | 1 struct · 2 fn · 3 crate-vis | GraphQlValue | A tracker response decoded on the host's memory line by the memory its value takes, not its wire bytes (FIX… |
+| `src/journal.rs` | src | m | 11 crate-vis | — | Host delivery state beneath the engine outbound dispatch, not a second gate |
 | `src/lib.rs` | src | s | 6 re-export | — | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror |
 | `src/source.rs` | src | s | 2 struct · 3 fn · 2 crate-vis | LinearHostChangeSource, LinearTrackerConfig | Linear issue snapshots from the team-scoped cursor-paged GraphQL connection |
 | `src/tests.rs` | test | m | — | — | — |

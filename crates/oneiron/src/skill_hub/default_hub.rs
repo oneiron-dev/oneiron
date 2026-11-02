@@ -15,7 +15,7 @@ use crate::{EntityId, Vault, consent::AuthenticatedOwner, error::Result, tempora
 /// Released oneiron-hub revision for library skills, and the model catalog
 /// ref's pin until the owner sets that ref's own policy. A floating branch or
 /// network lookup never changes an opened vault's skill source.
-const HUB_COMMIT: &str = "7947f21265d41ae5457c7aaf31e510348a46e7f0";
+const HUB_COMMIT: &str = "3f14540e167b1bc629afd82bbd6267c3d33f6a4e";
 const HUB_ENDPOINT: &str = "https://github.com/oneiron-dev/oneiron-hub.git";
 /// Library data, deliberately not a fifth build-embedded bootstrap skill.
 pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explainer";
@@ -23,7 +23,8 @@ pub const REVIEW_BUNDLE_EXPLAINER_SUBTREE: &str = "skills/review-bundle-explaine
 /// fetched bytes carry scan evidence and the pack installs; which bytes are
 /// fetched is the ref's sync policy, vault data rather than an engine constant.
 pub(crate) const MODEL_PACK_SUBTREE: &str = "packs/model-catalog";
-pub(crate) const MODEL_PACK_NAME: &str = "oneiron.models";
+/// The first-party model catalog's pack name.
+pub const MODEL_PACK_NAME: &str = "oneiron.models";
 /// The publisher an owner admits when syncing the first-party catalog.
 const MODEL_PACK_PUBLISHER: &str = "publisher:oneiron-hub";
 
@@ -60,7 +61,7 @@ impl DefaultSkillHub {
 
 /// The model catalog ref as an owner reads it: its policy and pin, the
 /// revisions seen and trusted, and the installed pack's receipt.
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub struct ModelCatalogSync {
     pub sync_policy: &'static str,
     pub pin_type: &'static str,
@@ -102,10 +103,6 @@ pub const fn default_skill_hub_commit() -> &'static str {
 }
 
 pub(crate) fn seed_default_skill_hub(vault: &Vault) -> Result<()> {
-    // The other registries-family seed rides this open-time call: the
-    // compiled `comm.*` claim-class descriptors (type 91), each at a fixed id
-    // with a fixed body, so every node seeds the same rows.
-    crate::comm::seed_claim_class_descriptors(vault)?;
     let id = default_skill_hub_id()?;
     let mut txn = vault.store.env.write_txn()?;
     // Reopens never revert an owner's endpoint, trust, or policy changes. Nor
@@ -225,14 +222,17 @@ impl Vault {
     /// Fetches a library skill from the shipped commit through the ordinary Git
     /// adapter and import/scanner doors. No network access occurs during open.
     /// An owner may change the configured endpoint, but cannot change the commit
-    /// pinned by this door; a source that lacks it fails closed.
+    /// pinned by this door; a source that lacks it fails closed. The import
+    /// runs as `owner`: the owner proof is checked before the fetch and again
+    /// in the writer that commits the skill, its provenance and scan receipts.
     pub fn import_default_hub_skill(
         &self,
+        owner: &AuthenticatedOwner,
         subtree: &str,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.import_default_hub_skill_at_commit(subtree, HUB_COMMIT, occurred, learned_at)
+        self.import_default_hub_skill_at_commit(owner, subtree, HUB_COMMIT, occurred, learned_at)
     }
 
     /// [`Self::import_default_hub_skill`] for a caller that names the skill
@@ -242,12 +242,14 @@ impl Vault {
     /// writes nothing.
     pub(crate) fn import_default_hub_skill_expecting(
         &self,
+        owner: &AuthenticatedOwner,
         subtree: &str,
         skill_id: &str,
         version: Option<&str>,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let id = default_skill_hub_id()?;
         let row = self.skill_hub_record(&id)?;
         if row.kind != SkillHubKind::Git || row.sync_policy != HubSyncPolicy::PinnedCommit {
@@ -262,6 +264,7 @@ impl Vault {
         let inventory = super::osv::dependency_inventory(&package)?;
         Ok(self
             .install_skill_with_advisories(
+                owner,
                 &reference,
                 &package,
                 &inventory,
@@ -272,16 +275,18 @@ impl Vault {
             .entity)
     }
 
-    /// Imports the review explainer through the pinned library/scanner path.
-    /// Activation, governance and optimized forks use the ordinary skill doors.
-    /// The returned entity (or an optimized descendant) is supplied to
-    /// `entity_doc::review_explainer::ReviewExplainerExecution` by its host.
+    /// Imports the review explainer through the pinned library/scanner path,
+    /// as `owner`. Activation, governance and optimized forks use the
+    /// ordinary skill doors. The returned entity (or an optimized descendant)
+    /// is supplied to `entity_doc::review_explainer::ReviewExplainerExecution`
+    /// by its host.
     pub fn import_review_bundle_explainer_skill(
         &self,
+        owner: &AuthenticatedOwner,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
-        self.import_default_hub_skill(REVIEW_BUNDLE_EXPLAINER_SUBTREE, occurred, learned_at)
+        self.import_default_hub_skill(owner, REVIEW_BUNDLE_EXPLAINER_SUBTREE, occurred, learned_at)
     }
 
     /// The model catalog ref's policy: the owner's stored row, else the
@@ -407,6 +412,7 @@ impl Vault {
 
     fn import_default_hub_skill_at_commit(
         &self,
+        owner: &AuthenticatedOwner,
         subtree: &str,
         commit: &str,
         occurred: TimeRange,
@@ -421,7 +427,7 @@ impl Vault {
         }
         let adapter = GitEndpointSkillHubAdapter::new(id, &row.endpoint, commit)?;
         let reference = HubRef::new(id, subtree, HubPin::Commit(commit.to_owned()))?;
-        self.import_skill_from_adapter(&adapter, &reference, occurred, learned_at)
+        self.import_skill_from_adapter(owner, &adapter, &reference, occurred, learned_at)
     }
 
     /// Re-imports a deleted or locally retired library skill from the pinned

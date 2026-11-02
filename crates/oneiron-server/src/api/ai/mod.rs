@@ -19,6 +19,7 @@ use crate::server::SyncServer;
 pub(crate) mod chat;
 mod media;
 mod options;
+pub(crate) mod room_place;
 mod vision;
 mod voices;
 mod waves;
@@ -27,13 +28,18 @@ mod waves;
 // does, under one typed refusal (OF-410, FIX 779).
 pub(crate) use media::{MediaCallParts, MediaCallRefusal, VoiceRefusal, prepare_media_call};
 // Every `ai.options` door lists through one projection (FIX 2942).
-pub(crate) use options::{caller_options, run_options};
+pub(crate) use options::{
+    CallerOptions, caller_options, granted_operations, line_options, run_options,
+    video_granted_agent,
+};
+// The facade's `ai.ask_image` door answers on this route's one path (FIX 679).
+pub(crate) use vision::asked as ask_image_answered;
 // The owner's `vault.voices.*` doors run the bank's provisioning and vendor
 // deletions as these routes do (DOOR-143); the OpenAPI document reads their
 // bodies.
 pub(crate) use voices::{
-    ConsentBody, PackBody, ProvisionBody, VoiceBankRefusal, evict_answer, provision_clone,
-    render_consent_answer,
+    CloneRequest, ConsentBody, PackBody, ProvisionBody, VoiceBankRefusal, clone_payer,
+    evict_answer, provision_clone, provision_clone_funded, render_consent_answer,
 };
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {
@@ -61,6 +67,7 @@ fn media_routes() -> Router<Arc<SyncServer>> {
         .route("/transcribe", post(media::transcribe))
         .route("/embed", post(media::embed))
         .route("/ask_image", post(vision::ask_image))
+        .route("/voices/{voice_id}", get(voices::view))
         .route("/voices/{voice_id}/packs", post(voices::bank_pack))
         .route(
             "/voices/{voice_id}/render_consent",
@@ -190,6 +197,14 @@ async fn session(
         Ok(key) => key,
         Err(response) => return *response,
     };
+    if !server.ai.takes_session_hints() {
+        return refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "dreamer_unavailable",
+            "the Dreamer is not running",
+        );
+    }
+    // The request carries no deadline, so none bounds the hint's wait.
     server.ai.session_hint(
         key,
         match request.event {
@@ -197,6 +212,7 @@ async fn session(
             SessionEvent::Activity => SessionHint::Activity,
             SessionEvent::End => SessionHint::ExplicitEnd,
         },
+        None,
     );
     (
         StatusCode::ACCEPTED,

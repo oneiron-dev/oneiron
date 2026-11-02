@@ -331,6 +331,39 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_shape_plan_card(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.plan.card", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_items_receipt(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.items.receipt", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_groups(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.groups", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shape_groups_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shape.groups.resolve", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_message(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.message", js_json(input))
@@ -343,12 +376,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_grants_asked(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.grants.asked", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_companions_access_requests_answer(
         &self,
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.companions.access_requests.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_grants_answer(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.grants.answer", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -442,6 +487,15 @@ impl NativeClient {
     pub fn self_budget_land(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.budget.land", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_billing_account_file(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.billing.account.file", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -550,6 +604,24 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_budgets_resident_shares(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.resident_shares", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_budgets_resident_shares_set(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.budgets.resident_shares.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_runners_seats_quotas(
         &self,
         input: serde_json::Value,
@@ -565,6 +637,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.runners.seats.top_up", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_runners_seats_resume(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.runners.seats.resume", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -664,6 +745,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_message_streams_refused(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.message_streams.refused", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_messages_durability(
         &self,
         input: serde_json::Value,
@@ -696,6 +786,8 @@ impl NativeClient {
         deadline_ms: Option<f64>,
         media: Option<NapiRecallMedia>,
         query_affect: Option<NapiQueryAffect>,
+        token_budget: Option<f64>,
+        reader_agent_ref: Option<String>,
     ) -> napi::Result<NapiMemoryPack> {
         let effort = oneiron_remote::parse_effort(effort.as_deref().unwrap_or("medium"))
             .map_err(facade_error)?;
@@ -719,6 +811,10 @@ impl NativeClient {
             .transpose()
             .map_err(facade_error)?;
         let query_affect = query_affect.map(query_affect_to_engine);
+        let token_budget = token_budget
+            .map(oneiron_remote::check_token_budget_number)
+            .transpose()
+            .map_err(facade_error)?;
         let output = self
             .inner
             .vault_recall(
@@ -731,6 +827,8 @@ impl NativeClient {
                 deadline_ms,
                 media,
                 query_affect,
+                token_budget,
+                reader_agent_ref.as_deref(),
             )
             .map_err(facade_error)?;
         memory_pack_from_engine(output).map_err(boundary_error)
@@ -1114,12 +1212,36 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_export_transfer_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.export.transfer.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_export_transfer_release(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.export.transfer.release", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn self_credential_attenuate(
         &self,
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("self.credential.attenuate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_actor(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.actor", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -1144,25 +1266,10 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
-    pub fn vault_receipts(
-        &self,
-        limit: Option<f64>,
-        kinds: Option<Vec<String>>,
-    ) -> napi::Result<Vec<NapiGateReceipt>> {
-        let limit = limit
-            .map(limit_to_engine)
-            .transpose()
-            .map_err(facade_error)?
-            .unwrap_or(100);
-        let kinds = kinds.unwrap_or_default();
-        let output = self
-            .inner
-            .vault_receipts(limit, &kinds)
-            .map_err(facade_error)?;
-        output
-            .into_iter()
-            .map(|item| gate_receipt_from_engine(item).map_err(boundary_error))
-            .collect()
+    pub fn vault_receipts(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts", js_json(input))
+            .map_err(facade_error)
     }
     #[napi]
     pub fn vault_assets_ingest(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
@@ -1199,6 +1306,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1260,6 +1370,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1282,6 +1395,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1304,6 +1420,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1326,6 +1445,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1348,6 +1470,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -1489,6 +1614,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.turn_programs.disarm", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_turn_programs_rebind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.turn_programs.rebind", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -1696,6 +1830,15 @@ impl NativeClient {
     pub fn vault_inbox_groups(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.inbox.groups", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_inbox_groups_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.inbox.groups.resolve", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -2038,6 +2181,18 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.skills.optimize.tradeoff_asks.pick", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_skills_optimize_tradeoff_asks_resolve(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb(
+                "vault.skills.optimize.tradeoff_asks.resolve",
+                js_json(input),
+            )
             .map_err(facade_error)
     }
     #[napi]
@@ -2425,6 +2580,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_authority_clock_repair(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.authority.clock.repair", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_wire_health_thresholds_get(
         &self,
         input: serde_json::Value,
@@ -2524,6 +2688,24 @@ impl NativeClient {
     pub fn vault_mesh_dial(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.mesh.dial", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_outbox_diverged_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbox.diverged.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_outbox_diverged_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.outbox.diverged.answer", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -2812,6 +2994,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.shared.policy.change", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_shared_policy_changes(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.shared.policy.changes", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -3340,6 +3531,42 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn self_off_record_results_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.results.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_results_read(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.results.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_waits_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.waits.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn self_off_record_waits_answer(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("self.off_record.waits.answer", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_off_record_rooms_status(
         &self,
         input: serde_json::Value,
@@ -3745,6 +3972,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_coach_training_offers_sources(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.coach.training_offers.sources", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_research_bind(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.research.bind", js_json(input))
@@ -3928,6 +4164,33 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_roots_requests_create(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.create", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_roots_requests_list(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.roots.requests.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_owner_work_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.owner_work.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_cleanup_run(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.cleanup.run", js_json(input))
@@ -3985,6 +4248,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.usage.events.remove_undecodable", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_usage_repair_receipts(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.usage.repair.receipts", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -4567,6 +4839,60 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_secrets_register(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.register", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_rotate(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.rotate", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_rewrap(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.rewrap", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_custody_get(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.custody.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_secrets_custody_submit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.secrets.custody.submit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_widen_proposals(
         &self,
         input: serde_json::Value,
@@ -4660,6 +4986,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_lenses_propose_from_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.propose_from_pack", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_lenses_activate(
         &self,
         input: serde_json::Value,
@@ -4681,6 +5016,15 @@ impl NativeClient {
     pub fn vault_lenses_list(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.lenses.list", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_lenses_export_pack(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.lenses.export_pack", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -5024,6 +5368,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5178,6 +5525,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5200,6 +5550,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5222,6 +5575,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5412,6 +5768,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -5511,6 +5870,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.code.origin.mirror.get", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_code_origin_mirror_plan(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.code.origin.mirror.plan", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -5959,6 +6327,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6037,6 +6408,24 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.repo.git_push.revoke", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_read_grants_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.read_grants.grant", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_read_grants_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.read_grants.revoke", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -6312,7 +6701,16 @@ impl NativeClient {
         input: serde_json::Value,
     ) -> napi::Result<serde_json::Value> {
         self.inner
-            .agent_verb("vault.tasks.cancel_force", js_json(input))
+            .agent_verb("vault.tasks.cancel.force", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_tasks_comm_widen_revoke(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.tasks.comm_widen.revoke", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -6383,6 +6781,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6405,6 +6806,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6427,6 +6831,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6449,6 +6856,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6471,6 +6881,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6493,6 +6906,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6599,6 +7015,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6621,6 +7040,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6643,6 +7065,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6665,6 +7090,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6687,6 +7115,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -6709,6 +7140,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self.inner.agent_verb("can", input).map_err(facade_error)?;
@@ -6728,6 +7162,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self.inner.agent_verb("peek", input).map_err(facade_error)?;
@@ -7067,6 +7504,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_conversations_turn_rebind(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.conversations.turn.rebind", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn vault_messages_react(
         &self,
         input: serde_json::Value,
@@ -7223,6 +7669,33 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.models.manifest.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_web_connector(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.web_connector", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_settings_web_connector_replace(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.settings.web_connector.replace", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_connectors_web_usage(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.connectors.web.usage", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7400,6 +7873,15 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn vault_receipts_craft_reply_manifest(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.receipts.craft_reply_manifest", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_voice_asr_open(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.voice.asr.open", js_json(input))
@@ -7544,6 +8026,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.models.trials.run", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_models_trials_resend_arm(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.models.trials.resend_arm", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7703,6 +8194,12 @@ impl NativeClient {
             .map_err(facade_error)
     }
     #[napi]
+    pub fn ai_ask_image(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("ai.ask_image", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
     pub fn ai_verdict(&self, input: serde_json::Value) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("ai.verdict", js_json(input))
@@ -7763,6 +8260,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.questions.read", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_questions_outcome_windows(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.questions.outcome_windows", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -7853,6 +8359,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.decisions.asks.climb", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_decisions_asks_confirm_grant(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.decisions.asks.confirm_grant", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -8553,6 +9068,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8575,6 +9093,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8597,6 +9118,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8619,6 +9143,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8641,6 +9168,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8663,6 +9193,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8685,6 +9218,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8707,6 +9243,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8729,6 +9268,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8751,6 +9293,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8773,6 +9318,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8798,6 +9346,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8820,6 +9371,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8842,6 +9396,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8864,6 +9421,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8886,6 +9446,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8908,6 +9471,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8930,6 +9496,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8952,6 +9521,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -8974,6 +9546,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9109,6 +9684,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.consolidation.lineage", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_consolidation_candidate_decisions(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.consolidation.candidate_decisions", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -9286,6 +9870,15 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.free_time.policy.set", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_free_time_policy_set_as(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.free_time.policy.set_as", js_json(input))
             .map_err(facade_error)
     }
     #[napi]
@@ -9794,6 +10387,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9816,6 +10412,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9838,6 +10437,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -9860,6 +10462,9 @@ impl NativeClient {
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             })
         })?;
         let output = self
@@ -10025,6 +10630,42 @@ impl NativeClient {
     ) -> napi::Result<serde_json::Value> {
         self.inner
             .agent_verb("vault.identity.proposals.for_pair", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_drain_begin(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.drain.begin", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_drain_commit(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.drain.commit", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_drain_folder(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.drain.folder", js_json(input))
+            .map_err(facade_error)
+    }
+    #[napi]
+    pub fn vault_custody_members_reenrol(
+        &self,
+        input: serde_json::Value,
+    ) -> napi::Result<serde_json::Value> {
+        self.inner
+            .agent_verb("vault.custody.members.reenrol", js_json(input))
             .map_err(facade_error)
     }
     #[napi]

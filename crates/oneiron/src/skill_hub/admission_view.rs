@@ -196,8 +196,8 @@ impl Vault {
                     crate::skill_optimize::receipt_is_held_out(&evidence_skill, receipt)
                 })
                 .collect::<Vec<_>>();
-        if evidence.is_empty() || evidence.len() > 4096 {
-            return Err(invalid("held-out reserve is empty or exceeds replay bound"));
+        if evidence.is_empty() {
+            return Err(invalid("held-out reserve is empty"));
         }
         let posture = crate::skill_scan::scan_gate_for_activation_in_txn(
             &self.store,

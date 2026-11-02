@@ -157,6 +157,9 @@ pub struct ConflictSettleReceipt {
     /// alternative its Keep landed, when the Gate held that landing for
     /// review (FIX 5753); `None` on every other settlement.
     pub approval_ref: Option<String>,
+    /// The work still owed after the settlement committed, such as the
+    /// approved alternative's pending VAD (FIX 7600); empty when none is.
+    pub warnings: Vec<crate::memory::SettleWarning>,
 }
 
 /// What reverting one settlement did (OF-023, owner ruling 10-18): the marker
@@ -489,7 +492,14 @@ pub(crate) fn apply_settlement_in_txn(
         let kept = vault
             .get_claim_in_txn(txn, &winner)?
             .ok_or(Error::EntityNotFound)?;
-        if !claim_surfaceable(&kept) || !on_subject(&kept) {
+        // A standing member must be settled to win. An alternative that just
+        // landed here may carry its own fresh confirm, which its owner can
+        // answer only once this write commits.
+        if !claim_surfaceable(&kept)
+            || !on_subject(&kept)
+            || (materialized.is_none()
+                && !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &winner)?)
+        {
             return Err(invalid_consolidation(
                 "the kept claim does not stand on the conflict's subject",
             ));
@@ -568,6 +578,8 @@ pub(crate) fn apply_settlement_in_txn(
         Value::Map(resolution),
     );
     let resolved = EntityId::now();
+    // A claim's times are Unix seconds; `now` is milliseconds (FIX 10519).
+    let at = now / 1_000;
     // Rule A: the answer is concluded from the marker it settles and every
     // member it weighed.
     let birth = {
@@ -581,7 +593,7 @@ pub(crate) fn apply_settlement_in_txn(
             "dreamer.settlement",
             &inputs,
             &[],
-            now,
+            at,
         )
     };
     // A MACHINE's answer (the Dreamer's) carries its retained signature, or
@@ -594,11 +606,8 @@ pub(crate) fn apply_settlement_in_txn(
             &resolved,
             candidate,
             &envelope,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
+            TimeRange { start: at, end: at },
+            at,
         )
         .made_by(&resolved, birth)
         .apply(txn)?;
@@ -843,6 +852,7 @@ fn restore_dreamer_member_in_txn(
             body.value.clone(),
             body.confidence,
         )
+        .with_confidence_details(body.confidence_details())
         .with_validity(body.valid_from, None),
         &body,
     );
@@ -867,13 +877,15 @@ fn restore_dreamer_member_in_txn(
         },
     );
     let copy = EntityId::now();
+    // A claim's times are Unix seconds; `now` is milliseconds (FIX 10519).
+    let at = now / 1_000;
     let birth = RowBirth::written(
         envelope.actor(),
         MadeByClass::Concluded,
         surface.birth,
         &[loser, reverted],
         &[],
-        now,
+        at,
     );
     vault.sign_retained_machine_claim_in_txn(&*txn, &copy, &candidate, &mut envelope)?;
     vault
@@ -882,11 +894,8 @@ fn restore_dreamer_member_in_txn(
             &copy,
             candidate,
             &envelope,
-            TimeRange {
-                start: now,
-                end: now,
-            },
-            now,
+            TimeRange { start: at, end: at },
+            at,
         )
         .made_by(&copy, birth)
         .apply(txn)?;
@@ -894,10 +903,10 @@ fn restore_dreamer_member_in_txn(
 }
 
 /// The dial a settlement ask runs under unless the host picks another. It
-/// ends below Human: the owner's open-conflict list is already the person's
-/// surface, so the ladder queues no second ask.
+/// starts at Rule, which abstains past no match toward Big, and ends
+/// below Human: the owner's open-conflict list is already the ask.
 pub const CONFLICT_SETTLE_DIAL: DecisionDial = DecisionDial {
-    first: DecisionRung::Local,
+    first: DecisionRung::Rule,
     ceiling: DecisionRung::Big,
     band: DecisionBand {
         low: 0.35,

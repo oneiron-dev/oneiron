@@ -73,7 +73,7 @@ pub unsafe extern "C" fn oneiron_vault_edges_out(
         }
         let result = with_vault(vault, |handle| {
             let src = parse_entity_id(src_ptr, src_len)?;
-            let edges = engine(handle.vault.edges_out(&src))?;
+            let edges = handle.edges_of(&src, true)?;
             let mut out = Vec::with_capacity(edges.len());
             for edge in edges {
                 let vad = edge.vad;
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn oneiron_vault_edges_in(
         }
         let result = with_vault(vault, |handle| {
             let tgt = parse_entity_id(tgt_ptr, tgt_len)?;
-            let edges = engine(handle.vault.edges_in(&tgt))?;
+            let edges = handle.edges_of(&tgt, false)?;
             let mut out = Vec::with_capacity(edges.len());
             for edge in edges {
                 let vad = edge.vad;
@@ -168,7 +168,7 @@ pub unsafe extern "C" fn oneiron_vault_search_vector(
             let query = with_required_slice(query_ptr, query_len, |values| {
                 convert_query_vector(values, handle.dimensions)
             })?;
-            let results = engine(handle.vault.search_vector(&query, limit))?;
+            let results = handle.vector_hits(&query, limit)?;
             let out = results
                 .into_iter()
                 .map(|result| OneironScoredEntity {
@@ -208,7 +208,7 @@ pub unsafe extern "C" fn oneiron_vault_search_text(
             let query = string_from_required(query_ptr, query_len)?;
             validate_query_len(&query)?;
             let limit = parse_search_limit(limit)?;
-            let results = engine(handle.vault.search_text(&query, limit))?;
+            let results = handle.text_hits(&query, limit)?;
             let out = results
                 .into_iter()
                 .map(|result| OneironScoredEntity {
@@ -259,9 +259,9 @@ pub unsafe extern "C" fn oneiron_vault_put_vector(
 ///
 /// `query_text_ptr`, `query_vector_ptr`, `format_ptr` and `media_json_ptr`
 /// are optional: pass a null pointer with length 0 to omit. If
-/// `limit_is_set == 0`, the default limit of 10 is used; otherwise `limit`
-/// must be at most 1000. The returned buffer must be released with
-/// `oneiron_buffer_free`.
+/// `limit_is_set == 0`, the default limit of 10 is used; otherwise the pack
+/// holds up to `limit` items, however many. The returned buffer must be
+/// released with `oneiron_buffer_free`.
 ///
 /// `media_json_ptr` is UTF-8 JSON of the served context pack's media query
 /// (OF-370): `{"space": "<ai.embed rung id>@<provider>", "mime": "image/png",
@@ -314,14 +314,16 @@ pub unsafe extern "C" fn oneiron_vault_context_pack(
             refuse_unserved_media(media_json_ptr, media_json_len)?;
             // The limit caps the pack itself: the channels fetch their
             // fusion list length whatever they are asked for.
-            let mut builder = handle.vault.context_pack().format(pack_format).limit(limit);
-            if let Some(text) = query_text.as_deref() {
-                builder = builder.search_text(text, limit);
-            }
-            if let Some(vector) = query_vector.as_deref() {
-                builder = builder.search_vector(vector, limit);
-            }
-            let output = engine(builder.run_serialized())?;
+            let output = handle.pack_bytes(|builder| {
+                let mut builder = builder.format(pack_format).limit(limit);
+                if let Some(text) = query_text.as_deref() {
+                    builder = builder.search_text(text, limit);
+                }
+                if let Some(vector) = query_vector.as_deref() {
+                    builder = builder.search_vector(vector, limit);
+                }
+                builder
+            })?;
             str::from_utf8(&output).map_err(|_| OneironStatus::Utf8)?;
             write_out(out_buffer, buffer_from_vec(output))
         });
@@ -351,7 +353,7 @@ pub unsafe extern "C" fn oneiron_vault_get_entity_type(
         }
         let result = with_vault(vault, |handle| {
             let id = parse_entity_id(id_ptr, id_len)?;
-            match engine(handle.vault.get_entity_type(&id))? {
+            match handle.entity_type_of(&id)? {
                 Some(entity_type) => write_out(out_entity_type, u32::from(entity_type)),
                 None => Err(OneironStatus::NotFound),
             }
@@ -382,7 +384,7 @@ pub unsafe extern "C" fn oneiron_vault_entities_by_type(
         }
         let result = with_vault(vault, |handle| {
             let entity_type = parse_u8(entity_type)?;
-            let ids = engine(handle.vault.entities_by_type(entity_type))?;
+            let ids = handle.ids_of_type(entity_type)?;
             write_out(out_ids, id_list_buffer(ids)?)
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
@@ -422,7 +424,7 @@ pub unsafe extern "C" fn oneiron_vault_targets(
             } else {
                 Some(parse_u8(target_type)?)
             };
-            let ids = engine(handle.vault.targets(&src, kind, target_type))?;
+            let ids = handle.peers_of(&src, kind, target_type, true)?;
             write_out(out_ids, id_list_buffer(ids)?)
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
@@ -462,7 +464,7 @@ pub unsafe extern "C" fn oneiron_vault_sources(
             } else {
                 Some(parse_u8(source_type)?)
             };
-            let ids = engine(handle.vault.sources(&tgt, kind, source_type))?;
+            let ids = handle.peers_of(&tgt, kind, source_type, false)?;
             write_out(out_ids, id_list_buffer(ids)?)
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
@@ -493,7 +495,7 @@ pub unsafe extern "C" fn oneiron_vault_subtree(
         }
         let result = with_vault(vault, |handle| {
             let root = parse_entity_id(root_ptr, root_len)?;
-            let entries = engine(handle.vault.subtree(&root, max_depth))?;
+            let entries = handle.subtree_of(&root, max_depth)?;
             let out = entries
                 .into_iter()
                 .map(|(id, depth)| OneironSubtreeEntry {
@@ -530,7 +532,7 @@ pub unsafe extern "C" fn oneiron_vault_ancestors(
         }
         let result = with_vault(vault, |handle| {
             let node = parse_entity_id(node_ptr, node_len)?;
-            let ids = engine(handle.vault.ancestors(&node))?;
+            let ids = handle.ancestors_of(&node)?;
             write_out(out_ids, id_list_buffer(ids)?)
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)
@@ -562,7 +564,7 @@ pub unsafe extern "C" fn oneiron_vault_would_create_cycle(
         let result = with_vault(vault, |handle| {
             let node = parse_entity_id(node_ptr, node_len)?;
             let target = parse_entity_id(target_ptr, target_len)?;
-            let would_cycle = engine(handle.vault.would_create_cycle(&node, &target))?;
+            let would_cycle = handle.cycle_through(&node, &target)?;
             write_out(out_would_cycle, u8::from(would_cycle))
         });
         result.map_or_else(|status| status, |()| OneironStatus::Ok)

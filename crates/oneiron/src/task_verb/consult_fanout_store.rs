@@ -305,6 +305,7 @@ pub(super) fn append_human_ruling(
         grant_ref: Some(grant_ref),
         diff_handle: plan_digest.to_vec(),
         read_frontier_hash: policy.read_frontier_hash()?,
+        context: Default::default(),
         redacted_at: None,
     };
     vault

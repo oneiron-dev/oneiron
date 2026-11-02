@@ -7,20 +7,22 @@
 //!   ‖ u8 has_registry ‖ registry binding (32) ‖ snapshot id (32)
 //!   ‖ u32be n ‖ key header (n)    the vault key's commitment and sealed wraps
 //!   ‖ frame*                      the image's chunks, then each body's in order
-//!   ‖ frame                       the sealed manifest
+//!   ‖ frame*                      the manifest's pieces (`manifest`)
+//!   ‖ frame                       the manifest's sealed root
 //!   ‖ u32be n ‖ commitment (n)    clear, signed (`commitment`)
 //!   ‖ u32be n ‖ signature (n)     E0 dual Ed25519 + SLH-DSA record
-//!   ‖ u64be offset of the manifest frame
+//!   ‖ u64be offset of the manifest root's frame
 //! frame = u32be len ‖ E0 envelope
 //! ```
 //!
 //! A chunk is up to 4 MiB of one stream, zstd-compressed, then sealed. Its
 //! envelope binds the vault, the epoch, the vault key's commitment, the kind's
 //! purpose (`CheckpointArtifact` or `BackupArtifact`) and, as its recipient,
-//! the snapshot id, its stream and its place in it. The manifest, sealed last,
-//! names the complete set in order: the image's length and BLAKE3, each result
-//! body's, the BLAKE3 of every chunk's envelope, and the key header's. A reader
-//! opens the manifest and every image chunk before a byte of the image is
+//! the snapshot id, its stream and its place in it. The manifest, sealed last
+//! in bounded pieces under a fixed-small root (FIX 8823), names the complete
+//! set in order: the image's length and BLAKE3, each result body's, the BLAKE3
+//! of every chunk's envelope, and the key header's. A reader opens the
+//! manifest and every image chunk before a byte of the image is
 //! decoded or anything is made; a body's chunks are opened, each checked
 //! against the manifest, as the body is read back into the restored vault.
 //!
@@ -30,9 +32,9 @@
 //! recovers one: exterior custody stays live (`checkpoint_custody`), and each
 //! body travels sealed under its instance's key (KS-2A).
 //!
-//! The commitment names the sealed manifest by digest, and a reader verifies
-//! its signature against the signers its key trusts before the manifest opens
-//! (`commitment`).
+//! The commitment names the sealed manifest root by digest, and a reader
+//! verifies its signature against the signers its key trusts before the
+//! manifest opens (`commitment`).
 //!
 //! The registry binding (FIX 5826) ties the engine's vault id to the
 //! registry's id for the vault, where the host that took the artifact knew
@@ -44,6 +46,8 @@
 //! never with where it restores to. The prelude, key header and commitment
 //! codecs are the shared ones in `oneiron_crypto::backup`; the engine reads
 //! version 2 only.
+mod manifest;
+mod payload_inventory;
 mod sink;
 
 use std::fs::File;
@@ -54,11 +58,12 @@ use oneiron_crypto::Kek;
 pub use oneiron_crypto::backup::ArtifactKind;
 use oneiron_crypto::backup::{
     ARTIFACT_SEAL_EPOCH as EPOCH, ARTIFACT_SEAL_SUITE as AEAD, ARTIFACT_VERSION_V2 as VERSION,
-    ArtifactPrelude, CustodyRef, IMAGE_STREAM, MANIFEST_STREAM, MAX_FRAME_LEN as MAX_FRAME,
+    ArtifactPrelude, CustodyRef, IMAGE_STREAM, MANIFEST_PIECE_STREAM, MAX_FRAME_LEN as MAX_FRAME,
     MAX_KEY_HEADER_LEN as MAX_KEY_HEADER, PRELUDE_V2_LEN as PRELUDE_LEN,
 };
-use serde::{Deserialize, Serialize};
 
+use self::manifest::StreamEntry;
+pub(super) use self::payload_inventory::write_payload_inventory;
 use self::sink::Sealer;
 pub(super) use self::sink::{ArtifactBody, write_artifact};
 use super::admission::{
@@ -94,7 +99,7 @@ fn binding_mismatch() -> Error {
 /// host without the vault unlocks it from a wrap the artifact carries
 /// ([`CheckpointKey::unlock`]) and says whom it trusts.
 pub struct CheckpointKey {
-    vault_id: [u8; 32],
+    pub(super) vault_id: [u8; 32],
     kek: Kek,
     /// The data key's custody-head subkey, which opens a custody head's
     /// host-readable compartments on a host without the vault (KS-4).
@@ -111,6 +116,12 @@ pub struct CheckpointKey {
     /// set only by [`CheckpointKey::with_wake_sequence_floor`]; `None` for a
     /// historical restore and a local open, which compare nothing.
     wake_floor: Option<u64>,
+    /// The family a host's worker opened from the artifact's host-private
+    /// member, for a cold restore (`with_artifact_host_holds`, FIX 6817).
+    pub(super) artifact_host_holds: Option<Box<super::ArtifactHostOrderHolds>>,
+    /// The signers the vault's mode roots delegated, trusted beside `trust`
+    /// (`trusting_mode_roots`, FIX 968).
+    pub(super) delegated: Option<Box<super::signer_delegation::DelegatedSigners>>,
 }
 
 impl std::fmt::Debug for CheckpointKey {
@@ -166,6 +177,8 @@ impl CheckpointKey {
             opened: Some(opened),
             expected: None,
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -203,6 +216,8 @@ impl CheckpointKey {
             opened: Some(opened),
             expected: Some(Box::new(expected.clone())),
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -229,13 +244,15 @@ impl CheckpointKey {
         self.opened.as_ref()
     }
 
-    /// [`CheckpointKey::unlock`] with this install's keystore at the platform
-    /// defaults, from the device wrap it holds a slot for, trusting the
-    /// signers whose seeds that keystore holds. `vault_dir` is the vault's
-    /// directory, which the keystore must lie outside.
-    pub fn unlock_on_this_device(path: &Path, vault_dir: &Path) -> Result<Self> {
-        let keystore = oneiron_keystore::default_platform_keystore(&[vault_dir])
-            .map_err(crate::world_keys::keystore_error)?;
+    /// [`CheckpointKey::unlock`] with this install's keystore, trusting its signers;
+    /// `None` is a host with none, which unlocks nothing (FIX 12225).
+    pub fn unlock_on_this_device(
+        path: &Path,
+        keystore: Option<&std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    ) -> Result<Self> {
+        let keystore = keystore
+            .cloned()
+            .ok_or_else(commitment::no_keystore_for_restore)?;
         Ok(
             Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
                 .trusting_device(keystore),
@@ -290,6 +307,8 @@ impl Vault {
             opened: None,
             expected: None,
             wake_floor: None,
+            artifact_host_holds: None,
+            delegated: None,
         })
     }
 
@@ -310,6 +329,8 @@ impl Vault {
                 opened: None,
                 expected: None,
                 wake_floor: None,
+                artifact_host_holds: None,
+                delegated: None,
             },
         ))
     }
@@ -354,45 +375,6 @@ impl std::fmt::Display for CheckpointSequenceBelowFloor {
 }
 
 impl std::error::Error for CheckpointSequenceBelowFloor {}
-
-/// One stream's line in the manifest.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StreamEntry {
-    len: u64,
-    /// BLAKE3 of the stream's bytes: the checkpoint id, or the body's name.
-    digest: [u8; 32],
-    /// BLAKE3 of each chunk's envelope, in order.
-    chunks: Vec<[u8; 32]>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Manifest {
-    version: u16,
-    kind: u8,
-    vault_id: [u8; 32],
-    snapshot: [u8; 32],
-    epoch: u64,
-    created_at: u64,
-    /// BLAKE3 of the clear key header.
-    key_header: [u8; 32],
-    image: StreamEntry,
-    bodies: Vec<StreamEntry>,
-    /// What the image needs of its exterior key custody (KS-4): the
-    /// position it had reached and every live id, never a key or a head.
-    /// `None` where the vault never published one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    custody: Option<crate::store::CustodyRequirement>,
-    /// The ordinary payload's owner compartments (KS-7), never a key, a
-    /// wrap, a head or a pad. `None`, and the manifest as before, while
-    /// CHECKPOINT_PAYLOADS_ENABLED is off.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    payload: Option<PayloadSection>,
-    /// Each payload bundle's stream, after every body's.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    payload_streams: Vec<StreamEntry>,
-}
 
 /// The clear head of an artifact file.
 struct Prelude {
@@ -444,9 +426,8 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) custody: Option<crate::store::CustodyRequirement>,
     /// The checkpoint sequence its verified commitment signs (OF-570 (e)).
     pub(super) sequence: u64,
-    /// The payload compartments it carries, apart from its bodies (KS-7).
-    #[allow(dead_code, reason = "KS7-5 opens the compartments")]
-    pub(super) payload: Option<SealedPayload<'k>>,
+    /// The snapshot id its verified commitment signs.
+    pub(super) snapshot: [u8; 32],
 }
 
 /// The result bodies an opened artifact carries, each read back through its
@@ -456,6 +437,8 @@ pub(super) struct SealedBodies<'k> {
     sealer: Sealer<'k>,
     /// Each body's manifest line and its frames (offset, length).
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
+    /// The payload compartments it carries, apart from its bodies (KS-7).
+    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// Opens the artifact at `path` with `key`: its manifest, checked against the
@@ -509,6 +492,7 @@ pub(super) fn open_artifact_file(
     let commitment_bytes = read_at(&mut file, signed_at + 4, commitment_len)?;
     let commitment = commitment::verify(
         &key.trust,
+        key.delegated_signers(),
         &key.vault_id,
         &commitment_bytes,
         &read_at(&mut file, record_at + 4, record_len)?,
@@ -540,9 +524,14 @@ pub(super) fn open_artifact_file(
         }
         .into_error());
     }
-    let manifest: Manifest =
-        rmp_serde::from_slice(&sealer.open(MANIFEST_STREAM, 0, &manifest_bytes)?)
-            .map_err(|_| codec())?;
+    // The manifest's root, then its pieces, each checked before the encoding
+    // they hold is read (FIX 8823).
+    let (manifest, pieces_at) = manifest::read_manifest(
+        &mut file,
+        &sealer,
+        (manifest_at, manifest_bytes.as_slice()),
+        prelude.end,
+    )?;
     if manifest.version != VERSION
         || manifest.kind != prelude.kind.code()
         || manifest.vault_id != prelude.vault_id
@@ -554,11 +543,11 @@ pub(super) fn open_artifact_file(
     {
         return Err(codec());
     }
-    // The frames between the head and the manifest are exactly the chunks it
-    // names, in its order: nothing added, dropped or moved.
+    // The frames between the head and the manifest's pieces are exactly the
+    // chunks it names, in its order: nothing added, dropped or moved.
     let mut frames = Vec::new();
     let mut at = prelude.end;
-    while at < manifest_at {
+    while at < pieces_at {
         let (len, next) = frame_at(&mut file, at)?;
         frames.push((at + 4, len));
         at = next;
@@ -570,7 +559,7 @@ pub(super) fn open_artifact_file(
             .chain(&manifest.payload_streams)
             .map(|body| body.chunks.len())
             .sum::<usize>();
-    if at != manifest_at || frames.len() != named {
+    if at != pieces_at || frames.len() != named {
         return Err(codec());
     }
     let mut rest = frames.into_iter();
@@ -627,16 +616,16 @@ pub(super) fn open_artifact_file(
             file,
             sealer,
             streams,
+            payload,
         },
         custody: manifest.custody,
         sequence: commitment.sequence,
-        payload,
+        snapshot: prelude.snapshot,
     })
 }
 
 /// The payload compartments an opened artifact carries (KS-7), read apart
 /// from its bodies: each bundle's stream after the last body's.
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 pub(super) struct SealedPayload<'k> {
     pub(super) section: PayloadSection,
     file: File,
@@ -646,8 +635,12 @@ pub(super) struct SealedPayload<'k> {
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
 }
 
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 impl SealedPayload<'_> {
+    /// The vault its compartments are sealed for.
+    pub(super) fn vault_id(&self) -> [u8; 32] {
+        self.sealer.key.vault_id
+    }
+
     /// The `index`th payload stream's bytes, each chunk checked against the
     /// manifest and opened as it is read, the whole checked after.
     pub(super) fn stream(&mut self, index: usize) -> Result<Vec<u8>> {
@@ -655,7 +648,7 @@ impl SealedPayload<'_> {
         let stream = u32::try_from(index)
             .ok()
             .and_then(|index| self.first.checked_add(index))
-            .filter(|stream| *stream != MANIFEST_STREAM)
+            .filter(|stream| *stream < MANIFEST_PIECE_STREAM)
             .ok_or_else(codec)?;
         let mut out = Vec::new();
         for (chunk, &(offset, len)) in frames.iter().enumerate() {

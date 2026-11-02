@@ -63,6 +63,13 @@ pub enum SecretError {
     /// (owner ruling C2).
     #[error("a sealed file is withheld: the vault owner and a granted agent read it")]
     SealedFileWithheld,
+    /// A file this reader would get as a masked copy cannot be served
+    /// masked (OF-067 C, FIX 2475): the copy, or a file no mark covers,
+    /// still holds a key the write door's rules read, or a container in it
+    /// does not read whole. The owner and a granted agent read the file. The
+    /// reason is the scan's code and never holds secret bytes.
+    #[error("a masked copy of this file is withheld: {reason}")]
+    MaskedCopyWithheld { reason: &'static str },
     /// The credential-door dial no longer admits this door-bound T0/T1
     /// materialization. The reason never contains secret or manifest bytes.
     #[error("secret materialization refused by credential-door policy: {reason}")]
@@ -196,6 +203,16 @@ pub enum SecretError {
         "world key refused: this credential is no longer a wrap of this vault; unlock with a current one"
     )]
     StalePageSealCredential,
+    /// A sealed vault's creation never finished (FIX 1942): a creation record
+    /// beside it still names it, so its environment was made but its first
+    /// wrap or its page-seal mirror never was. It opens nothing and nothing
+    /// was served from it; `oneiron init` removes it and creates it again. A
+    /// world key refusal by kind.
+    #[error(
+        "world key refused: this sealed vault's creation did not finish, so it opens nothing; \
+         `oneiron init` removes it and creates it again"
+    )]
+    UnfinishedSealedCreation,
     /// This install has no this-device-only keystore, so it can hold no machine
     /// secret and open no world key.
     #[error("no this-device-only keystore: {0}")]
@@ -256,6 +273,7 @@ impl SecretError {
             Self::ManifestWidensFloor { .. } => ErrorKind::ManifestWidensFloor,
             Self::SecretTierDenied { .. } => ErrorKind::SecretTierDenied,
             Self::SealedFileWithheld => ErrorKind::SealedFileWithheld,
+            Self::MaskedCopyWithheld { .. } => ErrorKind::MaskedCopyWithheld,
             Self::SecretDoorPolicyRefused { .. } => ErrorKind::SecretDoorPolicyRefused,
             Self::SecretRefNotFound { .. } => ErrorKind::SecretRefNotFound,
             Self::SecretWiderThanManifest { .. } => ErrorKind::SecretWiderThanManifest,
@@ -276,7 +294,8 @@ impl SecretError {
             Self::SecretGrantCleanupKept { .. } => ErrorKind::SecretGrantCleanupKept,
             Self::WorldKeyRefused(_)
             | Self::SealedBundleNoCapsule
-            | Self::StalePageSealCredential => ErrorKind::WorldKeyRefused,
+            | Self::StalePageSealCredential
+            | Self::UnfinishedSealedCreation => ErrorKind::WorldKeyRefused,
             Self::KeystoreUnavailable(_) => ErrorKind::KeystoreUnavailable,
             Self::UnverifiedKitRestore { .. } => ErrorKind::UnverifiedKitRestore,
             Self::KitConfirmationStale { .. } => ErrorKind::KitConfirmationStale,

@@ -106,9 +106,7 @@ pub(super) fn open_marker(
         1.0,
     )
     .with_scope(identity_scope(&conflict.identity)?);
-    if let Some(rel) = conflict.identity.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(conflict.identity.rel.clone());
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
@@ -138,9 +136,15 @@ pub fn close_persistent_conflict(
     open: EntityId,
     resolution: Value,
     evidence_refs: Vec<EntityId>,
+    checker: Option<&crate::llm::BoundedAutoChecker>,
 ) -> Result<crate::dreamer_promotion::PromotionOutcome> {
     let close = conflict_close_candidate(vault, run, open, resolution, evidence_refs)?;
-    crate::dreamer_promotion::promote_consolidated_claims(vault, run, vec![close])
+    crate::dreamer_promotion::promote_consolidated_claims_with_checker(
+        vault,
+        run,
+        vec![close],
+        checker,
+    )
 }
 
 /// The close [`close_persistent_conflict`] promotes, for a door that writes
@@ -190,7 +194,7 @@ pub(crate) fn conflict_close_candidate(
         &Value::Binary(open.as_bytes().to_vec()),
         body.world,
         None,
-        body.rel,
+        body.rel.as_ref(),
         body.scope_project,
         super::conflict::topic_key(body.scope.as_ref())?.as_deref(),
     )?;
@@ -260,9 +264,7 @@ pub(crate) fn on_axes_of(mut candidate: ClaimCandidate, body: &crate::ClaimBody)
     if !fields.is_empty() {
         candidate = candidate.with_scope(Value::Map(fields));
     }
-    if let Some(rel) = body.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(body.rel.clone());
     if let Some(world) = body.world {
         candidate = candidate.with_world(world);
     }

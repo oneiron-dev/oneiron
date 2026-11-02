@@ -467,6 +467,53 @@ pub enum EngineLimit {
     /// and the row asks whether everything is okay; only the memory floor
     /// and a round's own deadline end a question.
     ConnectorLiveQuestions,
+    /// UTF-8 bytes of the context one connector reply's model call reads:
+    /// the agent's instructions, the conversation's whole witnessed history
+    /// and the inbound message (FIX 2404). Past it the row asks whether
+    /// everything is okay and the call reads the context whole; nothing is
+    /// cut, refused or skipped.
+    ConnectorReplyContextBytes,
+    /// Rows one campaign judgment request joins (FIX 9655). Past it the row
+    /// asks whether everything is okay and every row is still joined, a
+    /// read chunk at a time; nothing is refused or cut.
+    CampaignJudgmentRows,
+    /// Active budget rows one connector key holds (FIX 8680). Past it the row
+    /// asks whether everything is okay and every row is kept and enforced.
+    ConnectorBudgetRows,
+    /// Suggested budget rows one connector key holds awaiting the owner
+    /// (FIX 8680). Past it the row asks and every suggestion is kept.
+    ConnectorSuggestedBudgetRows,
+    /// Cap rows one compiled connector charter carries (FIX 8685). Past it the
+    /// row asks and every cap is compiled and enforced.
+    ConnectorCharterCaps,
+    /// Verbs one connector's advertised catalog carries (FIX 8687). Past it
+    /// the row asks and the whole catalog is kept.
+    ConnectorCatalogVerbs,
+    /// Dispatches one connector-key batch admission accounts (FIX 8683). Past
+    /// it the row asks and the whole batch is accounted, one transaction
+    /// chunk after another.
+    ConnectorDispatchBatch,
+    /// Bytes of the whole encoded identity-decision state one identity ask
+    /// sends its ladder (FIX 8302). Past it the row asks and the whole
+    /// state is still sent.
+    IdentityDecisionStateBytes,
+    /// Bytes of the whole source message one identity mention's ask keeps
+    /// (FIX 8303). Past it the row asks and the whole message is still kept
+    /// and sent.
+    IdentityExcerptBytes,
+    /// Bytes one community-cache family holds, read or published whole
+    /// (FIX 8854). Past it the row asks whether everything is okay and the
+    /// snapshot is still served whole; nothing is refused or cut.
+    CommunityCacheBytes,
+    /// Tools one connector manifest under admission declares, and the
+    /// permissions or triggers one of its tools declares (FIX 8684, 8758).
+    /// The vault policy's admission quota asks first when it is lower. Past
+    /// it the row asks and the whole manifest is admitted.
+    ConnectorManifestEntries,
+    /// Held-out receipts one shared-skill merge scores its base over
+    /// (FIX 5218). Past it the row asks whether everything is okay and
+    /// the merge scores over every receipt.
+    SharedMergeEvidenceRows,
 }
 
 /// `1/divisor` of the machine's memory, or the fallback when it cannot be
@@ -639,6 +686,22 @@ pub trait LimitAsk: Send + Sync {
     /// `row`, set to `bound`, measured `measured`. The work is served either
     /// way.
     fn crossed(&self, row: EngineLimit, bound: u64, measured: u64);
+
+    /// [`Self::crossed`] for work `owner` ran: the vault owner or co-owner
+    /// whose credential the host admitted for it (FIX 5702), so in a
+    /// co-owned vault the question names whose work crossed the row. The
+    /// work is served either way, and the answer is the same; a port that
+    /// keeps no owner asks as [`Self::crossed`] does.
+    fn crossed_for_owner(
+        &self,
+        row: EngineLimit,
+        bound: u64,
+        measured: u64,
+        owner: crate::entity_id::EntityId,
+    ) {
+        let _ = owner;
+        self.crossed(row, bound, measured);
+    }
 }
 
 /// One open vault's engine rows: what they are set to, fixed when it opened,
@@ -698,6 +761,29 @@ impl LimitWatch {
             .clone();
         if let Some(ask) = ask {
             ask.crossed(row, bound, measured);
+        }
+    }
+
+    /// [`Self::crossed`] for work `owner` ran, when the host knows which
+    /// owner's credential admitted it ([`LimitAsk::crossed_for_owner`], FIX
+    /// 5702); with none, exactly [`Self::crossed`].
+    pub fn crossed_for(
+        &self,
+        row: EngineLimit,
+        bound: u64,
+        measured: u64,
+        owner: Option<crate::entity_id::EntityId>,
+    ) {
+        let Some(owner) = owner else {
+            return self.crossed(row, bound, measured);
+        };
+        let ask = self
+            .ask
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        if let Some(ask) = ask {
+            ask.crossed_for_owner(row, bound, measured, owner);
         }
     }
 }

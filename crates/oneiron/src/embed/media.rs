@@ -14,8 +14,6 @@
 
 use std::collections::BTreeSet;
 
-use rmpv::Value;
-
 use super::space::{
     EmbeddingSpace, InputKind, clear_media_refusal_in_txn, embedding_space_in_txn,
     has_media_vector_in_txn, media_refused_in_txn, media_text_hash_in_txn,
@@ -34,10 +32,6 @@ use crate::registry::{
 };
 use crate::store::ManifestDbs;
 
-/// ASSET body field holding the bytes.
-const ASSET_BODY_BYTES: &str = "bytes";
-/// ASSET body field holding the bytes' media type.
-const ASSET_BODY_MEDIA_TYPE: &str = "mime_type";
 /// The media type a text document is handed over as.
 pub(super) const TEXT_MEDIA_TYPE: &str = "text/plain; charset=utf-8";
 /// The records the text index embeds ([`super::embeddable_payload_in_txn`]), and so the text
@@ -227,8 +221,9 @@ impl Vault {
     /// embedder at a third party is sent only the documents `egress` allows
     /// ([`EgressPredicate::decide_media`]) that no device-local world keeps (DEC-0005), each
     /// asked again right before its bytes leave ([`MediaEmbedder::embed_each_released`]); the
-    /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on this
-    /// device or the owner's server reads as it does without a gate.
+    /// rest stay unsent and are counted [`MediaEmbedReport::withheld`]. An embedder on the
+    /// owner's server reads through `egress` when the host gives one (FIX 9830), and one on
+    /// this device reads as it does without a gate.
     ///
     /// # Errors
     ///
@@ -451,7 +446,8 @@ impl Vault {
     }
 
     /// Whether `input`'s bytes may go to `embedder` now, as the backfill sends a stored document
-    /// (FIX 382): to a model on this device or the owner's server, always; to one at a third
+    /// (FIX 382): to a model on this device, always; to one on the owner's server, always with
+    /// no gate and otherwise as a third party's (FIX 9830); to one at a third
     /// party only with the host's gate `egress`, which must allow it, and only while no
     /// device-local world keeps it (DEC-0005), read under the flag lock right before the bytes
     /// go. A move's check asks it for each media query it encodes (FIX 1637); `false` sends
@@ -466,10 +462,17 @@ impl Vault {
         egress: Option<&dyn EgressPredicate>,
         input: &MediaEmbeddingInput<'_>,
     ) -> Result<bool> {
-        if embedder.locality() != EmbedderLocality::ThirdParty {
-            return Ok(true);
-        }
-        if egress.is_none_or(|egress| egress.decide_media(input) != EgressDecision::Allow) {
+        // One on the owner's server reads through the host's gate when it
+        // gives one, as its backfill does (FIX 9830), and leaves ungated with
+        // none.
+        let gate = match (embedder.locality(), egress) {
+            (EmbedderLocality::OnDevice, _) | (EmbedderLocality::OwnerServer, None) => {
+                return Ok(true);
+            }
+            (EmbedderLocality::ThirdParty, None) => return Ok(false),
+            (EmbedderLocality::OwnerServer | EmbedderLocality::ThirdParty, Some(egress)) => egress,
+        };
+        if gate.decide_media(input) != EgressDecision::Allow {
             return Ok(false);
         }
         self.media_rows_may_leave(None, &[input.entity_id])
@@ -602,7 +605,11 @@ pub(super) fn asset_document_in(
     };
     let learned_at = row.learned_at;
     let raw = row.encode();
-    let Some((media_type, bytes)) = raw.get(ENTITY_METADATA_HEADER_LEN..).and_then(asset_media)
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    // FIX 9949: an ASSET's bytes are the blob it holds by reference.
+    let Some((media_type, bytes)) = crate::memory::asset_media_in(body, |blob| {
+        Ok(store.port_entity_record(txn, blob)?.map(|blob| blob.body))
+    })?
     else {
         report.no_media += 1;
         return Ok(None);
@@ -656,19 +663,22 @@ pub(super) fn is_text_document_type(entity_type: u8) -> bool {
 }
 
 /// The host's gate a pass with `embedder` reads through: a third-party embedder's must be
-/// there, or the pass is refused as it was before the gate; any other reads ungated.
+/// there, or the pass is refused as it was before the gate; one on the owner's server reads
+/// through the gate the host gives, or ungated with none (FIX 9830); one on this device reads
+/// ungated.
 pub(super) fn media_egress_for<'a>(
     embedder: &dyn MediaEmbedder,
     egress: Option<&'a dyn EgressPredicate>,
 ) -> Result<Option<&'a dyn EgressPredicate>> {
-    if embedder.locality() != EmbedderLocality::ThirdParty {
-        return Ok(None);
+    match embedder.locality() {
+        EmbedderLocality::OnDevice => Ok(None),
+        EmbedderLocality::OwnerServer => Ok(egress),
+        EmbedderLocality::ThirdParty => egress.map(Some).ok_or_else(|| {
+            Error::InvalidConfig(
+                "a third-party media embedder has no egress grant for stored media".into(),
+            )
+        }),
     }
-    egress.map(Some).ok_or_else(|| {
-        Error::InvalidConfig(
-            "a third-party media embedder has no egress grant for stored media".into(),
-        )
-    })
 }
 
 /// The text a text-bound space embeds for record `id`: what the text index would embed for it
@@ -725,34 +735,20 @@ fn text_row_in(
     )))
 }
 
-/// The inline media an ASSET body holds: its media type and non-empty bytes.
-pub(super) fn asset_media(body: &[u8]) -> Option<(String, Vec<u8>)> {
-    let Value::Map(entries) = rmpv::decode::read_value(&mut &body[..]).ok()? else {
-        return None;
+/// The UTF-8 content of a text ASSET, shared by both embedding workers: the
+/// bytes of the blob its body names (FIX 9949), `read` reading one stored
+/// row's body by id in the caller's own snapshot.
+pub(super) fn asset_text(
+    body: &[u8],
+    read: impl FnOnce(&EntityId) -> Result<Option<Vec<u8>>>,
+) -> Result<Option<String>> {
+    let Some((mime, bytes)) = crate::memory::asset_media_in(body, read)? else {
+        return Ok(None);
     };
-    let field = |name: &str| {
-        entries
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .map(|(_, value)| value)
-    };
-    let (Some(Value::Binary(bytes)), Some(media_type)) = (
-        field(ASSET_BODY_BYTES),
-        field(ASSET_BODY_MEDIA_TYPE).and_then(Value::as_str),
-    ) else {
-        return None;
-    };
-    (!bytes.is_empty()).then(|| (media_type.to_owned(), bytes.clone()))
-}
-
-/// The UTF-8 content of a text ASSET, shared by both embedding workers.
-pub(super) fn asset_text(body: &[u8]) -> Option<String> {
-    let (mime, bytes) = asset_media(body)?;
     if !mime.starts_with("text/") {
-        return None;
+        return Ok(None);
     }
-    let text = String::from_utf8(bytes).ok()?;
-    text.chars()
-        .any(|c| !c.is_whitespace() && !c.is_control())
-        .then_some(text)
+    Ok(String::from_utf8(bytes)
+        .ok()
+        .filter(|text| text.chars().any(|c| !c.is_whitespace() && !c.is_control())))
 }

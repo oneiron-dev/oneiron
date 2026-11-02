@@ -32,18 +32,23 @@ const CALL_RECEIPTS: SideTable<EntityId, CallReceipt, Named> =
 /// Agents' calls by actor, each actor's oldest first.
 pub(super) type AgentCalls = BTreeMap<EntityId, Vec<(EntityId, CallReceipt)>>;
 
-/// Each agent's calls in the lookback, oldest first. The whole lookback is
-/// read: past `limits.maintenance_scan_rows` receipts the review asks and
+/// Each agent's calls in the lookback, oldest first, and the newest time a
+/// receipt that did not read may hold ([`unread_bound`]). The whole lookback
+/// is read: past `limits.maintenance_scan_rows` receipts the review asks and
 /// reads on.
-pub(super) fn agent_calls(vault: &Vault, since: u64) -> Result<AgentCalls> {
+pub(super) fn agent_calls(vault: &Vault, since: u64) -> Result<(AgentCalls, Option<u64>)> {
     let rtxn = vault.store.env.read_txn()?;
     let mut calls = AgentCalls::new();
     let mut read: u64 = 0;
+    let mut newer = None;
+    let mut unread = None;
     for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
         read += 1;
         let Ok((id, receipt)) = row else {
+            unread.get_or_insert(unread_bound(newer));
             continue;
         };
+        newer = Some(receipt.at);
         if receipt.at < since {
             break;
         }
@@ -59,7 +64,13 @@ pub(super) fn agent_calls(vault: &Vault, since: u64) -> Result<AgentCalls> {
     for rows in calls.values_mut() {
         rows.reverse();
     }
-    Ok(calls)
+    Ok((calls, unread))
+}
+
+/// The newest time a receipt that did not read may hold, read newest first:
+/// the time of the row read just before it, or any time when none was.
+fn unread_bound(newer: Option<u64>) -> u64 {
+    newer.unwrap_or(u64::MAX)
 }
 
 /// One actor's calls whose receipts name one attempt at one generation, or
@@ -129,6 +140,10 @@ pub(super) struct CallActivity {
     /// generation of this one: counter-evidence on the card, never this
     /// attempt's activity.
     pub(super) other: Option<(CallAttemptRef, u64)>,
+    /// The newest time a receipt read since its claim that did not read may
+    /// hold. That row may be any of the calls above, so silence older than
+    /// it is not judged.
+    pub(super) unread: Option<u64>,
 }
 
 impl CallActivity {
@@ -204,11 +219,16 @@ pub(super) fn attempt_calls(
     let mut stream_open = witness.is_some();
     let mut activity_open = activity_since.is_some() && witness.is_some();
     let mut read: u64 = 0;
+    let mut newer = None;
     for row in CALL_RECEIPTS.iter_rev_from(&vault.store, &rtxn, &[])? {
         read += 1;
         let Ok((id, receipt)) = row else {
+            if activity_open {
+                activity.unread.get_or_insert(unread_bound(newer));
+            }
             continue;
         };
+        newer = Some(receipt.at);
         stream_open &= receipt.at >= since;
         activity_open &= activity_since.is_some_and(|start| receipt.at >= start);
         let wants_activity = activity_open && !activity.full();

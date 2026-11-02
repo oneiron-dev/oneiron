@@ -29,7 +29,13 @@
 //! every world's key to publish the vault's sealed bundle to the home its
 //! act targets. A custody change ([`OwnerWorkBody::Custody`]) asks for one
 //! change to one portable secret's custody, by its id: ids, digests and a
-//! generation only, its recipients inline (`custody`). Each kind is one
+//! generation only, its recipients inline (`custody`), or past one row their
+//! commitment, the recipients riding in numbered piece rows of their own
+//! ahead of it ([`CustodyPermitPiece`], FIX 11866). An export secret
+//! request ([`OwnerWorkBody::ExportSecret`], FIX 4624(b)) asks the install
+//! that holds one custody secret an owner export could not open to seal it to
+//! the recipient machine the owner chose (`export`): it carries the export's
+//! own act, and its result names the sealed copy's digest. Each kind is one
 //! [`OwnerWorkBody`] variant with its [`OwnerWorkKind`], the [`OwnerActKind`]
 //! its act carries and the wire map it states under `work`; the request and
 //! result envelopes stay as they are.
@@ -40,6 +46,8 @@
 
 mod cancel;
 mod custody;
+mod export;
+mod permit_piece;
 mod result;
 mod root_basis;
 
@@ -52,11 +60,15 @@ pub use self::cancel::{OP_KIND_OWNER_WORK_CANCEL, OwnerWorkCancel, ROOT_WORK_CAN
 pub(super) use self::cancel::{decode_owner_work_cancel, owner_work_cancel_value};
 pub use self::custody::{
     CUSTODY_RECIPIENT_SET_DOMAIN, CUSTODY_WORK_REVISION_CONTEXT, CustodyChange,
-    CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
+    CustodyPermitPieces, CustodyRecipientPermit, CustodyRequestAuthority, custody_recipient_set,
+    custody_recipients_encoded_len,
 };
+pub use self::export::ExportSecretWork;
+pub use self::permit_piece::{CustodyPermitPiece, OP_KIND_CUSTODY_PERMIT_PIECE};
+pub(super) use self::permit_piece::{custody_permit_piece_value, decode_custody_permit_piece};
 pub use self::result::{
     CustodyRegisterCheck, CustodyUncheckedReason, OwnerWorkOutcome, OwnerWorkRefusal,
-    OwnerWorkResult,
+    OwnerWorkResult, SealedWorkOutput,
 };
 pub(super) use self::result::{decode_owner_work_result, owner_work_result_value};
 pub use self::root_basis::RootRevisionBasis;
@@ -79,7 +91,17 @@ const PUBLISH_BUNDLE_WORK_KEYS: [&str; 2] = [OP_KEY_KIND, "home"];
 
 /// What kind of work a request asks for: the `kind` of its `work` map.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerWorkKind {
@@ -92,6 +114,9 @@ pub enum OwnerWorkKind {
     PublishBundle,
     /// A change to one portable secret's custody.
     Custody,
+    /// One custody secret an owner export could not open, sealed by its
+    /// holder to the recipient the owner chose (FIX 4624(b)).
+    ExportSecret,
 }
 
 impl OwnerWorkKind {
@@ -103,6 +128,7 @@ impl OwnerWorkKind {
             Self::Root => "root",
             Self::PublishBundle => "publish_bundle",
             Self::Custody => "custody",
+            Self::ExportSecret => "export_secret",
         }
     }
 
@@ -114,6 +140,7 @@ impl OwnerWorkKind {
             "root" => Some(Self::Root),
             "publish_bundle" => Some(Self::PublishBundle),
             "custody" => Some(Self::Custody),
+            "export_secret" => Some(Self::ExportSecret),
             _ => None,
         }
     }
@@ -125,6 +152,7 @@ impl OwnerWorkKind {
             Self::WorldKey | Self::PublishBundle => OwnerActKind::WorldKeyRequest,
             Self::Root => OwnerActKind::RootRequest,
             Self::Custody => OwnerActKind::CustodyTransition,
+            Self::ExportSecret => OwnerActKind::Export,
         }
     }
 }
@@ -282,15 +310,26 @@ pub enum OwnerWorkBody {
     /// its encrypted `input` (none for a rewrap) and the `recipients` the
     /// owner permits; a revoke names none of them and its carrier executes it.
     /// `authority` says whose say-so carries it (FIX 6053): an install's, or
-    /// the owner's kit's, which no machine carries or executes.
+    /// the owner's kit's, which no machine carries or executes. Permits past
+    /// one row ride in pieces (FIX 11866): `pieces` is then their commitment,
+    /// `recipients` is empty as the entry carries it, and the fold fills it
+    /// from the [`CustodyPermitPiece`] rows in the request's causal past.
     Custody {
         change: CustodyChange,
         generation: u32,
         input: Option<[u8; 32]>,
         holder: Option<EntityId>,
         recipients: Vec<CustodyRecipientPermit>,
+        pieces: Option<CustodyPermitPieces>,
         authority: CustodyRequestAuthority,
     },
+    /// One custody secret an owner export met and its exporting install
+    /// could not open, for its holder to seal to the owner's chosen
+    /// recipient (FIX 4624(b)). The act is the export's own: kind `export`,
+    /// on the reserved export target, `seen` zero, the owner's alone. The
+    /// executor is the install that holds the secret; nothing in custody
+    /// changes.
+    ExportSecret(ExportSecretWork),
 }
 
 impl OwnerWorkBody {
@@ -301,6 +340,7 @@ impl OwnerWorkBody {
             Self::Root { .. } => OwnerWorkKind::Root,
             Self::PublishBundle { .. } => OwnerWorkKind::PublishBundle,
             Self::Custody { .. } => OwnerWorkKind::Custody,
+            Self::ExportSecret(_) => OwnerWorkKind::ExportSecret,
         }
     }
 }
@@ -429,11 +469,18 @@ impl OwnerWorkRequest {
             input,
             holder,
             recipients,
+            pieces,
             authority,
             ..
         } = &self.work
         {
-            custody::validate_custody(self, *change, *input, *holder, recipients, *authority)?;
+            custody::validate_custody(
+                self, *change, *input, *holder, recipients, *pieces, *authority,
+            )?;
+        }
+        // An export secret request carries the export's own act.
+        if let OwnerWorkBody::ExportSecret(work) = &self.work {
+            export::validate_export_secret(self, work)?;
         }
         Ok(())
     }
@@ -457,8 +504,9 @@ fn signed_alone_by_install_key(entry: &AuthorityLogEntry) -> Result<()> {
 /// a world key work map is kind, then mode; a root work map is kind, change,
 /// root, machine, each field the change does not state nil, then its
 /// revision basis (`root_basis`); a publication work map is kind, then home;
-/// a custody work map is `custody`'s. The privacy basis is nil for work the
-/// owner's act asks for, else a map of edit, after, then key_owner.
+/// a custody work map is `custody`'s, an export secret map `export`'s. The
+/// privacy basis is nil for work the owner's act asks for, else a map of
+/// edit, after, then key_owner.
 pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
     let work = match &request.work {
         OwnerWorkBody::WorldKey { mode } => Value::Map(vec![
@@ -501,15 +549,17 @@ pub(super) fn owner_work_request_value(request: &OwnerWorkRequest) -> Value {
             input,
             holder,
             recipients,
+            pieces,
             authority,
         } => custody::custody_work_value(
             *change,
             *generation,
             *input,
             *holder,
-            recipients,
+            (recipients.as_slice(), *pieces),
             *authority,
         ),
+        OwnerWorkBody::ExportSecret(work) => export::export_secret_work_value(work),
     };
     Value::Map(vec![
         (
@@ -595,6 +645,7 @@ pub(super) fn decode_owner_work_request(entries: &[(Value, Value)]) -> Result<Au
             }
         }
         OwnerWorkKind::Custody => custody::decode_custody_work(work)?,
+        OwnerWorkKind::ExportSecret => export::decode_export_secret_work(work)?,
     };
     let privacy_basis = match required(entries, "privacy_basis")? {
         Value::Nil => None,

@@ -12,11 +12,13 @@ use wasmtime::{Config, Engine, Instance, Module, Store, StoreLimits, StoreLimits
 const ARTIFACT: &[u8] =
     include_bytes!("../../../../../components/schema-validator/artifacts/validator.wasm");
 const SHA256: &str = "bd82dc89962e5dd043404ffb19206462ed91348caf2d45103e51929d3e0154a1";
-const MAX_REQUEST_BYTES: usize = 256 * 1024;
+/// The guest's memory grant, bounding the request frame, the reply frame
+/// and the guest's linear memory alike.
+const GUEST_MEMORY_BYTES: usize = 64 * 1024 * 1024;
 const DEFAULT_BUDGET: SchemaValidationBudget = SchemaValidationBudget {
     fuel: 500_000_000,
-    memory_bytes: 64 * 1024 * 1024,
-    output_bytes: 4096,
+    memory_bytes: GUEST_MEMORY_BYTES,
+    output_bytes: GUEST_MEMORY_BYTES,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -79,7 +81,7 @@ pub(super) fn validate_with_budget(
         None => json!({"op":"check","schema":schema}),
     };
     let input = serde_json::to_vec(&input).map_err(|_| "schema request encoding failed")?;
-    if input.len() > MAX_REQUEST_BYTES {
+    if input.len() > GUEST_MEMORY_BYTES {
         return Ok(SchemaValidationOutcome::LimitExceeded);
     }
     let (engine, module) = COMPILED.with(|cell| {

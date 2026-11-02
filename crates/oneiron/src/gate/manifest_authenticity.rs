@@ -3,14 +3,48 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, GateError, Result};
 use crate::registry::ENTITY_TYPE_POLICY_MANIFEST;
-use crate::side_table::{self, HexId, Raw, SideTable};
-use crate::store::Store;
+use crate::side_table::{self, CodecError, HexId, Raw, RawValue, SideTable};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord, Store,
+};
 use crate::{EntityId, Vault};
 
-/// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated).
-/// Key: hex32.
-const TRUSTED_ORIGIN: SideTable<HexId, [u8; 32], Raw> =
+/// Authenticity hash stamped when a policy manifest is contributed directly (non-replicated),
+/// with the time this vault first trusted that body. Key: hex32.
+const TRUSTED_ORIGIN: SideTable<HexId, TrustedOrigin, Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_TRUSTED_ORIGIN);
+
+/// [`TRUSTED_ORIGIN`]'s value: the trusted body's hash, then the second this vault first
+/// trusted that body (FIX 10936), big-endian. A rewrite of the same body keeps the time, so
+/// what counts from it never moves. The vault-bootstrap seed writes the bare hash: it records
+/// no trust time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TrustedOrigin {
+    hash: [u8; 32],
+    trusted_at: Option<u64>,
+}
+
+impl RawValue for TrustedOrigin {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        let mut bytes = self.hash.to_vec();
+        if let Some(at) = self.trusted_at {
+            bytes.extend_from_slice(&at.to_be_bytes());
+        }
+        Ok(bytes)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let (hash, rest) = bytes.split_at(bytes.len().min(32));
+        Ok(Self {
+            hash: <[u8; 32]>::from_raw(hash)?,
+            trusted_at: if rest.is_empty() {
+                None
+            } else {
+                Some(u64::from_raw(rest)?)
+            },
+        })
+    }
+}
 /// Marks a policy-manifest contribution as quarantined by an explicit owner action. Key: hex32.
 const QUARANTINED: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_QUARANTINED);
@@ -20,6 +54,13 @@ const REKEY: SideTable<HexId, EntityId, Raw> = SideTable::new(&side_table::GATE_
 /// manifest. An owner write clears it. Key: hex32.
 const SEEDED: SideTable<HexId, [u8; 32], Raw> =
     SideTable::new(&side_table::GATE_MANIFEST_SEEDED_CONFIDENCE);
+
+/// The Gate `content_kind` of every manifest quarantine receipt.
+const MANIFEST_QUARANTINE_CONTENT_KIND: &str = "policy_manifest_quarantine";
+/// A manifest's current bytes were quarantined.
+const MANIFEST_QUARANTINED_REASON: &str = "gate.manifest.quarantined";
+/// A manifest's quarantine marker was lifted.
+const MANIFEST_QUARANTINE_LIFTED_REASON: &str = "gate.manifest.quarantine_lifted";
 
 /// `store::handle`'s vault-bootstrap seed writes this row directly, before any vault (and so any
 /// typed door) exists to read it back through — kept as a plain string builder so that raw write
@@ -111,9 +152,22 @@ pub(crate) fn stamp_manifest_origin(
     let origin_key = HexId(*id);
     if !replicated {
         // Every local re-authoring is authored even if it keeps the seeded ID,
-        // pack name or byte-identical default value.
+        // pack name or byte-identical default value. A body already trusted
+        // keeps the time it was first trusted (FIX 10936).
         SEEDED.delete(store, txn, &origin_key)?;
-        TRUSTED_ORIGIN.put(store, txn, &origin_key, hash.as_bytes())?;
+        let trusted_at = match TRUSTED_ORIGIN.get(store, txn, &origin_key)? {
+            Some(prior) if prior.hash == *hash.as_bytes() => prior.trusted_at,
+            _ => Some(crate::ports::recorded_at_in_txn(store, txn)?),
+        };
+        TRUSTED_ORIGIN.put(
+            store,
+            txn,
+            &origin_key,
+            &TrustedOrigin {
+                hash: *hash.as_bytes(),
+                trusted_at,
+            },
+        )?;
     } else {
         let existing_matches = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
             .is_some_and(|raw| {
@@ -131,7 +185,7 @@ pub(crate) fn stamp_manifest_origin(
         if !existing_matches
             || TRUSTED_ORIGIN
                 .get(store, txn, &origin_key)?
-                .is_none_or(|old| old != *hash.as_bytes())
+                .is_none_or(|old| old.hash != *hash.as_bytes())
         {
             TRUSTED_ORIGIN.delete(store, txn, &origin_key)?;
         }
@@ -147,7 +201,22 @@ pub(crate) fn manifest_is_trusted(
 ) -> Result<bool> {
     Ok(TRUSTED_ORIGIN
         .get(store, txn, &HexId(*id))?
-        .is_some_and(|hash| hash == *blake3::hash(body).as_bytes()))
+        .is_some_and(|origin| origin.hash == *blake3::hash(body).as_bytes()))
+}
+
+/// The second this vault first trusted `body` at manifest `id` (FIX 10936): its trust stamp's
+/// time, kept across a rewrite of the same body. `None` when that body is not trusted there,
+/// or its stamp records no time (the bootstrap seed's).
+pub(crate) fn manifest_trusted_at(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    body: &[u8],
+) -> Result<Option<u64>> {
+    Ok(TRUSTED_ORIGIN
+        .get(store, txn, &HexId(*id))?
+        .filter(|origin| origin.hash == *blake3::hash(body).as_bytes())
+        .and_then(|origin| origin.trusted_at))
 }
 
 pub(crate) fn manifest_is_quarantined(
@@ -164,11 +233,12 @@ pub(crate) fn manifest_is_quarantined(
 /// Quarantines the bytes manifest `id` holds now, as the owner's quarantine
 /// door does, inside `txn`. False when `id` names no stored manifest.
 fn quarantine_current_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
+    actor: Option<EntityId>,
 ) -> Result<bool> {
-    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)? else {
         return Ok(false);
     };
     if EntityMetadataHeader::parse(&raw)
@@ -177,7 +247,14 @@ fn quarantine_current_in_txn(
         return Ok(false);
     }
     let hash = blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]);
-    QUARANTINED.put(store, txn, &HexId(*id), hash.as_bytes())?;
+    QUARANTINED.put(&vault.store, txn, &HexId(*id), hash.as_bytes())?;
+    vault.append_quarantine_receipt_in_txn(
+        txn,
+        actor,
+        MANIFEST_QUARANTINED_REASON,
+        *id,
+        *hash.as_bytes(),
+    )?;
     Ok(true)
 }
 
@@ -217,14 +294,57 @@ impl Vault {
         Ok(out)
     }
 
+    /// Appends one manifest quarantine receipt in the acting writer and
+    /// answers its decision id.
+    fn append_quarantine_receipt_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: Option<EntityId>,
+        reason: &'static str,
+        id: EntityId,
+        hash: [u8; 32],
+    ) -> Result<GateDecisionId> {
+        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
+        let (actor_class, actor_ref) = match actor {
+            Some(actor) => ("human".to_owned(), Some(actor.to_hex())),
+            None => ("system".to_owned(), None),
+        };
+        let record = GateDecisionRecord {
+            version: GATE_DECISION_LEDGER_VERSION,
+            decision_id,
+            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
+            outcome: "allow".to_owned(),
+            reason_codes: vec![reason.to_owned()],
+            receipt_reasons: Vec::new(),
+            system_notices: GateSystemNoticeRecord::receipt_details(
+                MANIFEST_QUARANTINE_CONTENT_KIND,
+                vec![format!("manifest:{}", id.to_hex())],
+            ),
+            actor_class,
+            actor_ref,
+            content_kind: MANIFEST_QUARANTINE_CONTENT_KIND.to_owned(),
+            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
+            claim_id: None,
+            grant_ref: None,
+            diff_handle: hash.to_vec(),
+            read_frontier_hash: [0; 32],
+            context: Default::default(),
+            redacted_at: None,
+        };
+        self.store.append_gate_decision_in_txn(txn, &record)?;
+        Ok(decision_id)
+    }
+
     /// Human removal of an untrusted narrowing, pinned to these exact bytes.
+    /// Once it commits, the custody floor rebinds and the manifest watch
+    /// reads it, as every manifest commit does (FIX 11527).
     pub fn quarantine_manifest_contribution(
         &self,
         owner: &AuthenticatedOwner,
         id: EntityId,
     ) -> Result<()> {
         let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, &id)?
             .ok_or(Error::EntityNotFound)?;
         if EntityMetadataHeader::parse(&raw)
@@ -234,6 +354,35 @@ impl Vault {
         }
         let hash = blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]);
         QUARANTINED.put(&self.store, &mut txn, &HexId(id), hash.as_bytes())?;
+        self.append_quarantine_receipt_in_txn(
+            &mut txn,
+            Some(actor),
+            MANIFEST_QUARANTINED_REASON,
+            id,
+            *hash.as_bytes(),
+        )?;
+        txn.commit()?;
+        self.apply_pending_rebinds_after_commit();
+        Ok(())
+    }
+
+    /// Lifts the quarantine marker on a manifest id, so bytes declared
+    /// under it count again as any declaration does. An id with no marker is
+    /// left as it is. An install never lifts it by itself.
+    pub fn lift_manifest_quarantine(&self, owner: &AuthenticatedOwner, id: EntityId) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_in_txn(self, &txn)?;
+        let Some(hash) = QUARANTINED.get(&self.store, &txn, &HexId(id))? else {
+            return Ok(());
+        };
+        QUARANTINED.delete(&self.store, &mut txn, &HexId(id))?;
+        self.append_quarantine_receipt_in_txn(
+            &mut txn,
+            Some(actor),
+            MANIFEST_QUARANTINE_LIFTED_REASON,
+            id,
+            hash,
+        )?;
         txn.commit()?;
         Ok(())
     }
@@ -368,7 +517,7 @@ impl Vault {
         TRUSTED_ORIGIN.delete(&self.store, txn, &key)?;
         RETENTION_HOLDER.delete(&self.store, txn, &key)?;
         SEEDED.delete(&self.store, txn, &key)?;
-        quarantine_current_in_txn(&self.store, txn, &id)?;
+        quarantine_current_in_txn(self, txn, &id, None)?;
         Ok(())
     }
 
@@ -423,7 +572,7 @@ impl Vault {
             before = after;
         }
         for id in retires {
-            placed = placed && quarantine_current_in_txn(&self.store, &mut txn, id)?;
+            placed = placed && quarantine_current_in_txn(self, &mut txn, id, None)?;
         }
         if placed && !retires.is_empty() {
             folded(&txn);

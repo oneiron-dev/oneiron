@@ -5,8 +5,8 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
 use super::super::record::{
-    CONNECTOR_KEY_MAX_BUDGET_ROWS, ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget,
-    invalid_body, normalize_connector_key, validate_budget_row, validate_suggested_budget_row,
+    ConnectorKeyRecord, ConnectorKeyStatus, EffectorBudget, invalid_body, normalize_connector_key,
+    validate_budget_row, validate_suggested_budget_row,
 };
 use super::super::txn::{
     append_connector_key_op_record, read_connector_key_in_txn, rewrite_connector_key_in_txn,
@@ -31,9 +31,6 @@ impl Vault {
         if record.status == ConnectorKeyStatus::Revoked {
             return Err(invalid_body("cannot add budget row to revoked key"));
         }
-        if record.budgets.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
-            return Err(invalid_body("too many budget rows"));
-        }
         record.budgets.push(budget);
         rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &record)?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
@@ -47,6 +44,7 @@ impl Vault {
             now,
         )?;
         wtxn.commit()?;
+        self.measure_connector_key_shape(&record);
         Ok(record)
     }
     /// Stages one advisory budget row. Suggested rows never participate in
@@ -68,9 +66,6 @@ impl Vault {
         if record.status == ConnectorKeyStatus::Revoked {
             return Err(invalid_body("cannot suggest budget row on revoked key"));
         }
-        if record.suggested_budgets.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
-            return Err(invalid_body("too many suggested budget rows"));
-        }
         record.suggested_budgets.push(budget);
         rewrite_connector_key_in_txn(&self.store, &mut wtxn, id, &record)?;
         let policy = crate::gate::resolve_policy_manifest(&self.store, &wtxn)?;
@@ -84,6 +79,7 @@ impl Vault {
             now,
         )?;
         wtxn.commit()?;
+        self.measure_connector_key_shape(&record);
         Ok(record)
     }
     /// Accepts one staged row into the active budget table. Existing usage is
@@ -99,9 +95,6 @@ impl Vault {
             read_connector_key_in_txn(&self.store, &wtxn, id)?.ok_or(Error::EntityNotFound)?;
         if record.status == ConnectorKeyStatus::Revoked {
             return Err(invalid_body("cannot accept budget row on revoked key"));
-        }
-        if record.budgets.len() >= CONNECTOR_KEY_MAX_BUDGET_ROWS {
-            return Err(invalid_body("too many budget rows"));
         }
         if suggestion_index >= record.suggested_budgets.len() {
             return Err(invalid_body("suggested budget row not found"));
@@ -121,6 +114,7 @@ impl Vault {
             now,
         )?;
         wtxn.commit()?;
+        self.measure_connector_key_shape(&record);
         Ok(record)
     }
 }

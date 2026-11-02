@@ -19,12 +19,17 @@
 //! A host that stops a vault between uses asks [`Vault::housekeeping_wake_at`]
 //! when it must run the vault again for a retirement that comes due.
 
+mod report;
 mod schedule;
 mod sweeps;
+mod sync_work;
 #[cfg(test)]
 mod tests;
 mod wake;
 
+pub use self::report::{
+    HardEraseWork, HousekeepingReport, SecretLiftWork, SweepOutcome, SweepReport, SweepWork,
+};
 pub(crate) use self::wake::note_wake_in_txn;
 
 use std::sync::Arc;
@@ -34,12 +39,12 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 
 use crate::Vault;
-use crate::error::{ErrorKind, Result};
+use crate::error::Result;
 
 use self::schedule::SweepState;
 
-/// One sweep the housekeeping pass knows. The engine runs the first twelve; the
-/// rest need a host's authority and are reported, never run.
+/// One sweep the housekeeping pass knows. The engine runs the first fourteen;
+/// the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -73,6 +78,12 @@ pub enum HousekeepingSweep {
     /// no door places files a lift proposal. Idle when no run is queued, and
     /// paused while the owner's switch is off.
     SecretLiftHistory,
+    /// Finishes owed claim VAD consolidations (FIX 9598): an approval whose
+    /// writer stopped, or whose consolidation failed, before it was done.
+    ClaimVadDebt,
+    /// Raises the found-key notices left due past one write's share (OF-560,
+    /// FIX 2648), for a vault no later write comes to.
+    FoundKeyNotices,
     /// Due signing reminders.
     EsignReminders,
     /// Consult deadlines and their expiry digests.
@@ -128,7 +139,7 @@ const DAY: u64 = 24 * HOUR;
 
 impl HousekeepingSweep {
     /// Every sweep, in report order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 20] = [
         Self::SecretLeaseExpiry,
         Self::CriticalConfirmExpiry,
         Self::SymbolLeaseExpiry,
@@ -141,6 +152,8 @@ impl HousekeepingSweep {
         Self::PprCacheEviction,
         Self::SharedActMaturity,
         Self::SecretLiftHistory,
+        Self::ClaimVadDebt,
+        Self::FoundKeyNotices,
         Self::EsignReminders,
         Self::ConsultSettlement,
         Self::PolicyHoldPrune,
@@ -164,6 +177,8 @@ impl HousekeepingSweep {
             Self::PprCacheEviction => "ppr_cache_eviction",
             Self::SharedActMaturity => "shared_act_maturity",
             Self::SecretLiftHistory => "secret_lift_history",
+            Self::ClaimVadDebt => "claim_vad_debt",
+            Self::FoundKeyNotices => "found_key_notices",
             Self::EsignReminders => "esign_reminders",
             Self::ConsultSettlement => "consult_settlement",
             Self::PolicyHoldPrune => "policy_hold_prune",
@@ -183,7 +198,10 @@ impl HousekeepingSweep {
     /// deadline makes the maturity sweep due then (its start notes it), and
     /// it runs hourly besides, for an act an objection withdrawal released.
     /// The lift sweep looks for a queued run every fifteen minutes, and a run
-    /// left unfinished at a pass's deadline is due again at once.
+    /// left unfinished at a pass's deadline is due again at once. Owed claim
+    /// VAD work runs at open, for an approval a stopped process left, and
+    /// every fifteen minutes. The found-key drain looks for due notices every
+    /// fifteen minutes.
     const fn runner(self) -> Runner {
         const fn engine(every: u64) -> Runner {
             Runner::Engine {
@@ -199,13 +217,18 @@ impl HousekeepingSweep {
             Self::EsignExpiry
             | Self::EsignSealBackstop
             | Self::CommitmentLapse
-            | Self::SecretLiftHistory => engine(15 * MINUTE),
+            | Self::SecretLiftHistory
+            | Self::FoundKeyNotices => engine(15 * MINUTE),
             Self::GateDecisionRetention => Runner::Engine {
                 every: HOUR,
                 at_open: true,
             },
             Self::HardEraseSweep | Self::PprCacheEviction => engine(DAY),
             Self::SharedActMaturity => engine(HOUR),
+            Self::ClaimVadDebt => Runner::Engine {
+                every: 15 * MINUTE,
+                at_open: true,
+            },
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),
@@ -278,233 +301,6 @@ impl Deadline {
     }
 }
 
-/// What one pass did, one row per sweep in [`HousekeepingSweep::ALL`] order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct HousekeepingReport {
-    /// The vault clock when the pass began, in seconds.
-    pub started_at: u64,
-    pub sweeps: Vec<SweepReport>,
-}
-
-impl HousekeepingReport {
-    /// Sweeps that ran this pass.
-    pub fn ran(&self) -> usize {
-        self.count(|outcome| matches!(outcome, SweepOutcome::Ran { .. }))
-    }
-
-    /// Sweeps that failed or panicked this pass, or ran but could not finish
-    /// some of their items.
-    pub fn failed(&self) -> usize {
-        self.count(|outcome| match outcome {
-            SweepOutcome::Failed { .. } | SweepOutcome::Panicked => true,
-            SweepOutcome::Ran { work, .. } => work.items_failed() > 0,
-            _ => false,
-        })
-    }
-
-    /// Due sweeps the budget left for a later pass.
-    pub fn out_of_budget(&self) -> usize {
-        self.count(|outcome| matches!(outcome, SweepOutcome::OutOfBudget))
-    }
-
-    /// The row of one sweep.
-    pub fn sweep(&self, sweep: HousekeepingSweep) -> Option<&SweepOutcome> {
-        self.sweeps
-            .iter()
-            .find(|row| row.sweep == sweep)
-            .map(|row| &row.outcome)
-    }
-
-    fn count(&self, matches: impl Fn(&SweepOutcome) -> bool) -> usize {
-        self.sweeps
-            .iter()
-            .filter(|row| matches(&row.outcome))
-            .count()
-    }
-}
-
-/// One sweep's row in a [`HousekeepingReport`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct SweepReport {
-    pub sweep: HousekeepingSweep,
-    #[serde(flatten)]
-    pub outcome: SweepOutcome,
-}
-
-/// What became of one sweep in one pass.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum SweepOutcome {
-    /// The sweep ran. `complete` is false when it stopped at its bound with
-    /// work left; it is due again on the next pass.
-    Ran { work: SweepWork, complete: bool },
-    /// Not due before `due_at` (vault clock, seconds).
-    NotDue { due_at: u64 },
-    /// Due, but the pass's budget was spent; it runs on a later pass, ahead
-    /// of sweeps that fell due after it.
-    OutOfBudget,
-    /// The sweep returned an error. It is retried on a later pass.
-    Failed {
-        #[serde(serialize_with = "serialize_error_kind")]
-        kind: ErrorKind,
-    },
-    /// The sweep panicked. It is retried on a later pass.
-    Panicked,
-    /// The engine does not run this sweep.
-    HostOnly { reason: HostOnlyReason },
-}
-
-/// The counts one sweep run reports.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SweepWork {
-    SecretLeases {
-        expired: u64,
-        /// Files a revoke or an expiry had kept that this run removed.
-        files_removed: u64,
-        /// Files still kept: not removable yet, or not the file the vault
-        /// wrote. Retried on later runs; never a failed item, so they hold
-        /// no other lease's expiry back.
-        files_kept: u64,
-    },
-    CriticalConfirms {
-        demoted: u64,
-        pages: u64,
-    },
-    SymbolLeases {
-        released: u64,
-    },
-    VoicePrints {
-        pruned: u64,
-    },
-    EsignExpiry {
-        documents: u64,
-        expired: u64,
-        failed: u64,
-    },
-    EsignSeals {
-        documents: u64,
-        enqueued: u64,
-        failed: u64,
-    },
-    Commitments {
-        lapsed: u64,
-        close_hooks_repaired: u64,
-    },
-    GateDecisions {
-        removed: u64,
-    },
-    HardErase(HardEraseWork),
-    PprCache {
-        evicted: u64,
-        deps_cleaned: u64,
-    },
-    SharedActs {
-        /// Matured-act notices written to live Owners.
-        noticed: u64,
-    },
-    SecretLift(SecretLiftWork),
-}
-
-impl SweepWork {
-    /// Items the run could not finish: each is retried on a later pass, after
-    /// the backoff.
-    pub fn items_failed(&self) -> u64 {
-        match *self {
-            Self::EsignExpiry { failed, .. } | Self::EsignSeals { failed, .. } => failed,
-            Self::HardErase(work) => work
-                .jobs_failed
-                .saturating_add(work.obligations_undecodable),
-            Self::SecretLift(work) => work.failed,
-            _ => 0,
-        }
-    }
-
-    /// Whether the run found nothing to do.
-    pub fn is_idle(&self) -> bool {
-        match *self {
-            Self::SecretLeases {
-                expired,
-                files_removed,
-                files_kept,
-            } => expired == 0 && files_removed == 0 && files_kept == 0,
-            Self::CriticalConfirms { demoted, .. } => demoted == 0,
-            Self::SymbolLeases { released } => released == 0,
-            Self::VoicePrints { pruned } => pruned == 0,
-            Self::EsignExpiry {
-                expired, failed, ..
-            } => expired == 0 && failed == 0,
-            Self::EsignSeals {
-                enqueued, failed, ..
-            } => enqueued == 0 && failed == 0,
-            Self::Commitments {
-                lapsed,
-                close_hooks_repaired,
-            } => lapsed == 0 && close_hooks_repaired == 0,
-            Self::GateDecisions { removed } => removed == 0,
-            Self::HardErase(work) => work == HardEraseWork::default(),
-            Self::PprCache {
-                evicted,
-                deps_cleaned,
-            } => evicted == 0 && deps_cleaned == 0,
-            Self::SharedActs { noticed } => noticed == 0,
-            Self::SecretLift(work) => work == SecretLiftWork::default(),
-        }
-    }
-}
-
-/// The erasure sweep's counts (ARCH-0038 historical carriers).
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct HardEraseWork {
-    /// Obligations discharged: receipts finalized and the obligation removed.
-    pub jobs_processed: u64,
-    /// Obligations left for a later run without an attempt (not yet due, a
-    /// live window, an unreadable row).
-    pub jobs_deferred: u64,
-    /// Windows no caller held, written down and closed so their carriers
-    /// could be compacted.
-    pub windows_unloaded: u64,
-    /// Obligations whose attempt failed; each keeps its row with a retry time.
-    pub jobs_failed: u64,
-    pub windows_compacted: u64,
-    pub windows_deferred_live: u64,
-    pub windows_deferred_raced: u64,
-    /// Windows and documents a legal hold keeps as they are (OF-470).
-    pub windows_deferred_held: u64,
-    pub receipts_finalized: u64,
-    /// Obligations past their 30-day deadline.
-    pub deadline_breaches: u64,
-    pub quarantine_rows_expired: u64,
-    /// Receipts queued for a sweep that no obligation covers.
-    pub obligations_missing: u64,
-    pub obligations_undecodable: u64,
-}
-
-/// The lift sweep's counts for one housekeeping run (OF-067). The run's own
-/// receipt counts the whole run, by family.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct SecretLiftWork {
-    /// Rows the census read.
-    pub rows_read: u64,
-    /// Rows rewritten with their handles.
-    pub masked: u64,
-    /// Lift proposals filed.
-    pub proposals: u64,
-    /// Rows that failed again when retried.
-    pub failed: u64,
-    /// A run waits for the owner's switch to come back on.
-    pub paused: bool,
-    /// The run ended and wrote its receipt.
-    pub finished: bool,
-}
-
-fn serialize_error_kind<S: serde::Serializer>(
-    kind: &ErrorKind,
-    serializer: S,
-) -> std::result::Result<S::Ok, S::Error> {
-    serializer.collect_str(&format_args!("{kind:?}"))
-}
-
 /// Per-handle housekeeping state: one pass at a time, and whether this handle
 /// has run its first pass yet.
 #[derive(Debug, Default)]
@@ -517,6 +313,8 @@ pub(crate) struct HousekeepingHandle {
 enum Selection {
     Due,
     All,
+    /// One engine sweep now, asked by a support holder (FIX 4407).
+    One(HousekeepingSweep),
 }
 
 /// A sweep a pass will start if its budget allows.
@@ -534,8 +332,13 @@ impl Vault {
     /// Runs every engine sweep that is due, oldest-due first, within
     /// `budget`. A host calls this on its own tick, off the request path. An
     /// error means the schedule could not be read; a sweep's own failure is a
-    /// row of the report.
+    /// row of the report. Unless the host has asked it to stop, the pass
+    /// first runs one capped communication projector pass, whose failure is
+    /// logged and never fails a sweep.
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
+        if !budget.deadline().stopped() {
+            crate::comm::run_comm_projector_housekeeping_step(self);
+        }
         self.housekeeping_pass(Selection::Due, budget)
     }
 
@@ -545,11 +348,22 @@ impl Vault {
         self.housekeeping_pass(Selection::All, budget)
     }
 
+    /// Runs the engine sweep `sweep` alone now and reschedules it from now: a
+    /// support holder's repair (FIX 4407), never [`Self::housekeeping_all`].
+    pub(crate) fn housekeeping_one(
+        &self,
+        sweep: HousekeepingSweep,
+        budget: HousekeepingBudget,
+    ) -> Result<HousekeepingReport> {
+        self.housekeeping_pass(Selection::One(sweep), budget)
+    }
+
     /// When a vault that is not running must next run a pass, or `None` when
     /// it owes no retirement: the earliest deadline a door noted for a secret
     /// lease, a voice print, a critical confirm or a shared act's window, not
     /// before that sweep is next due (a failing sweep waits out its backoff),
-    /// and the erasure sweep's due time while an obligation waits. Cache and retention hygiene
+    /// and the erasure sweep's due time while an obligation waits, and a left
+    /// env's owed body collection (FIX 2413). Cache and retention hygiene
     /// never wake a vault. Reads one row per sweep and the schedule, never a
     /// whole table, so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
@@ -567,6 +381,9 @@ impl Vault {
         let mut owed = noted;
         if schedule::erase_obligation_waiting(self)? {
             owed.push((HousekeepingSweep::HardEraseSweep, 0));
+        }
+        if let Some(at) = sync_work::left_env_body_collect_due_at(self)? {
+            owed.push((HousekeepingSweep::GateDecisionRetention, at));
         }
         let mut earliest: Option<u64> = None;
         for (sweep, at) in owed {
@@ -596,10 +413,15 @@ impl Vault {
         let mut rows: Vec<Option<SweepOutcome>> = vec![None; HousekeepingSweep::ALL.len()];
         let mut due: Vec<Due> = Vec::new();
         for (index, sweep) in HousekeepingSweep::ALL.into_iter().enumerate() {
+            if let Selection::One(asked) = selection
+                && asked != sweep
+            {
+                continue;
+            }
             match sweep.runner() {
                 Runner::Host(reason) => rows[index] = Some(SweepOutcome::HostOnly { reason }),
                 Runner::Engine { every, at_open } => {
-                    if selection == Selection::All || (at_open && !handle.first_pass_done) {
+                    if selection != Selection::Due || (at_open && !handle.first_pass_done) {
                         due.push(Due {
                             at: 0,
                             index,
@@ -643,11 +465,14 @@ impl Vault {
             rows[index] =
                 Some(self.run_scheduled_sweep(sweep, state, every, &deadline, owner_asked));
         }
-        handle.first_pass_done = true;
+        if !matches!(selection, Selection::One(_)) {
+            handle.first_pass_done = true;
+        }
 
         let sweeps = HousekeepingSweep::ALL
             .into_iter()
             .zip(rows)
+            .filter(|(sweep, _)| !matches!(selection, Selection::One(asked) if asked != *sweep))
             .map(|(sweep, outcome)| SweepReport {
                 sweep,
                 outcome: outcome.unwrap_or(SweepOutcome::OutOfBudget),
@@ -723,13 +548,14 @@ impl Vault {
         let (outcome, finished) = match result {
             Ok(Ok(run)) => {
                 // An owner's erasure run that left a window uncompacted (a
-                // caller held it, a write raced it, or a legal hold kept it)
-                // has not answered the owner: it is retried as the owner's,
-                // after the backoff.
+                // caller held it, a write raced it, its cut was not proved,
+                // or a legal hold kept it) has not answered the owner: it is
+                // retried as the owner's, after the backoff.
                 let owner_left = running.owners()
                     && matches!(run.work, SweepWork::HardErase(work)
                         if work.windows_deferred_live > 0
                             || work.windows_deferred_raced > 0
+                            || work.windows_deferred_unproved > 0
                             || work.windows_deferred_held > 0);
                 let items_failed = run.work.items_failed() > 0 || owner_left;
                 if run.complete && !items_failed {

@@ -21,6 +21,7 @@
 //! doors, their key bound and their container budget are unchanged.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -29,6 +30,8 @@ use super::super::container::{
     Stop, holds_spans, masked_retained_repo_copy, walk_retained_repo_members,
 };
 use super::super::release_hit;
+use super::body::reads_as_text;
+use super::text_log::{TextLog, TextSpans};
 use super::wipe::PlanValues;
 use super::{
     FileKey, FoundFile, Masker, REASON_KNOWN_VALUE, file_spans, merged, occurrences, offset,
@@ -38,6 +41,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::origin::lfs::find_custody_credential;
 use crate::ports::ShortIdStoreRead;
+use crate::repo_mutation::{
+    REPO_ENV_VALUE_REASON, dotenv_value_lifts, repo_env_entries, repo_env_file,
+};
 use crate::secret_custody::{
     CustodyWrite, KeySpan, KnownValues, MaskedFile, MemberStep, masked_file_in_txn,
 };
@@ -58,10 +64,12 @@ pub(crate) struct RetainedRepoBlobPlan {
     opaque: Option<&'static str>,
 }
 
-/// Plans the marks of `bytes`, one retained repository blob the receive
-/// door's scan named under `proved`. `known` is the index a pass read now;
-/// `origin` is the record a plan's stand-ins read for (the push's
-/// operation). A blob no rule places a key in, whose container no reader
+/// Plans the marks of `bytes`, one retained repository blob at `path` (the
+/// door's label) the receive door's scan named under `proved`. A dotenv
+/// blob's every value [`dotenv_value_lifts`] takes is a key too,
+/// token-shaped or not (FIX 7608 slice 6, CALL DOTENV-IMPORT). `known` is
+/// the index a pass read now; `origin` is the record a plan's stand-ins
+/// read for (the push's operation). A blob no rule places a key in, whose container no reader
 /// here reads, or whose rebuilt copy still reads as secret is opaque: the
 /// keys placed stay, and the residue's reason is kept beside them.
 ///
@@ -69,6 +77,7 @@ pub(crate) struct RetainedRepoBlobPlan {
 /// An engine failure while reading. A stop the blob's own bytes cause is
 /// opaque residue, never an error.
 pub(crate) fn plan_retained_repo_blob(
+    path: &str,
     bytes: &[u8],
     known: Option<&KnownValues>,
     proved: &'static str,
@@ -76,12 +85,13 @@ pub(crate) fn plan_retained_repo_blob(
 ) -> Result<RetainedRepoBlobPlan> {
     let mut keys = Vec::new();
     if holds_spans(bytes) {
-        place_leaf(&[], bytes, known, origin, &mut keys)?;
+        let env = dotenv_value_spans(path, bytes);
+        place_leaf(&[], bytes, &env, known, origin, &mut keys)?;
     }
     let walked = {
         let mut visit = |path: &[MemberStep], member: &[u8]| -> std::result::Result<(), Stop> {
             if holds_spans(member) {
-                place_leaf(path, member, known, origin, &mut keys)?;
+                place_leaf(path, member, &[], known, origin, &mut keys)?;
             }
             Ok(())
         };
@@ -104,12 +114,31 @@ pub(crate) fn plan_retained_repo_blob(
     })
 }
 
-/// The keys the file mask's text and field rules, and the values custody
-/// knows, place in `leaf` (a blob's own bytes, or one member's), each at
-/// `path`, in byte order. No count bounds them (rule 5).
+/// Each value span of the dotenv blob at `path` that receive lifts, under
+/// the dotenv reason; none for any other blob.
+fn dotenv_value_spans(path: &str, bytes: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    if repo_env_file(path).is_none() {
+        return Vec::new();
+    }
+    repo_env_entries(bytes)
+        .into_iter()
+        .filter(|entry| {
+            bytes
+                .get(entry.value.clone())
+                .is_some_and(dotenv_value_lifts)
+        })
+        .map(|entry| (entry.value, REPO_ENV_VALUE_REASON))
+        .collect()
+}
+
+/// The keys the file mask's text and field rules, the values custody
+/// knows, and `extra` (a dotenv blob's values) place in `leaf` (a blob's
+/// own bytes, or one member's), each at `path`, in byte order. No count
+/// bounds them (rule 5).
 fn place_leaf(
     path: &[MemberStep],
     leaf: &[u8],
+    extra: &[(Range<usize>, &'static str)],
     known: Option<&KnownValues>,
     origin: EntityId,
     keys: &mut Vec<FileKey>,
@@ -126,7 +155,17 @@ fn place_leaf(
         at: Some((origin, PLACE.to_owned())),
         ..Masker::default()
     };
+    // A leaf no decoder takes is read as one text, whose spans are
+    // the ones just found: they are not found again (speed, FIX 12211).
+    if reads_as_text(leaf) {
+        let leaf_spans = TextSpans {
+            known: Vec::new(),
+            shapes: spans.clone(),
+        };
+        fields.text_log = TextLog::seeded(leaf, leaf_spans);
+    }
     fields.mask_body(leaf)?;
+    spans.extend(extra.iter().cloned());
     for found in fields.found {
         spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
     }
@@ -214,7 +253,7 @@ fn leaf_hit(bytes: &[u8]) -> Result<Option<&'static str>> {
 /// far, wiped when it drops. A value met again, in one blob or another,
 /// keeps the record it took the first time.
 pub(crate) struct RetainedRepoCustody {
-    known: Option<KnownValues>,
+    known: Option<Arc<KnownValues>>,
     minted: PlanValues<(String, EntityId)>,
 }
 
@@ -222,7 +261,7 @@ impl RetainedRepoCustody {
     /// The index as `wtxn` reads it, with nothing minted yet.
     pub(crate) fn load_in_writer(store: &Store, wtxn: &RwTxn<'_>) -> Result<Self> {
         Ok(Self {
-            known: KnownValues::load_in_writer(store, wtxn)?,
+            known: KnownValues::shared_in_writer(store, wtxn)?,
             minted: PlanValues::default(),
         })
     }
@@ -342,6 +381,7 @@ pub(crate) fn mark_retained_repo_blob_in_txn(
         let file = FoundFile {
             hash: raw_blake3,
             keys: marked,
+            record: origin,
         };
         put_file_marks_in_txn(store, wtxn, vec![file], &minted, at)?;
     }
@@ -475,8 +515,19 @@ fn put_step(out: &mut Vec<u8>, step: MemberStep) {
             out.extend_from_slice(&entry.to_be_bytes());
         }
         MemberStep::Gzip => out.push(1),
+        // FIX 2471: a tar entry and an xz payload.
+        MemberStep::Tar { entry } => {
+            out.push(4);
+            out.extend_from_slice(&entry.to_be_bytes());
+        }
+        MemberStep::Xz => out.push(5),
         MemberStep::PdfStream { object, generation } => {
             out.push(2);
+            out.extend_from_slice(&object.to_be_bytes());
+            out.extend_from_slice(&generation.to_be_bytes());
+        }
+        MemberStep::PdfStrings { object, generation } => {
+            out.push(3);
             out.extend_from_slice(&object.to_be_bytes());
             out.extend_from_slice(&generation.to_be_bytes());
         }
@@ -524,7 +575,14 @@ impl<'b> Spooled<'b> {
         Ok(match self.byte()? {
             0 => MemberStep::Zip { entry: self.u32()? },
             1 => MemberStep::Gzip,
+            // FIX 2471: a tar entry and an xz payload.
+            4 => MemberStep::Tar { entry: self.u32()? },
+            5 => MemberStep::Xz,
             2 => MemberStep::PdfStream {
+                object: self.u32()?,
+                generation: self.u16()?,
+            },
+            3 => MemberStep::PdfStrings {
                 object: self.u32()?,
                 generation: self.u16()?,
             },

@@ -120,7 +120,10 @@ impl Vault {
     /// [`Vault::write_authority_checkpoint_v2`] sets its parent and keeps it.
     /// Refuses with the typed history-required error where the tail cannot
     /// extend the baseline and a covered row is not held here; with every
-    /// covered row held, the held log builds the image whole.
+    /// covered row held, the held log builds the image whole. It inherits the
+    /// adopted image's residence overflow mark, and its residence bodies fall
+    /// back for [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`]
+    /// as a held-only build's do (FIX 11400).
     pub(super) fn build_authority_checkpoint_from_adopted_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -184,11 +187,13 @@ impl Vault {
                 observations: &observations,
                 posture,
                 pin: pin.as_ref(),
+                keep_replay: true,
             },
         )?;
         let (
             ImageFold {
                 per_parent,
+                replay,
                 merged,
                 fold: mut once,
                 safety,
@@ -276,6 +281,8 @@ impl Vault {
             frontier: per_parent.keys().copied().collect(),
             rows,
             per_parent,
+            replay,
+            residence_overflow: image.residence_overflow,
             aggregate: CheckpointAggregate {
                 posture,
                 peers,
@@ -291,11 +298,12 @@ impl Vault {
         };
         // One serde round trip normalizes what a decoder would, so the image
         // re-encodes to its own bytes.
-        let normalized: AuthorityCheckpointV2 = rmp_serde::from_slice(
+        let normalized = rmp_serde::from_slice::<AuthorityCheckpointV2>(
             &rmp_serde::to_vec_named(&next)
                 .map_err(|_| refused("checkpoint image does not encode"))?,
         )
-        .map_err(|_| refused("checkpoint image does not decode"))?;
+        .map_err(|_| refused("checkpoint image does not decode"))?
+        .within_cap()?;
         normalized.encode()?;
         Ok(normalized)
     }

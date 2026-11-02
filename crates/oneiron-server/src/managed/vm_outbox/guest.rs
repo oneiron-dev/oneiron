@@ -26,6 +26,7 @@
 //! a local commit in flight finishes, a network transfer parks (its sender
 //! replays it on the next boot), and it exits. No deadline is added.
 
+use super::diverged::Board;
 use super::endpoint::{self, Registry};
 use super::local::{Owner, open_dir_at, open_dir_path};
 use super::store::Store;
@@ -99,11 +100,13 @@ fn run() -> anyhow::Result<()> {
     let store = Store::open(open_dir_at(&outbox, CARRIER)?)?;
     let gate = Arc::new(Gate::default());
     let registry = Registry::default();
+    let board = Board::default();
     endpoint::serve(
         endpoint::bind(uid)?,
         uid,
         Arc::clone(&gate),
         Arc::clone(&registry),
+        Arc::clone(&board),
     )?;
     let connection: Arc<Mutex<Option<File>>> = Arc::default();
     watch_stop(stops, Arc::clone(&gate), Arc::clone(&connection))?;
@@ -118,6 +121,7 @@ fn run() -> anyhow::Result<()> {
         store,
         gate,
     );
+    carrier.board = Some(board);
     carry(&mut carrier, &vault, &connection);
     Ok(())
 }
@@ -129,6 +133,9 @@ fn carry(carrier: &mut Carrier, vault: &str, connection: &Mutex<Option<File>>) {
         if !carrier.gate.proceed() {
             return;
         }
+        // The owner's answers and the statuses the endpoint reads go on
+        // while the host is out of reach too.
+        carrier.member_turn();
         let ended = connect_blocking(VM_HOST_CID, VM_OUTBOX_PORT)
             .map_err(anyhow::Error::from)
             .and_then(|stream| {

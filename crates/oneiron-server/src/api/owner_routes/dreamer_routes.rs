@@ -7,17 +7,18 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
+use oneiron::memory::DreamerDecidedCandidateView;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -25,10 +26,62 @@ use crate::server::SyncServer;
 /// The most changes one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/dreamer/changes", get(changes))
-        .route("/dreamer/revert", post(revert))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/candidate-decisions",
+                summary: "Every candidate one Dreamer attempt decided a correction for, with its kept decisions: ids and decisions only.",
+                row: None,
+            },
+            get(candidate_decisions),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/changes",
+                summary: "The Dreamer's standing changes, newest first, and the people whose about it wrote.",
+                row: None,
+            },
+            get(changes),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/revert",
+                summary: "The owner's revert of one Dreamer change, with one receipt.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/pause",
+                summary: "Sets the owner's own Dreamer pause: no new pass starts, and the running attempt parks at its next boundary. Answers the pause and the owner's cause of it.",
+                row: None,
+            },
+            post(pause_dreamer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/resume",
+                summary: "Clears the owner's own Dreamer pause; a managed freeze still holds it. Answers the pause and the owner's cause of it.",
+                row: None,
+            },
+            post(resume_dreamer),
+        ),
+    ]
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateDecisionsQuery {
+    /// The attempt, as `vault.consolidation.status` names it (`job:`
+    /// prefix allowed).
+    job_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,14 +117,27 @@ struct PersonAboutView {
     at: u64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevertChange {
     /// The change, as 32 hex: a claim, a summary, a NOTE or a PERSON.
     change: String,
 }
 
-#[derive(Debug, Serialize)]
+/// `POST /v1/owner/dreamer/pause` and `/resume` carry no fields: `{}`.
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct DreamerPauseRequest {}
+
+/// The Dreamer's pause after the call, and the owner's own cause of it:
+/// a managed freeze can still hold the pause past a resume.
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+struct DreamerPaused {
+    paused: bool,
+    owner_paused: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ChangeReverted {
     change: String,
     kind: &'static str,
@@ -95,6 +161,29 @@ struct ChangeReverted {
     /// What a later write changed, left as it is.
     left_alone: Vec<String>,
     receipt_ref: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/revert`'s body (FIX 11611): [`RevertChange`].
+pub(crate) fn revert_change_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevertChange>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/revert`'s answer (FIX 11611):
+/// [`ChangeReverted`].
+pub(crate) fn change_reverted_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ChangeReverted>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/pause`'s body (FIX 11611), shared
+/// with `POST /v1/owner/dreamer/resume`: [`DreamerPauseRequest`].
+pub(crate) fn dreamer_pause_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DreamerPauseRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/dreamer/pause`'s answer (FIX 11611), shared
+/// with `POST /v1/owner/dreamer/resume`: [`DreamerPaused`].
+pub(crate) fn dreamer_paused_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DreamerPaused>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
@@ -134,6 +223,30 @@ fn reverted_view(receipt: DreamerRevertReceipt) -> ChangeReverted {
     }
 }
 
+/// `GET /v1/owner/dreamer/candidate-decisions?job_ref=<ref>`: every
+/// candidate the Dreamer attempt decided a correction for, with its kept
+/// decisions. Ids and decisions only, never a candidate's value.
+async fn candidate_decisions(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CandidateDecisionsQuery>, QueryRejection>,
+) -> OwnerReply<Vec<DreamerDecidedCandidateView>> {
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let locality = auth.locality();
+    let read = blocking(move || -> OwnerResult<Vec<DreamerDecidedCandidateView>> {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        vault
+            .memory(actor, EdgeActorClass::Human)
+            .at(locality)
+            .dreamer_candidate_decisions(Some(&owner), &query.job_ref)
+            .map_err(memory_refused)
+    })
+    .await?;
+    Ok(Json(read))
+}
+
 /// `GET /v1/owner/dreamer/changes` (optionally `?limit=<n>`): the Dreamer's
 /// standing changes, newest first, and the people whose `about` it wrote.
 async fn changes(
@@ -169,15 +282,58 @@ async fn changes(
     Ok(Json(listed))
 }
 
+fn dreamer_control(server: &SyncServer) -> OwnerResult<crate::ai_host::DreamerControl> {
+    server
+        .ai
+        .dreamer_control()
+        .ok_or_else(|| OwnerError::Refused("this server holds no dreamer pause control".to_owned()))
+}
+
+/// `POST /v1/owner/dreamer/pause` with `{}`: sets the owner's own Dreamer
+/// pause — no new pass starts, and the running attempt parks at its next
+/// boundary — and answers whether the Dreamer reads paused now.
+async fn pause_dreamer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<DreamerPauseRequest>,
+) -> OwnerReply<DreamerPaused> {
+    owner(&auth, &server)?;
+    payload.read(&server).await?;
+    let control = dreamer_control(&server).map_err(owner_error)?;
+    control.set_owner_paused(true);
+    Ok(Json(DreamerPaused {
+        paused: control.paused(),
+        owner_paused: control.owner_paused(),
+    }))
+}
+
+/// `POST /v1/owner/dreamer/resume` with `{}`: clears the owner's own Dreamer
+/// pause — a managed freeze still holds it — and answers whether the
+/// Dreamer reads paused now.
+async fn resume_dreamer(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<DreamerPauseRequest>,
+) -> OwnerReply<DreamerPaused> {
+    owner(&auth, &server)?;
+    payload.read(&server).await?;
+    let control = dreamer_control(&server).map_err(owner_error)?;
+    control.resume();
+    Ok(Json(DreamerPaused {
+        paused: control.paused(),
+        owner_paused: control.owner_paused(),
+    }))
+}
+
 /// `POST /v1/owner/dreamer/revert`: the owner's revert of one Dreamer
 /// change, with one receipt.
 async fn revert(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevertChange>, JsonRejection>,
+    payload: OwnerJsonBody<RevertChange>,
 ) -> OwnerReply<ChangeReverted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let reverted = blocking(move || -> OwnerResult<ChangeReverted> {
         let change = entity_id("change", &request.change)?;

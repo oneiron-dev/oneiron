@@ -1,7 +1,10 @@
 //! Session provenance claims and promotion guarded by verified revision history.
+use std::collections::HashSet;
+
 use crate::claim::{ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject};
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_SESSION;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, LegacyCompact, SideTable};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
@@ -246,10 +249,42 @@ impl Vault {
         Ok(())
     }
     fn require_inherited_file_mode_reviews(&self, revision_id: EntityId) -> Result<()> {
-        let mut revision = self
+        let revision = self
             .get_code_revision(&revision_id)?
             .ok_or(Error::EntityNotFound)?;
-        for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+        // The walk reads one revision at a time through the vault's own
+        // doors, so only the threshold row needs this transaction.
+        let mut count = {
+            let txn = self.store.env.read_txn()?;
+            ScanCount::start(
+                &self.store,
+                &txn,
+                EngineScan::DagWalkRecords,
+                revision_id.as_bytes(),
+            )?
+        };
+        let mut visited = HashSet::new();
+        let outcome = self.inherited_file_mode_walk(revision, &mut visited, &mut count);
+        count.defer(&self.store);
+        outcome
+    }
+
+    /// Walks the parent chain to its root, revalidating each inherited
+    /// nondefault file mode's receipt on the way. The chain is walked
+    /// whole, however long; a repeated revision is a cycle.
+    fn inherited_file_mode_walk(
+        &self,
+        mut revision: super::CodeRevision,
+        visited: &mut HashSet<EntityId>,
+        count: &mut ScanCount,
+    ) -> Result<()> {
+        loop {
+            if !visited.insert(revision.revision_id) {
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                    "code revision parent chain contains a cycle",
+                )));
+            }
+            count.row();
             let Some(parent_id) = revision.parent_revision_id else {
                 return Ok(());
             };
@@ -270,7 +305,6 @@ impl Vault {
             self.check_code_revision_reviews(parent_id, &reviews, false)?;
             revision = parent;
         }
-        Err(Error::IndexOverflow("code_revision_mode_review_chain"))
     }
     /// The document operations a promoted revision carries, per changed file:
     /// every operation its tested frontier holds beyond the parent's, each

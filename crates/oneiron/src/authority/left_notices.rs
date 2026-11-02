@@ -18,6 +18,10 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::{RemovalExportCopy, SignedSharedActOutcome};
 
+// The host's delivery of those archives to their removed holder, beside
+// these pull doors (FIX 3215, 3396).
+mod delivery;
+
 /// What rides beside a removed person's notices as the handoff to the root
 /// that signed them.
 enum HandoffEvidence {
@@ -258,6 +262,10 @@ impl Vault {
     /// The archives export-first removals delivered to the holder of `slip`
     /// (OF-150, FIX 1300), still within their term, under the same proof as
     /// [`Vault::removed_member_notices_signed`]; the nonce is spent once.
+    /// The removed Owner proving the mint's own key takes each as stored; a
+    /// holder the slip was transferred to takes each cut down to what its
+    /// caveats admit, and none they admit nothing of (FIX-LIST 8224), all
+    /// before the nonce commits.
     pub fn removed_owner_exports(
         &self,
         slip: &CapabilitySlip,
@@ -268,8 +276,13 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
-        let copies =
-            self.removal_exports_in_txn(&txn, person, self.store.clock.now_recorded_at())?;
+        let now = self.store.clock.now_recorded_at();
+        let copies = match slip.transferred_bounds() {
+            None => self.removal_exports_in_txn(&txn, person, now)?,
+            Some(bounds) => {
+                self.transferred_exports_in_txn(&mut txn, slip, person, None, now, bounds)?
+            }
+        };
         txn.commit()?;
         Ok(copies)
     }
@@ -280,7 +293,9 @@ impl Vault {
     /// its term ([`crate::federation::REMOVAL_EXPORT_RETAIN_SECS`] from its
     /// latest delivery), `None` after it or when that removal delivered this
     /// person none. Only the removed person reaches it; the nonce is spent
-    /// once, and a malformed `receipt_id` is refused before it is.
+    /// once, and a malformed `receipt_id` is refused before it is. A holder
+    /// the slip was transferred to takes it cut down to what its caveats
+    /// admit, `None` when they admit nothing of it (FIX-LIST 8224).
     pub fn removed_owner_archive(
         &self,
         slip: &CapabilitySlip,
@@ -293,14 +308,74 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let person =
             self.left_person_in_txn(&mut txn, slip, request_timestamp, signature, request_nonce)?;
-        let copy = self.removal_export_in_txn(
-            &txn,
-            person,
-            receipt_id,
-            self.store.clock.now_recorded_at(),
-        )?;
+        let now = self.store.clock.now_recorded_at();
+        let copy = match slip.transferred_bounds() {
+            None => self.removal_export_in_txn(&txn, person, receipt_id, now)?,
+            Some(bounds) => self
+                .transferred_exports_in_txn(&mut txn, slip, person, Some(receipt_id), now, bounds)?
+                .pop(),
+        };
         txn.commit()?;
         Ok(copy)
+    }
+
+    /// The copies a transferred holder's `bounds` take at `now` of
+    /// `person`'s archives (the one `receipt_id` names, else every one),
+    /// each cut down to what they admit. A one-shot transfer is served once
+    /// (FIX-LIST 10773): a slip any door already consumed, or one an archive
+    /// door already served, takes nothing, and the first answer that takes
+    /// anything spends it on every archive of `person`, in this writer. A
+    /// pact-bound transfer takes only what its pact still leaves it, read in
+    /// this writer, and each answer that takes anything is logged under that
+    /// pact on the archives it served (FIX 11860).
+    fn transferred_exports_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        slip: &CapabilitySlip,
+        person: EntityId,
+        receipt_id: Option<EntityId>,
+        now: u64,
+        bounds: Result<super::slip::TransferredBounds>,
+    ) -> Result<Vec<RemovalExportCopy>> {
+        let single_use = bounds
+            .as_ref()
+            .is_ok_and(super::slip::TransferredBounds::single_use);
+        let slip_id = slip.claims.slip_id;
+        if single_use
+            && (self
+                .authority_view_readonly_in_txn(txn)?
+                .slips
+                .consumed
+                .contains(&slip_id)
+                || self.removal_archive_slip_spent_in_txn(txn, person, &slip_id)?)
+        {
+            return Ok(Vec::new());
+        }
+        let pact_grant = bounds
+            .as_ref()
+            .ok()
+            .and_then(super::slip::TransferredBounds::pact_grant);
+        let served_pact = match (&bounds, pact_grant) {
+            (Ok(bounds), Some(_)) => {
+                bounds.served_pact_scope(&self.authority_fold_readonly_in_txn(txn)?)
+            }
+            _ => None,
+        };
+        let admits = transferred_admission(bounds, now, served_pact);
+        let copies = match receipt_id {
+            Some(receipt_id) => self
+                .projected_removal_export_in_txn(txn, person, receipt_id, now, &admits)?
+                .into_iter()
+                .collect(),
+            None => self.projected_removal_exports_in_txn(txn, person, now, &admits)?,
+        };
+        if single_use && !copies.is_empty() {
+            self.spend_removal_archive_slip_in_txn(txn, person, slip_id)?;
+        }
+        if let Some(grant) = pact_grant {
+            self.log_removal_archive_pact_serve_in_txn(txn, &copies, grant, slip_id, now)?;
+        }
+        Ok(copies)
     }
 
     /// The person whose slip, minted here whatever its standing since, the
@@ -329,5 +404,21 @@ impl Vault {
             request_now,
         )?;
         Ok(person)
+    }
+}
+
+/// Which archived records a transferred holder takes at `now`: those its
+/// authenticated caveat bounds admit, a pact-bound one within `served_pact`.
+/// Caveats the meet refuses (a floor, a second pact) leave the holder
+/// nothing; they are its own bytes.
+fn transferred_admission(
+    bounds: Result<super::slip::TransferredBounds>,
+    now: u64,
+    served_pact: Option<crate::federation::FederationDirectionScope>,
+) -> impl Fn(EntityId, Option<&crate::federation::Scope>) -> bool {
+    move |id: EntityId, position: Option<&crate::federation::Scope>| {
+        bounds
+            .as_ref()
+            .is_ok_and(|bounds| bounds.admits(id, position, now, served_pact.as_ref()))
     }
 }

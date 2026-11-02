@@ -34,4 +34,7 @@ pub(super) async fn stop_serving(
         mesh.stop().await;
     }
     server.live_voice.stop_all().await;
+    // The recall doors' buffered retrieval rows go in one grouped write, before
+    // the vault closes (FIX 11011).
+    server.flush_retrieval_meters();
 }

@@ -21,6 +21,8 @@ impl ModelRuntime {
             rests: OfferCooldowns::unkept(),
             token_ratios: None,
             training: Default::default(),
+            budgets: ModelHostBudgets::unhosted(),
+            responses: ResponsesContext::default(),
         }
     }
 
@@ -148,13 +150,30 @@ impl ModelRuntime {
         broker: Option<&BrokerContext>,
         rests: Arc<OfferCooldowns>,
     ) -> Self {
+        Self::build_hosted_on(config, broker, rests, &ModelHostBudgets::unhosted())
+    }
+
+    /// [`build_hosted`](Self::build_hosted), its media rungs, clone wires
+    /// and mesh routes holding their bytes on `budgets`, the vault's own
+    /// (FIX 9321, FIX 9323). [`build_hosted`](Self::build_hosted) gives the
+    /// runtime budgets of its own, at the rows' defaults.
+    #[must_use]
+    pub(crate) fn build_hosted_on(
+        config: Option<&ModelsConfig>,
+        broker: Option<&BrokerContext>,
+        rests: Arc<OfferCooldowns>,
+        budgets: &ModelHostBudgets,
+    ) -> Self {
         let Some(config) = config else {
             // A discovered model's rest outlives a restart here too.
             return Self {
                 rests,
+                budgets: budgets.clone(),
                 ..Self::unconfigured()
             };
         };
+        // V2-R3: the next vault lock's bound and the status read this.
+        worker_host::snapshot_policy(&config.snapshots);
         let mut status = ModelsStatus {
             // The process's supervisors for `[models.workers]` (FIX 8315).
             workers: worker_host::configure(&config.workers, &config.providers),
@@ -168,8 +187,9 @@ impl ModelRuntime {
         // One cache of house llama.cpp launch manifests, for the chat routes
         // and the decision read alike (FIX 7895).
         let identities = Arc::new(llama_identity::LlamaIdentityResolver::default());
+        let responses = ResponsesContext::default();
         for (name, provider) in &config.providers {
-            match build_provider(name, provider, config, site, keys, &identities) {
+            match build_provider(name, provider, config, site, keys, &identities, &responses) {
                 Ok(Some(backend)) => {
                     let broker = backend.broker_isolation();
                     built.insert(name.clone(), backend);
@@ -318,7 +338,7 @@ impl ModelRuntime {
                     .push(SeatStatus::new(*role, None, state, rung_status));
             }
         }
-        let media = MediaRuntime::build(config, &rests, &mut status.seats, site, keys);
+        let media = MediaRuntime::build(config, &rests, &mut status.seats, site, keys, budgets);
         // Each chat model the router serves, and each media seat's rung, is
         // one a parked offer's calls may fall back to once the owner names
         // it (`use_fallback`).
@@ -355,6 +375,8 @@ impl ModelRuntime {
             rests,
             token_ratios,
             training: config.training.clone(),
+            budgets: budgets.clone(),
+            responses,
         }
     }
 
@@ -437,7 +459,13 @@ impl ModelRuntime {
         vault: &Arc<oneiron::Vault>,
         mesh: Arc<dyn oneiron_mesh_transport::MeshTransport>,
     ) -> MeshRoutes {
-        MeshRoutes::new(self.raw_router(), Arc::clone(&self.rests), vault, mesh)
+        MeshRoutes::new(
+            self.raw_router(),
+            Arc::clone(&self.rests),
+            vault,
+            mesh,
+            self.budgets.mesh_staging(),
+        )
     }
 
     #[must_use]
@@ -479,6 +507,9 @@ impl ModelRuntime {
             })
             .collect();
         worker_host::refresh(&mut status.workers);
+        worker_host::refresh_devices(&mut status.devices);
+        // V2-R3: sealed snapshot parking, counts and outcomes only.
+        status.snapshots = worker_host::snapshot_status();
         status
     }
 }

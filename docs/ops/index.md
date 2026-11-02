@@ -6,6 +6,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Your vault: where it lives, backups, restore, export, one-act approvals](owner-actions.md) —
   `oneiron doctor`, `backup`, `restore --rehearse`, `restore`, `export`, `secret-scan`,
   `import`, `runs`, `learning-settings`, `widen-proposals`, and the `/v1/owner` routes.
+- [Owner custody commands](owner-custody.md) — `--unlock` for every vault-key command, a
+  restore's `--wrap-to`, `secrets bind`/`unbind`, the kit push on a running server, credentials a
+  restore left pending, and a stopped-vault guest revoke's `--peer`.
 - [Key custody beside your backups](key-custody.md) — the custody head and keyless log each
   backup leaves beside it, the residence and hosted members, the anchor (`custody_anchor_root`,
   `custody_anchor_url`, `/v1/owner/custody-anchor`), the status names, and what a restore says.
@@ -20,8 +23,12 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
 - [Sync a machine to its home](device-sync.md) — the `[device_sync]` section: the home a
   machine dials over the paired mesh, the credential file the `/ws` upgrade presents, its MACRO
   home candidacy, and what the log shows.
+- [A relay room's locker](relay-room.md) — `oneiron host relay`: the locker's routes under the
+  room's access token, and its connection pressure check (`GET /v1/relay/{vault}/pressure`).
 - [Connect Claude Code or Codex](connect-an-agent.md) — `oneiron token agent` mints a scoped,
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
+- [The built-in web connector](web-connector.md) — `connector.web.search` and `fetch`: the
+  deploy's `TAVILY_API_KEY`, the owner's provider switch, result shapes and usage rows.
 - [Import your history](import-history.md) — `oneiron import` for ChatGPT and Claude.ai exports
   and Claude Code and Codex sessions: what lands, what is counted, and how re-imports dedup.
 - [Claude Code hooks](claude-code-hooks.md) — recall at session start and each session handed to
@@ -42,6 +49,7 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   `restore_source_disk` at `/restore`, the guest network's one NIC and `/config/network.json`
   (FIX 6808), the managed profile's five typed `/config` files (FIX 6809), the lost-result
   decision table and the image manifest's revision floors.
+- [Cloud registration](cloud-registration.md) — the pins file, `oneiron account login`, `status`, `refresh` and `logout`, the link/refresh/logout/erase lifecycle, key rollover, and what the client wipes.
 - [Guest image family](guest-image-family.md) — the mkosi builder in `crates/oneiron-container/images/`: the release list, the package lock, build and rebuild from the mirror, retention, pins vs digests vs signatures vs boot proof, byte fields, and the candidate hand-off.
 - [Code map](../CODEMAP.md) — generated crate/module/file map (`python3 scripts/codemap/codemap.py`);
   per-crate file tables in [`../codemap/`](../codemap/).

@@ -1,10 +1,12 @@
-//! An upgraded socket's transport under its embedded engine's stop (OF-237).
+//! An upgraded socket's transport under its server's stop (OF-237).
 //!
-//! [`crate::embedded::UpgradeHold::run`] hands each socket the engine's stop,
+//! [`crate::embedded::UpgradeHold::run`] hands each socket the server's stop,
 //! and the socket answers it itself: its loop stops reading at its next wait,
 //! a send held up by a peer that stopped reading gives way, the transport
 //! closes, and the socket ends only once every call it admitted has finished.
-//! A socket no embedded engine carried has a stop that never turns.
+//! An embedded channel or mesh carries the lifetime, as plain and managed
+//! serve do through [`crate::embedded::upgrade_lifetime`]; a request
+//! without one runs its socket as before, its stop never turning.
 
 use std::ops::{Deref, DerefMut};
 

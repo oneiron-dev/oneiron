@@ -52,3 +52,23 @@ impl AnchorPath {
         }
     }
 }
+
+/// Whether the anchor door under `url` may carry the owner credential
+/// (FIX 8637): `https://` anywhere, with the client's normal certificate
+/// verification, or `http://` only on this machine, named as itself
+/// (`localhost` or a loopback address). Anything else, or a URL that does not
+/// parse, fails closed, so the bearer and holder proof never cross a network
+/// in the clear.
+pub(super) fn url_admits_credentials(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    let loopback = parsed.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    matches!((parsed.scheme(), loopback), ("https", _) | ("http", true))
+}

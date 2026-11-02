@@ -119,6 +119,14 @@ impl BudgetRead {
             self.limit_units,
         )
     }
+
+    /// What the meter has left, or `None` when it has no cap: an uncapped
+    /// meter's limit is the type's maximum, which no spend reaches, so its
+    /// remainder is no amount a reader can count down (FIX 10593).
+    #[must_use]
+    pub fn capped_remaining_units(&self) -> Option<u64> {
+        (self.limit_units != u64::MAX).then_some(self.remaining_units)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

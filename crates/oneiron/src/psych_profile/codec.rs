@@ -6,14 +6,17 @@ use rmpv::Value;
 
 use super::record::{
     CONFIDENCE_KEYS, KEY_COMPACT, KEY_CONFIDENCE, KEY_NARRATIVE, KEY_SCHEMA_VERSION,
-    KEY_SOURCE_REVISION_IDS, KEY_STATUS, KEY_SUBJECT_REF, KEY_TEXT, MAX_COMPACT_BYTES,
-    MAX_NARRATIVE_BYTES, MAX_PSYCH_PROFILE_BODY_BYTES, MAX_PSYCH_PROFILE_SOURCE_REVISIONS,
-    MAX_TEXT_BYTES, PSYCH_PROFILE_BODY_KEYS, PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile,
-    PsychProfileConfidence, PsychProfileSnapshotStatus, TOO_MANY_SOURCE_REVISIONS,
+    KEY_SOURCE_PAGES, KEY_SOURCE_REVISION_PAGES, KEY_STATUS, KEY_SUBJECT_REF, KEY_TEXT,
+    MAX_COMPACT_BYTES, MAX_NARRATIVE_BYTES, MAX_TEXT_BYTES, PSYCH_PROFILE_BODY_KEYS,
+    PSYCH_PROFILE_SCHEMA_VERSION, PsychProfile, PsychProfileConfidence, PsychProfileSnapshotStatus,
 };
 use crate::claim::unit_interval_f32;
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
+
+mod source_pages;
+pub use self::source_pages::PSYCH_PROFILE_SOURCE_IDS_PER_CODEC_PAGE;
+use self::source_pages::{decode_pages, decode_source, encode_pages, encode_source};
 
 /// Encodes a PsychProfile body in canonical MessagePack field order.
 pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
@@ -37,8 +40,8 @@ pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
             Value::from(profile.narrative.as_str()),
         ),
         (
-            Value::from(KEY_SOURCE_REVISION_IDS),
-            encode_source_revision_ids(&profile.source_revision_ids),
+            Value::from(KEY_SOURCE_REVISION_PAGES),
+            encode_pages(&profile.source_revision_ids, |id| Value::from(id.to_hex())),
         ),
         (
             Value::from(KEY_CONFIDENCE),
@@ -47,6 +50,10 @@ pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
         (
             Value::from(KEY_STATUS),
             Value::from(profile.status.as_code()),
+        ),
+        (
+            Value::from(KEY_SOURCE_PAGES),
+            encode_pages(&profile.sources, encode_source),
         ),
     ]);
 
@@ -58,9 +65,6 @@ pub fn encode_psych_profile_body(profile: &PsychProfile) -> Result<Vec<u8>> {
 
 /// Decodes and validates a PsychProfile body.
 pub fn decode_psych_profile_body(bytes: &[u8]) -> Result<PsychProfile> {
-    if bytes.len() > MAX_PSYCH_PROFILE_BODY_BYTES {
-        return Err(invalid_profile("body exceeds the largest valid snapshot"));
-    }
     let mut cursor = Cursor::new(bytes);
     let value = rmpv::decode::read_value(&mut cursor).map_err(|_| invalid_profile("body"))?;
     if cursor.position() != bytes.len() as u64 {
@@ -96,15 +100,21 @@ fn decode_psych_profile_value(value: &Value) -> Result<PsychProfile> {
             MAX_NARRATIVE_BYTES,
             "narrative profile tier must be non-empty and at most 32768 bytes",
         )?,
-        source_revision_ids: decode_source_revision_ids(required_value(
-            entries,
-            KEY_SOURCE_REVISION_IDS,
-        )?)?,
+        source_revision_ids: decode_pages(
+            required_value(entries, KEY_SOURCE_REVISION_PAGES)?,
+            "sourceRevisionPages must be full pages of revision ids",
+            decode_entity_ref,
+        )?,
         confidence: decode_confidence(required_value(entries, KEY_CONFIDENCE)?)?,
         status: required_value(entries, KEY_STATUS)?
             .as_u64()
             .and_then(PsychProfileSnapshotStatus::parse_code)
             .ok_or_else(|| invalid_profile("status must be typed code 1 or 2"))?,
+        sources: decode_pages(
+            required_value(entries, KEY_SOURCE_PAGES)?,
+            "sourcePages must be full pages of source placements",
+            decode_source,
+        )?,
     };
 
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(PSYCH_PROFILE_SCHEMA_VERSION) {
@@ -113,38 +123,6 @@ fn decode_psych_profile_value(value: &Value) -> Result<PsychProfile> {
 
     profile.validate()?;
     Ok(profile)
-}
-
-pub(super) fn encode_source_revision_ids(ids: &[EntityId]) -> Value {
-    Value::Array(
-        ids.iter()
-            .map(|id| Value::from(id.to_hex()))
-            .collect::<Vec<_>>(),
-    )
-}
-
-fn decode_source_revision_ids(value: &Value) -> Result<Vec<EntityId>> {
-    let Value::Array(values) = value else {
-        return Err(invalid_profile("sourceRevisionIds must be an array"));
-    };
-    if values.len() > MAX_PSYCH_PROFILE_SOURCE_REVISIONS {
-        return Err(invalid_profile(TOO_MANY_SOURCE_REVISIONS));
-    }
-    let mut ids = Vec::with_capacity(values.len());
-    for value in values {
-        ids.push(decode_entity_ref(value)?);
-    }
-    if ids.is_empty() {
-        return Err(invalid_profile(
-            "sourceRevisionIds must contain at least one revision id",
-        ));
-    }
-    if !ids.windows(2).all(|ids| ids[0] < ids[1]) {
-        return Err(invalid_profile(
-            "sourceRevisionIds must be canonical sorted unique ids",
-        ));
-    }
-    Ok(ids)
 }
 
 pub(super) fn canonical_source_revision_ids(mut ids: Vec<EntityId>) -> Result<Vec<EntityId>> {

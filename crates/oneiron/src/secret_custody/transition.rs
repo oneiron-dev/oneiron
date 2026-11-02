@@ -18,10 +18,14 @@
 //! A device-bound, cross-vault or "this device only" record never makes one:
 //! that material stays on the device that holds it.
 
+mod anchor_push;
+mod carrier_leaf;
 mod kit_request;
 mod payload;
 mod pieces;
 mod rebind;
+
+pub(super) use self::carrier_leaf::transitions_awaiting_leaf_in_txn;
 
 #[cfg(feature = "sync")]
 pub(crate) use self::rebind::moves_custody_floor;
@@ -29,10 +33,12 @@ pub(crate) use self::rebind::moves_custody_floor;
 use ed25519_dalek::SigningKey;
 use oneiron_crypto::HybridPublicKey;
 
-use self::payload::{ValueBinding, seal_value, status_byte, unsigned};
+use self::carrier_leaf::TransitionLeaf;
+use self::payload::{status_byte, unsigned};
 pub(crate) use self::pieces::{CustodyPieces, custody_row_key, parse_custody_row_key};
 #[cfg(feature = "sync")]
 pub(crate) use self::pieces::{completed_custody_groups_in_txn, keep_custody_piece_in_txn};
+use super::carrier_custody::CarrierRef;
 use super::codec::encode_secret_custody_body;
 use super::doors::bind_synced_name_in_txn;
 use super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
@@ -119,10 +125,14 @@ pub(crate) struct CustodyTransition {
     pub(crate) pieces: u32,
     /// Where this piece's permits start in the complete set.
     pub(crate) first: u32,
+    /// The carrier key the value is sealed under before each permit's seal
+    /// (transition v3, FIX 7402); `None` on the wire as on main.
+    pub(crate) carrier: Option<CarrierRef>,
     /// The record in the body codec, its value taken out.
     body: Vec<u8>,
     /// The value sealed to each permitted recipient, with its permit,
-    /// ascending by machine; none once revoked.
+    /// ascending by machine, a value too large for one carrier in numbered
+    /// envelopes, each beside its permit (FIX 7953); none once revoked.
     sealed: Vec<(CustodyRecipientPermit, Vec<u8>)>,
     /// The Ed25519 key that signed.
     pub(crate) signer: [u8; 32],
@@ -139,7 +149,7 @@ impl std::fmt::Debug for CustodyTransition {
             .field("signed_at", &self.signed_at)
             .field("piece", &self.piece)
             .field("pieces", &self.pieces)
-            .field("recipients", &self.sealed.len())
+            .field("recipients", &self.permits().count())
             .finish_non_exhaustive()
     }
 }
@@ -163,13 +173,15 @@ pub(crate) struct Enactment<'a> {
 /// `signing`, its value sealed to each permit of `enactment`, at `signed_at`,
 /// in as many pieces as the carrier's frame floors need (CALLS `Phase2
 /// custody pieces request bound`). A live record is sealed to every permit,
-/// however many, a revoked one to none.
+/// however many, a revoked one to none. With `leaf`, the carrier key minted
+/// for it, the value is sealed under that key once first, and every piece
+/// names it (transition v3, FIX 7402).
 ///
 /// # Errors
 /// The vault has no authority genesis; the record may not leave its device;
 /// it is live but an admitted revoke names its id, which nothing brings
-/// back; the permits do not fit its status; one sealed value outgrows one
-/// carrier.
+/// back; the permits do not fit its status; its body leaves a carrier no
+/// room for a value.
 pub(crate) fn sign_custody_transition(
     fold: &AuthorityFold,
     signing: &SigningKey,
@@ -177,6 +189,7 @@ pub(crate) fn sign_custody_transition(
     record: &SecretCustodyRecord,
     enactment: Enactment<'_>,
     signed_at: u64,
+    leaf: Option<&TransitionLeaf>,
 ) -> Result<CustodyPieces> {
     let Some(vault_id) = fold.vault_id else {
         return Err(refused("this vault has no authority genesis to sign for"));
@@ -196,19 +209,17 @@ pub(crate) fn sign_custody_transition(
     let mut bare = record.clone();
     zeroize::Zeroize::zeroize(&mut bare.value_bytes);
     let body = encode_secret_custody_body(&bare)?;
-    let binding = ValueBinding {
-        id,
-        generation: record.rotation_generation,
-        status: record.status,
-        request: enactment.request,
-    };
-    let mut sealed = Vec::with_capacity(enactment.permits.len());
-    for (permit, public) in enactment.permits {
-        let envelope = seal_value(&vault_id, &binding, permit, public, &record.value_bytes)?;
-        sealed.push((*permit, envelope));
-    }
-    sealed.sort_unstable_by_key(|(permit, _)| permit.machine);
-    let permits: Vec<CustodyRecipientPermit> = sealed.iter().map(|(permit, _)| *permit).collect();
+    let mut permits: Vec<CustodyRecipientPermit> = enactment
+        .permits
+        .iter()
+        .map(|(permit, _)| *permit)
+        .collect();
+    permits.sort_unstable_by_key(|permit| permit.machine);
+    // Sealed under the carrier key once, whole, before it is split into
+    // envelopes and pieces (FIX 7402, 7953).
+    let under = leaf
+        .map(|minted| minted.carrier.seal(&minted.leaf, None, &record.value_bytes))
+        .transpose()?;
     let template = CustodyTransition {
         id,
         generation: record.rotation_generation,
@@ -220,12 +231,19 @@ pub(crate) fn sign_custody_transition(
         piece: 0,
         pieces: 1,
         first: 0,
+        carrier: leaf.map(|minted| minted.carrier),
         body,
         sealed: Vec::new(),
         signer: signing.verifying_key().to_bytes(),
         signature: [0; 64],
     };
-    pieces::sign_pieces(&vault_id, signing, template, sealed)
+    pieces::sign_pieces(
+        &vault_id,
+        signing,
+        template,
+        enactment.permits,
+        under.as_deref().unwrap_or(&record.value_bytes),
+    )
 }
 
 /// The second a new transition of record `id` is signed at: `at`, or just
@@ -251,8 +269,10 @@ fn signed_after_held_in_txn(
 /// transaction the transition of record `id` as `record` now stands, for
 /// `enactment`'s request: every piece, each verified, or none. A transition
 /// is never optional here: no install key, or any reason
-/// [`sign_custody_transition`] refuses, refuses the transaction. Returns the
-/// pieces written.
+/// [`sign_custody_transition`] refuses, refuses the transaction. While the
+/// carrier wire is on, a live record's value is sealed under a carrier key
+/// minted here first (FIX 7402); the key of the transition it replaces
+/// retires. Returns the pieces written.
 pub(crate) fn write_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -265,7 +285,17 @@ pub(crate) fn write_custody_transition_in_txn(
         .ok_or_else(|| refused("this install has no install key to sign the custody transition"))?;
     let fold = vault.authority_view_readonly_in_txn(wtxn)?;
     let signed_at = signed_after_held_in_txn(vault, wtxn, id, record, at)?;
-    let pieces = sign_custody_transition(&fold, &signing, id, record, enactment, signed_at)?;
+    let leaf = carrier_leaf::mint_transition_leaf_in_txn(vault, wtxn, id, record)?;
+    let pieces = sign_custody_transition(
+        &fold,
+        &signing,
+        id,
+        record,
+        enactment,
+        signed_at,
+        leaf.as_ref(),
+    )?;
+    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, id)?;
     TRANSITIONS.put(&vault.store, wtxn, &HexId(id), &pieces.encode())?;
     Ok(pieces)
 }
@@ -274,7 +304,9 @@ pub(crate) fn write_custody_transition_in_txn(
 /// it supersedes the one held, so this vault relays it, and drops the
 /// carrier it supersedes from the window that carrier rides; a piece of the
 /// transition held joins its siblings, the rest still owed. An erased
-/// credential's is never kept (KS-6 part 2). Returns whether it kept it.
+/// credential's is never kept (KS-6 part 2). The carrier key of a
+/// transition it replaces retires here, when this install holds it (FIX
+/// 7402). Returns whether it kept it.
 pub(crate) fn remember_custody_transition_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -287,6 +319,9 @@ pub(crate) fn remember_custody_transition_in_txn(
     let held = TRANSITIONS
         .get(&vault.store, wtxn, &key)?
         .and_then(|held| CustodyPieces::decode(&held));
+    let replaces = held
+        .as_ref()
+        .is_some_and(|held| !held.lead().same_transition(transition));
     let kept = match held {
         Some(held) if held.lead().same_transition(transition) => {
             match held.with_piece(transition) {
@@ -297,6 +332,9 @@ pub(crate) fn remember_custody_transition_in_txn(
         Some(held) if !transition.supersedes(held.lead()) => return Ok(false),
         _ => CustodyPieces::single(transition.clone()),
     };
+    if replaces {
+        carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, transition.id)?;
+    }
     TRANSITIONS.put(&vault.store, wtxn, &key, &kept.encode())?;
     Ok(true)
 }
@@ -331,7 +369,8 @@ pub(crate) fn holds_sealed_carrier_in_txn(
 
 /// Drops the carrier this vault keeps of record `id` while it still seals
 /// the value: a revoke leaves at most the revoked carrier, byte-free (CALLS
-/// CUSTODY_REVOKE_ERASE). Returns whether it dropped one.
+/// CUSTODY_REVOKE_ERASE), and its carrier key retires (FIX 7402). Returns
+/// whether it dropped one.
 pub(crate) fn drop_sealed_carrier_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -340,6 +379,7 @@ pub(crate) fn drop_sealed_carrier_in_txn(
     if !holds_sealed_carrier_in_txn(vault, wtxn, id)? {
         return Ok(false);
     }
+    carrier_leaf::retire_held_carrier_in_txn(vault, wtxn, *id)?;
     TRANSITIONS.delete(&vault.store, wtxn, &HexId(*id))
 }
 
@@ -510,153 +550,6 @@ fn kit_push_admits(fold: &AuthorityFold, transition: &CustodyTransition) -> bool
                     .as_ref()
                     .is_some_and(|root| root.anchor_key == transition.signer)
         }
-    }
-}
-
-/// Whether this install may push with the owner's kit (CALLS
-/// CUSTODY_KIT_PUSH): it has no live machine profile in the vault, so it
-/// carries no owner act and holds for no request. Ordinary control never
-/// reaches the seed (CALLS CUSTODY_ORDINARY_CONTROL_SEED).
-fn kit_push_allowed_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    fold: &AuthorityFold,
-) -> Result<bool> {
-    match (CUSTODY_ORDINARY_CONTROL_SEED, CUSTODY_KIT_PUSH) {
-        (CustodyOrdinaryControlSeed::Never, CustodyKitPush::UnprofiledInstallOnly) => {
-            let Some(machine) = crate::identity::read_machine_id_in_txn(vault, txn)? else {
-                return Ok(true);
-            };
-            Ok(fold.machine(machine).is_none_or(|folded| {
-                folded.chains().any(|(_, chain)| chain.removed)
-                    || !folded.chains().any(|(_, chain)| chain.is_live())
-            }))
-        }
-    }
-}
-
-impl Vault {
-    /// Pushes the current transition of the portable record `secret_ref`
-    /// names, signed with the owner anchor of `seed`, the recovery root this
-    /// vault pins, its value sealed to `recipients`, each a live linked
-    /// install with an importable key (CALLS CUSTODY_KIT_PUSH): the owner's
-    /// kit is his authority; the install carries no act. Only an install with
-    /// no live machine profile may push, so ordinary control never signs
-    /// with the seed (CALLS CUSTODY_ORDINARY_CONTROL_SEED); any other install
-    /// rewraps the record as its own holder ([`Vault::rewrap_secret_as_owner`]).
-    /// No origin is asked: the kit is the proof. The record keeps its
-    /// generation, status and value.
-    ///
-    /// # Errors
-    /// This install has a live machine profile; a proof that is no longer
-    /// the live vault owner's; a seed whose root is not the root this vault
-    /// pins; a name no record holds; a recipient that is no live linked
-    /// install with an importable key, or none of them; the refusals of
-    /// [`sign_custody_transition`]; storage errors.
-    pub fn sign_custody_with_anchor(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        seed: &crate::world_keys::RecoveryRootSeed,
-        secret_ref: &str,
-        recipients: &[EntityId],
-        at: u64,
-    ) -> Result<bool> {
-        let vault_id = {
-            let rtxn = self.store.env.read_txn()?;
-            self.authority_view_readonly_in_txn(&rtxn)?
-                .vault_id
-                .ok_or_else(unsigned)?
-        };
-        // The anchor is derived before the write transaction opens.
-        let root = seed.public(&vault_id)?;
-        let anchor = seed.anchor();
-        let transition = self.with_write_txn(|wtxn| {
-            let actor = owner.revalidate_as_vault_owner_in_txn(self, wtxn)?;
-            let fold = self.authority_view_readonly_in_txn(wtxn)?;
-            if !kit_push_allowed_in_txn(self, wtxn, &fold)? {
-                return Err(Error::InvalidConfig(
-                    "this install has a live machine profile, so it carries the owner's act: \
-                     rewrap the secret with this install as its holder (`oneiron secrets \
-                     rewrap`); the kit pushes only from an install with no profile"
-                        .into(),
-                ));
-            }
-            if fold.vault_id != Some(vault_id)
-                || fold
-                    .pinned_root
-                    .as_ref()
-                    .is_none_or(|pin| pin.id != root.id || pin.anchor_key != root.anchor_key)
-            {
-                return Err(Error::InvalidConfig(
-                    "the seed's root is not the root this vault pins".into(),
-                ));
-            }
-            let id = super::resolve_secret_ref_in_txn(&self.store, wtxn, secret_ref)?.ok_or_else(
-                || {
-                    Error::Secret(crate::error::SecretError::SecretRefNotFound {
-                        name: secret_ref.to_owned(),
-                    })
-                },
-            )?;
-            let Some(record) = super::read_secret_custody_in_txn(&self.store, wtxn, &id)? else {
-                return Ok(None);
-            };
-            let record = WipedRecord(record);
-            let permits =
-                super::control::permits::permits_for(&fold, recipients).map_err(|machine| {
-                    Error::InvalidConfig(format!(
-                        "recipient {} is not a linked install with an importable encryption key; \
-                     nothing was written",
-                        machine.to_hex()
-                    ))
-                })?;
-            let keyed = super::control::permits::permitted_keys(&fold, &permits)
-                .ok_or_else(|| refused("a recipient's key changed"))?;
-            let keyed = if record.0.status == SecretCustodyStatus::Revoked {
-                Vec::new()
-            } else {
-                keyed
-            };
-            // FIX 6053: the push records the custody request it enacts, under
-            // the pinned kit's authority; a fault leaves it as before.
-            let request = if keyed.is_empty() {
-                [0; 32]
-            } else {
-                kit_request::record_kit_request_in_txn(
-                    self,
-                    wtxn,
-                    &fold,
-                    actor,
-                    id,
-                    record.0.rotation_generation,
-                    &permits,
-                    (&anchor, root.id),
-                )
-            };
-            let enactment = Enactment {
-                request,
-                input: None,
-                permits: &keyed,
-            };
-            let signed_at = signed_after_held_in_txn(self, wtxn, id, &record.0, at)?;
-            let pieces =
-                sign_custody_transition(&fold, &anchor, id, &record.0, enactment, signed_at)?;
-            Ok(remember_custody_pieces_in_txn(self, wtxn, &pieces)?.then_some(pieces))
-        })?;
-        #[cfg(feature = "sync")]
-        if transition.is_some() {
-            self.refresh_custody_in_live_windows();
-        }
-        Ok(transition.is_some())
-    }
-}
-
-/// A record whose value is wiped when it drops, on every path.
-struct WipedRecord(SecretCustodyRecord);
-
-impl Drop for WipedRecord {
-    fn drop(&mut self) {
-        zeroize::Zeroize::zeroize(&mut self.0.value_bytes);
     }
 }
 

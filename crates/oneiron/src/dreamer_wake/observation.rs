@@ -154,6 +154,10 @@ pub struct WakeObservedCallEnd {
     pub used_units: Option<u64>,
     /// The terminal `dreamer.step` claim that recorded its step.
     pub claim: Option<EntityId>,
+    /// When the provider limit that refused it says it resets, in Unix
+    /// seconds (FIX 11226); none for any other end.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stated_reset: Option<u64>,
 }
 
 /// A call's last recorded state.
@@ -183,6 +187,12 @@ pub struct WakeObservedCheckpoint {
     /// same try replays from its memo once resumed.
     pub saved_steps: Vec<[u8; 32]>,
     pub resumed: Option<WakeObservedResume>,
+    /// A Retry park's due instant, in Unix seconds: the latest reset a
+    /// provider limit that refused one of its try's calls stated (FIX
+    /// 11226). No later pass resumes it before then, and one may at it.
+    /// None keeps the vault's Retry pause.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub not_before: Option<u64>,
 }
 
 /// The later pass that resumed a Checkpoint park, as the same try.
@@ -637,6 +647,7 @@ pub(crate) fn record_call_terminal_in_txn(
         at_unix_ms: crate::unix_millis_now(),
         used_units: Some(claimed.used_units),
         claim: Some(claimed.claim),
+        stated_reset: None,
     });
     in_savepoint(vault, wtxn, "call terminal", |txn| {
         CALLS.put(vault, txn, &key, &row)

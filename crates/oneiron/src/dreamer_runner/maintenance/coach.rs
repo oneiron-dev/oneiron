@@ -34,6 +34,10 @@ use rmpv::Value;
 mod eval_measurement;
 // Q3 tuning's read, policy call and proposal (FIX 8708).
 mod person_threshold;
+// Q2 tuning's quick picks, read, policy call and proposal (FIX 2437).
+mod think_threshold;
+
+pub use self::think_threshold::ThinkThresholdPolicy;
 
 pub(crate) use self::eval_measurement::enqueue_coach_eval_measurement_in_txn;
 
@@ -48,6 +52,9 @@ pub const COACH_SKILL_DISCOVERY_FACET: &str = "coach.skill_discovery";
 /// Q3 tuning (ARCH-0076 #ask): each case where a person changed the ladder's
 /// answer, read once, feeds a proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_FACET: &str = "coach.person_threshold";
+/// Q2 tuning (FIX 2437): each quick pick that later proved wrong, read once,
+/// feeds a proposed think-threshold row.
+pub const COACH_THINK_THRESHOLD_FACET: &str = "coach.think_threshold";
 /// Observe, read-side hardening: the retrieval-miss detector over the stored
 /// retrieval runs.
 pub const COACH_READ_HARDENING_FACET: &str = "coach.read_hardening";
@@ -68,6 +75,13 @@ pub const COACH_WEAVE_DIGEST_SETTINGS_FACET: &str = "coach.weave_digest_settings
 /// vault's own history by the eval-authoring skill, and applied through
 /// [`Vault::run_coach_eval_authoring`].
 pub const COACH_EVAL_AUTHORING_FACET: &str = "coach.eval_authoring";
+/// Browser programs (CUA E8, FIX 7605): programs proposed from solved runs
+/// and repairs of failed ones, with no model, through
+/// [`Vault::run_coach_browser_programs`].
+pub const COACH_BROWSER_PROGRAMS_FACET: &str = "coach.browser_programs";
+/// Site-skill knowledge distilled from the same solved browser receipts (FIX 7606),
+/// filed as inert Candidates through [`Vault::run_coach_site_skills`].
+pub const COACH_SITE_SKILLS_FACET: &str = "coach.site_skills";
 /// One offer's promise check, queued for the host on the offer's check date.
 /// The host reads the receipts since and records what they showed through
 /// [`Vault::run_coach_offer_check`]. Input: `{offer: <32 hex>}`.
@@ -149,6 +163,8 @@ pub const COACH_ROOM_UPKEEP_FACET: &str = "coach.room_upkeep";
 pub const COACH_TRADEOFF_ROUTE_FACET: &str = "coach.tradeoff_route";
 /// Predicate of the Coach's Proposed person-threshold row.
 pub const COACH_PERSON_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.person_threshold.proposal";
+/// Predicate of the Coach's Proposed think-threshold row.
+pub const COACH_THINK_THRESHOLD_PROPOSAL_PREDICATE: &str = "coach.think_threshold.proposal";
 /// Predicate of the Coach's Proposed room nudge, its subject the room's host.
 pub const COACH_ROOM_NUDGE_PREDICATE: &str = "coach.room_upkeep.nudge";
 /// One room nudge as `read` reads it in `txn`, for the host's own upkeep
@@ -163,12 +179,15 @@ pub(crate) fn room_upkeep_nudge_in_txn(
 /// Producer name of a pending training offer's inbox NOTIFICATION.
 pub const TRAINING_OFFER_NOTIFICATION_PRODUCER: &str = "coach.training_offer";
 
-const HOST_FACETS: [&str; 16] = [
+const HOST_FACETS: [&str; 19] = [
     COACH_SKILL_DISTILL_FACET,
     COACH_SKILL_DISCOVERY_FACET,
     COACH_PERSON_THRESHOLD_FACET,
+    COACH_THINK_THRESHOLD_FACET,
     COACH_TRAINING_OFFER_FACET,
     COACH_EVAL_AUTHORING_FACET,
+    COACH_BROWSER_PROGRAMS_FACET,
+    COACH_SITE_SKILLS_FACET,
     COACH_JUDGE_SWAP_FACET,
     COACH_TRADEOFF_ROUTE_FACET,
     COACH_SEAL_CHECKS_FACET,
@@ -361,17 +380,30 @@ impl Vault {
         record: &PersonChangedAnswer,
     ) -> Result<()> {
         self.with_write_txn_grouped(|txn| {
-            if PERSON_CHANGED_READ.contains(&self.store, &*txn, &source)? {
-                return Ok(());
-            }
-            match PERSON_CHANGED.get(&self.store, &*txn, &source)? {
-                Some(held) if held == *record => Ok(()),
-                Some(_) => Err(Error::InvalidConfig(
-                    "another person-changed record already names this source".into(),
-                )),
-                None => PERSON_CHANGED.put(&self.store, txn, &source, record),
-            }
+            self.record_person_changed_answer_in_txn(txn, source, record)
         })
+    }
+
+    /// [`Self::record_person_changed_answer`] in the caller's write, beside
+    /// the answer it records (FIX 9905).
+    pub(crate) fn record_person_changed_answer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        source: EntityId,
+        record: &PersonChangedAnswer,
+    ) -> Result<()> {
+        // A quick pick a person changed also feeds the think tune (FIX 2437).
+        think_threshold::keep_quick_pick_in_txn(self, txn, source, record)?;
+        if PERSON_CHANGED_READ.contains(&self.store, &*txn, &source)? {
+            return Ok(());
+        }
+        match PERSON_CHANGED.get(&self.store, &*txn, &source)? {
+            Some(held) if held == *record => Ok(()),
+            Some(_) => Err(Error::InvalidConfig(
+                "another person-changed record already names this source".into(),
+            )),
+            None => PERSON_CHANGED.put(&self.store, txn, &source, record),
+        }
     }
 
     /// Records the offer skill's draft as the Coach, under a leased

@@ -1,8 +1,9 @@
 //! `host.wake` (ARCH-0080 §5) around one wake pass. The pre chain runs before
 //! the pass does any work, so a hook may skip the wake with a reason (quiet
-//! hours, say) or add material for it; the post chain reads what the pass
-//! did, and may note it. A pass its wake budget stopped is that line's
-//! `host.budget.hit`, under the Suspend the Dreamer's budget defaults to.
+//! hours, say) or add material for it (`rewrite`, FIX 8722), which rides the
+//! pass; the post chain reads what the pass did, and may note it. A pass its
+//! wake budget stopped is that line's `host.budget.hit`, under the Suspend
+//! the Dreamer's budget defaults to.
 
 use serde_json::{Value, json};
 
@@ -27,16 +28,21 @@ pub(super) struct WakeHooks {
 impl DreamerWakeDriver<'_> {
     /// Runs `host.wake`'s pre chain for `input`. `Err(report)` when a hook
     /// skipped the wake or asked first: the pass does nothing, and the
-    /// report says so; the hook's receipt keeps why.
+    /// report says so; the hook's receipt keeps why. The material a hook's
+    /// admitted Rewrite added rides the pass ([`Self::hook_material`]).
     pub(super) fn pre_wake_hooks(
-        &self,
+        &mut self,
         input: &RunWakePass,
     ) -> Result<std::result::Result<WakeHooks, WakePassReport>> {
+        self.hook_material.clear();
         let kind = input.scope.attempt_kind();
-        let queued: Vec<Value> = AttemptQueue::new(self.vault)
-            .list()?
+        let rows = {
+            let txn = self.vault.store.env.read_txn()?;
+            AttemptQueue::new(self.vault).kind_working_rows_in_txn(&txn, kind)?
+        };
+        let queued: Vec<Value> = rows
             .into_iter()
-            .filter(|attempt| attempt.kind == kind && !attempt.state.is_terminal())
+            .filter(|attempt| !attempt.state.is_terminal())
             .map(|attempt| {
                 json!({
                     "attempt": bytes_to_hex_lower(attempt.id.as_bytes()),
@@ -68,23 +74,32 @@ impl DreamerWakeDriver<'_> {
             class: HookActorClass::System,
             scope: None,
             board_epoch: None,
+            turn: None,
             domain: VerbDomain::Write,
             // A host's own call reads as its actor.
             reader: None,
         };
-        let check = |rewritten: &Value| {
-            if *rewritten == args {
-                Ok(())
-            } else {
-                Err("a host verb's args are the host's".to_owned())
-            }
-        };
+        // A Rewrite may only add material, each text re-gated (FIX 8722).
+        let vault = self.vault;
+        let check = |rewritten: &Value| super::rewrite::admit_wake_rewrite(vault, &args, rewritten);
         Ok(
             match self.vault.pre_verb_hooks(call, args.clone(), &check)? {
-                Ok(pre) => Ok(WakeHooks {
-                    pre: Some(pre),
-                    hit,
-                }),
+                Ok(pre) => {
+                    // The final args were checked rewrite by rewrite: the pass
+                    // runs on the host's own input with their material. Args
+                    // the host does not admit add none.
+                    match super::rewrite::added_material(&args, &pre.args) {
+                        Ok(material) => self.hook_material = material,
+                        Err(_) => tracing::warn!(
+                            "host.wake hooks left args the host does not admit; the pass adds \
+                             no material"
+                        ),
+                    }
+                    Ok(WakeHooks {
+                        pre: Some(pre),
+                        hit,
+                    })
+                }
                 Err(stop) => {
                     tracing::info!(%stop, "host.wake pre-hooks skipped a wake pass");
                     Err(WakePassReport {

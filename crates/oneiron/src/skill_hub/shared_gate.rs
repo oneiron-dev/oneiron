@@ -10,6 +10,7 @@ use crate::{
     consent::{AuthenticatedOwner, ComposedEffect, ConsentReceipt, EffectDigest, EffectFacts},
     entity_id::EntityId,
     error::{ArtifactError, Error, Result},
+    limit_ask::EngineLimit,
     llm::decision::{
         AnswerContract, DecisionAnswer, DecisionClass, DecisionQuestion, DecisionRung,
         PairedReading, Reversibility, TypedDecision,
@@ -578,9 +579,10 @@ impl Vault {
             .into_iter()
             .filter(|r| crate::skill_optimize::receipt_is_held_out(&base_id, r))
             .collect::<Vec<_>>();
-        if evidence.is_empty() || evidence.len() > 4096 {
-            return Err(invalid("no bounded held-out reserve for shared base"));
+        if evidence.is_empty() {
+            return Err(invalid("no held-out reserve for shared base"));
         }
+        let _ = self.measure_limit(EngineLimit::SharedMergeEvidenceRows, evidence.len() as u64);
         let scan = crate::skill_scan::scan_gate_for_activation_in_txn(
             &self.store,
             txn,

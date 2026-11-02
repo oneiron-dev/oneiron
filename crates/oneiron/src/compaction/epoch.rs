@@ -873,12 +873,15 @@ pub(super) fn mint_epoch_summary_in_overlay(
     let scope = JournalScope::new(*session_ref, summary_id);
     // A self-written summary's home parts are its sources too (FIX 4465 B).
     let derived = summary_dependencies(request, writer);
+    // FIX 3103: the mint keeps the run whose envelope it runs under.
+    let source_run = crate::skill_attribution::current_run_write_token();
     let entry = |role, op| JournalEntry {
         scope,
         role,
         learned_at: at,
         occurred,
         op,
+        source_run: source_run.clone(),
     };
     session.overlay_write_routed(route, |wtxn, apply| {
         apply(

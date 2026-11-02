@@ -11,28 +11,26 @@
 //! there back into its journal. Each apply is one run-tree root with a child
 //! per item (see [`super::run`]), and its waiting items are one inbox group
 //! (see [`super::group`]).
+mod journal;
+
 use super::approval::{
     ShapeApprovalDependencies, check_waiting_shape_approval, moves_reach, repin_waiting,
 };
+use super::item_refs::landing_receipt_refs;
 use super::live::{ShapeSources, facet_name, world_name};
+use super::member::{lowers_member, pending_invitation};
 use super::plan::{ShapeChange, ShapeItemClass, ShapePlan, ShapePlanItem};
 use super::run::ShapeApplyRun;
+use super::shared_setup::{CreatorAnswer, ShapeLearningOutcome, creator_answer, report_unread};
 use super::{ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::{AgentDefinition, AgentScope};
-use crate::authority::{HostSlipIssuer, VerifiedSlip};
-use crate::channel_identity::{decode_channel_identity_body, resolve_quarantine_floor_in_txn};
-use crate::channel_identity_lifecycle::{
-    ChannelIdentityLifecycleActor, ChannelIdentityLifecycleGate, ChannelIdentityLifecycleIntent,
-    ChannelIdentityLifecycleRequest, ReleaseIntent,
-};
+use crate::authority::{ActSurface, HostSlipIssuer, VerifiedSlip};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::federation::InitialSharedMember;
 use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
-use crate::side_table::{self, Named, SideTable};
 use crate::skill::SkillLifecycle;
 use crate::skill_hub::pack_catalog::PackInstallDisposition;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
@@ -48,10 +46,6 @@ const SHAPE_GRANT_PROPOSAL_SECS: u64 = 3600;
 /// The widen inbox's verdict on a filing the owner accepted, minting it.
 const SHAPE_FILING_ACCEPTED: &str = "accepted";
 
-/// Every apply's journal, keyed by the frontier of the plan it lands.
-const JOURNAL: SideTable<String, ShapeApplyReceipt, Named> =
-    SideTable::new(&side_table::VAULT_SHAPE_APPLY);
-
 /// `vault.shape.apply`'s input.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -62,6 +56,11 @@ pub struct ShapeApplyRequest {
     /// the owner's apply reads it.
     #[serde(default)]
     pub approve: Vec<u32>,
+    /// The creator's answer to the conversation-learning question, for a
+    /// shared vault this apply creates (FIX 5603). Only the owner's own
+    /// apply reads it; absent leaves the setting as it stands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_learning: Option<bool>,
 }
 
 /// Where one item stands.
@@ -82,6 +81,33 @@ pub enum ShapeItemState {
         proposal_ref: String,
         expires_at: u64,
     },
+    /// A new grant an actor's apply tried to file, but the widen inbox
+    /// refused, with the reason it gave. It waits as [`Self::Proposed`]
+    /// does, and an owner's apply may land it.
+    FileRefused { reason: String },
+    /// A channel retire the identity's lifecycle gate holds for the owner's
+    /// approve-once press on `approval_digest` (FIX 2577). It waits as
+    /// [`Self::Proposed`] does, and the owner's next apply asks again as
+    /// exactly this request: under `request_ref`, with the quarantine bound
+    /// and the clock it first asked with, so the gate reads the same request
+    /// and asks for no second approval.
+    Held {
+        request_ref: String,
+        approval_digest: String,
+        quarantine_until: u64,
+        requested_at: u64,
+    },
+    /// A channel provision the identity's lifecycle gate holds for the
+    /// owner's approve-once press on `approval_digest` (FIX 2300). It waits
+    /// as [`Self::Proposed`] does, and the owner's next apply asks again as
+    /// exactly this request: under `request_ref`, for the identity
+    /// `identity_ref` it first asked for, on the clock it first asked with.
+    HeldProvision {
+        request_ref: String,
+        approval_digest: String,
+        identity_ref: String,
+        requested_at: u64,
+    },
     /// An authority operation, for its AUTHORITY_LOG ceremony.
     Ceremony,
     /// The vault has no door for it yet; nothing landed.
@@ -101,6 +127,18 @@ pub struct ShapeApplyItem {
     /// lands only while it still holds. None on a journal from before it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval: Option<ShapeApprovalDependencies>,
+    /// The member this item lowered or removed keeps their capability
+    /// slips (FIX 2574): neither the host nor this install held an issuer
+    /// to revoke them, so the revocation waits for one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub slips_kept: bool,
+    /// The entities its landing's receipt or refusal names, as its door
+    /// listed them while it landed or refused it, and the id the door
+    /// returned (FIX 11151, 11175): what a reader's view of that receipt is
+    /// judged by. `None`: its door lists none, or a read it ran could not
+    /// be followed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receipt_refs: Option<Vec<String>>,
 }
 
 /// One apply: its journal row, and `vault.shape.apply`'s answer.
@@ -118,16 +156,21 @@ pub struct ShapeApplyReceipt {
     pub done: bool,
     /// The apply's run tree: one root, one child row per item.
     pub run: ShapeApplyRun,
+    /// What became of the apply's conversation-learning answer (FIX 5603).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub conversation_learning: Option<ShapeLearningOutcome>,
 }
 
 /// Who applies: the vault's owner, with the host's slip issuer when the
-/// host has one (a member a change lowers or removes loses their slips), or
-/// another actor with the credential it presented, if any.
+/// host has one (a member a change lowers or removes loses their slips) and
+/// where his request reached this install, or another actor with the
+/// credential it presented, if any.
 #[derive(Clone, Copy)]
 pub enum ShapeApplier<'a> {
     Owner {
         owner: &'a AuthenticatedOwner,
         slips: Option<&'a HostSlipIssuer>,
+        surface: ActSurface,
     },
     Actor {
         actor: EntityId,
@@ -139,7 +182,12 @@ pub enum ShapeApplier<'a> {
 pub(super) const fn open(state: &ShapeItemState) -> bool {
     matches!(
         state,
-        ShapeItemState::Pending | ShapeItemState::Proposed | ShapeItemState::Filed { .. }
+        ShapeItemState::Pending
+            | ShapeItemState::Proposed
+            | ShapeItemState::Filed { .. }
+            | ShapeItemState::FileRefused { .. }
+            | ShapeItemState::Held { .. }
+            | ShapeItemState::HeldProvision { .. }
     )
 }
 
@@ -154,48 +202,6 @@ fn held(item: &ShapePlanItem) -> ShapeItemState {
     }
 }
 
-/// The member rows a first sharing invites in its own writer: each new
-/// member the same apply approves. Under a preset the creator is its Owner
-/// already, so their own row is left to read as landed.
-fn founding_members(
-    items: &[ShapeApplyItem],
-    shared: &ShapePlanItem,
-    approve: &[u32],
-    creator: EntityId,
-) -> Vec<(usize, InitialSharedMember)> {
-    let preset = matches!(
-        shared.after,
-        Some(ShapeRow::Shared {
-            preset: Some(_),
-            ..
-        })
-    );
-    items
-        .iter()
-        .enumerate()
-        .filter_map(|(at, entry)| {
-            let (ShapeChange::Create, Some(ShapeRow::Member { member, role })) =
-                (entry.item.change, &entry.item.after)
-            else {
-                return None;
-            };
-            if !open(&entry.state) || !approve.contains(&entry.item.seq) {
-                return None;
-            }
-            let member = EntityId::from_hex(member).ok()?;
-            (!(preset && member == creator)).then(|| {
-                (
-                    at,
-                    InitialSharedMember {
-                        member_ref: member,
-                        role: Some((*role).into()),
-                    },
-                )
-            })
-        })
-        .collect()
-}
-
 /// The next version of a definition the shape updates: the next integer,
 /// else the old version with a `.shape` step.
 fn next_version(version: &str) -> String {
@@ -205,7 +211,7 @@ fn next_version(version: &str) -> String {
     )
 }
 
-type LiveByTarget = BTreeMap<ShapeTarget, (ShapeRow, Option<EntityId>)>;
+pub(super) type LiveByTarget = BTreeMap<ShapeTarget, (ShapeRow, Option<EntityId>)>;
 
 /// Lists the pack source a pack catalog receipt names; a receipt naming no
 /// entity leaves the rows unknown.
@@ -217,39 +223,6 @@ fn list_pack_source(sources: &mut ShapeSources, source_id: &str) {
 }
 
 impl Vault {
-    /// The journal of the apply landing the plan at `frontier`.
-    ///
-    /// # Errors
-    ///
-    /// A read failure.
-    pub fn shape_apply(&self, frontier: &str) -> Result<Option<ShapeApplyReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        JOURNAL.get(&self.store, &txn, &frontier.to_owned())
-    }
-
-    /// Every apply with an item still pending or waiting for the owner.
-    ///
-    /// # Errors
-    ///
-    /// A read failure.
-    pub fn open_shape_applies(&self) -> Result<Vec<ShapeApplyReceipt>> {
-        let txn = self.store.env.read_txn()?;
-        Ok(JOURNAL
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, receipt)| receipt)
-            .filter(|receipt| !receipt.done)
-            .collect())
-    }
-
-    /// Records `receipt`, and settles its run rows to match, in one writer.
-    pub(super) fn put_shape_apply(&self, receipt: &ShapeApplyReceipt, now: u64) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            JOURNAL.put(&self.store, txn, &receipt.frontier, receipt)?;
-            self.settle_shape_run_in_txn(txn, receipt, now)
-        })
-    }
-
     /// Lands `request.plan`. A first apply re-plans its seed over the rows
     /// `visible` admits and refuses a plan whose frontier has moved; then it
     /// stores the seed, and opens the journal and the apply's run tree in
@@ -269,33 +242,30 @@ impl Vault {
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
     ) -> Result<ShapeApplyReceipt> {
-        self.apply_shape_into(applier, request, now, visible, &mut ShapeSources::off())
+        self.apply_shape_listing(applier, request, now, visible).0
     }
 
     /// [`Self::apply_shape`], beside the rows its receipt stands on
-    /// (`host_door_lists`): what its re-plan read (see
+    /// (`host_door_lists`): what its first apply's re-plan read (see
     /// [`Self::plan_shape_into`]), the seed revision it stored, every live
     /// read an owner's landing made, the staged source a pack installs
-    /// from, and the entity each landing wrote. `None` for a resumed apply:
-    /// its journal holds no source set, and the rows its plan was read from
-    /// may have moved since. `None` too once an item lands through a door
-    /// whose reads it does not follow (a delegated channel provision, whose
-    /// custody record its writer resolves by name; a skill import refused
-    /// before it lands a candidate).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::apply_shape`].
+    /// from, the custody record a delegated channel provision reads, the
+    /// hub a refused skill import read, and the entity each landing wrote.
+    /// The journal keeps them (FIX 3411, 3513), so a resumed apply lists
+    /// them beside its own reads without planning again. `None` once a read
+    /// ran whose rows it does not follow (a skill import refused after its
+    /// import began), and from then on for every apply of that journal. A
+    /// refusal answers beside the rows read before it.
     pub fn apply_shape_listing(
         &self,
         applier: ShapeApplier<'_>,
         request: &ShapeApplyRequest,
         now: u64,
         visible: &mut dyn FnMut(&EntityId) -> Result<bool>,
-    ) -> Result<(ShapeApplyReceipt, Option<Vec<EntityId>>)> {
+    ) -> (Result<ShapeApplyReceipt>, Option<Vec<EntityId>>) {
         let mut sources = ShapeSources::on();
-        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources)?;
-        Ok((receipt, sources.into_rows()))
+        let receipt = self.apply_shape_into(applier, request, now, visible, &mut sources);
+        (receipt, sources.into_rows())
     }
 
     /// [`Self::apply_shape`]'s landing, listing in `sources`.
@@ -312,10 +282,9 @@ impl Vault {
             ShapeApplier::Owner { owner, .. } => owner.revalidate(self)?,
             ShapeApplier::Actor { actor, .. } => actor,
         };
-        let mut journal = if let Some(journal) = self.shape_apply(&request.plan.frontier)? {
-            // A resumed apply lists nothing: its journal holds no source
-            // set, and nothing is re-planned to make one.
-            sources.unknown();
+        // A resumed apply lists what its journal stands on (FIX 3411).
+        let resumed = self.resume_shape_apply(&request.plan.frontier, sources)?;
+        let mut journal = if let Some(journal) = resumed {
             journal
         } else {
             let (plan, pin) = self.plan_shape_into(Some(&request.plan.seed), visible, sources)?;
@@ -346,18 +315,21 @@ impl Vault {
                             item,
                             state: ShapeItemState::Pending,
                             approval: Some(pin.clone()),
+                            slips_kept: false,
+                            receipt_refs: None,
                         })
                         .collect(),
                     done: false,
+                    conversation_learning: None,
                 };
-                JOURNAL.put(&self.store, txn, &journal.frontier, &journal)?;
+                self.put_shape_journal_in_txn(txn, &journal, sources)?;
                 Ok(journal)
             })?
         };
         self.reconcile_shape_filings(&mut journal, now)?;
 
         let (owner, slips) = match applier {
-            ShapeApplier::Owner { owner, slips } => (owner, slips),
+            ShapeApplier::Owner { owner, slips, .. } => (owner, slips),
             ShapeApplier::Actor { credential, .. } => {
                 // An actor holds none of the owner's doors, so its apply
                 // lands nothing: each item waits for the owner (DEC-0006 is
@@ -369,11 +341,15 @@ impl Vault {
                     }
                 }
                 journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-                self.put_shape_apply(&journal, now)?;
+                self.put_shape_apply_listing(&journal, sources, now)?;
+                report_unread(&mut journal, &applier, request.conversation_learning);
                 return Ok(journal);
             }
         };
-        self.land_shape_journal_into(owner, slips, &mut journal, &request.approve, now, sources)?;
+        let answer = creator_answer(&applier, request.conversation_learning);
+        let approve = &request.approve;
+        self.land_shape_journal_into(owner, slips, &mut journal, approve, answer, now, sources)?;
+        report_unread(&mut journal, &applier, request.conversation_learning);
         Ok(journal)
     }
 
@@ -419,7 +395,8 @@ impl Vault {
     /// its door, waits for the owner's word unless `approve` carries its
     /// `seq`, or is refused, and the journal and its run rows are written
     /// after each. An owner's apply and the owner's answer to an apply's
-    /// inbox group both land through it.
+    /// inbox group both land through it; only the former carries `answer`.
+    /// What it reads and lands extends the rows the journal stands on.
     ///
     /// # Errors
     ///
@@ -430,30 +407,31 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         journal: &mut ShapeApplyReceipt,
         approve: &[u32],
+        answer: Option<CreatorAnswer>,
         now: u64,
     ) -> Result<()> {
-        self.land_shape_journal_into(
-            owner,
-            slips,
-            journal,
-            approve,
-            now,
-            &mut ShapeSources::off(),
-        )
+        let sources = &mut self.shape_apply_sources(&journal.frontier)?;
+        self.land_shape_journal_into(owner, slips, journal, approve, answer, now, sources)
     }
 
     /// [`Self::land_shape_journal`], listing in `sources` every live read it
     /// makes and what each landing wrote.
+    #[allow(clippy::too_many_arguments)]
     fn land_shape_journal_into(
         &self,
         owner: &AuthenticatedOwner,
         slips: Option<&HostSlipIssuer>,
         journal: &mut ShapeApplyReceipt,
         approve: &[u32],
+        answer: Option<CreatorAnswer>,
         now: u64,
         sources: &mut ShapeSources,
     ) -> Result<()> {
         let author = owner.revalidate(self)?;
+        // With no host issuer, the vault's own ends the slips of a member
+        // the shape lowers or removes (FIX 2574).
+        let own_issuer = self.shape_slip_issuer(slips);
+        let slips = slips.or(own_issuer.as_ref());
         let mut live = self.live_by_target(sources)?;
         let mut pin = self.shape_approval_now()?;
         for index in 0..journal.items.len() {
@@ -461,9 +439,19 @@ impl Vault {
                 continue;
             }
             let item = journal.items[index].item.clone();
+            // A release the lifecycle gate held asks again as its own request
+            // (FIX 2577): the owner's word was given when it was first asked.
+            let held_release = matches!(journal.items[index].state, ShapeItemState::Held { .. });
+            // So does a provision the gate held (FIX 2300).
+            let held_provision = matches!(
+                journal.items[index].state,
+                ShapeItemState::HeldProvision { .. }
+            );
             // The released re-preview (FIX 10200): an approved widening whose
             // previewed reach moved under it lands only once planned again.
-            let approved = item.class == ShapeItemClass::Widening
+            let approved = !held_release
+                && !held_provision
+                && item.class == ShapeItemClass::Widening
                 && item.door.is_some()
                 && approve.contains(&item.seq);
             if approved
@@ -479,42 +467,78 @@ impl Vault {
                     repin_waiting(&mut journal.items, index, &before, &pin, true);
                 }
                 journal.items[index].state = state;
-                self.put_shape_apply(journal, now)?;
+                self.put_shape_apply_listing(journal, sources, now)?;
                 continue;
             }
+            // What this item's own door lists, kept on the item (FIX 11175):
+            // on for each door that lists its rows.
+            let mut landing = None;
             let state = match held(&item) {
+                ShapeItemState::Proposed if held_release => {
+                    let resting = &journal.items[index].state;
+                    self.retire_shape_channel(owner, &item, &live, resting, now)
+                }
+                ShapeItemState::Proposed if held_provision => {
+                    let resting = &journal.items[index].state;
+                    self.provision_shape_channel_item(
+                        owner,
+                        &item,
+                        &live,
+                        resting,
+                        now,
+                        landing.insert(ShapeSources::on()),
+                    )
+                }
                 ShapeItemState::Proposed
                     if item.class == ShapeItemClass::Widening && !approve.contains(&item.seq) =>
                 {
                     match &journal.items[index].state {
-                        // A filing keeps its inbox reference while it waits.
-                        filed @ ShapeItemState::Filed { .. } => filed.clone(),
+                        // A filing keeps its inbox reference while it waits,
+                        // as a refused one keeps its reason.
+                        waiting @ (ShapeItemState::Filed { .. }
+                        | ShapeItemState::FileRefused { .. }) => waiting.clone(),
                         _ => ShapeItemState::Proposed,
                     }
                 }
                 // Sharing the vault invites, in its own writer, each new
                 // member this apply approves: the founding members.
                 ShapeItemState::Proposed if item.target == ShapeTarget::Shared => {
-                    let founding = founding_members(&journal.items, &item, approve, author);
-                    match self.share_vault(owner, &item, &founding, now) {
-                        Ok(receipt) => {
-                            for (at, _) in &founding {
-                                journal.items[*at].state = ShapeItemState::Landed {
-                                    at: now,
-                                    receipt: "founding member".to_owned(),
-                                };
-                            }
-                            // The members after it read the vault shared.
-                            live = self.live_by_target(sources)?;
-                            ShapeItemState::Landed { at: now, receipt }
-                        }
-                        Err(error) => ShapeItemState::Refused {
-                            reason: error.to_string(),
-                        },
+                    let shared =
+                        self.land_shared_vault(owner, journal, &item, approve, author, answer, now);
+                    if matches!(shared, ShapeItemState::Landed { .. }) {
+                        // The members after it read the vault shared.
+                        live = self.live_by_target(sources)?;
                     }
+                    shared
+                }
+                // A channel identity retires through its lifecycle gate,
+                // whose hold waits for the owner's press (FIX 2577).
+                ShapeItemState::Proposed
+                    if item.change == ShapeChange::Retire
+                        && matches!(item.target, ShapeTarget::Channel { .. }) =>
+                {
+                    let resting = &journal.items[index].state;
+                    self.retire_shape_channel(owner, &item, &live, resting, now)
+                }
+                // So does a new one provision, and its hold waits the same
+                // way (FIX 2300).
+                ShapeItemState::Proposed
+                    if item.change == ShapeChange::Create
+                        && matches!(item.target, ShapeTarget::Channel { .. }) =>
+                {
+                    let resting = &journal.items[index].state;
+                    self.provision_shape_channel_item(
+                        owner,
+                        &item,
+                        &live,
+                        resting,
+                        now,
+                        landing.insert(ShapeSources::on()),
+                    )
                 }
                 ShapeItemState::Proposed => {
-                    match self.land_shape_item(owner, slips, &item, &live, now, sources) {
+                    let landing = landing.insert(ShapeSources::on());
+                    match self.land_shape_item(owner, slips, &item, &live, now, landing) {
                         Ok(receipt) => {
                             // The skills a pack bundles, and the actors a
                             // channel binds, read live for the items after.
@@ -533,6 +557,7 @@ impl Vault {
                 }
                 rest => rest,
             };
+            journal.items[index].receipt_refs = landing_receipt_refs(&state, landing, sources);
             // The journal's own landing moves what the waiting items stand
             // on: they follow it, and only it.
             if let ShapeItemState::Landed { receipt, .. } = &state {
@@ -541,19 +566,20 @@ impl Vault {
                     let before = std::mem::replace(&mut pin, self.shape_approval_now()?);
                     repin_waiting(&mut journal.items, index, &before, &pin, own);
                 }
+                journal.items[index].slips_kept = !own && slips.is_none() && lowers_member(&item);
             }
             journal.items[index].state = state;
-            self.put_shape_apply(journal, now)?;
+            self.put_shape_apply_listing(journal, sources, now)?;
         }
         journal.done = !journal.items.iter().any(|entry| open(&entry.state));
-        self.put_shape_apply(journal, now)
+        self.put_shape_apply_listing(journal, sources, now)
     }
 
     /// Where an actor's apply leaves `item`: a new grant it carries the bound
     /// of is filed to the owner's widen inbox under `credential`, as an
-    /// action or a disclosure widening, for the vault's embedded owner to
-    /// answer. Anything else, or a filing the inbox refuses, rests where any
-    /// actor's item rests, waiting for the owner.
+    /// action or a disclosure widening, for the owner who accepts to answer
+    /// (FIX 2503). Anything else rests where any actor's item rests, waiting for
+    /// the owner; a filing the inbox refuses waits there with its reason.
     fn file_shape_grant(
         &self,
         credential: Option<&VerifiedSlip>,
@@ -572,7 +598,7 @@ impl Vault {
             return held(item);
         };
         let filed = bound.bound().and_then(|grant| {
-            let owner_ref = crate::vault::embedded_owner_actor_id()?.to_hex();
+            let owner_ref = self.shape_filing_owner_ref()?;
             let expires_at = self.store.clock.peek_recorded_at() + SHAPE_GRANT_PROPOSAL_SECS;
             if bound.is_action() {
                 self.propose_action_widen(credential, grant, &owner_ref, expires_at)
@@ -585,7 +611,9 @@ impl Vault {
                 proposal_ref: proposal.proposal_ref,
                 expires_at: proposal.expires_at,
             },
-            Err(_) => resting,
+            Err(error) => ShapeItemState::FileRefused {
+                reason: error.to_string(),
+            },
         }
     }
 
@@ -598,34 +626,6 @@ impl Vault {
             .into_iter()
             .map(|(row, entity)| (row.target(), (row, entity)))
             .collect())
-    }
-
-    /// Shares the vault as `item` declares, inviting `founding` in the
-    /// same writer.
-    fn share_vault(
-        &self,
-        owner: &AuthenticatedOwner,
-        item: &ShapePlanItem,
-        founding: &[(usize, InitialSharedMember)],
-        now: u64,
-    ) -> Result<String> {
-        let (ShapeChange::Create, Some(ShapeRow::Shared { vault_id, preset })) =
-            (item.change, &item.after)
-        else {
-            return Err(invalid(
-                "a shared vault is shared once; no seed reshares it",
-            ));
-        };
-        let members: Vec<InitialSharedMember> =
-            founding.iter().map(|(_, member)| member.clone()).collect();
-        let creation = self.initialize_shared_vault(
-            owner,
-            *vault_id,
-            (*preset).map(Into::into),
-            &members,
-            now,
-        )?;
-        Ok(creation.vault_id.to_string())
     }
 
     /// The entities `live` holds were listed when it was read; `sources`
@@ -679,6 +679,13 @@ impl Vault {
             ) => Ok(self
                 .add_shared_member(owner, shared()?, person(member)?, Some((*role).into()))?
                 .id),
+            (ShapeChange::Update, ShapeTarget::Member { .. }, Some(ShapeRow::Member { .. }))
+                if pending_invitation(current).is_some() =>
+            {
+                Err(invalid(
+                    "their invitation at another role is still pending; withdraw it, or wait for their answer",
+                ))
+            }
             (
                 ShapeChange::Update,
                 ShapeTarget::Member { member },
@@ -692,9 +699,18 @@ impl Vault {
                     slips,
                 )?
                 .id),
-            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => Ok(self
-                .remove_shared_member(owner, shared()?, person(member)?, slips)?
-                .id),
+            // Retiring a person still invited withdraws the invitation
+            // (FIX 2573), the owner's own act.
+            (ShapeChange::Retire, ShapeTarget::Member { member }, _) => {
+                match pending_invitation(current) {
+                    Some(invitation) => Ok(self
+                        .withdraw_shared_invitation(owner, shared()?, person(member)?, invitation)?
+                        .id),
+                    None => Ok(self
+                        .remove_shared_member(owner, shared()?, person(member)?, slips)?
+                        .id),
+                }
+            }
             (ShapeChange::Create, ShapeTarget::World { name }, _) => {
                 let world = self.create_world(owner, name, now)?;
                 sources.list(world);
@@ -712,9 +728,18 @@ impl Vault {
                 sources.list(facet);
                 Ok(facet.to_hex())
             }
-            (ShapeChange::Retire, ShapeTarget::World { .. } | ShapeTarget::Facet { .. }, _) => {
-                self.delete_shape_entity(owner, entity.ok_or_else(stale)?)
+            (ShapeChange::Create, ShapeTarget::WorldFacet { world, name }, _) => {
+                let facet = self.create_world_facet(owner, world, name, now)?;
+                sources.list(facet);
+                Ok(facet.to_hex())
             }
+            (
+                ShapeChange::Retire,
+                ShapeTarget::World { .. }
+                | ShapeTarget::Facet { .. }
+                | ShapeTarget::WorldFacet { .. },
+                _,
+            ) => self.delete_shape_entity(owner, entity.ok_or_else(stale)?),
             (
                 ShapeChange::Create,
                 ShapeTarget::Actor { agent_id },
@@ -818,7 +843,7 @@ impl Vault {
                     version: Some(version),
                     ..
                 }),
-            ) => self.update_shape_skill(owner, entity.ok_or_else(stale)?, version),
+            ) => self.update_shape_skill(owner, entity.ok_or_else(stale)?, version, sources),
             (ShapeChange::Retire, ShapeTarget::Skill { .. }, _) => {
                 // Retiring a skill quarantines it: out of every pack, its
                 // evidence kept, revivable. The owner's word is the consent
@@ -830,74 +855,6 @@ impl Vault {
                 owner.revalidate(self)?;
                 self.update_skill_record(&id, &record, occurred, now)?;
                 Ok(id.to_hex())
-            }
-            (
-                ShapeChange::Create,
-                ShapeTarget::Channel { channel, address },
-                Some(ShapeRow::Channel {
-                    provision: Some(provision),
-                    ..
-                }),
-            ) => {
-                let binding = provision.binding.resolve(|agent_id| {
-                    live.get(&ShapeTarget::Actor {
-                        agent_id: agent_id.to_owned(),
-                    })
-                    .and_then(|(_, entity)| *entity)
-                })?;
-                self.provision_shape_channel(
-                    owner, channel, address, provision, binding, now, sources,
-                )
-            }
-            (ShapeChange::Retire, ShapeTarget::Channel { .. }, _) => {
-                // Retiring a channel identity releases it through its
-                // lifecycle gate: outbound closes, and a self-held address
-                // goes into its never-recycle quarantine for the policy's
-                // shortest hold.
-                let id = entity.ok_or_else(stale)?;
-                let actor = owner.revalidate(self)?;
-                let quarantine_until = {
-                    let txn = self.store.env.read_txn()?;
-                    let LiveEntityRow::Live { body, .. } =
-                        live_entity_row_in_txn(&self.store, &txn, &id)?
-                    else {
-                        return Err(stale());
-                    };
-                    let identity = decode_channel_identity_body(&body)?;
-                    if identity.is_delegated() {
-                        now
-                    } else {
-                        now.saturating_add(resolve_quarantine_floor_in_txn(
-                            &self.store,
-                            &txn,
-                            &identity,
-                        )?)
-                    }
-                };
-                let released = self.apply_channel_identity_lifecycle_intent(
-                    ChannelIdentityLifecycleRequest {
-                        actor: ChannelIdentityLifecycleActor {
-                            actor_class: "human".to_owned(),
-                            actor_ref: Some(actor.to_hex()),
-                            actor_entity_ref: Some(actor),
-                        },
-                        gate: ChannelIdentityLifecycleGate::allow_when_policy_grants(),
-                        requested_at: now,
-                        intent: ChannelIdentityLifecycleIntent::Release(ReleaseIntent {
-                            identity_id: id,
-                            quarantine_until,
-                        }),
-                    },
-                )?;
-                if !released.identity_retiring {
-                    // FIX 6424 part 3: a hold names its approve-once press.
-                    return Err(invalid(format!(
-                        "the release did not take: {}{}",
-                        released.owner_visible_state,
-                        released.held_approval_note()
-                    )));
-                }
-                Ok(released.receipt_id)
             }
             (ShapeChange::Retire, ShapeTarget::Pack { name }, _) => {
                 let removed = self.remove_pack(owner, name)?;
@@ -937,6 +894,15 @@ impl Vault {
                     sources.list(id);
                 }
                 Ok(installed)
+            }
+            // A kind's wire is declared, never effected (FIX 2300).
+            (
+                ShapeChange::Create | ShapeChange::Update,
+                ShapeTarget::Sync { entity_kind },
+                Some(ShapeRow::Sync { on_wire, .. }),
+            ) => self.declare_shape_wire(owner, entity_kind, *on_wire, now),
+            (ShapeChange::Retire, ShapeTarget::Sync { entity_kind }, _) => {
+                self.withdraw_shape_wire(owner, entity_kind)
             }
             (ShapeChange::Retire, ShapeTarget::Manifest { .. }, _) => {
                 // A manifest is never deleted. Retiring one quarantines its

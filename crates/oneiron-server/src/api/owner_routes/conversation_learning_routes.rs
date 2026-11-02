@@ -31,12 +31,11 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, put};
 use oneiron::authority::{ConversationLearningView, ConversationTrainingView};
 use oneiron::error::RecordError;
 use oneiron::feedback::{
@@ -47,10 +46,11 @@ use oneiron::world_keys::PolicyRevision;
 use oneiron_vault_contract::conversation_training::TrainingReceiptStatusV2;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
 use super::world_privacy_routes::holder;
-use super::{OwnerReply, blocking};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::{CoreAuth, CoreScope};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -63,14 +63,57 @@ const LEARNING_READS: CoreScope = CoreScope::Read;
 /// conversation-learning scope"); the engine's writer then judges who may.
 const LEARNING_ACTS: CoreScope = CoreScope::Write;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/conversation-learning", get(view).put(set))
-        .route("/conversation-learning/me", get(own_view).put(set_own))
-        .route("/conversation-learning/receipts", get(receipts))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning",
+                summary: "The vault's \"Learn from my conversations\" setting, for a live member, delegate or guest (the owner, or another live person on their own human slip): on, allow_opt_out, the revision to present back as seen, any conflict, the act in force, set_by (the admin, 32 hex) and the one line a member's surface shows while it is on. While on, everything in the vault counts, people, agents and guests alike; private worlds never do.",
+                row: None,
+            },
+            get(view),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/conversation-learning",
+                summary: "The vault's admin (its live owner, or a shared vault's owner or admin holding the workspace-settings power) sets it: body {on, allow_opt_out, seen}, both flags required (a body missing one is a 400). Off until turned on; turning it off stops new sharing and withdraws nothing already shared. A stale seen (64 hex) is a conflict; anyone else is refused.",
+                row: None,
+            },
+            put(set),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning/me",
+                summary: "The caller's own opt-out, as the person their proof names: leave_out, whether the vault allows opt-outs now (allowed), the revision to present back as seen, any conflict and the act in force.",
+                row: None,
+            },
+            get(own_view),
+        ),
+        (
+            OwnerRoute {
+                method: "put",
+                path: "/conversation-learning/me",
+                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. It stops new sharing of their messages and withdraws nothing already shared. A stale seen (64 hex) is a conflict.",
+                row: None,
+            },
+            put(set_own),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/conversation-learning/receipts",
+                summary: "One page of the caller's own publisher training receipts, as the person their proof names: each submission carrying their words with its source, worlds, local custody, the intake's last receipt (stored, excluded, removal_pending, removed or rejected), the runs that used it, the withdrawal note and times. Never another person's rows. Pass the page's next back as after (34 hex) for the rest.",
+                row: None,
+            },
+            get(receipts),
+        ),
+    ]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetLearning {
     /// Whether the vault's conversations count for training. Required.
@@ -83,7 +126,7 @@ struct SetLearning {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct LearningReply {
     /// Whether the setting is on now. No choice, an off and a conflict read
     /// as off.
@@ -117,7 +160,19 @@ fn reply(view: &ConversationLearningView) -> LearningReply {
     }
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning`'s body (FIX 11611):
+/// [`SetLearning`].
+pub(crate) fn set_learning_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetLearning>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning`'s answer (FIX 11611):
+/// [`LearningReply`].
+pub(crate) fn learning_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningReply>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetOwn {
     /// Whether the caller's own messages are left out. Required.
@@ -128,7 +183,7 @@ struct SetOwn {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct OwnReply {
     /// The person whose opt-out this is, as 32 hex: the proof's own.
     person: String,
@@ -156,6 +211,18 @@ fn own_reply(view: &ConversationTrainingView) -> OwnReply {
         conflicted: view.conflicted,
         act: view.act.as_ref().map(revision_hex),
     }
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/me`'s body (FIX 11611):
+/// [`SetOwn`].
+pub(crate) fn set_own_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetOwn>()
+}
+
+/// The OpenAPI schema of `PUT /v1/owner/conversation-learning/me`'s answer (FIX 11611):
+/// [`OwnReply`].
+pub(crate) fn own_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OwnReply>()
 }
 
 /// The engine's typed refusals as the caller's: a stale revision is a change
@@ -199,12 +266,13 @@ async fn view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn set(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetLearning>, JsonRejection>,
+    payload: OwnerJsonBody<SetLearning>,
 ) -> OwnerReply<LearningReply> {
     let person = holder(&auth, &server, LEARNING_ACTS)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<LearningReply> {
         let seen = seen_revision(body.seen.as_deref())?;
         let view = server
@@ -236,12 +304,13 @@ async fn own_view(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> Owne
 async fn set_own(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetOwn>, JsonRejection>,
+    payload: OwnerJsonBody<SetOwn>,
 ) -> OwnerReply<OwnReply> {
     let person = holder(&auth, &server, LEARNING_ACTS)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let body = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let body = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<OwnReply> {
         let seen = seen_revision(body.seen.as_deref())?;
         let view = server

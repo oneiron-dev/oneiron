@@ -234,8 +234,8 @@ impl<'a> ContextPackBuilder<'a> {
     }
 
     /// Adds the content-addressed L2 prefix for these explicit person/persona
-    /// subjects. Uses their ClaimOf ledger, never ranked query hits. At most
-    /// eight subjects are accepted. New non-subject hits remain in the delta.
+    /// subjects. Uses their ClaimOf ledger, never ranked query hits. Every
+    /// deduplicated subject is read. New non-subject hits remain in the delta.
     pub fn l2_summary_subjects(mut self, subjects: &[EntityId]) -> Self {
         self.l2_summary_subjects = subjects
             .iter()

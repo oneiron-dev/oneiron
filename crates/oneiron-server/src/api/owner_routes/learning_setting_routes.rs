@@ -8,8 +8,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -19,16 +18,60 @@ use oneiron::learning_setting_doors::{
 };
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerResult, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/settings/learning", get(list).post(put))
-        .route("/settings/learning/clear", post(clear))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/learning",
+                summary: "The catalog, each knob with the value the vault reads now, and the owner's rows.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/learning",
+                summary: "Lays one seed or pin, replacing the row of the same key, mode and scope.",
+                row: None,
+            },
+            post(put),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/learning/clear",
+                summary: "Clears one row; an absent row clears too.",
+                row: None,
+            },
+            post(clear),
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/learning`'s body (FIX 11611):
+/// [`LearningSettingPut`].
+pub(crate) fn put_learning_setting_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingPut>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/learning/clear`'s body (FIX 11611):
+/// [`LearningSettingClear`].
+pub(crate) fn clear_learning_setting_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingClear>()
+}
+
+/// The OpenAPI schema of the two learning writes' answer (FIX 11611): [`LearningSettingsView`].
+pub(crate) fn learning_settings_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<LearningSettingsView>()
 }
 
 /// `GET /v1/owner/settings/learning[?key=<key>]`: the catalog, each knob
@@ -61,10 +104,10 @@ async fn list(
 async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<LearningSettingPut>, JsonRejection>,
+    payload: OwnerJsonBody<LearningSettingPut>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(
@@ -88,10 +131,10 @@ async fn put(
 async fn clear(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<LearningSettingClear>, JsonRejection>,
+    payload: OwnerJsonBody<LearningSettingClear>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(

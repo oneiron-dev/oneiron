@@ -116,9 +116,8 @@ pub(super) use participation::record_bound_task_in_txn;
 pub(crate) use participation::{
     Admitted, admit_participation_in_txn, join_subject_for_actor_in_txn,
 };
-use participation::{
-    Claimant, agent_off_room_in_txn, require_reader, require_thread_reader, require_thread_standing,
-};
+use participation::{Claimant, agent_off_room_in_txn, require_thread_standing};
+pub(in crate::workspace_roster) use participation::{require_reader, require_thread_reader};
 pub use private_threads::{PrivateThreadMetadata, RoomPrivateThreadsRequest};
 pub(crate) use replica::{
     RoomSideRow, SideMerge, TurnMerge, clear_replicated_side_cell_in_txn,
@@ -139,7 +138,7 @@ pub use thread_join::{
 pub(crate) use thread_projection::room_thread_turns_in_txn;
 pub(crate) use thread_reads::turn_held_back_for_in;
 pub use upkeep::{RoomUpkeepInput, RoomUpkeepThread, room_upkeep_input};
-pub(crate) use upkeep::{room_upkeep_host, upkeep_rooms};
+pub(crate) use upkeep::{room_upkeep_host, room_upkeep_reach, upkeep_rooms};
 pub use upkeep_voice::{
     RoomUpkeepNudge, RoomUpkeepPendingRequest, RoomUpkeepVoiceReceipt, RoomUpkeepVoiceRequest,
 };

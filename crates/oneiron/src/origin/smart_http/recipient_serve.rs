@@ -13,6 +13,13 @@
 //! The exact path delegates first, byte for byte; a masked context reaches
 //! the selection that serves a marked store's masked copy and receives its
 //! pushes into a private ingress (FIX 7608 slice 2b-ii-B2).
+//!
+//! CALL GIT-REVEAL-OPT-IN (FIX 9328): a masked context may carry the
+//! reader's own explicit reason for real bytes, which only its host sets
+//! from the reader's request. With a proven recipient and a valid reason,
+//! the files a live grant covers are read at their stored bytes, each
+//! delivered afresh with its receipts; an absent or invalid reason, or an
+//! unknown recipient, is today's masked read, with no ask and no refusal.
 
 use std::io::Read;
 use std::sync::Arc;
@@ -32,11 +39,14 @@ use crate::origin::residence::OriginAuthorityLease;
 use crate::origin::secret_marks::{RepoSecretMarkLookup, for_each_repo_secret_mark_in_txn};
 use crate::origin::secret_projection::RepoRevealRecipient;
 
+pub(super) mod delivery;
+
 /// The recipient a Git read serves, as its host proved it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RepoGitReadContext {
     masked: bool,
     actual: Option<RepoRevealRecipient>,
+    why: Option<String>,
 }
 
 impl RepoGitReadContext {
@@ -47,6 +57,7 @@ impl RepoGitReadContext {
         Self {
             masked: false,
             actual: None,
+            why: None,
         }
     }
 
@@ -57,7 +68,23 @@ impl RepoGitReadContext {
         Self {
             masked: true,
             actual,
+            why: None,
         }
+    }
+
+    /// This read with the reader's own explicit reason for a marked file's
+    /// real bytes, as its host took it from the reader's request: it opts
+    /// a masked read with a proven recipient into the files a live grant
+    /// covers. An exact read reads the stored history whatever it says.
+    #[must_use]
+    pub fn with_reveal_why(mut self, why: Option<&str>) -> Self {
+        self.why = why.map(str::to_owned);
+        self
+    }
+
+    /// The reader's reason, when its host passed one.
+    pub(crate) fn reveal_why(&self) -> Option<&str> {
+        self.why.as_deref()
     }
 
     /// Whether this read is a masked recipient's.

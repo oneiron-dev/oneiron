@@ -48,13 +48,15 @@ pub use self::call::{
     call_bytes_digest, call_json_digest, call_reads_world, call_refusal_digest, json_entity_refs,
 };
 pub use self::context_emit::ContextEmitReceipt;
-pub use self::decision_asks::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
+pub use self::decision_asks::{
+    DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
+};
 pub use self::family::{PendingTrayAsk, PendingTrayQuery};
 pub use self::field_set::{
     ContextReceiptFields, FIELD_EXECUTOR_ROLE, FIELD_EXECUTOR_SEAT, FIELD_LEARNING_DECIDED_BY,
-    FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, append_context_receipt_fields,
-    append_pack_attribution_fields, append_pack_manifest_fields, append_task_type_fields,
-    append_team_receipt_fields, memories_state_ref,
+    FIELD_LEARNING_PATTERN, FIELD_LEARNING_TEAM_REF, FIELD_LEASE_GENERATION,
+    append_context_receipt_fields, append_pack_attribution_fields, append_pack_manifest_fields,
+    append_task_type_fields, append_team_receipt_fields, memories_state_ref,
 };
 pub use self::grant::{
     StandingOutboundGrantLensRow, StandingOutboundGrantRevokeAction, StandingOutboundGrantsLens,
@@ -78,9 +80,9 @@ pub use self::pack_attribution::{
     SkillContribution, UsedProvenanceEdge,
 };
 pub(crate) use self::pack_attribution::{
-    attempt_pack_attribution_in_txn, finalize_attempt_pack_judge_in_txn,
-    has_attempt_pack_attribution_in_txn, put_attempt_pack_attribution_in_txn, reference,
-    take_attempt_pack_attribution_in_txn,
+    attempt_pack_attribution_in_txn, erase_attempt_attribution_scope_in_txn,
+    finalize_attempt_pack_judge_in_txn, has_attempt_pack_attribution_in_txn,
+    put_attempt_pack_attribution_in_txn, reference, take_attempt_pack_attribution_in_txn,
 };
 pub use self::projection::{
     BriefReceiptProjection, CounterpartyReceiptProjection, GrantReceiptProjection,
@@ -88,18 +90,18 @@ pub use self::projection::{
     project_receipts_by_counterparty, project_receipts_by_grant,
 };
 pub use self::questions::{
-    GRAPH_ASK_MAX_UNITS, GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined,
-    GraphAskOutcome, GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage,
-    QuestionAnswersReply, QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest,
-    QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
+    GRAPH_ASK_UNIT_DEADLINE_MS, GraphAdmitRequest, GraphAskDeclined, GraphAskOutcome,
+    GraphAskRequest, GraphAskSelection, QuestionAnswer, QuestionAnswersPage, QuestionAnswersReply,
+    QuestionAnswersRequest, QuestionBackfillRequest, QuestionCreateRequest, QuestionEditRequest,
+    QuestionOutcomeWindowsRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
     QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
     QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
 };
 pub(crate) use self::reference_refusal::{
-    ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals, receipt_refusal,
-    record_reference_refusals_in_txn,
+    ReferenceOutcome, ReferenceRefusalFacts, receipt_creations_not_proven,
+    receipt_reference_refusals, receipt_refusal, record_reference_refusals_in_txn,
 };
-pub use self::served_form::{PixelPull, ServedForm, ServedRung};
+pub use self::served_form::{AudioPull, PixelPull, ServedForm, ServedRung};
 pub use self::session::{SessionLocalReceiptLog, SessionReceiptClose};
 pub use self::share_doors::{ShareRevokeReceipt, SharedBriefCitation, SharedBriefView};
 

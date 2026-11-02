@@ -44,7 +44,7 @@ async fn as_owner_listing<T: Send + 'static>(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    match tokio::task::spawn_blocking(move || act(&*server, &owner)).await {
+    match super::clock_ingress::run_blocking(move || act(&*server, &owner)).await {
         Ok(Ok((answer, rows))) => (Ok(answer), rows),
         Ok(Err(refusal)) => (Err(refusal), Vec::new()),
         Err(_) => (Err(internal(verb)), Vec::new()),

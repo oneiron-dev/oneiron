@@ -100,11 +100,13 @@ impl HostSelfDispatcher<'_> {
         };
         // A write carries the run's TASK creator, so a TASK it creates runs
         // inside the creator's lease tree (OF-532). `reveal.describe` judges
-        // grants with the run's project as `reveal` does (FIX 2359); a run
-        // whose binding cannot be read describes without one, as before.
+        // grants with the run's project as `reveal` does (FIX 2359), and
+        // `reveal.wait` finds the reveal its run asked under that project and
+        // run (FIX 2360); a run whose binding cannot be read calls without
+        // one, as before.
         let task_host = if call.verb.writes() {
             self.task_host_binding()?
-        } else if matches!(call.verb, AgentVerb::RevealDescribe) {
+        } else if matches!(call.verb, AgentVerb::RevealDescribe | AgentVerb::RevealWait) {
             self.task_host_binding().ok().flatten()
         } else {
             None
@@ -112,19 +114,24 @@ impl HostSelfDispatcher<'_> {
         let origin =
             HostWriteOrigin::new(self.agent_verb_envelope(call.verb, site.map(|site| site.seq))?)
                 .with_task_host(task_host)
-                .with_model_provider(self.model_provider());
+                .with_model_provider(self.model_provider())
+                .with_read_proof(self.program_proof().cloned())
+                .with_bound_run(self.bound_run);
         // The call's step names the logical verb its hooks fire once for, the
         // same across replays of the step, and a call a hook's ask parked
         // keeps its invocation into a later step (ARCH-0080 §3). A hook's
         // stop goes back to the dispatcher as `Error::VerbHook`. That call
         // names the ask it parked on beside its invocation, as an HTTP retry
         // names its pause (FIX 5526): the door's memory resumes that pause,
-        // or refuses one that is gone rather than running a new call.
+        // or refuses one that is gone rather than running a new call. A
+        // durable call's origin names that step (FIX 11683).
         let parked = SelfCall::AgentVerb(call.clone());
         let invocation = self.verb_invocation(&parked, site)?;
-        let origin = origin.with_hook_ask(self.parked_ask(&parked, site)?);
+        let origin = origin
+            .with_hook_ask(self.parked_ask(&parked, site)?)
+            .with_step(site.map(|_| invocation));
         let Some(site) = site.filter(|_| call.verb.writes()) else {
-            let answer = door.call(&call, &origin, invocation)?;
+            let answer = self.program_door_call(&**door, &call, &origin, invocation)?;
             return Ok(connector_call_answer(
                 call.verb,
                 worded(
@@ -163,7 +170,7 @@ impl HostSelfDispatcher<'_> {
             Some(consent_site) => origin.with_code_consent(consent_site.clone()),
             None => origin,
         };
-        let outcome = match door.call(&call, &origin, invocation) {
+        let outcome = match self.program_door_call(&**door, &call, &origin, invocation) {
             // A held connector call parks before its receipt keeps it, so a
             // resumed step parks on the same call again: on its code consent
             // wait when one was bound to it, else on the call itself.
@@ -320,6 +327,38 @@ impl HostSelfDispatcher<'_> {
         }
     }
 
+    /// The guest's view of a granted `reveal.wait` a resumed turn program's
+    /// settled row answers (FIX 2360): its value read again through the door
+    /// under the lease `kept` names, as the call's view. The row keeps its
+    /// value-free answer. `None` for any other call or answer, or when the
+    /// door serves no replay or refuses it: the kept answer stands.
+    pub(crate) fn replay_reveal_view(
+        &self,
+        call: &SelfCall,
+        kept: &SelfDispatchOutcome,
+    ) -> Result<Option<Value>> {
+        let (SelfCall::AgentVerb(wait), SelfDispatchOutcome::AgentVerb(answer)) = (call, kept)
+        else {
+            return Ok(None);
+        };
+        let (true, Some(door)) = (wait.verb == AgentVerb::RevealWait, &self.agent_verbs) else {
+            return Ok(None);
+        };
+        let Some(lease) = crate::task_verb::sdk::kept_reveal_lease(&answer.output) else {
+            return Ok(None);
+        };
+        let origin = HostWriteOrigin::new(self.agent_verb_envelope(wait.verb, None)?)
+            .with_task_host(self.task_host_binding().ok().flatten())
+            .with_model_provider(self.model_provider())
+            .with_read_proof(self.program_proof().cloned())
+            .with_bound_run(self.bound_run);
+        let invocation = self.verb_invocation(call, None)?;
+        Ok(door
+            .replay_reveal(wait, lease, &origin, invocation)?
+            .ok()
+            .map(|answer| serde_json::json!({ "output": answer.output })))
+    }
+
     /// A step past a write that did not meet its receipt can no longer close,
     /// so it commits nothing more: every later call gets the refusal that
     /// write got in place of its kept answer, or an error where it got none.
@@ -457,13 +496,27 @@ impl HostSelfDispatcher<'_> {
     /// A verb's answer as the run takes it, when a code consent wait may
     /// bind it: a held call its wait was bound to parks the run on that
     /// wait, which only its owner's answer and the effect's own gate settle.
-    /// Every other answer is [`connector_call_answer`]'s.
+    /// A browser call whose press held an act its host bound to the wait at
+    /// this call's own site parks the same way (FIX 10423), whatever its
+    /// answer said. Every other answer is [`connector_call_answer`]'s.
     fn code_consent_answer(
         &self,
         consent_site: Option<&CodeConsentCallSite>,
         verb: AgentVerb,
         outcome: SelfDispatchOutcome,
     ) -> Result<SelfDispatchOutcome> {
+        if let Some(consent_site) = consent_site
+            && verb.is_browser()
+            && let ExecutorStorage::Canonical(vault) = &self.storage
+            && consent_wait::code_consent_binds_held_browser(vault, consent_site.wait_id)?
+        {
+            return Ok(SelfDispatchOutcome::DurableWait(SelfDurableWait {
+                wait_id: consent_site.wait_id,
+                effect: SelfEffect::AgentVerb,
+                reason: SelfDurableWaitReason::OutboundEffect,
+                prompt: Some(format!("code_consent:{}", consent_site.wait_id.to_hex())),
+            }));
+        }
         if let (Some(consent_site), SelfDispatchOutcome::AgentVerb(answer)) =
             (consent_site, &outcome)
             && let Some(call_ref) = held_call_ref(verb, &answer.output)

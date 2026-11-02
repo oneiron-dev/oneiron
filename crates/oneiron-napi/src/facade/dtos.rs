@@ -2,6 +2,13 @@
 
 use napi_derive::napi;
 
+use super::legal_hold::NapiLegalHoldNotice;
+
+mod read_scope;
+mod witness_assertions;
+pub(super) use self::read_scope::{NapiReadReceipt, NapiReadScope, NapiRecallScope};
+pub(super) use self::witness_assertions::NapiWitnessAssertions;
+
 // ── DTOs (napi objects mirroring the engine facade DTOs) ────────────────
 
 /// One message inside a witnessed turn.
@@ -60,6 +67,9 @@ pub struct NapiWitnessTurn {
     /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
     /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read; omitted ⇒ it asserts nothing.
+    pub assertions: Option<NapiWitnessAssertions>,
 }
 
 /// The quoted span of one MESSAGE: half-open Unicode scalar indices into
@@ -83,6 +93,21 @@ pub struct NapiWitnessReceipt {
     pub message_short_ids: Vec<String>,
     /// Facade write marker (`witness:<hex>`).
     pub receipt_ref: String,
+    /// What the wake this turn owes its actor's armed programs came to
+    /// (FIX 9970); absent when the turn owes none.
+    pub wake_outcome: Option<NapiTurnProgramWakeOutcome>,
+}
+
+/// What a landed turn's program wake came to (FIX 9970).
+#[napi(object)]
+pub struct NapiTurnProgramWakeOutcome {
+    /// `not_armed`, `evaluated` or `unpersisted`.
+    pub outcome: String,
+    /// Wakes this landing recorded, when `outcome` is `evaluated`. Zero means
+    /// none matched or each was already recorded, not a failure.
+    pub newly_recorded: Option<u32>,
+    /// `no_authority` or `storage_failure`, when `outcome` is `unpersisted`.
+    pub reason: Option<String>,
 }
 
 /// One claim to commit (`approval` is not settable by callers).
@@ -102,7 +127,9 @@ pub struct NapiClaimInput {
     pub source: String,
     /// Optional WORLD ref.
     pub world_ref: Option<String>,
-    pub relationship_ref: Option<String>,
+    /// Optional RELATIONSHIP refs: absent for all, `[]` for the explicit
+    /// empty set.
+    pub relationship_ref: Option<Vec<String>>,
     /// Optional scope map.
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).
@@ -115,6 +142,13 @@ pub struct NapiClaimInput {
     pub learned_at: Option<f64>,
     /// Optional salience in [0, 1].
     pub salience: Option<f64>,
+    /// The band a calibrated producer gave `confidence`
+    /// (`low|medium|high|certain`), with `confidence_basis`; both omitted
+    /// mean the house band of the number.
+    pub confidence_band: Option<String>,
+    /// Where `confidence_band` came from
+    /// (`calibrated_model|deterministic_fallback`).
+    pub confidence_basis: Option<String>,
 }
 
 /// Receipt for one committed claim.
@@ -161,6 +195,9 @@ pub struct NapiRecordRefusal {
     pub suggestions: Vec<String>,
     /// The refused element's JSON pointer (`/claims/2`).
     pub field: String,
+    /// The legal-hold notice behind this refusal, when its producer supplied one.
+    #[napi(js_name = "legal_hold")]
+    pub legal_hold: Option<NapiLegalHoldNotice>,
 }
 
 /// Receipt for one safe delete.
@@ -405,18 +442,6 @@ pub struct NapiBlobVersionView {
     pub created_at: i64,
 }
 
-/// Recall scoping (S5): narrowing only; unset = vault floor.
-#[napi(object)]
-pub struct NapiRecallScope {
-    /// WORLD entity ref; scopes to that world plus base reality.
-    pub world_ref: Option<String>,
-    /// Facet entity ref; strict facet narrowing when set.
-    pub facet: Option<String>,
-    /// Registry kinds to return; unset returns every kind but
-    /// conversations, sessions, facets and worlds.
-    pub kinds: Option<Vec<String>>,
-}
-
 /// A recall's media query (OF-370): bytes the server embeds into one
 /// declared space, searched as that space's list beside the query's.
 #[napi(object)]
@@ -521,6 +546,9 @@ pub struct NapiMemoryItem {
     pub confidence: f64,
     /// Hedge vocabulary bucket.
     pub hedge_bucket: String,
+    /// Where a claim's band came from (`calibrated_model` or
+    /// `deterministic_fallback`); omitted for an item that is not a claim.
+    pub confidence_basis: Option<String>,
     /// Provenance.
     pub provenance: NapiMemoryProvenance,
     pub stale: Option<NapiMemoryStaleStamp>,
@@ -897,43 +925,6 @@ pub struct NapiForgetSelector {
     pub subject_ref: Option<String>,
     /// Predicate (used with `subject_ref`).
     pub predicate: Option<String>,
-}
-
-// ── read receipts ───────────────────────────────────────────────────────
-
-/// One read scope on a receipt: the requested, ceiling, or applied tuple.
-#[napi(object)]
-pub struct NapiReadScope {
-    /// Admitted entity type bytes; absent means every registered type.
-    pub entity_types: Option<Vec<u32>>,
-    /// Highest admitted sensitivity band.
-    pub max_sensitivity_band: u32,
-    /// Whether stale claims are admitted.
-    pub include_stale: bool,
-    /// Lowest admitted claim confidence.
-    pub min_confidence: f64,
-    /// Lowest admitted claim salience.
-    pub min_salience: f64,
-    /// Whether the scope admits nothing.
-    pub deny_all: bool,
-}
-
-/// The mandatory receipt every read returns: what was asked, the actor's
-/// ceiling, what applied, and which axes narrowed.
-#[napi(object)]
-pub struct NapiReadReceipt {
-    /// The scope the caller asked for.
-    pub requested: NapiReadScope,
-    /// The actor's ceiling.
-    pub actor_ceiling: NapiReadScope,
-    /// The intersection that applied.
-    pub applied: NapiReadScope,
-    /// Axes that narrowed the read.
-    pub narrowed_axes: Vec<String>,
-    /// Stored rows this actor may not read.
-    pub suppressed_count: u32,
-    /// Machine-readable re-plan hint: the narrowed axes.
-    pub replan_hint: Vec<String>,
 }
 
 /// `getEntity` result: the view, or none, with the read's receipt.

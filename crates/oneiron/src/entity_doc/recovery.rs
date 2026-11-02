@@ -25,6 +25,11 @@ use crate::{EntityId, Result, Vault};
 use heed::{RoTxn, RwTxn};
 use loro::{ExportMode, Frontiers, UpdateOptions, VersionVector};
 
+mod canonical_order;
+mod summary_meta;
+
+use canonical_order::{canonical_order, hasse, names};
+
 fn invalid(reason: &'static str) -> crate::Error {
     ArtifactError::InvalidRecoveryArtifact(reason).into()
 }
@@ -77,6 +82,7 @@ pub(crate) fn capture(
         },
         text: doc.text(),
         metadata: doc.metadata_bytes()?,
+        summary_meta: summary_meta::bytes(&doc.doc),
         record_fields: doc.record_fields()?,
         birth_actor: raw_actor(doc.birth().actor),
         birth_at: doc.birth().at,
@@ -122,6 +128,7 @@ struct ForkAt {
     index: u64,
     len: u64,
     settled: bool,
+    opener_lineage: Vec<[u8; 32]>,
 }
 
 /// The causal rows of `entity`, by value; None when it has none, so that
@@ -221,6 +228,7 @@ fn history(
             len: u64::try_from(bundle.forks.len())
                 .map_err(|_| invalid("entity document proposal size"))?,
             settled: bundle.settled,
+            opener_lineage: super::proposal_lineage::frozen(&bundle)?,
         });
     }
     let mut purge_rows = Vec::with_capacity(purges.len());
@@ -232,13 +240,16 @@ fn history(
 
     let mut texts = Vec::with_capacity(versions.frontiers.len());
     let mut metadata = Vec::with_capacity(versions.frontiers.len());
+    let mut summaries = Vec::with_capacity(versions.frontiers.len());
     for frontier in &versions.frontiers {
         let version = doc.fork(&frontier.encode())?;
         texts.push(version.text());
         metadata.push(version.metadata_bytes()?);
+        summaries.push(summary_meta::bytes(&version.doc));
     }
     let parents = hasse(&versions.vvs);
-    let order = canonical_order(&parents, &texts, &metadata)?;
+    let names = names(texts.len(), &pin_rows, &receipt_rows, &forks, &purge_rows)?;
+    let order = canonical_order(&parents, &texts, &metadata, &names)?;
     if order[head] != texts.len() - 1 {
         return Err(Error::InvariantViolation(
             "live head is not the last version",
@@ -258,6 +269,7 @@ fn history(
         let mut version = CanonicalEntityDocumentHistory::splice(first, &texts[node])?;
         version.parents = mapped;
         version.metadata = metadata[node].clone();
+        version.summary_meta = summaries[node].clone();
         carried.push(version);
     }
     let at = |node: usize| order[node] as u32;
@@ -325,6 +337,7 @@ fn history(
                 proposal_index: fork.index,
                 proposal_len: fork.len,
                 proposal_settled: fork.settled,
+                proposal_opener_lineage: fork.opener_lineage,
                 read_refs: fork
                     .record
                     .read_refs
@@ -359,83 +372,6 @@ fn history(
         forks,
         purges,
     }))
-}
-
-/// Each version's direct predecessors among the captured versions: the
-/// maximal ones its version vector includes. A strictly later version holds
-/// strictly more operations, so walking down by size meets every cover first.
-fn hasse(vvs: &[VersionVector]) -> Vec<Vec<usize>> {
-    let size = |vv: &VersionVector| vv.values().map(|&end| i64::from(end)).sum::<i64>();
-    let mut by_size: Vec<usize> = (0..vvs.len()).collect();
-    by_size.sort_by_key(|&node| size(&vvs[node]));
-    let mut below = vec![vec![false; vvs.len()]; vvs.len()];
-    let mut parents = vec![Vec::new(); vvs.len()];
-    for (rank, &node) in by_size.iter().enumerate() {
-        let mut covered = vec![false; vvs.len()];
-        for &earlier in by_size[..rank].iter().rev() {
-            if covered[earlier] || !vvs[node].includes_vv(&vvs[earlier]) {
-                continue;
-            }
-            parents[node].push(earlier);
-            covered[earlier] = true;
-            for (other, &held) in below[earlier].iter().enumerate() {
-                covered[other] |= held;
-            }
-        }
-        let mut reach = vec![false; vvs.len()];
-        for &parent in &parents[node] {
-            reach[parent] = true;
-            for (other, &held) in below[parent].iter().enumerate() {
-                reach[other] |= held;
-            }
-        }
-        below[node] = reach;
-    }
-    parents
-}
-
-/// The canonical index of every version: a topological order that takes,
-/// among the ready versions, the least by (parent indices, text). The same
-/// causal shape and texts give the same order on every capture, including
-/// the recapture of a replayed document.
-fn canonical_order(
-    parents: &[Vec<usize>],
-    texts: &[String],
-    metadata: &[BTreeMap<String, Vec<u8>>],
-) -> Result<Vec<usize>> {
-    let mut order = vec![usize::MAX; parents.len()];
-    for index in 0..parents.len() {
-        let mut best: Option<(Vec<usize>, usize)> = None;
-        let mut tied = false;
-        for node in 0..parents.len() {
-            if order[node] != usize::MAX || parents[node].iter().any(|&p| order[p] == usize::MAX) {
-                continue;
-            }
-            let mut key: Vec<usize> = parents[node].iter().map(|&p| order[p]).collect();
-            key.sort_unstable();
-            let ordering = best.as_ref().map(|(known, other)| {
-                (&key, &texts[node], &metadata[node]).cmp(&(
-                    known,
-                    &texts[*other],
-                    &metadata[*other],
-                ))
-            });
-            match ordering {
-                None | Some(std::cmp::Ordering::Less) => {
-                    best = Some((key, node));
-                    tied = false;
-                }
-                Some(std::cmp::Ordering::Equal) => tied = true,
-                Some(std::cmp::Ordering::Greater) => {}
-            }
-        }
-        if tied {
-            return Err(invalid("entity document versions are indistinguishable"));
-        }
-        let (_, node) = best.ok_or(Error::InvariantViolation("cyclic document versions"))?;
-        order[node] = index;
-    }
-    Ok(order)
 }
 
 pub(crate) fn restore(
@@ -485,14 +421,16 @@ pub(crate) fn restore(
         field: field_of(row),
         generation: 0,
         pending: 0,
+        birth_frontier: None,
     };
     let slot = DocumentSlot::from_hex(&head.document)?;
     match &row.history {
         None => {
             let doc = EntityDoc::rebuild_value(entity, &row.text, birth_actor, row.birth_at)?;
             EntityDoc::replace_metadata(&doc.doc, &row.metadata)?;
+            summary_meta::write(&doc.doc, &row.summary_meta)?;
             EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-            doc.doc.commit();
+            super::document::restate_birth(&doc.doc);
             storage::persist(vault, txn, &entity, &mut head, &doc, None)?;
             store.port_document_rows_delete(txn, slot, &[DocumentRow::ShallowSince])?;
         }
@@ -567,6 +505,7 @@ fn refuse_loss(
 /// Replays the carried versions into fresh history: an empty birth commit,
 /// then each version as one commit on its parents, so the replayed causal
 /// order is the carried one. A purged document is cut at version 0 again.
+/// Each replayed commit restates the row's birth (FIX 10929).
 fn replay(
     entity: EntityId,
     row: &CanonicalEntityDocument,
@@ -575,7 +514,7 @@ fn replay(
     let texts = history.texts()?;
     let doc = EntityDoc::rebuild_value(entity, "", doc_actor(row.birth_actor)?, row.birth_at)?;
     EntityDoc::set_record_fields(&doc.doc, &row.record_fields)?;
-    doc.doc.commit();
+    super::document::restate_birth(&doc.doc);
     let root = doc.doc.oplog_frontiers();
     let mut frontiers: Vec<Frontiers> = Vec::with_capacity(texts.len());
     for (index, (version, text)) in history.versions.iter().zip(&texts).enumerate() {
@@ -604,6 +543,7 @@ fn replay(
             .update(text, UpdateOptions::default())
             .map_err(|_| invalid("entity document version replay"))?;
         EntityDoc::replace_metadata(&branch, &version.metadata)?;
+        summary_meta::write(&branch, &version.summary_meta)?;
         branch
             .get_map("meta")
             .insert(
@@ -611,7 +551,7 @@ fn replay(
                 i64::try_from(index).map_err(|_| invalid("entity document version count"))?,
             )
             .map_err(|_| invalid("entity document version replay"))?;
-        branch.commit();
+        super::document::restate_birth(&branch);
         let known = doc.doc.oplog_vv();
         let updates = branch
             .export(ExportMode::updates(&known))
@@ -631,6 +571,7 @@ fn replay(
     if &doc.doc.oplog_frontiers() != head
         || doc.text() != row.text
         || doc.metadata_bytes()? != row.metadata
+        || summary_meta::bytes(&doc.doc) != row.summary_meta
     {
         return Err(Error::InvariantViolation("replayed head differs"));
     }
@@ -800,7 +741,8 @@ pub(crate) fn restore_proposals(
     rows: &[CanonicalEntityDocument],
 ) -> Result<()> {
     let store = &vault.store;
-    let mut bundles: BTreeMap<[u8; 16], (bool, Vec<(u64, [u8; 16])>)> = BTreeMap::new();
+    let mut bundles: BTreeMap<[u8; 16], (&CanonicalDocumentFork, Vec<(u64, [u8; 16])>)> =
+        BTreeMap::new();
     for fork in rows
         .iter()
         .filter_map(|row| row.history.as_ref())
@@ -808,11 +750,11 @@ pub(crate) fn restore_proposals(
     {
         bundles
             .entry(fork.proposal)
-            .or_insert((fork.proposal_settled, Vec::new()))
+            .or_insert((fork, Vec::new()))
             .1
             .push((fork.proposal_index, fork.fork));
     }
-    for (proposal, (settled, mut members)) in bundles {
+    for (proposal, (first, mut members)) in bundles {
         members.sort_unstable();
         let mut forks = Vec::with_capacity(members.len());
         for (_, fork) in members {
@@ -835,7 +777,12 @@ pub(crate) fn restore_proposals(
                 proposal: proposal.clone(),
                 author,
                 forks,
-                settled,
+                settled: first.proposal_settled,
+                opener_lineage: first
+                    .proposal_opener_lineage
+                    .iter()
+                    .map(|slip| crate::entity_id::bytes_to_hex_lower(slip))
+                    .collect(),
             },
         )?;
     }

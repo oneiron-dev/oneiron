@@ -68,9 +68,11 @@ impl Memory<'_> {
     /// its host's own evidence (OF-063, FIX 3416). Each is read through the
     /// writer's own lane, opened before its writer, and judged in the
     /// terminal's write: one it cannot read refuses the terminal, which
-    /// commits nothing and leaves the stream open. A new MESSAGE keeps the
-    /// set admitted in its metadata under `reply_assertions`, in that write;
-    /// a continuation's MESSAGE keeps its birth envelope.
+    /// commits nothing and leaves the stream open. The generation's receipt
+    /// keeps the set admitted, its seed's with it, in that write (FIX
+    /// 10258); a new MESSAGE also copies it into its object metadata under
+    /// `reply_assertions` unless its caller put that key there, and a
+    /// continuation's MESSAGE keeps its birth envelope.
     pub fn finalize_model_stream_if(
         &self,
         handle: MessageStreamHandle,
@@ -285,7 +287,13 @@ impl Vault {
                 if state.relift {
                     admission::admit_axes_in_txn(self, txn, &mut row, &mut lifted)?;
                 }
-                admission::authorize(self, txn, &row, &format!("{}{}", state.base, pending))?;
+                admission::authorize(
+                    self,
+                    txn,
+                    &row,
+                    &format!("{}{}", state.base, pending),
+                    !pending.is_empty(),
+                )?;
                 storage::checkpoint(self, txn, &row)?;
                 Ok((pending, row.metadata))
             })?;
@@ -302,8 +310,15 @@ impl Vault {
     /// the quiet interval. Each MESSAGE is born, or its continuation appended,
     /// with exactly the text its seed checkpointed, and left partial; nothing
     /// past the checkpoint is invented, and saved text is never dropped.
-    /// A policy refusal aborts open and retains the seed for explicit repair.
-    pub(crate) fn recover_message_streams(&self) -> MessageStreamResult<()> {
+    /// A refused replay (a revoked grant, an actor that no longer proves, a
+    /// policy that moved) is that stream's alone (FIX 9974): its seed stays
+    /// for explicit repair, its typed refusal is logged, returned and kept in
+    /// place of the last open's for the owner to read (FIX 11933), and the
+    /// open goes on for every other stream. A storage failure fails the open.
+    pub(crate) fn recover_message_streams(
+        &self,
+    ) -> MessageStreamResult<Vec<StreamRecoveryRefusal>> {
+        let mut refused = Vec::new();
         // However many seeds survived, each is retired: none is refused for
         // the count. They are read a page at a time, so the decode holds one
         // page in memory, never the whole table.
@@ -337,7 +352,8 @@ impl Vault {
                 seeds
             };
             let Some(last) = seeds.last().map(|seed| seed.message_id) else {
-                return Ok(());
+                self.message_streams.keep_refused(&refused);
+                return Ok(refused);
             };
             for mut seed in seeds {
                 // A seed holds its text as admitted; no raw copy outlives
@@ -359,7 +375,8 @@ impl Vault {
                     _turn: None,
                 };
                 // A Retry that no longer stands is retired, landing
-                // nothing (FIX 3152); any other refusal aborts open.
+                // nothing (FIX 3152); any other refusal of the stream's own
+                // is isolated to it (FIX 9974).
                 if let Err(error) = commit_terminal(
                     self,
                     &mut state,
@@ -373,11 +390,38 @@ impl Vault {
                     None,
                 ) && !state.terminal
                 {
-                    return Err(error);
+                    if !stream_refusal(&error) {
+                        return Err(error);
+                    }
+                    let refusal = StreamRecoveryRefusal::new(&state.seed, error);
+                    tracing::warn!(
+                        stream_message = %refusal.message_id.to_hex(),
+                        conversation = %refusal.conversation.to_hex(),
+                        actor = %refusal.actor.to_hex(),
+                        code = %refusal.code,
+                        error = %refusal.message,
+                        "a surviving stream seed's recovery was refused; its seed stays for repair"
+                    );
+                    refused.push(refusal);
                 }
             }
             after = Some(last);
         }
+    }
+}
+
+/// Whether `error`, a seed's refused replay, is that stream's own refusal,
+/// which recovery isolates (FIX 9974). A storage failure, a corrupt index or
+/// a poisoned lock is the vault's, and fails the open as before.
+fn stream_refusal(error: &MessageStreamError) -> bool {
+    match error {
+        MessageStreamError::Poisoned => false,
+        MessageStreamError::Engine(error) => !matches!(
+            error,
+            Error::Storage(_) | Error::Io(_) | Error::MapFull | Error::CorruptedIndex(_)
+        ),
+        MessageStreamError::Memory(error) => error.code != crate::memory::MEMORY_CODE_INTERNAL,
+        _ => true,
     }
 }
 /// Seeds open-time recovery reads and retires at a time.

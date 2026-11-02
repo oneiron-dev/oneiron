@@ -173,6 +173,21 @@ impl RpcReply {
         request_id: u64,
         result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
     ) -> Result<Self, ProtocolError> {
+        Self::answer_attributed(server, auth, None, call, request_id, result)
+    }
+
+    /// [`Self::answer`], with the receipt of a call a device forwarded for
+    /// its caller (FIX 3550) naming that caller, as the home verified it, and
+    /// the machine that carried it. With no `attribution` the receipt names
+    /// the bound credential, as [`Self::answer`]'s does.
+    fn answer_attributed(
+        server: &crate::server::SyncServer,
+        auth: &CoreAuth,
+        attribution: Option<&call_receipt::ForwardedAttribution>,
+        call: RpcCall,
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> Result<Self, ProtocolError> {
         let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
         // A `reveal.wait` reply is digested with its value masked (OF-560).
         let mut masked = None;
@@ -206,7 +221,17 @@ impl RpcReply {
                 Vec::new(),
             ),
         };
-        let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+        let (actor_ref, actor_class, credential_ref) = match attribution {
+            Some(caller) => (
+                caller.actor_ref.clone(),
+                caller.actor_class.clone(),
+                Some(caller.credential_ref.clone()),
+            ),
+            None => {
+                let (actor_ref, actor_class) = call_receipt::call_actor(auth);
+                (actor_ref, actor_class, call_receipt::credential_ref(auth))
+            }
+        };
         let stamp = call_receipt::record(
             server,
             call.anonymous,
@@ -215,7 +240,8 @@ impl RpcReply {
                 verb: call.method,
                 actor_ref,
                 actor_class,
-                credential_ref: call_receipt::credential_ref(auth),
+                credential_ref,
+                carrier_machine: attribution.map(|caller| caller.carrier_machine.clone()),
                 outcome,
                 request_digest: call.request_digest,
                 result_digest,
@@ -223,6 +249,55 @@ impl RpcReply {
                 attempt: call.attempt,
                 served,
             },
+        );
+        let (frames, rows) = match packed {
+            Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
+                Ok(frames) => (frames, Some(rows)),
+                Err(_) => (rpc_error(request_id, too_large(), &stamp)?, None),
+            },
+            Err(error) => (rpc_error(request_id, error, &stamp)?, None),
+        };
+        Ok(Self {
+            request_id,
+            frames,
+            rows,
+        })
+    }
+
+    /// [`Self::answer`] for a call no bound credential carries: a home
+    /// handoff call on a socket that bound no actor (FIX 6458). Its receipt
+    /// is the connection's, as a ping's is, with the call's outcome and
+    /// digests.
+    fn answer_unbound(
+        server: &crate::server::SyncServer,
+        call: RpcCall,
+        request_id: u64,
+        result: Result<(Value, Option<Vec<oneiron::EntityId>>), AppError>,
+    ) -> Result<Self, ProtocolError> {
+        let too_large = || AppError::bad_request("RPC result byte limit exceeded", None);
+        let packed = result.and_then(|(value, rows)| {
+            wire::packed(&value)
+                .map(|bytes| (bytes, rows))
+                .map_err(|_| too_large())
+        });
+        let (outcome, result_digest) = match &packed {
+            Ok((bytes, _)) => (
+                oneiron::receipt::CallOutcome::Ok,
+                oneiron::receipt::call_bytes_digest(bytes),
+            ),
+            Err(error) => (
+                oneiron::receipt::CallOutcome::Refused {
+                    code: error.code().to_owned(),
+                },
+                oneiron::receipt::call_refusal_digest(error.code(), error.message()),
+            ),
+        };
+        let stamp = call_receipt::record_socket_reply(
+            server,
+            call.method,
+            outcome,
+            call.request_digest,
+            Some(result_digest),
         );
         let (frames, rows) = match packed {
             Ok((bytes, rows)) => match wire::result_chunks(request_id, &bytes, &stamp) {
@@ -309,8 +384,29 @@ pub(crate) fn residence_rpc(
     peer: oneiron::authority::PeerMachine,
     request: RpcRequest,
     index_cache: &mut Option<ResidenceIndexCache>,
+    append_stage: &mut Option<oneiron::sync::residence::AuthorityAppendStage>,
 ) -> Result<RpcReply, ProtocolError> {
-    residence::run(server, auth, peer, request, index_cache)
+    residence::run(server, auth, peer, request, index_cache, append_stage)
+}
+
+/// FIX 6458: whether `method` is one of the home handoff's own calls, the
+/// only ones a socket that bound no actor makes.
+pub(crate) fn machine_handoff_method(method: &str) -> bool {
+    residence::machine_method(method)
+}
+
+/// FIX 6458: one home handoff call on a socket that bound no actor. Its
+/// owner-grade upgrade's machine, `peer`, judged again now, is the caller;
+/// the reply carries its rows to the send door, and its receipt is the
+/// connection's ([`RpcReply::answer_unbound`]).
+pub(crate) fn machine_handoff_rpc(
+    server: &crate::server::SyncServer,
+    peer: oneiron::authority::PeerMachine,
+    request: RpcRequest,
+) -> Result<RpcReply, ProtocolError> {
+    let call = RpcCall::of(&request);
+    let result = residence::run_machine(server, peer, &request.method, request.params);
+    RpcReply::answer_unbound(server, call, request.request_id, result)
 }
 
 #[cfg(test)]
@@ -391,6 +487,47 @@ fn facade_limit(requested: Option<usize>, default: usize) -> Result<usize, AppEr
         ));
     }
     Ok(limit)
+}
+
+/// A count a receipt or pending-consent subscription asks for, or `default`
+/// (FIX 8859): read in scoped pages ([`scoped_pages`]), so no count past the
+/// list page is refused.
+fn facade_count(requested: Option<usize>, default: usize) -> Result<usize, AppError> {
+    let limit = requested.unwrap_or(default);
+    if limit == 0 {
+        return Err(AppError::new(
+            oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+            "limit must be at least 1",
+            ["Request at least one row."],
+        ));
+    }
+    Ok(limit)
+}
+
+/// The first `limit` rows of a scoped subscription read, read a page of at
+/// most the list page ([`crate::api::CORE_MAX_LIST_LIMIT`]) at a time, each
+/// page continuing where the one before it stopped (FIX 8859).
+fn scoped_pages<T>(
+    limit: usize,
+    mut read: impl FnMut(
+        usize,
+        Option<oneiron::sync::bridge::ScopedContinuation>,
+    ) -> oneiron::Result<oneiron::sync::bridge::ScopedPage<T>>,
+) -> oneiron::Result<Vec<T>> {
+    let mut rows = Vec::new();
+    let mut after = None;
+    while rows.len() < limit {
+        let page = read(
+            (limit - rows.len()).min(crate::api::CORE_MAX_LIST_LIMIT),
+            after,
+        )?;
+        rows.extend(page.rows);
+        let Some(next) = page.next else {
+            break;
+        };
+        after = Some(next);
+    }
+    Ok(rows)
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]

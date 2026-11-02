@@ -45,7 +45,9 @@ mod driven;
 mod fallback_tests;
 mod family;
 mod forward;
+mod gemini_chat;
 mod gemini_media;
+mod host_budgets;
 mod hosted_speech;
 mod http;
 #[cfg(test)]
@@ -61,6 +63,8 @@ mod openai;
 pub(crate) mod outbound_wait;
 mod output_cap;
 mod raw;
+// FIX 462: realtime voice sessions on a voice-loop run.
+mod realtime_voice;
 mod receipts;
 mod rerank;
 mod responses_socket;
@@ -90,30 +94,38 @@ pub use decision_read::DecisionReadDoor;
 pub use declared::DeclaredRun;
 #[cfg(feature = "mesh")]
 pub(crate) use discovered::MeshRoutes;
-pub use hosted_speech::HostedCloner;
-pub(crate) use http::{
-    codec_token, encode_request_body, install_media_reply_line, mark_cloud_node,
-};
-pub use ladder::OfferLadder;
+pub(crate) use host_budgets::ModelHostBudgets;
+pub use hosted_speech::{HostedCloner, VendorVoice};
+pub(crate) use http::{codec_token, encode_request_body, mark_cloud_node};
+pub use ladder::{CallDeadline, OfferLadder};
 pub(crate) use media::RungVoices;
 pub use media::{MediaRow, MediaRuntime, MediaTicket};
 pub use offer::{OfferEndpoint, ServedOffer};
 pub(crate) use raw::{InjectedRuns, RawInference, funded_run};
+pub use realtime_voice::{RealtimeVoiceRung, RealtimeVoiceSession, RealtimeWire, VOICE_LOOP_RUN};
 pub(crate) use receipts::ServerReceipts;
 pub use receipts::{LoggedReceipts, RUN_RECEIPT_TARGET};
-pub(crate) use rerank::{rerank_request, rerank_scores};
-pub(crate) use responses_socket::{set_responses_chain_vault, set_responses_store};
+pub(crate) use rerank::{
+    RerankLine, RerankOutcome, RerankStop, on_line, rerank_outcome, rerank_request,
+};
+pub(crate) use responses_socket::ResponsesContext;
 pub use role_route::{RoleCall, RoleRefusal, RoleRoute};
 pub use router::ModelRouter;
 pub use run_backend::RunBackend;
 pub(crate) use source_admission::{SourceAdmission, SourceOffer};
 pub use status::{
-    DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState, SeatStatus,
+    DeviceDeclarationStatus, DeviceExecutorStatus, DevicePressureStatus, DeviceRowStatus,
+    DeviceStatus, DiscoveredStatus, ModelsStatus, ProviderStatus, RungStatus, SeatState,
+    SeatStatus, SnapshotReceipt, SnapshotSkips, SnapshotStatus,
 };
 pub use token_ratio::TokenRatios;
-pub(crate) use worker_host::permit_worker_launch;
-// DESIGN-V2 R2: a committed chat reply reaches the session coordinator.
-pub(crate) use worker_host::{AuthorityVerdict, CheckpointAuthority, ReplyCommit, reply_committed};
+pub(crate) use worker_host::{install_snapshot_runtime, permit_worker_launch};
+// DESIGN-V2 R2: a committed chat reply reaches the session coordinator; R3:
+// with what a snapshot of it is kept and restored under.
+pub(crate) use worker_host::{
+    AuthorityVerdict, CheckpointAuthority, ReplyCommit, RestoreClaim, SnapshotScope,
+    reply_committed, turn_admitted,
+};
 
 use catalog::{catalog_entry, engine_model_id, locality_rank, model_family};
 use ladder::{LadderRung, SeatScope, Wire};
@@ -137,6 +149,20 @@ impl Seat {
     /// The rung that serves `model`, alone and with its prompt.
     fn rung(&self, model: &ModelId) -> Option<Arc<OfferLadder>> {
         self.rungs.get(model).cloned()
+    }
+
+    /// Each rung's engine model id and the prompt it prepends, in ladder
+    /// order: every model a call on the seat may be served on.
+    pub(crate) fn rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        self.ladder
+            .rung_models()
+            .map(|(model, prompt)| (model.clone(), prompt.map(str::to_owned)))
+            .collect()
+    }
+
+    /// The owner-named fallback rungs a parked call on this seat may use.
+    pub(crate) fn fallback_rung_models(&self) -> Vec<(ModelId, Option<String>)> {
+        self.ladder.fallback_rung_models()
     }
 }
 
@@ -164,6 +190,11 @@ pub struct ModelRuntime {
     token_ratios: Option<Arc<TokenRatios>>,
     /// The trainer connectors `[models.training]` names (FIX 7263).
     training: crate::config::models::TrainingSettings,
+    /// The vault's model byte budgets its media rungs and mesh routes hold
+    /// their bytes on (FIX 9321, FIX 9323).
+    budgets: ModelHostBudgets,
+    /// This server's Responses state, which its socket pools hold (FIX 9516).
+    responses: ResponsesContext,
 }
 
 /// A run that declares nothing, on a meter its host built: the vault's
@@ -192,6 +223,7 @@ fn build_provider(
     site: Option<&Result<broker::BrokerSite, String>>,
     keys: Option<&Arc<dyn KeyDoor>>,
     identities: &Arc<llama_identity::LlamaIdentityResolver>,
+    responses: &ResponsesContext,
 ) -> anyhow::Result<Option<Arc<dyn SingleRouteBackend>>> {
     let catalog = referenced_models(config, name)
         .iter()
@@ -220,17 +252,29 @@ fn build_provider(
                         provider,
                         &http.url("/v1/responses"),
                         socket.max_age_secs,
+                        responses.clone(),
                     )
                 })
                 .transpose()?;
             // Only an own server reads the host's solo marker (INF 1).
             let solo = provider.kind == ProviderKind::LocalOpenaiCompat;
+            let engine_models: BTreeMap<String, ModelId> = catalog
+                .iter()
+                .filter_map(|entry| {
+                    entry
+                        .metadata
+                        .get("wire_model")?
+                        .as_str()
+                        .map(|wire| (wire.to_owned(), entry.model.clone()))
+                })
+                .collect();
             let config = OpenAiCompatConfig::from_catalog(catalog).with_solo_admission(solo);
             let transport = openai::OpenAiHttp {
                 http,
                 cap: output_cap(provider),
                 response_format: provider.response_format,
                 identities: Arc::clone(identities),
+                engine_models,
             };
             // A provider a managed EXL3 worker of this process is bound to
             // calls that worker over its native socket (DESIGN-V2 §8); every
@@ -271,6 +315,9 @@ fn build_provider(
                 },
             ))
         }
+        // A gemini provider's chat rungs send the Gemini API's own wire
+        // (FIX 1816); one that serves media seats only gets none.
+        ProviderKind::Gemini => return gemini_chat::chat_backend(provider, catalog),
         // The tagger slot's worker is the consumer of this kind; it never
         // answers generate calls, so no LLM backend is built for it. A
         // media-only provider's only client is its media rung's.
@@ -278,7 +325,6 @@ fn build_provider(
         | ProviderKind::Cartesia
         | ProviderKind::Elevenlabs
         | ProviderKind::Voxcpm2
-        | ProviderKind::Gemini
         | ProviderKind::Soniox => {
             return Ok(None);
         }

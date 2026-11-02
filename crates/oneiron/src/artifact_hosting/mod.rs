@@ -32,6 +32,8 @@ use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::write_envelope::WriteActor;
 
+/// The KS7 getter of the hosting rows, under each blob artifact (FIX 10436).
+pub(crate) mod checkpoint;
 /// Typed requests and replies for publication and live-preview host doors.
 pub mod door_types;
 mod pointer_rows;
@@ -52,6 +54,7 @@ use self::publication_sync::mark_publication_in_txn;
 pub(crate) use self::publication_sync::{
     ArtifactPublicationCursor, ArtifactPublicationPart, ArtifactPublicationStep,
 };
+pub(crate) use self::serving_blob::retire_released_version_in_txn;
 pub use self::vocabulary::{
     ARTIFACT_POINTER_CHANNELS, ArtifactExportRef, ArtifactPointer, ArtifactPointerChannel,
     ArtifactPublishVerbOutcome, ArtifactPublishVerbRequest, ArtifactPublishVerbStatus,

@@ -11,8 +11,7 @@ use oneiron_crypto::backup::{BackupEvidence, CheckpointFact, SignedCheckpointFac
 use super::watermark::SnapshotMark;
 use super::{
     ArtifactKind, BackupSnapshotReceipt, CheckpointImage, INDEX_SOURCE_PHONETIC, INDEX_SOURCE_TEXT,
-    RecoveryWriteBudget, StorageTier, artifact, carried_bodies, codec_error, commitment, rebuild,
-    storage_tier,
+    RecoveryWriteBudget, artifact, carried_bodies, codec_error, commitment, payload, rebuild,
 };
 use crate::ports::{IndexRows, RetrievalIndexInventory};
 use crate::store::DB_MANIFEST;
@@ -28,29 +27,66 @@ impl Vault {
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<BackupSnapshotReceipt> {
+        // Each stage logs its start with counts and elapsed time only, never
+        // a row, a key, a path or a value (FIX 6778).
+        let started = std::time::Instant::now();
+        tracing::info!(
+            stage = "setup",
+            kind = kind.code(),
+            "checkpoint snapshot: unlocking the vault key, minting the backup incarnation and \
+             preparing pads"
+        );
         self.unlock_vault_key()?;
         // The store's backup incarnation is minted before its first
         // snapshot reads it (the backup watermark).
         self.mint_backup_incarnation()?;
         // Every pad a row holds goes into current custody first, outside
-        // the custody guard, so the image names it by reference (KS-5, FIX
-        // 5686 part 2). One that does not go rides as its carrier.
-        if let Err(error) = self.prepare_image_pads() {
-            tracing::warn!(
+        // the custody guard, and is read back, so the image names it by
+        // reference (KS-5, FIX 5686 part 2, FIX 7313). One that does not go
+        // rides as its carrier, and the receipt counts it.
+        match self.prepare_image_pads() {
+            Ok(0) => {}
+            Ok(unprepared) => tracing::warn!(
+                unprepared,
+                "world key pads current custody does not hold the same ride this image as their \
+                 carriers"
+            ),
+            Err(error) => tracing::warn!(
                 kind = ?error.kind(),
                 "world key pads were not prepared for this image; any custody lacks rides as \
                  its carrier"
-            );
+            ),
         }
+        let mut pass = 0_u32;
         loop {
+            pass = pass.saturating_add(1);
+            tracing::info!(
+                stage = "binding",
+                pass,
+                elapsed_ms = elapsed_ms(started),
+                "checkpoint snapshot: binding the bodies the image carries"
+            );
             // Every body the image carries has its instance minted and bound
             // first, before the snapshot and its custody guard, the mints
             // outside any writer (KS-2A). A body written since is bound by
             // the next pass, and the snapshot taken again.
             self.bind_carried_bodies()?;
             if let Some(id) = self.snapshot_once(path, created_at, owner, kind, registry, budget)? {
+                tracing::info!(
+                    stage = "done",
+                    pass,
+                    elapsed_ms = elapsed_ms(started),
+                    "checkpoint snapshot: done"
+                );
                 return Ok(id);
             }
+            tracing::info!(
+                stage = "retry",
+                pass,
+                elapsed_ms = elapsed_ms(started),
+                "checkpoint snapshot: a body its rows name has no instance bound yet; taking it \
+                 again"
+            );
         }
     }
 
@@ -66,10 +102,20 @@ impl Vault {
         registry: Option<&str>,
         budget: &dyn RecoveryWriteBudget,
     ) -> Result<Option<BackupSnapshotReceipt>> {
+        let started = std::time::Instant::now();
         let keys = self.checkpoint_signing_keys()?;
+        tracing::info!(
+            stage = "lock",
+            "checkpoint snapshot: taking the custody read guard and the result-body pins"
+        );
         let _custody = self.store.gate_custody_read_guard()?;
         let _bodies = self.pin_all_result_bodies();
         let txn = self.store.env.read_txn()?;
+        tracing::info!(
+            stage = "pins",
+            elapsed_ms = elapsed_ms(started),
+            "checkpoint snapshot: custody guard and pins held; reading the rows"
+        );
         // Where the vault stands for the backup watermark: this read
         // transaction's id and the custody position under the same guard,
         // after the keys, signer and bodies were prepared.
@@ -96,40 +142,18 @@ impl Vault {
         // canonical re-embedding path. Diagnostics are deliberately
         // runtime-only. Other explicit vectors must not silently disappear.
         self.validate_checkpoint_rebuild_sources(&txn)?;
-        let mut excluded = std::collections::BTreeSet::<Vec<u8>>::new();
-        for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
-            let (key, value) = row?;
-            if crate::batch::EntityMetadataHeader::parse(&value)
-                .is_some_and(|h| h.entity_type == crate::registry::ENTITY_TYPE_DIAGNOSTIC)
-            {
-                excluded.insert(key.as_bytes().to_vec());
-            }
-        }
+        // What the image takes, the payload projection's rule too (FIX 6377).
+        let filter = payload::ImageFilter::of_snapshot(&self.store, &txn)?;
         let mut databases = BTreeMap::new();
         let mut census = carried_bodies::BodyCensus::default();
         // Window snapshots kept as they rest, warned by count (FIX 7107).
         let mut kept_windows = 0;
+        // Pad rows the image carries with their pad, counted in its receipt
+        // (FIX 7313).
+        let mut pads_carried = 0_usize;
         for entry in DB_MANIFEST {
             let mut image_row = |key: &[u8], value: &[u8]| -> Result<Option<(Vec<u8>, Vec<u8>)>> {
-                if storage_tier(entry.name, key) != StorageTier::Canonical {
-                    return Ok(None);
-                }
-                let excluded_row = match entry.name {
-                    "entities" | "short_ids_reverse" => excluded.contains(key),
-                    "short_ids" => excluded.contains(value),
-                    "edges_out" | "edges_in" => {
-                        key.len() == 33
-                            && (excluded.contains(&key[..16]) || excluded.contains(&key[17..]))
-                    }
-                    "vault_meta" => [
-                        INDEX_SOURCE_TEXT.decl().prefix,
-                        INDEX_SOURCE_PHONETIC.decl().prefix,
-                    ]
-                    .iter()
-                    .any(|p| key.strip_prefix(*p).is_some_and(|id| excluded.contains(id))),
-                    _ => false,
-                };
-                if excluded_row {
+                if !filter.takes(entry.name, key, value) {
                     return Ok(None);
                 }
                 // Every body a row names goes with it, sealed under its
@@ -163,9 +187,18 @@ impl Vault {
                 } else {
                     value.to_vec()
                 };
+                if entry.name == "entities"
+                    && crate::world_keys::image_pad_row_of(&value).is_some_and(|row| row.held)
+                {
+                    pads_carried = pads_carried.saturating_add(1);
+                }
                 // Every queue row goes unleased: an agent dispatch's stub
                 // too, whose instance seals the row as it stood (FIX 7115).
-                let value = if entry.name == "job_records" {
+                // An opaque one's stub, the erased marker, and an opaque row
+                // itself go as they are (FIX 9390).
+                let value = if entry.name == "job_records"
+                    && !crate::attempt_queue::attempt_row_opaque(key, &value)
+                {
                     rebuild::unlease_attempt(key, &value)?
                 } else {
                     value
@@ -193,8 +226,22 @@ impl Vault {
             }
             databases.insert(entry.name.into(), rows);
         }
+        // A hosted vault's whole host-order family, read in this same
+        // transaction, so it is the one these rows saw; sealed after it
+        // (FIX 6598).
+        let host_holds = super::host_holds::export_in_txn(self, &txn);
+        // Where each row the image takes goes, read in this same transaction
+        // (KS7-5): none while CHECKPOINT_PAYLOADS_ENABLED is off.
+        let projected = payload::project_image(self, &txn, &filter)?;
         drop(txn);
         super::window_pad_refs::warn_kept_window_pads(kept_windows);
+        tracing::info!(
+            stage = "census",
+            databases = databases.len(),
+            rows = databases.values().map(Vec::len).sum::<usize>(),
+            elapsed_ms = elapsed_ms(started),
+            "checkpoint snapshot: rows read"
+        );
         // A response binding whose row holds no response now names nothing
         // the image carries: it stays out (KS-2B1).
         let stale = census.stale();
@@ -206,9 +253,26 @@ impl Vault {
         // same after its transaction. Each is sealed into the artifact after
         // the image, and never lands anywhere in the clear.
         let Some(files) = census.finish(&self.store)? else {
+            tracing::info!(
+                stage = "unbound",
+                elapsed_ms = elapsed_ms(started),
+                "checkpoint snapshot: a body its rows name has no instance bound yet"
+            );
             return Ok(None);
         };
+        // Each owner's rows go sealed under its own compartment, out of the
+        // image (KS7-5); the rows no compartment holds stay, named.
+        let payload = match &projected {
+            Some(projected) => payload::seal_image(self, projected, &filter, &mut databases)?,
+            None => None,
+        };
         let (bodies, sealed_bodies, inline_bodies) = files.image_bodies();
+        // The artifact's snapshot id, minted before anything is sealed to
+        // it: the host-order member binds it, never the image's digest.
+        let mut snapshot = [0u8; 32];
+        crate::world_keys::os_fill(&mut snapshot)?;
+        let (host_holds, host_holds_availability) =
+            super::host_holds::seal_member(self, *self.vault_id().as_bytes(), snapshot, host_holds);
         let image = CheckpointImage {
             version: super::image::IMAGE_VERSION,
             created_at,
@@ -217,8 +281,18 @@ impl Vault {
             sealed_bodies,
             inline_bodies,
             checkpoint_sequence: None,
+            host_holds,
+            snapshot: None,
         };
         let bytes = rmp_serde::to_vec_named(&image).map_err(|_| codec_error())?;
+        tracing::info!(
+            stage = "holder",
+            image_bytes = bytes.len(),
+            files = image.bodies.len(),
+            inline = image.inline_bodies.len(),
+            elapsed_ms = elapsed_ms(started),
+            "checkpoint snapshot: holding the image's bodies"
+        );
         // Every body instance the image carries is held for it, synced,
         // before it is written (FIX 6022): no retention retires one while a
         // copy of it is kept. A write that fails keeps the holder.
@@ -228,8 +302,36 @@ impl Vault {
                 .get("vault_meta")
                 .map_or(&[][..], Vec::as_slice),
         )?;
+        // What its payload is sealed under lands beside it before it is
+        // written, for the host that keeps the copy (KS7-5). One that does
+        // not land keeps every leaf it would name: their retention waits.
+        let inventory = payload.as_ref().and_then(|payload| {
+            artifact::write_payload_inventory(
+                path,
+                &key,
+                kind,
+                &carried,
+                snapshot,
+                *blake3::hash(&bytes).as_bytes(),
+                &payload.streams.section,
+            )
+            .inspect_err(|error| {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a checkpoint's payload inventory did not land; its payload leaves stay kept"
+                );
+            })
+            .ok()
+        });
+        tracing::info!(
+            stage = "write",
+            held = holder.is_some(),
+            elapsed_ms = elapsed_ms(started),
+            "checkpoint snapshot: writing the artifact"
+        );
         let (id, head, evidence) = artifact::write_artifact(
             path,
+            snapshot,
             &key,
             kind,
             registry,
@@ -240,12 +342,21 @@ impl Vault {
             &bytes,
             &files.streams(),
             |index| files.open(index),
-            None,
+            payload.as_ref().map(|payload| &payload.streams),
             budget,
-        )?;
+        )
+        .inspect_err(|_| remove_inventory(inventory.as_deref()))?;
+        tracing::info!(
+            stage = "chain",
+            size = evidence.size,
+            frames = evidence.frames,
+            elapsed_ms = elapsed_ms(started),
+            "checkpoint snapshot: artifact written; advancing the chain"
+        );
         // A checkpoint the chain does not take is no checkpoint.
         if let Err(error) = self.advance_checkpoint_chain(link.head, head) {
             let _ = std::fs::remove_file(path);
+            remove_inventory(inventory.as_deref());
             return Err(error);
         }
         // Its holder is named by its checkpoint id, which its custodian
@@ -264,11 +375,25 @@ impl Vault {
         let checkpoint_fact = (kind == ArtifactKind::Backup)
             .then(|| sign_fact(&link.keys, id, &evidence))
             .flatten();
+        tracing::info!(
+            stage = "receipt",
+            fact = checkpoint_fact.is_some(),
+            elapsed_ms = elapsed_ms(started),
+            "checkpoint snapshot: receipt"
+        );
+        // What its payload left under the vault-wide seal, and why (KS7-6).
+        let (not_compartmented, payload_registry_gaps) = payload
+            .map(|payload| (payload.not_compartmented, payload.registry_gaps))
+            .unwrap_or_default();
         Ok(Some(BackupSnapshotReceipt {
             image_digest: blake3::Hash::from(id).to_hex().to_string(),
             covered: mark.covered(),
             evidence,
             checkpoint_fact,
+            host_holds: host_holds_availability,
+            pads_carried,
+            not_compartmented,
+            payload_registry_gaps,
         }))
     }
 
@@ -323,6 +448,18 @@ impl Vault {
             }
         }
         Ok(())
+    }
+}
+
+/// Milliseconds since `started`, for a stage's log.
+fn elapsed_ms(started: std::time::Instant) -> u64 {
+    u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
+
+/// Removes the payload inventory a write that did not land left beside it.
+fn remove_inventory(inventory: Option<&Path>) {
+    if let Some(inventory) = inventory {
+        let _ = std::fs::remove_file(inventory);
     }
 }
 

@@ -14,9 +14,12 @@
 //! and either may spell the other's escape characters. So each run of bytes
 //! that could spell a form, holding a backslash or a `%`, is also read
 //! through every chain of up to [`DEPTH`] such decodings, and every form is
-//! searched in every reading. Only the source bytes of each match become
-//! [`MARKER`]. A run that some chain of [`DEPTH`] decodings leaves still
-//! decodable could hide a form deeper than that, so the whole run becomes
+//! searched in every reading. A run also crosses literal whitespace between
+//! its escapes (FIX 8560), or past a trailing escape to raw base64 (FIX
+//! 11564), so whitespace among them never splits it. Only
+//! the source bytes of each match become [`MARKER`]. A run that some chain
+//! of [`DEPTH`] decodings leaves still decodable could hide a form deeper
+//! than that, so the whole run becomes
 //! [`MARKER`]: text encoded that deep is over-redacted, never passed. The
 //! broker sends only a key in the alphabet such a run holds ([`admits`]), so a
 //! part-encoded echo never splits across runs. The whole reply is buffered
@@ -332,18 +335,94 @@ fn strip_encoded_runs(
 }
 
 /// Where the run starting at `at` ends: it takes bytes that can spell a form
-/// of the key or an escape of one, and each JSON escape whole.
+/// of the key or an escape of one, each JSON escape and each `%XX` whole,
+/// and literal whitespace that sits between escapes (FIX 8560) or past a
+/// trailing escape before raw base64 (FIX 11564), so a base64 form spelled
+/// in escapes, or mixed raw and escaped, stays one run: each reading
+/// decodes the escapes and passes the whitespace through, and the wrapped
+/// base64 search skips it. Whitespace beside no escape still ends the run,
+/// so words around an encoded echo stay out of it, but for the one raw
+/// stretch a trailing escape joins.
 fn run_end(key: &[u8], bytes: &[u8], mut at: usize) -> usize {
+    let start = at;
+    let mut last_was_escape = false;
     while let Some(&byte) = bytes.get(at) {
         if byte == b'\\' {
-            at += escape_len(&bytes[at..]);
+            let len = escape_len(&bytes[at..]);
+            last_was_escape = len > 1;
+            at += len;
+        } else if byte == b'%' && starts_percent_escape(&bytes[at..]) {
+            last_was_escape = true;
+            at += 3;
         } else if is_url_byte(byte) || key.contains(&byte) {
+            last_was_escape = false;
+            at += 1;
+        } else if byte.is_ascii_whitespace()
+            && ws_bridges_escapes(key, bytes, start, at, last_was_escape)
+        {
             at += 1;
         } else {
             break;
         }
     }
     at
+}
+
+/// Whether `rest` starts with a percent escape: `%` and two hex digits.
+fn starts_percent_escape(rest: &[u8]) -> bool {
+    rest.get(..3).is_some_and(|head| {
+        head[0] == b'%' && head[1].is_ascii_hexdigit() && head[2].is_ascii_hexdigit()
+    })
+}
+
+/// Whether `rest` starts with a JSON escape.
+fn starts_json_escape(rest: &[u8]) -> bool {
+    rest.first() == Some(&b'\\') && escape_len(rest) > 1
+}
+
+/// Whether the whitespace at `at` joins the run from `start` (FIX 8560): an
+/// escape sequence starts past it and the run already holds one, or the run
+/// ends with one and the next stretch holds one, or is raw base64 (FIX
+/// 11564), the raw part of a mixed form. An escape always stands beside the
+/// whitespace; the run's readings decode what it joins, and the wrapped
+/// base64 search skips it.
+fn ws_bridges_escapes(
+    key: &[u8],
+    bytes: &[u8],
+    start: usize,
+    at: usize,
+    last_was_escape: bool,
+) -> bool {
+    let mut next = at;
+    while bytes
+        .get(next)
+        .is_some_and(|byte| byte.is_ascii_whitespace())
+    {
+        next += 1;
+    }
+    let rest = &bytes[next..];
+    let starts_escape = starts_percent_escape(rest) || starts_json_escape(rest);
+    if starts_escape && memchr::memchr2(b'\\', b'%', &bytes[start..at]).is_some() {
+        return true;
+    }
+    if !last_was_escape {
+        return false;
+    }
+    let mut end = next;
+    while let Some(&byte) = bytes.get(end) {
+        if byte == b'\\' {
+            end += escape_len(&bytes[end..]);
+        } else if is_url_byte(byte) || key.contains(&byte) {
+            end += 1;
+        } else {
+            break;
+        }
+    }
+    let stretch = &bytes[next..end];
+    // The raw part of a mixed form: past a trailing escape, a raw base64
+    // stretch joins the run as an escape does (FIX 11564).
+    memchr::memchr2(b'\\', b'%', stretch).is_some()
+        || (!stretch.is_empty() && stretch.iter().all(|byte| is_base64_byte(*byte)))
 }
 
 /// A decoding of a reading: the decoded bytes, and for each where in the

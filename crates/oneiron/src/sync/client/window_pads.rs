@@ -64,6 +64,10 @@ pub(crate) struct WindowPadLedger {
     carrier: HashSet<String>,
     /// First frames released whose parts follow them, by envelope id.
     released: HashSet<[u8; 32]>,
+    /// The last update past one frame this connection made for each window,
+    /// its envelope id and payload, read whole when its first frame is
+    /// judged (FIX 8247). A later one of the window takes its place.
+    continued: HashMap<String, ([u8; 32], Vec<u8>)>,
 }
 
 fn invalid(why: &'static str) -> TransportError {
@@ -92,6 +96,14 @@ impl SyncClient {
         context: Option<&LoroDoc>,
     ) -> Result<PreparedWindowPads, TransportError> {
         let key = WindowKey::try_new(window_key).ok_or(TransportError::InvalidWindowKey)?;
+        // FIX 7608 slice 4: the home gets a marked repo item's masked copy,
+        // made before any pad is; one that cannot be masked fails this send
+        // and stays in the window, owed to the next exchange. A copy the home
+        // may hold an older one of is re-authored with it (FIX 10729).
+        let masked =
+            crate::sync::selector::prepare_repo_sync_frame_for_home(&self.vault, payload, context)
+                .map_err(|error| TransportError::Storage(error.to_string()))?;
+        let payload = masked.as_deref().unwrap_or(payload);
         if self.window_pad_ledger().carrier.contains(window_key) {
             return Ok(carrier_window_pads(&self.vault, &key, payload, context));
         }
@@ -116,6 +128,16 @@ impl SyncClient {
         raw: &[u8],
     ) -> Result<Vec<Vec<u8>>, TransportError> {
         let (frames, binding) = prepared.frames(window_key, sub_tag, queue_seq)?;
+        // An update past one frame is judged whole as its first frame leaves,
+        // from the payload kept here until then (FIX 8247).
+        if sub_tag == window_sub_tags::UPDATE
+            && let Some(id) = frames.first().and_then(|first| continued_frame_id(first))
+        {
+            let payload = prepared.envelope(WindowPadKind::Update, queue_seq).payload;
+            self.window_pad_ledger()
+                .continued
+                .insert(window_key.to_owned(), (id, payload));
+        }
         let sealed = prepared.form() == WindowPadForm::Sealed;
         let key = match queue_seq {
             Some(seq) => SentKey::Residence(seq),
@@ -268,10 +290,11 @@ impl SyncClient {
         };
         let receipt = admit_window_pads(&self.vault, key, &envelope);
         if receipt.readiness != WindowPadReadiness::NotReady {
-            return Ok(ControlFlow::Continue((
-                sub_tag,
-                Cow::Owned(envelope.payload),
-            )));
+            // FIX 7608 slice 4: a copy edit lands on its source; a held one imports nothing.
+            return Ok(match self.admitted_window_payload(key, envelope.payload)? {
+                Some(payload) => ControlFlow::Continue((sub_tag, Cow::Owned(payload))),
+                None => ControlFlow::Break(Vec::new()),
+            });
         }
         // Nothing of it imports. The home is told, sends this window as the
         // carrier from now on, and is asked for it again.
@@ -320,7 +343,8 @@ impl SyncClient {
                 "bulk window pads not installed".into(),
             ));
         }
-        Ok(envelope.payload)
+        // FIX 7608 slice 4: copy rows land on the sources this device holds.
+        self.admitted_whole_payload(key, envelope.payload)
     }
 
     /// A promotion reply's snapshot of `window`, its envelope in base64, the
@@ -344,7 +368,8 @@ impl SyncClient {
         {
             tracing::warn!(%window, "promoted window pads not installed; its pad rows land them");
         }
-        Ok(envelope.payload)
+        // FIX 7608 slice 4: copy rows land on the sources this device holds.
+        self.admitted_whole_payload(window, envelope.payload)
     }
 
     /// Whether a window frame of `key` about to leave carries what a
@@ -354,13 +379,34 @@ impl SyncClient {
     pub(crate) fn window_frame_withheld(&self, key: &str, sub_tag: u8, payload: &[u8]) -> bool {
         match sub_tag {
             window_sub_tags::UPDATE => {
-                let Ok((id, inner, streams)) = transport::window_pad_frame_payload(payload) else {
-                    return true;
+                let (id, inner, streams) = match transport::window_pad_frame_payload(payload) {
+                    Ok((id, inner, streams)) => (id, Cow::Borrowed(inner), streams),
+                    // A first frame whose payload continues in parts: the
+                    // payload this device made, read whole (FIX 8247).
+                    Err(_) => {
+                        let id = transport::window_pad_frame_id(payload);
+                        let mut ledger = self.window_pad_ledger();
+                        let Some((id, whole)) = ledger
+                            .continued
+                            .remove(key)
+                            .filter(|(made, _)| Some(*made) == id)
+                        else {
+                            if id.is_some() {
+                                tracing::warn!(
+                                    window = key,
+                                    "window update past one frame withheld: payload not held"
+                                );
+                            }
+                            return true;
+                        };
+                        drop(ledger);
+                        (id, Cow::Owned(whole), true)
+                    }
                 };
-                let withheld = self.update_verdict(key, inner) != UpdateVerdict::Portable;
+                let withheld = self.update_verdict(key, &inner) != UpdateVerdict::Portable;
                 let mut ledger = self.window_pad_ledger();
                 if withheld {
-                    let digest = *blake3::hash(inner).as_bytes();
+                    let digest = *blake3::hash(&inner).as_bytes();
                     ledger.sent.remove(&SentKey::Update(key.to_owned(), digest));
                 } else if streams {
                     ledger.released.insert(id);
@@ -372,4 +418,14 @@ impl SyncClient {
             _ => false,
         }
     }
+}
+
+/// The envelope id of `frame`, a window frame this device made, when it is a
+/// first frame whose payload continues in parts (FIX 8247).
+fn continued_frame_id(frame: &[u8]) -> Option<[u8; 32]> {
+    let (_, _, payload) = transport::decode_window_sync(frame.get(1..)?).ok()?;
+    if transport::window_pad_frame_payload(payload).is_ok() {
+        return None;
+    }
+    transport::window_pad_frame_id(payload)
 }

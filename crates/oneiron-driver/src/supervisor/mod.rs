@@ -1,12 +1,17 @@
-//! The wake-pass supervisor (ONE-1683): a plain `tokio::select!` loop that
-//! pumps [`DreamerWakeDriver::run_wake_pass`] — the starter motor the engine
-//! deliberately does not own.
+//! The wake-pass supervisor (ONE-1683): the loop that pumps
+//! [`DreamerWakeDriver::run_wake_pass`] — the starter motor the engine
+//! deliberately does not own. This file declares the supervisor's modules and
+//! re-exports its API; the loop is `loop.rs`, its one arbitration point
+//! `arbiter.rs`, the owed-pass debt and backoff `retry.rs`, and the wave
+//! quanta `wave_lane.rs`.
 //!
 //! Shape (all acceptance-pinned):
 //!
-//! * ONE biased select composes the loop: shutdown beats a ready tick, and
-//!   the tick source itself resolves deadline-vs-push priority (deadline
-//!   wins — see [`HybridTick`](crate::HybridTick)).
+//! * ONE arbiter composes the loop (`arbiter::next_supervisor_event`):
+//!   shutdown beats everything, then fresh source ticks, due owed retries
+//!   and wave quanta take turns in a fixed rotation, so no lane pins another.
+//!   The tick source resolves deadline-vs-push order itself (see
+//!   [`HybridTick`](crate::HybridTick)).
 //! * A `tokio::sync::Semaphore(1)` serializes passes: a second tick arriving
 //!   mid-pass can never start a second pass (share the gate across
 //!   supervisors over one vault via [`WakeSupervisor::with_pass_gate`]).
@@ -25,22 +30,28 @@
 //!   `abort_budget_reservation`.
 //! * No actor framework, no attempt-worker crate, no heartbeat: the loop only
 //!   ever wakes for a [`Tick`] (an attempt-queue deadline read or an
-//!   authenticated push) — plus a bounded one-shot delay after a FAILED
-//!   pass, which defers consuming the next already-signalled tick rather
-//!   than generating wakeups of its own.
+//!   authenticated push), an owed retry coming due, or wave work. A pass that
+//!   fails or admits nothing leaves its tick owed, due again after that
+//!   tick's own capped backoff (`retry`), while fresh ticks and wave work
+//!   keep their turns.
 
+mod arbiter;
 mod attachment;
 mod budget_ids;
 mod config;
 mod factory;
 mod inference;
+mod inference_admission;
 mod inference_device;
 mod inference_worker;
 mod pass;
 mod program_factory;
+mod retry;
 #[path = "loop.rs"]
 mod run;
 mod shutdown;
+mod supervised_pass;
+mod wave_lane;
 
 pub use self::attachment::{
     AttachedPassFuture, LinkedShutdown, PassAttachment, PassAttachmentSource, WakePassFuture,
@@ -50,13 +61,24 @@ pub use self::factory::{
     ConsolidationExecutorFactory, PassExecutorFactory, SkillOptimizerLoan, WaveReadyDispatcher,
 };
 pub use self::inference::{WorkerProbe, WorkerProbeFuture, WorkerSpec};
+pub use self::inference_admission::{
+    ADMISSION_WAIT_LIMIT, AUTO_PROFILE_SUBSTITUTION, AdmissionSnapshot, AdmissionStop,
+    BACKGROUND_FAIRNESS, BackgroundFairness, CANCEL_RELEASE_LIMIT, DEFAULT_DEADLINE,
+    DEFAULT_WORK_CLASS, DEVICE_HEADROOM_MIB, DeviceAdmission, DeviceGrant, ExecutorRegistration,
+    GrantId, LoadGrant, PRESSURE_ACTION_ORDER, PressureAction, PressureDecision, PressureState,
+    QUEUE_ORDER, QueueOrder, RESIDENT_FRESHNESS, ResidentFreshness, TicketId,
+    UNKNOWN_MEMORY_POLICY, UNLOAD_EXTERNAL, UNMEDIATED_SHARED_DEVICE, UnknownMemoryPolicy,
+    UnmediatedPolicy, WorkRequest, WorkTicket, WorkerQueueStatus,
+};
 pub use self::inference_device::{
     DeclaredEnvelope, DeviceLedger, DeviceRow, DeviceSnapshot, ResidentReport, ResidentSource,
+    TryReserveOutcome, WorkEnvelope,
 };
 pub use self::inference_worker::{
     DEFAULT_WORKER_IDLE_STOP, InferenceWorker, LaunchFailure, LauncherFuture, RunningWorker,
-    WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL, WORKER_STOP_GRACE,
-    WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy, WorkerUnavailable,
+    UnloadOutcome, WORKER_ACTIVITY_POLL, WORKER_CRASH_BACKOFF_SECS, WORKER_LIVENESS_POLL,
+    WORKER_STOP_GRACE, WorkerActivity, WorkerExit, WorkerLauncher, WorkerLease, WorkerPolicy,
+    WorkerUnavailable,
 };
 pub use self::program_factory::ProgramExecutorFactory;
 pub use self::run::{WakeSupervisor, WakeSupervisorReport};

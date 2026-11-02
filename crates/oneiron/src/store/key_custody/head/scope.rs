@@ -12,6 +12,15 @@ use crate::error::Result;
 use super::super::identity::{CustodyId, CustodyKind, CustodySubject};
 use super::pad_scope::{PadRecipients, WORLD_PAD_COMPARTMENTS, WorldPadScope, world_of};
 
+/// The compartment a host issuer seed's escrow rides (FIX-LIST 10770; CALLS
+/// "L02 FIX 10770 issuer-seed custody scope (D1)"): host-readable, so a
+/// managed host that unlocked a backup with the data key takes the seed back
+/// without the owner's kit (Engine 10-27). `OwnerOnly` wraps it to the
+/// recovery root alone; that flip also needs
+/// [`CustodyRecipients::keeps_local`] to leave the seed out while no root is
+/// pinned, as it does a credential's keys.
+const HOST_ISSUER_SEED_CUSTODY_SCOPE: CompartmentScope = CompartmentScope::HostReadable;
+
 /// Who may read one kind's entries, which fixes the recipients of the
 /// compartment they are sealed in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -56,7 +65,15 @@ impl CompartmentScope {
             | CustodyKind::KnownValueEntry
             | CustodyKind::WorldPad
             | CustodyKind::CheckpointPayload
-            | CustodyKind::TrainingLink => Self::HostReadable,
+            | CustodyKind::TrainingLink
+            // An erasable key (FIX 8875) is one the host engine reads, as a
+            // claim key is (HostReadable, Engine 10-23).
+            | CustodyKind::ErasableKey => Self::HostReadable,
+            CustodyKind::HostIssuerSeed => HOST_ISSUER_SEED_CUSTODY_SCOPE,
+            // An inference snapshot's key is one the host engine opens in
+            // its own process to import the snapshot into its worker, as a
+            // body instance's is, and no owner kit is present at that point.
+            CustodyKind::InferenceSnapshot => Self::HostReadable,
             // A credential's value and its carriers' keys (KS-6, CALLS
             // `KS-6 entry eligibility`): only the owner's kit opens them; a
             // head carries one only where [`CustodyRecipients::keeps_local`]
@@ -128,10 +145,19 @@ impl CustodyRecipients {
     /// Whether the head leaves the live entry `id` out: a world pad of a
     /// world [`Self::pad_worlds_kept_local`] names, or (world compartments
     /// on) of a world no admitted machine or root receives; or a
-    /// credential's value or carrier key unless a root is pinned and the
-    /// credential is one [`Self::credentials_eligible`] names (KS-6). A
-    /// connector call's resume (FIX 9157) is always left out.
+    /// credential's value key unless a root is pinned and the credential is
+    /// one [`Self::credentials_eligible`] names (KS-6). A carrier key is
+    /// always left out (FIX 7402): it opens a retained carrier only where it
+    /// is released live, so no head, which retains, carries it or a
+    /// permanent key's wrap of it. So is a connector call's resume (FIX
+    /// 9157).
     pub(crate) fn keeps_local(&self, id: &CustodyId) -> bool {
+        if matches!(
+            id.kind(),
+            CustodyKind::CustodyTransition | CustodyKind::CustodyRequestInput
+        ) {
+            return true;
+        }
         if crate::store::credential_kind(id.kind()) {
             return self.root.is_none()
                 || !id

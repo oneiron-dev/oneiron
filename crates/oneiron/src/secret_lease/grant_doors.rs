@@ -375,8 +375,9 @@ impl Vault {
         if let Some(guard) = guard {
             guard.disarm();
         }
+        // FIX 7954: the destination records the delivering grant's own id.
         if let (Some(value), SecretGrantTarget::HostDestination { name }) = (value, &grant.target)
-            && let Err(error) = delivery.deliver(&grant.holder, name, &value)
+            && let Err(error) = delivery.deliver(&grant.holder, &grant.grant_id, name, &value)
         {
             self.retire_secret_grant(&grant.grant_id, SecretGrantStatus::Revoked, None)?;
             return Err(error);

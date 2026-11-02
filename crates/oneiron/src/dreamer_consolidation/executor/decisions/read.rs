@@ -55,6 +55,9 @@ pub(in crate::dreamer_consolidation) struct ScopedRead<'a> {
     pub(in crate::dreamer_consolidation) state: &'a serde_json::Value,
     /// The highest rung the read may climb to; the host's dial may stop lower.
     pub(in crate::dreamer_consolidation) ceiling: DecisionRung,
+    /// The complete rows the generation's prompt and state were read from,
+    /// which its call sends under (FIX 6998); `None` when not known complete.
+    pub(in crate::dreamer_consolidation) sources: Option<Vec<EntityId>>,
 }
 
 impl ConsolidationExecutor<'_> {
@@ -113,13 +116,14 @@ impl Decider<'_> {
         }
         dial.ceiling = dial.ceiling.min(read.ceiling).min(VERDICT_CEILING);
         dial.first = dial.first.min(dial.ceiling);
+        let backend = read.call.call_backend(read.sources);
         let rung = GeneratedRung {
             pin: ProviderPin {
                 rung: self.decisions.dial.first,
                 model: read.call.model.to_string(),
                 version: read.call.model.to_string(),
             },
-            backend: read.call.backend,
+            backend: backend.get(),
             step: GeneratedStep::Durable {
                 step: read.step,
                 guard: self.guard,
@@ -197,6 +201,11 @@ impl Decider<'_> {
                 }
                 None => None,
             };
+            // The receipt names the role the ask went to and who answered it,
+            // actor-free (FIX 2225); the kept ask beside it stays as it was.
+            if let Some(ask) = &ask {
+                decision.receipt.bind_ask(ask);
+            }
             kept.push(KeptDecision {
                 decision,
                 ask: ask.as_ref().map(KeptAsk::of),

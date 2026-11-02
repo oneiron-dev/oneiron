@@ -404,6 +404,9 @@ pub(crate) struct PolicyManifestResolution {
     pub(crate) diagnostics: PolicyManifestDiagnostics,
     pub(crate) room_thread: Option<crate::gate::RoomThreadManifest>,
     pub(crate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    /// The trusted rows behind `diagnostic_bounds` and the fields they state
+    /// (FIX 10096): carried for the tripwire receipt, never consulted to admit.
+    pub(crate) diagnostic_bounds_origin: Option<crate::self_heal::tripwires::TripwireBoundsOrigin>,
     pub(crate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(crate) residence_operation_budgets: ResidenceOperationBudgetLimits,
     /// The trusted residence rows met so far, whose resolution is
@@ -491,6 +494,8 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) pptx_comment_limits: Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(super) docx_archive_limits: Vec<crate::gate::docx_budget::DocxArchivePolicy>,
     pub(super) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    /// Every trusted manifest's booking anti-abuse rule rows (FIX 9628).
+    pub(crate) booking_anti_abuse_rows: Vec<crate::booking::anti_abuse::BookingAntiAbuseRuleRow>,
     pub(super) dreamer_failure_rules: Vec<DreamerFailureRule>,
     pub(super) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     /// Vault-resident wait windows keyed by class.

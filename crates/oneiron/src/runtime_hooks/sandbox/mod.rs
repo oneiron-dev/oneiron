@@ -8,15 +8,22 @@
 //! [`HookRunContext`], never a stop (FIX 8842): start-up, reads and verdicts
 //! are measured against it, each admitted callback's answer is delivered
 //! even when late, and the body runs to its own end under its fuel and
-//! memory.
+//! memory. A body is prepared once, here, as code mode prepares a program
+//! (FIX 9208): JavaScript runs byte for byte as written; TypeScript runs as
+//! the JavaScript Oxc prints, its errors naming its TypeScript position; a
+//! body neither parse takes runs as written, with a note, never refused.
 
 /// Types generated from the hook world.
 pub mod bindings {
     wasmtime::component::bindgen!({ path: "wit/hook/hook.wit", world: "hook" });
 }
 
-use super::{HookBodyRun, HookBodyRuntime, HookRunContext, HookVerdictCall};
+use super::{
+    HookBodyRun, HookBodyRuntime, HookBodyUsage, HookPreparation, HookRunContext, HookVerdictCall,
+};
+use crate::code_sandbox::source::{PreparedSource, prepare_source, split_guest_error};
 use crate::code_sandbox::wasmtime_runtime::ComponentBudget;
+use crate::receipt::hex_lower;
 use crate::{Error, Result};
 use std::sync::mpsc;
 use wasmtime::component::{Component, Linker};
@@ -31,17 +38,15 @@ const HOOK_COMPONENT: &[u8] =
 
 /// BLAKE3 of the checked-in hook component; its manifest row carries the SHA-256.
 pub const HOOK_COMPONENT_BLAKE3: [u8; 32] = [
-    0xb5, 0x64, 0xbe, 0x6f, 0xf8, 0x30, 0x63, 0x76, 0xc6, 0xba, 0xf4, 0xa3, 0xad, 0x62, 0x0b, 0x18,
-    0x89, 0xf4, 0xf7, 0x77, 0x33, 0x46, 0x67, 0x40, 0x2d, 0x64, 0x9b, 0xca, 0x30, 0xa0, 0x71, 0x3e,
+    0x48, 0xca, 0x94, 0x38, 0x8c, 0xa1, 0x8c, 0x48, 0x26, 0xb0, 0xf4, 0xbc, 0xb1, 0x7c, 0xb9, 0x80,
+    0x37, 0x53, 0xec, 0xb3, 0x4f, 0x7e, 0x77, 0xd5, 0x48, 0xfd, 0x63, 0x08, 0x84, 0x1a, 0x14, 0xcc,
 ];
 
 /// The three imports of the hook world, sorted. A component importing
 /// anything else is refused before it runs.
 const HOOK_IMPORTS: [&str; 3] = ["ai-verdict", "emit-outcome", "scoped-read"];
-/// Bytes one read request may carry.
-const READ_REQUEST_BYTES: usize = 4 * 1024;
-/// Bytes one read answer may carry.
-const READ_RESPONSE_BYTES: usize = 256 * 1024;
+/// Bytes one `ai.verdict` answer may carry.
+const VERDICT_RESPONSE_BYTES: usize = 256 * 1024;
 /// Bytes one `ai.verdict` request may carry: a question, its options, its
 /// evidence refs and its state.
 const VERDICT_REQUEST_BYTES: usize = 64 * 1024;
@@ -71,6 +76,14 @@ pub struct HookSandbox {
 }
 
 impl HookBodyRuntime for HookSandbox {
+    fn runtime_identity(&self) -> Option<String> {
+        Some(
+            blake3::Hash::from(HOOK_COMPONENT_BLAKE3)
+                .to_hex()
+                .to_string(),
+        )
+    }
+
     fn run_hook(
         &self,
         body: &str,
@@ -156,11 +169,21 @@ impl HookSandbox {
         read: &mut dyn FnMut(&str) -> std::result::Result<String, String>,
         verdict: HookVerdictCall<'_>,
     ) -> Result<HookBodyRun> {
+        // A body refused before its worker starts used nothing (FIX 9332).
         let budget_ms = context.budget_ms();
         if budget_ms == 0 || budget_ms > MAX_BUDGET_MS {
+            context.report_usage(HookBodyUsage::NOT_RUN);
             return Err(failure("hook budget_ms is out of bounds"));
         }
-        if body.len() > self.budget.message_bytes || input_json.len() > self.budget.message_bytes {
+        // Prepared once, for every route a body runs by (FIX 9208); the
+        // authored body stays the body of record.
+        let prepared = prepare_source(body);
+        context.report_preparation(preparation(&prepared));
+        let executed = prepared.executed();
+        if executed.len() > self.budget.message_bytes
+            || input_json.len() > self.budget.message_bytes
+        {
+            context.report_usage(HookBodyUsage::NOT_RUN);
             return Err(failure("hook body or input exceeds the message limit"));
         }
         // Wasmtime needs 'static store data, so the body runs on a scoped
@@ -170,10 +193,13 @@ impl HookSandbox {
         let (events, requests) = mpsc::sync_channel(1);
         let budget = self.budget;
         let pre = &self.pre;
+        let prepared = &prepared;
+        // Unavailable until the worker's end measures it.
+        context.body_starts();
         std::thread::scope(|scope| {
             scope.spawn(move || {
-                let result = execute(pre, budget, body, input_json, events.clone());
-                let _ = events.send(Event::Finished(result));
+                let (result, usage) = execute(pre, budget, prepared, input_json, events.clone());
+                let _ = events.send(Event::Finished(result, usage));
             });
             serve_reads(&requests, read, verdict, context)
         })
@@ -206,7 +232,6 @@ struct State {
     events: mpsc::SyncSender<Event>,
     limits: StoreLimits,
     host_calls: u32,
-    message_bytes: usize,
     outcome: Option<String>,
     trap: Option<&'static str>,
 }
@@ -220,7 +245,9 @@ enum Event {
         request: String,
         reply: mpsc::SyncSender<std::result::Result<String, String>>,
     },
-    Finished(Result<HookBodyRun>),
+    /// The body's end: its result, and what it used, measured on every path
+    /// it took (FIX 9332).
+    Finished(Result<HookBodyRun>, HookBodyUsage),
 }
 
 type Reply<T> = std::result::Result<T, String>;
@@ -232,13 +259,10 @@ impl State {
     }
 
     /// One scoped read, counted in the run's host calls: a count never
-    /// refuses one (FIX 8841). Oversized requests and answers come back as
-    /// codes.
+    /// refuses one (FIX 8841), and neither does the size of its request or
+    /// its answer, which the body gets whole (FIX 9233).
     fn read(&mut self, request: String) -> wasmtime::Result<Reply<String>> {
         self.host_calls = self.host_calls.saturating_add(1);
-        if request.len() > READ_REQUEST_BYTES {
-            return Ok(Err("read_request_over_budget".into()));
-        }
         let (reply, response) = mpsc::sync_channel(1);
         if self.events.send(Event::Read { request, reply }).is_err() {
             return Err(self.refuse("hook host stopped"));
@@ -246,11 +270,7 @@ impl State {
         let Ok(answer) = response.recv() else {
             return Err(self.refuse("hook host stopped"));
         };
-        Ok(match answer {
-            Ok(rows) if rows.len() > READ_RESPONSE_BYTES => Err("read_response_over_budget".into()),
-            Err(code) if code.len() > READ_RESPONSE_BYTES => Err("read_refused".into()),
-            answer => answer,
-        })
+        Ok(answer)
     }
 
     /// One `ai.verdict` call, counted as a read is. The host answers it, or
@@ -268,23 +288,21 @@ impl State {
             return Err(self.refuse("hook host stopped"));
         };
         Ok(match answer {
-            Ok(verdict) if verdict.len() > READ_RESPONSE_BYTES => {
+            Ok(verdict) if verdict.len() > VERDICT_RESPONSE_BYTES => {
                 Err("verdict_response_over_budget".into())
             }
-            Err(text) if text.len() > READ_RESPONSE_BYTES => Err("verdict_refused".into()),
+            Err(text) if text.len() > VERDICT_RESPONSE_BYTES => Err("verdict_refused".into()),
             answer => answer,
         })
     }
 
-    /// The one outcome. A malformed or oversized outcome comes back as a code;
-    /// a second outcome after one was taken traps the body.
+    /// The one outcome, whole whatever its size (FIX 10074, 10086). A
+    /// malformed outcome comes back as a code; a second outcome after one
+    /// was taken traps the body.
     fn emit(&mut self, outcome: String) -> wasmtime::Result<Reply<()>> {
         self.host_calls = self.host_calls.saturating_add(1);
         if self.outcome.is_some() {
             return Err(self.refuse("hook outcome already emitted"));
-        }
-        if outcome.len() > self.message_bytes {
-            return Ok(Err("outcome_over_budget".into()));
         }
         let kind = serde_json::from_str::<serde_json::Value>(&outcome)
             .ok()
@@ -323,13 +341,14 @@ fn link_imports(linker: &mut Linker<State>) -> Result<()> {
     Ok(())
 }
 
+/// Runs the prepared body on a fresh Store: its result, beside what it used.
 fn execute(
     pre: &bindings::HookPre<State>,
     budget: ComponentBudget,
-    body: &str,
+    prepared: &PreparedSource<'_>,
     input_json: &str,
     events: mpsc::SyncSender<Event>,
-) -> Result<HookBodyRun> {
+) -> (Result<HookBodyRun>, HookBodyUsage) {
     let limits = StoreLimitsBuilder::new()
         .memory_size(budget.memory_bytes)
         .memories(1)
@@ -344,43 +363,63 @@ fn execute(
             events,
             limits,
             host_calls: 0,
-            message_bytes: budget.message_bytes,
             outcome: None,
             trap: None,
         },
     );
     store.limiter(|state| &mut state.limits);
-    store
-        .set_fuel(budget.fuel)
-        .map_err(|_| failure("hook fuel setup failed"))?;
-    let hook = pre
-        .instantiate(&mut store)
-        .map_err(|_| failure("hook component instantiation refused"))?;
-    // Wasmtime performs canonical post-return inside the call.
-    let ran = hook.call_run_hook(&mut store, body, input_json);
-    let fuel_used = budget.fuel.saturating_sub(store.get_fuel().unwrap_or(0));
+    if store.set_fuel(budget.fuel).is_err() {
+        // No fuel, no body: it used nothing.
+        return (
+            Err(failure("hook fuel setup failed")),
+            HookBodyUsage::NOT_RUN,
+        );
+    }
+    let ran = match pre.instantiate(&mut store) {
+        // Wasmtime performs canonical post-return inside the call.
+        Ok(hook) => Ok(hook.call_run_hook(&mut store, prepared.executed(), input_json)),
+        Err(_) => Err(failure("hook component instantiation refused")),
+    };
+    // What the body used, read before its Store drops on every path it took,
+    // a failed instantiation, a trap, a guest error and a missing emit
+    // included (FIX 9332). A fuel read that fails measured nothing: its count
+    // is unavailable, never a number.
+    let usage = HookBodyUsage {
+        fuel_used: store
+            .get_fuel()
+            .ok()
+            .map(|left| budget.fuel.saturating_sub(left)),
+        host_calls: Some(store.data().host_calls),
+    };
     let state = store.into_data();
-    match ran {
-        Err(error) => Err(match state.trap {
+    let result = match ran {
+        Err(error) => Err(error),
+        Ok(Err(error)) => Err(match state.trap {
             Some(reason) => failure(reason),
             None => trap_failure(&error),
         }),
-        Ok(Err(message)) => Err(guest_failure(&message)),
-        Ok(Ok(())) => Ok(HookBodyRun {
-            outcome_json: state
-                .outcome
-                .ok_or(failure("hook body emitted no outcome"))?,
-            fuel_used,
-            host_calls: state.host_calls,
-        }),
-    }
+        Ok(Ok(Err(message))) => Err(guest_failure(&message, prepared)),
+        Ok(Ok(Ok(()))) => match state.outcome {
+            Some(outcome_json) => Ok(HookBodyRun {
+                outcome_json,
+                // A run that succeeded keeps its plain count, as before: one
+                // whose fuel did not read counts its whole budget spent.
+                fuel_used: usage.fuel_used.unwrap_or(budget.fuel),
+                host_calls: state.host_calls,
+            }),
+            None => Err(failure("hook body emitted no outcome")),
+        },
+    };
+    (result, usage)
 }
 
 /// Answers the worker's reads and verdicts until the body ends. The budget
 /// stops nothing (FIX 8842): it waits on the body however long it runs,
 /// runs each admitted callback to its end, measured on `context`, and sends
 /// its answer even when late. Only the worker's end, or its channel closing
-/// without one, ends the wait.
+/// without one, ends the wait. The end's usage goes on `context` before its
+/// result returns; a channel that closes without an end leaves it
+/// unavailable (FIX 9332).
 fn serve_reads(
     requests: &mpsc::Receiver<Event>,
     read: &mut dyn FnMut(&str) -> Reply<String>,
@@ -395,7 +434,10 @@ fn serve_reads(
             Ok(Event::Verdict { request, reply }) => {
                 let _ = reply.send(context.verdict(|| verdict(&request)));
             }
-            Ok(Event::Finished(result)) => return result,
+            Ok(Event::Finished(result, usage)) => {
+                context.report_usage(usage);
+                return result;
+            }
             Err(mpsc::RecvError) => return Err(failure("hook worker stopped without an end")),
         }
     }
@@ -412,13 +454,32 @@ fn trap_failure(error: &wasmtime::Error) -> Error {
     }
 }
 
-/// The body's own error text, so the receipt says why it stopped.
-fn guest_failure(message: &str) -> Error {
+/// The body's own error text, so the receipt says why it stopped (FIX
+/// 9208). The guest's position header never reaches it: it is split off
+/// before the text is cut, and a TypeScript body's error ends with where it
+/// threw in its TypeScript source, past the cut. A JavaScript body's error
+/// reads as it always did.
+fn guest_failure(message: &str, prepared: &PreparedSource<'_>) -> Error {
+    let (message, at) = split_guest_error(message);
     let mut text: String = message.chars().take(GUEST_ERROR_CHARS).collect();
     if text.len() < message.len() {
         text.push_str(&format!(" … ({} bytes in all)", message.len()));
     }
+    if let Some(position) = prepared.failure_position(at) {
+        text.push_str(&position);
+    }
     Error::InvalidConfig(format!("hook body failed: {text}"))
+}
+
+/// How `prepared` ran, for the run's record.
+fn preparation(prepared: &PreparedSource<'_>) -> HookPreparation {
+    HookPreparation {
+        language: prepared.language().as_str().to_owned(),
+        note: prepared.note().map(|note| note.code().to_owned()),
+        identity: prepared
+            .transpiled()
+            .map(|transpiled| hex_lower(&transpiled.identity())),
+    }
 }
 
 fn failure(detail: &'static str) -> Error {

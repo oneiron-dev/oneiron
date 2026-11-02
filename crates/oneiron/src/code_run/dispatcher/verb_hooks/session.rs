@@ -66,6 +66,7 @@ impl HostSelfDispatcher<'_> {
                 .and_then(ScopedReadActorKey::room_turn)
                 .map(|turn| format!("room:{}", turn.room.to_hex())),
             board_epoch: None,
+            turn: None,
             domain: hook_domain(&call),
             reader: read_as,
         };

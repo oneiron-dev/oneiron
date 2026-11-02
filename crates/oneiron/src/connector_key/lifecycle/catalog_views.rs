@@ -29,7 +29,9 @@ pub struct ConnectorDescription {
     pub key_generation: u32,
     pub registered_at: u64,
     pub status_changed_at: Option<u64>,
-    /// Entry-wide ARCH-0054 classification: `call_class.debits_sends()`.
+    /// ARCH-0054 class of the catalog: `call_class.debits_sends()`. Its
+    /// tools not declared read-only debit `Sends`; a read-only one never
+    /// does (FIX 8688).
     pub budgeted_as_sends: bool,
 }
 /// An actor's live connector registration (ARCH-0028: a connector "registers
@@ -52,8 +54,9 @@ pub struct ConnectorCallRoute {
     pub name: String,
     pub connector: String,
     pub call_class: ConnectorCallClass,
-    /// ENTRY-WIDE (ARCH-0054): there is no verb parameter, so a mixed-verb
-    /// `CounterpartyComm` connector budgets every call as a send.
+    /// ARCH-0054 class of the catalog: a `CounterpartyComm` connector's
+    /// tools not declared read-only debit `Sends`; a read-only one never
+    /// does (FIX 8688).
     pub budgeted_as_sends: bool,
     /// Descriptive verb list from the catalog entry.
     pub verbs: Vec<String>,
@@ -203,9 +206,9 @@ impl Vault {
     /// `Some` ONLY while the governing key is Active (a removed or suspended
     /// connector reports `None` and stops execution at the lookup).
     ///
-    /// `budgeted_as_sends` is ENTRY-WIDE and there is deliberately no verb
-    /// parameter: ARCH-0054's Send class is a property of what the connector
-    /// IS, not of which verb a caller reaches for. An UNCLASSIFIED key
+    /// `budgeted_as_sends` describes the catalog: ARCH-0054's Send class is
+    /// what the connector IS, refined per call by the dispatched tool's
+    /// approved read-only declaration (FIX 8688). An UNCLASSIFIED key
     /// (`catalog = None`) has no route at all, which leaves the executor on
     /// the canon default — scoped-MCP tool calls unbudgeted.
     ///

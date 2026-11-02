@@ -28,4 +28,22 @@ impl<'a> ContextPackBuilder<'a> {
         self.pipeline = self.pipeline.filter_candidates(filter);
         self
     }
+
+    /// [`crate::pipeline::PipelineBuilder::gate_candidates`] (FIX 11648).
+    pub(crate) fn gate_candidates(mut self, gate: &'a dyn crate::pipeline::CandidateGate) -> Self {
+        self.pipeline = self.pipeline.gate_candidates(gate);
+        self
+    }
+
+    /// Narrows to one facet, as the retrieval pipeline's own facet stage
+    /// does (FIX 9961): a facet recall assembles and renders through the
+    /// same builder as every other recall.
+    pub(crate) fn facet(
+        mut self,
+        facet_id: &crate::EntityId,
+        mode: crate::pipeline::FacetMode,
+    ) -> Self {
+        self.pipeline = self.pipeline.facet(facet_id, mode);
+        self
+    }
 }

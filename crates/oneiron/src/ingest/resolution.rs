@@ -221,12 +221,16 @@ pub(crate) fn score_entity_resolution_waterfall_in_txn(
             // The EFFECTIVE confidence, never the stored column: a claim's
             // own number says how sure its provider was, not how much this
             // vault has learned to trust that provider.
-            let effective_confidence = crate::provider_confidence::effective_confidence_in_txn(
+            let effective = crate::provider_confidence::effective_confidence_in_txn(
                 vault,
                 wtxn,
                 &candidate.confidence_claim_ref,
                 &mut prior_memo,
             )?;
+            // A claim whose provider's only priors a split left unresolved
+            // has no number to rank by (FIX 10530): the waterfall stops on
+            // it, as it always did.
+            let effective_confidence = effective.resolved_or_error()?;
             scored.push(ScoredEntityResolutionCandidate {
                 candidate: EntityResolutionCandidate {
                     subject,

@@ -6,7 +6,9 @@
 //! one generated dispatcher every MCP door shares. Code mode holds no
 //! authority a direct tool call lacks; only the paging envelope is left out,
 //! since the guest receives the verb's whole output. Its writes carry the
-//! run's host-owned origin, not a source the guest's input names.
+//! run's host-owned origin, not a source the guest's input names. Its `ai.*`
+//! media calls spend on the run's own line, code mode's meter, which its
+//! steps spend on, rather than the owner's media meter (FIX 780).
 //!
 //! A browser row (`self.browser.*`) is no tool. The run's own browser
 //! answers it: one guest per run, started on the run's first admitted
@@ -48,11 +50,14 @@ mod browser_guest;
 mod dispatch;
 mod field_writer;
 mod guests;
+mod held_press;
 mod library;
+mod program_admission;
 mod reader;
 mod receipt_evidence;
 mod secret_custody;
 mod session_write;
+mod site_skills;
 mod solved_runs;
 mod task_workflow;
 mod verdict;
@@ -69,6 +74,7 @@ use self::field_writer::RunFieldWriter;
 use self::guests::*;
 use self::receipt_evidence::ReceiptWriter;
 use self::secret_custody::RunSecretCustody;
+use self::site_skills::RunSiteSkills;
 use self::solved_runs::BrowserCapture;
 use super::actor_dispatch::{mcp_execute_code_gate, mcp_tool_validation_error, mcp_verb_gate};
 use super::admission::{
@@ -106,9 +112,9 @@ use oneiron_browser::{
     Admitted, BrowserDriver, BrowserEngine, BrowserError, BrowserGuest, BrowserRequestHandler,
     BrowserSession, DesktopGuest, DesktopSession, EFFECT_CLASSES, FiledWorkflow, FreshGuest,
     GuestLimits, HandleRetention, LibraryCard, PressMode, RetiredCard, RoutineAnswer, RoutineAsk,
-    RoutineDecider, RoutineReply, RunOutcome, SecretCustody, SendPolicy, StrictDenial,
-    StrictDenied, SupersedeRefusal, TextCheck, TextCheckReply, WorkflowLibrary, WorkflowProgram,
-    WorkflowProof,
+    RoutineDecider, RoutineReply, RunOutcome, SecretCustody, SendPolicy, SiteSkillLoader,
+    StrictDenial, StrictDenied, SupersedeRefusal, TextCheck, TextCheckReply, WorkflowLibrary,
+    WorkflowProgram, WorkflowProof,
 };
 use oneiron_container::{EgressRelay, SessionManifest, SessionTransport};
 use serde_json::Value;
@@ -131,6 +137,10 @@ pub(crate) struct McpCodeModeVerbs {
     run_id: oneiron::EntityId,
     /// This run's browser and desktop.
     guests: RunGuests,
+    /// The `execute_code` call's attempt collector, taken where the door is
+    /// built: each verb runs on a spawned task, and a live-run hold made
+    /// there reaches the call's receipt only through this (FIX 10938).
+    collector: Option<std::sync::mpsc::Sender<oneiron::receipt::CallAttemptWitness>>,
 }
 
 /// One run's guests: its browser, when the host has a `[browser]` guest to
@@ -147,6 +157,11 @@ pub(crate) struct RunGuests {
     /// The payer the attached live run bills (FIX 8902), for a caller whose
     /// door bound no line of its own: its Fill writer bills it.
     payer: Option<oneiron::llm::run_admission::PayerPerson>,
+    /// The admission job this run is (CUA E8b): what it files is kept
+    /// against the job, placed by rule alone, and it captures no evidence.
+    admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,
+    /// That job's leased try, which its site skills load under (CUA E10).
+    admission_lease: Option<oneiron::attempt_queue::AttemptRecord>,
 }
 
 /// One run's browser guest. It starts on the first call that needs it and
@@ -293,6 +308,12 @@ struct VaultLibrary {
     /// The caller's solved-run scope, which a program it files covers its
     /// group in (CUA E8a); none for a library that files nothing.
     scope: Option<oneiron::browser_library::SolvedRunScope>,
+    /// The admission job its filing files for (CUA E8b): placed by rule
+    /// alone, and kept against the job in the filing's write.
+    admission: Option<oneiron::browser_library::ProgramAdmissionFiling>,
+    /// The envelope its filings' anchor claims are written under (FIX
+    /// 10513); none where its caller keeps no filing claim.
+    filing: Option<oneiron::WriteEnvelope>,
 }
 
 /// The fresh browser a proposal's replay runs on (CUA E1): a new guest for
@@ -301,9 +322,9 @@ struct VaultLibrary {
 /// the run's egress door and grants, and its own live-handle charge; on the
 /// engine the proposing browser runs, in its request custody, with its own
 /// decider and keeper of receipt screenshots for the same call, and the
-/// run's secret custody (FIX 8028): the replay is the same run. It takes
-/// nothing of the proposing page here: the session carries its sign-ins
-/// into it, and runs the replay.
+/// run's secret custody (FIX 8028) and site skills (CUA E10): the replay is
+/// the same run. It takes nothing of the proposing page here: the session
+/// carries its sign-ins into it, and runs the replay.
 struct RunFreshGuest {
     vault: Arc<oneiron::Vault>,
     run_id: oneiron::EntityId,
@@ -313,6 +334,7 @@ struct RunFreshGuest {
     decider: LadderDecider,
     invocation: Option<InvocationId>,
     secrets: Arc<dyn SecretCustody>,
+    site_skills: Arc<dyn SiteSkillLoader>,
 }
 
 /// The door a reader child's run binds (ARCH-0079 #reader-forks). It runs

@@ -47,16 +47,30 @@ pub(super) fn record(result: &Value, rows: Option<&[EntityId]>) {
 
 /// What the claim keeps beside `saved`, the reply that went out without its
 /// id: the last result judged, with its rows and the first caller's machine
-/// `peer`, when it is the result that went out. A reply that is not it, a
-/// refusal or a withheld result among them, keeps nothing beside it and is
-/// sent again as it was.
+/// `peer`, when it is the result that went out, or when the reply withheld it
+/// (`mcp_result_changed`, FIX 10498) so an admitted waiter gets its own
+/// projection. Any other reply, a refusal among them, keeps nothing beside it
+/// and is sent again as it was.
 pub(super) fn kept(
     peer: PeerMachine,
     saved: &Value,
     judged: Option<Judged>,
 ) -> Option<InvocationRelease> {
     let (value, rows) = judged?;
-    (saved.get("result") == Some(&value)).then_some(InvocationRelease { peer, value, rows })
+    if saved.get("result") == Some(&value) {
+        return Some(InvocationRelease { peer, value, rows });
+    }
+    // FIX 10498: a first caller whose result was withheld leaves its refusal
+    // for no waiter; the final release's pre-release value is kept too, so a
+    // waiter toward another machine is judged for its own destination. Only a
+    // result with known rows is kept, so the waiter's copy is released again.
+    let withheld = saved
+        .get("error")
+        .and_then(|error| error.get("data"))
+        .and_then(|data| data.get("kind"))
+        .and_then(Value::as_str)
+        == Some("mcp_result_changed");
+    (withheld && rows.is_some()).then_some(InvocationRelease { peer, value, rows })
 }
 
 /// The reply a waiter `actor` gets from the first call's `outcome` (FIX
@@ -65,9 +79,10 @@ pub(super) fn kept(
 /// released, and never run again. A listed row its credential no longer
 /// reads or that was erased since, or a result the release would hold, gives
 /// the content-free word that the call ran; a waiter toward another machine
-/// is answered for its own, never refused for the difference. A result whose
-/// rows are unknown, and a reply kept with nothing beside it, go as they
-/// were.
+/// is answered for its own, never refused for the difference. A refusal kept
+/// with nothing beside it has its words released again for this waiter
+/// (FIX 10497); a result whose rows are unknown, and any other such reply,
+/// go as they were.
 pub(super) fn replayed(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -75,7 +90,7 @@ pub(super) fn replayed(
 ) -> Value {
     let mut reply = outcome.body;
     let Some(release) = outcome.release else {
-        return reply;
+        return super::device_release::mcp_rerelease_refusal(server, actor, reply);
     };
     let peer = actor.auth.as_ref().map(crate::auth::CoreAuth::peer);
     if peer != Some(release.peer) {
@@ -96,6 +111,9 @@ pub(super) fn replayed(
         }
     };
     if let Some(reply) = reply.as_object_mut() {
+        // FIX 10498: a waiter whose projection is kept from a withheld reply
+        // gets its own result, never the first caller's refusal.
+        reply.remove("error");
         reply.insert("result".to_owned(), result);
     }
     reply

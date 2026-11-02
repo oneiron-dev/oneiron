@@ -17,12 +17,20 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
             if [
                 b"dreamer:budget:".as_slice(),
                 b"dreamer:budget_reservation:",
+                // The buckets a narrowed MACRO run holds under its lease
+                // (FIX 7729): node-local as the lease is.
+                b"dreamer:consolidation:running_buckets:v1:",
                 // The host's last home-node candidates are this node's own
                 // topology input, never an image's (DOOR-101 PR2a).
                 b"dreamer:home_candidates:v1",
                 b"dreamer:parked:",
+                b"dreamer:outage_due:v1:",
                 b"dreamer:peer_wait",
                 b"dreamer:trap_binding:",
+                b"dreamer:trap_sent:v1:",
+                // The program holds among the parked tries, indexed beside
+                // them (FIX 6062): node-local as the parked rows are.
+                b"dreamer:turn_program:hold:v1:",
                 // A pass's own observation of its clock, calls and leases
                 // (DOOR-144): no image restores a live lease.
                 b"dreamer:wake:observation:v1:",
@@ -62,6 +70,9 @@ pub fn storage_tier(database: &str, key: &[u8]) -> StorageTier {
                 // Host orders and the host-only log never enter an owner's
                 // image (OF-470 C2).
                 HOST_HOLD_PREFIX,
+                // An owner's confirm stands only where he gave it: an image's
+                // receipt is never an election (FIX-LIST 10671).
+                b"secret_custody:restore_election:v1:",
             ]
             .iter()
             .any(|p| key.starts_with(p))

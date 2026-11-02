@@ -39,6 +39,7 @@ use crate::task_verb::highway::{
 use crate::task_verb::highway_accept::{HostFence, Lane, lane_of, require_live_standard};
 use crate::task_verb::lifecycle_receipt;
 use crate::task_verb::runner_done::workflow_done_question;
+use crate::task_verb::settlement_anchor::anchor_kept_review_in_txn;
 use crate::task_verb::wire_decode::task_verb_body_in;
 use crate::task_verb::{
     HostBinding, RunnerDoneAnswer, RunnerDoneQuestion, TaskCallReceipt, TaskExecutionState,
@@ -344,7 +345,7 @@ impl Memory<'_> {
                         "Report against the task your own attempt realizes.",
                     ));
                 }
-                let binder = WriteActor::new(self.actor(), self.actor_class());
+                let binder = self.write_actor();
                 let source = AgentDispatcher::new(vault)
                     .workflow_task_source_in_txn(txn, &record)?
                     .filter(|source| source.task == task_ref && source.bound_by == binder);
@@ -562,7 +563,13 @@ fn close_in(
         if let Some(id) = &receipt.receipt_ref {
             lifecycle_receipt::mark_settled_in(vault, txn, id)?;
         }
+        // A review the owner accepted before the TASK settled anchors the
+        // settlement.
+        anchor_kept_review_in_txn(vault, txn, end.task, Some(end.wrapper.id))?;
     }
+    // The routing projection counts this settlement on the folds whose runs
+    // worked this TASK before it settled (FIX 11807).
+    crate::edit_distance::routing::refold_task_outcomes_in_txn(vault, txn, end.task);
     Ok(receipt)
 }
 

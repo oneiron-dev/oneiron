@@ -36,6 +36,7 @@ struct Leg<'c> {
     ctx: &'c WakeAttemptContext<'c>,
     call: &'c RoleCall<'c>,
     locality: ModelLocality,
+    keyless: bool,
     policy: &'c WakeRecipePolicy,
     sizing: Sizing,
     key: [u8; 32],
@@ -78,6 +79,7 @@ impl Leg<'_> {
                 .now_ms
                 .div_ceil(1_000)
                 .saturating_add(self.policy.rung_retry_secs),
+            step_hashes: charges.step_hashes.clone(),
         }
     }
 
@@ -175,6 +177,7 @@ impl ConsolidationExecutor<'_> {
                 DreamerParkCause::Retry,
             ));
         };
+        let keyless = call.inference.selected_keyless();
         let writer = Writer {
             attempt: attempt.status.attempt.id,
             generation: attempt.status.attempt.attempt_count,
@@ -191,6 +194,7 @@ impl ConsolidationExecutor<'_> {
             if !policy.follower_enabled {
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
             let leg = Leg {
@@ -198,6 +202,7 @@ impl ConsolidationExecutor<'_> {
                 ctx,
                 call: &call,
                 locality,
+                keyless,
                 policy: &policy,
                 sizing: Sizing::new(
                     self.roles.follower_window_tokens(),
@@ -218,6 +223,7 @@ impl ConsolidationExecutor<'_> {
                 Next::Idle => {
                     return Ok(DreamerAttemptExecution::Completed {
                         completed_units: charges.units,
+                        step_hashes: charges.step_hashes.clone(),
                     });
                 }
                 Next::Fold(work) => self.fold(&leg, &work, &mut charges).await?,
@@ -242,10 +248,11 @@ impl ConsolidationExecutor<'_> {
             return Err(Error::InvariantViolation("a follower suffix asks nothing"));
         };
         let labels = request::labels(&work.asked);
-        let request = match request::ask_request(leg.call.model, leg.locality, work, &labels) {
-            Ok(request) => request,
-            Err(error) => return Ok(Some(charges.park_on_error(&error))),
-        };
+        let request =
+            match request::ask_request(leg.call.model, leg.locality, leg.keyless, work, &labels) {
+                Ok(request) => request,
+                Err(error) => return Ok(Some(charges.park_on_error(&error))),
+            };
         let (request, step_hash) = match admit(leg, request) {
             Ok(admitted) => admitted,
             Err(refusal) => return Ok(Some(refused(charges, &refusal))),
@@ -282,17 +289,27 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
+                {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
+                    return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
+                }
                 if failure_policy.is_some() {
-                    return charges
-                        .park_on_fallback(
-                            vault,
-                            attempt_id,
-                            step_hash,
-                            FOLLOWER_FALLBACK,
-                            &response,
-                        )
-                        .map(Some);
+                    return match charges.park_on_fallback(
+                        vault,
+                        attempt_id,
+                        step_hash,
+                        FOLLOWER_FALLBACK,
+                        &response,
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => {
+                            super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some)
+                        }
+                    };
                 }
                 (response, memoized)
             }
@@ -423,6 +440,7 @@ impl ConsolidationExecutor<'_> {
         let request = request::fold_request(
             leg.call.model,
             leg.locality,
+            leg.keyless,
             &leg.policy.follower_keyframe_instruction,
             group,
             pins,
@@ -451,17 +469,27 @@ impl ConsolidationExecutor<'_> {
                 failure_policy,
                 ..
             }) => {
-                charges.record_terminal(vault, attempt_id, step_hash, &response.usage)?;
+                if let Err(error) =
+                    charges.record_terminal(vault, attempt_id, step_hash, &response.usage)
+                {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
+                    return super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some);
+                }
                 if failure_policy.is_some() {
-                    return charges
-                        .park_on_fallback(
-                            vault,
-                            attempt_id,
-                            step_hash,
-                            FOLLOWER_FALLBACK,
-                            &response,
-                        )
-                        .map(Some);
+                    return match charges.park_on_fallback(
+                        vault,
+                        attempt_id,
+                        step_hash,
+                        FOLLOWER_FALLBACK,
+                        &response,
+                    ) {
+                        Ok(parked) => Ok(Some(parked)),
+                        Err(error) => {
+                            super::residency::spent_or_deferred(error, leg.ctx, charges).map(Some)
+                        }
+                    };
                 }
                 run.calls
                     .push(output::evidence(&response, step_hash, memoized));
@@ -532,6 +560,7 @@ fn hand_back_owed(
             vault.store.notify_attempt_observers();
             Ok(Some(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }))
         }
         Err(error) => engine(charges, error).map(Some),

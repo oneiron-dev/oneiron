@@ -2,7 +2,7 @@
 //! A repository is a hub (ARCH-0053 §7): `owner/repo` names a GitHub repository,
 //! and discovery lists its skill folders the way `npx skills add` does.
 use super::git_process::GitScratch;
-use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
+use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
 use super::{HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillHubAdapter, SkillHubKind};
 use crate::{entity_id::EntityId, error::Result};
@@ -183,8 +183,6 @@ impl SkillHubAdapter for GitEndpointSkillHubAdapter {
         Ok(entries)
     }
 }
-/// The most skill folders one discovery reads.
-const MAX_DISCOVERED_SKILLS: usize = 256;
 /// Folders holding a `SKILL.md`, in path order; a folder inside another skill's
 /// folder is part of that skill. Repository metadata folders are skipped.
 fn skill_folders(listing: &[u8]) -> Result<Vec<String>> {
@@ -219,11 +217,6 @@ fn skill_folders(listing: &[u8]) -> Result<Vec<String>> {
         {
             continue;
         }
-        if kept.len() == MAX_DISCOVERED_SKILLS {
-            return Err(invalid(
-                "the repository holds more skill folders than one discovery reads; name a subtree",
-            ));
-        }
         kept.push(folder);
     }
     Ok(kept)
@@ -242,7 +235,7 @@ fn github_shorthand(endpoint: &str) -> Option<String> {
     };
     (valid(owner) && valid(repo)).then(|| format!("https://github.com/{owner}/{repo}.git"))
 }
-fn normalize_endpoint(endpoint: &str) -> Result<String> {
+pub(super) fn normalize_endpoint(endpoint: &str) -> Result<String> {
     if let Some(url) = github_shorthand(endpoint) {
         return Ok(url);
     }
@@ -337,7 +330,7 @@ fn read_blobs(repo: &GitScratch, listing: &[u8]) -> Result<Vec<HubFile>> {
         .split(|byte| *byte == 0)
         .filter(|row| !row.is_empty())
     {
-        if files.len() >= MAX_HUB_PACKAGE_FILES || std::time::Instant::now() >= deadline {
+        if std::time::Instant::now() >= deadline {
             return Err(invalid("Git subtree resource budget exceeded"));
         }
         let row = std::str::from_utf8(row).map_err(|_| invalid("Git path is not UTF-8"))?;

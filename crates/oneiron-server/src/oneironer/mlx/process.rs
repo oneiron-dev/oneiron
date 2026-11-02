@@ -3,8 +3,9 @@
 //!
 //! The child starts through `oneiron_spawn`, with the standard descriptors
 //! alone, a cleared environment, `/` as its cwd and three pipes. Its stderr
-//! is drained from the start, line by line into the log, so a full pipe
-//! never stalls it. Its stdout is read on a thread of its own, frame by
+//! is drained from the start, line by line, so a full pipe never stalls it;
+//! the log keeps only each line's fixed kind and the counts, never a byte
+//! of its text, which may echo a turn (FIX 9521). Its stdout is read on a thread of its own, frame by
 //! frame, into one event queue, which every wait reads with a deadline: the
 //! 120 s handshake and each call's timeout really interrupt a worker that
 //! hangs. Its stdin is written by a third thread, so a write to a worker
@@ -32,8 +33,8 @@ const EXIT_WITHIN: Duration = Duration::from_secs(2);
 const KILL_AFTER: Duration = Duration::from_secs(5);
 /// How often a closing worker is checked for its exit.
 const REAP_POLL: Duration = Duration::from_millis(20);
-/// The longest stderr line logged whole; a longer one is logged in pieces,
-/// every byte of it, so the drain holds no growing buffer.
+/// The longest stderr line read whole; a longer one is read in pieces, so
+/// the drain holds no growing buffer.
 const LOG_LINE_BYTES: usize = 8 * 1024;
 /// The environment the worker keeps when this process has it (A1).
 const INHERITED: [&str; 2] = ["HOME", "TMPDIR"];
@@ -231,23 +232,26 @@ fn write_frames(mut stdin: ChildStdin, queue: &Receiver<Vec<u8>>, events: &Sende
     }
 }
 
-/// The stderr thread: every line into the log as a worker diagnostic, never
-/// read as protocol, until the pipe ends.
+/// The stderr thread: every line drained, never read as protocol, until the
+/// pipe ends. A line is logged by its fixed kind alone, and the pipe's
+/// counts once it ends: no text, hash or excerpt of a line reaches the log,
+/// and no model is asked to scrub one (FIX 9521).
 fn drain_stderr(stderr: ChildStderr) {
     let mut reader = BufReader::with_capacity(LOG_LINE_BYTES, stderr);
     let mut line = Vec::with_capacity(LOG_LINE_BYTES);
+    let mut counts = StderrCounts::default();
     loop {
         let used = match reader.fill_buf() {
             Ok([]) => break,
             Ok(available) => {
                 for &byte in available {
                     if byte == b'\n' {
-                        log_line(&line);
+                        counts.note(&line);
                         line.clear();
                     } else {
                         line.push(byte);
                         if line.len() == LOG_LINE_BYTES {
-                            log_line(&line);
+                            counts.note(&line);
                             line.clear();
                         }
                     }
@@ -259,13 +263,81 @@ fn drain_stderr(stderr: ChildStderr) {
         };
         reader.consume(used);
     }
-    log_line(&line);
+    counts.note(&line);
+    tracing::info!(
+        worker = "mlx/metal",
+        tracebacks = counts.traceback,
+        errors = counts.error,
+        warnings = counts.warning,
+        other = counts.other,
+        "oneironer worker stderr closed"
+    );
 }
 
-fn log_line(line: &[u8]) {
-    let text = String::from_utf8_lossy(line);
-    let text = text.trim_end();
-    if !text.is_empty() {
-        tracing::info!(worker = "mlx/metal", line = text, "oneironer worker stderr");
+/// What one stderr line is, by a fixed name: the one fact of it the log
+/// keeps.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum StderrKind {
+    Traceback,
+    Error,
+    Warning,
+    Other,
+}
+
+impl StderrKind {
+    fn of(line: &[u8]) -> Self {
+        let has = |word: &[u8]| line.windows(word.len()).any(|window| window == word);
+        if line.starts_with(b"Traceback") {
+            Self::Traceback
+        } else if has(b"Error") || has(b"error") {
+            Self::Error
+        } else if has(b"Warning") || has(b"warning") {
+            Self::Warning
+        } else {
+            Self::Other
+        }
+    }
+
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Traceback => "traceback",
+            Self::Error => "error",
+            Self::Warning => "warning",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// The stderr lines a worker wrote, counted by kind.
+#[derive(Default)]
+struct StderrCounts {
+    traceback: u64,
+    error: u64,
+    warning: u64,
+    other: u64,
+}
+
+impl StderrCounts {
+    /// Counts one line; a traceback or error line is logged by its kind as
+    /// it comes. A blank line is nothing.
+    fn note(&mut self, line: &[u8]) {
+        if line.iter().all(u8::is_ascii_whitespace) {
+            return;
+        }
+        let kind = StderrKind::of(line);
+        let count = match kind {
+            StderrKind::Traceback => &mut self.traceback,
+            StderrKind::Error => &mut self.error,
+            StderrKind::Warning => &mut self.warning,
+            StderrKind::Other => &mut self.other,
+        };
+        *count = count.saturating_add(1);
+        if matches!(kind, StderrKind::Traceback | StderrKind::Error) {
+            tracing::warn!(
+                worker = "mlx/metal",
+                kind = kind.as_str(),
+                "oneironer worker stderr"
+            );
+        }
     }
 }

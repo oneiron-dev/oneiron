@@ -7,6 +7,8 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::llm::run_admission::LeaseUnit;
+use crate::scan_check::{EngineScan, ScanCount};
+use crate::store::Store;
 use crate::write_envelope::{ClaimCandidate, WriteActor, WriteEnvelope, WriteProvenance};
 use crate::{EntityId, TimeRange, Vault};
 use rmpv::Value;
@@ -24,6 +26,7 @@ pub(crate) use admission::{
 };
 pub use context::ProjectGoalInterviewContext;
 pub use interview::GoalInterviewTurns;
+use limits::GoalLimitValues;
 pub(crate) use limits::GoalLimits;
 
 fn decode_goal_claim(body: &ClaimBody, project: EntityId) -> Result<GoalRecord> {
@@ -132,33 +135,68 @@ impl GoalRecord {
         Ok(())
     }
 
-    fn validate_limits(&self, limits: GoalLimits) -> Result<()> {
-        let len = |s: &str| u64::try_from(s.len()).unwrap_or(u64::MAX);
-        if len(&self.goal) > limits.goal_bytes
-            || len(&self.why) > limits.why_bytes
-            || u64::try_from(self.primary_axes.len() + self.floor_axes.len() + self.cost_axes.len())
-                .unwrap_or(u64::MAX)
-                > limits.axes
-            || u64::try_from(self.preferences.len()).unwrap_or(u64::MAX) > limits.preferences
-            || self
-                .primary_axes
+    /// Counts the record against `limits`, each field under its own scope
+    /// (the project, then the field's name; never its text). Past one, the
+    /// intake raises its scan check and keeps the whole record (rule 5).
+    fn observe_limits(&self, store: &Store, project: EntityId, limits: GoalLimitValues) {
+        let observe = |scan: EngineScan, field: &str, threshold: u64, rows: usize| {
+            let scope = [project.as_bytes().as_slice(), field.as_bytes()].concat();
+            let mut count = ScanCount::start_at(scan, &scope, threshold);
+            count.rows(rows);
+            count.defer(store);
+        };
+        let axes = || {
+            self.primary_axes
                 .iter()
                 .chain(&self.floor_axes)
                 .chain(&self.cost_axes)
-                .any(|axis| {
-                    len(&axis.name) > limits.axis_name_bytes
-                        || len(&axis.measure) > limits.axis_detail_bytes
-                        || len(&axis.bound) > limits.axis_detail_bytes
-                })
-            || self.preferences.iter().any(|pref| {
-                len(&pref.prefer) > limits.axis_detail_bytes
-                    || len(&pref.over) > limits.axis_detail_bytes
-                    || len(&pref.reason) > limits.axis_detail_bytes
-            })
-        {
-            return Err(invalid());
+        };
+        observe(
+            EngineScan::ProjectGoalTextBytes,
+            "goal",
+            limits.goal_bytes,
+            self.goal.len(),
+        );
+        observe(
+            EngineScan::ProjectGoalTextBytes,
+            "why",
+            limits.why_bytes,
+            self.why.len(),
+        );
+        observe(
+            EngineScan::ProjectGoalAxes,
+            "axes",
+            limits.axes,
+            axes().count(),
+        );
+        observe(
+            EngineScan::ProjectGoalPreferences,
+            "preferences",
+            limits.preferences,
+            self.preferences.len(),
+        );
+        for axis in axes() {
+            observe(
+                EngineScan::ProjectGoalAxisNameBytes,
+                "axis_name",
+                limits.axis_name_bytes,
+                axis.name.len(),
+            );
+            for (field, value) in [("measure", &axis.measure), ("bound", &axis.bound)] {
+                let detail = EngineScan::ProjectGoalDetailBytes;
+                observe(detail, field, limits.axis_detail_bytes, value.len());
+            }
         }
-        Ok(())
+        for preference in &self.preferences {
+            for (field, value) in [
+                ("prefer", &preference.prefer),
+                ("over", &preference.over),
+                ("reason", &preference.reason),
+            ] {
+                let detail = EngineScan::ProjectGoalDetailBytes;
+                observe(detail, field, limits.axis_detail_bytes, value.len());
+            }
+        }
     }
 }
 
@@ -175,15 +213,18 @@ impl Vault {
         now: u64,
     ) -> Result<EntityId> {
         self.with_write_txn_grouped(|txn| {
-            self.write_project_goal_in_txn(txn, owner, project_id, record, now)
+            self.write_project_goal_in_txn(txn, owner, project_id, None, record, now)
         })
     }
 
+    /// `thread` is the room thread the intake was confirmed in, if any: its
+    /// scoped goal-limit rows apply beside the project's.
     pub(super) fn write_project_goal_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: &AuthenticatedOwner,
         project_id: EntityId,
+        thread: Option<EntityId>,
         record: &GoalRecord,
         now: u64,
     ) -> Result<EntityId> {
@@ -193,7 +234,10 @@ impl Vault {
         if policy.diagnostics().loaded_manifest_forces_fail_closed() {
             return Err(invalid());
         }
-        record.validate_limits(policy.goal_limits())?;
+        let limits = policy
+            .goal_limits()
+            .resolve_for(project_id, thread, Some(actor));
+        record.observe_limits(&self.store, project_id, limits);
         let id = EntityId::now();
         let envelope = WriteEnvelope::new(
             WriteActor::new(actor, EdgeActorClass::Human),

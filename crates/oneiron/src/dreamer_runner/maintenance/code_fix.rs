@@ -149,6 +149,10 @@ pub struct CandidateRun {
     /// longer stood.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub engine: Option<EngineCandidateRun>,
+    /// The Grant an instruction's exact replay read the kept request under
+    /// (FIX 9448): its keep is rechecked against that Grant alone. `None`
+    /// for an engine pair, which holds its own, and for any other run.
+    pub grant: Option<EntityId>,
 }
 
 impl CandidateRun {
@@ -731,12 +735,23 @@ impl Vault {
                 },
                 &Ran(shadow),
             )?;
+            let replay_fidelity = outcome.and(fidelity);
+            let grant = match (&engine, replay_fidelity) {
+                (None, Some(ReplayFidelity::Exact | ReplayFidelity::ExactMasked)) => replay
+                    .snapshot
+                    .admission
+                    .as_ref()
+                    .ok()
+                    .map(CoachReplayAdmission::grant),
+                _ => None,
+            };
             let run = CandidateRun {
                 candidate_id: candidate_id.clone(),
                 outcome,
                 export,
-                replay: outcome.and(fidelity),
+                replay: replay_fidelity,
                 engine,
+                grant,
             };
             candidates.push((run, sealed));
         }

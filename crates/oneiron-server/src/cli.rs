@@ -5,6 +5,10 @@ use clap::{Args, Parser, Subcommand};
 use crate::commands;
 use crate::config::ServeArgs;
 
+mod account_args;
+pub use account_args::{
+    AccountCommand, AccountLoginArgs, AccountLogoutArgs, AccountServeArgs, AccountStatusArgs,
+};
 mod deployment_args;
 pub use deployment_args::HostRelayArgs;
 mod files_args;
@@ -13,12 +17,17 @@ pub use files_args::{
 };
 mod graph_fs_args;
 mod hook_args;
+mod hosted_args;
 pub use graph_fs_args::GraphFsCommand;
+pub use hosted_args::{HostedCommand, HostedLoginArgs, HostedLogoutArgs, HostedSelectArgs};
 mod learning_setting_args;
 mod owner_args;
 mod recovery_kit_args;
+mod secret_control_args;
+mod vault_unlock_args;
 mod vm_args;
 pub use vm_args::HostVmArgs;
+mod seat_args;
 mod wake_args;
 mod widen_proposal_args;
 pub use hook_args::{
@@ -52,9 +61,13 @@ pub use owner_args::{
     VaultKeyCommand, VaultKeyNamedArgs, VaultKeyResealArgs,
 };
 pub use recovery_kit_args::{
-    KitPieceArgs, RecoveryKitCommand, RecoveryKitConfirmArgs, RecoveryKitIssueArgs,
-    RecoveryKitRestoreArgs, RecoveryKitStatusArgs,
+    KitPieceArgs, RecoveryKitAnchorArgs, RecoveryKitCommand, RecoveryKitConfirmArgs,
+    RecoveryKitIssueArgs, RecoveryKitPadAccessArgs, RecoveryKitPinArgs, RecoveryKitRestoreArgs,
+    RecoveryKitRootsArgs, RecoveryKitStatusArgs, RunningServerArgs,
 };
+pub use seat_args::{SeatCommand, SeatLoginPlanArgs, SeatRunnerPolicyArgs};
+pub use secret_control_args::{SecretBindArgs, SecretPendingArgs, SecretRefArgs, SecretUnbindArgs};
+pub use vault_unlock_args::{RestoreWrapArgs, RestoreWrapKind, VaultUnlockArgs};
 pub use wake_args::{WakeArgs, WakeCommand};
 pub use widen_proposal_args::{
     WidenProposalAnswerArgs, WidenProposalListArgs, WidenProposalStateArg, WidenProposalsCommand,
@@ -178,6 +191,10 @@ pub enum Command {
     /// Enrol this machine with its home, so `serve` dials it.
     #[command(subcommand)]
     Device(DeviceCommand),
+    /// Link a stopped vault to your Oneiron cloud account: login, status,
+    /// refresh and logout.
+    #[command(subcommand)]
+    Account(AccountCommand),
     /// Make short curl-shaped calls against the existing HTTP API.
     Api(ApiArgs),
     /// Serve MCP on stdio for an agent that spawns a command (Claude Code,
@@ -186,10 +203,17 @@ pub enum Command {
     /// sign-in an authenticated surface issued (`--auth-mode owner`).
     Mcp(McpArgs),
     /// Run one agent-harness hook: read the host's event on stdin, bind a
-    /// vault (a pin, a running local vault, else start one), recall for the
-    /// session or the prompt, or queue the session's log. Always exits 0
+    /// vault (a pin, a running local vault, the selected hosted vault, else
+    /// start one), recall for the session or the prompt, or queue the
+    /// session's log. Always exits 0
     /// once parsed; a mistyped command exits 1, never 2.
     Hook(HookArgs),
+    /// The hosted vaults this machine's hooks may bind: record one the
+    /// surface the owner signed in on exported (origin, vault id, auth mode,
+    /// credential file), select one, or sign out. `oneiron hook` binds the
+    /// selected one at its step 3.
+    #[command(subcommand)]
+    Hosted(HostedCommand),
     /// Read or acknowledge a host instance wake inbox.
     Wake(WakeArgs),
     /// Scaffold a self-host node from the shipped deployment templates.
@@ -209,95 +233,6 @@ pub enum Command {
     /// you run to sign one in. Never takes or shows a vendor token.
     #[command(subcommand)]
     Seat(SeatCommand),
-}
-
-#[derive(Subcommand)]
-pub enum SeatCommand {
-    /// List every seat route with its placement on your own runtime and on
-    /// an Oneiron-hosted one (no vendor approvals assumed).
-    Routes,
-    /// Print the sign-in plan for one seat: placement verdict, the login you
-    /// run yourself, and what the seat does when its plan window is dry.
-    LoginPlan(Box<SeatLoginPlanArgs>),
-    /// List every named Dreamer runner a seat policy may name — the CLI
-    /// runners and the official seat adapters — with where a login seat on
-    /// each may run (no vendor approvals assumed).
-    Runners,
-    /// Validate an owner runner-seat policy (JSON settings) and print the
-    /// effective order: which runner takes Dreamer work, and where the work
-    /// goes when a seat's quota is spent.
-    RunnerPolicy(Box<SeatRunnerPolicyArgs>),
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct SeatRunnerPolicyArgs {
-    /// Runner-seat policy settings as JSON (`seats`, `on_spent`, optional
-    /// `official` seat registrations). `-` reads stdin.
-    #[arg(long)]
-    pub settings: PathBuf,
-}
-
-#[derive(Args, Clone, Debug)]
-pub struct SeatLoginPlanArgs {
-    /// Seat route label (see `seat routes`).
-    #[arg(long)]
-    pub route: String,
-    /// Your own label for the account. A label only, never a credential.
-    #[arg(long)]
-    pub account: String,
-    /// Runtime mode the seat would run under.
-    #[arg(long, default_value = "local_free")]
-    pub mode: crate::runtime::RuntimeMode,
-    /// Which of your machines holds the login.
-    #[arg(long)]
-    pub machine: Option<String>,
-    /// Where the vendor's own login store lives on that machine.
-    #[arg(long = "login-store")]
-    pub login_store: Option<String>,
-    /// Custody handle name for endpoint-shaped seats.
-    #[arg(long = "credential-handle")]
-    pub credential_handle: Option<String>,
-    /// Say the vendor binary is modified. A Claude login seat then refuses:
-    /// the hosting permission covers the unmodified binary only.
-    #[arg(long = "modified-binary")]
-    pub modified_binary: bool,
-    /// Anthropic has approved offering a Claude.ai login via the Agent SDK.
-    #[arg(long = "anthropic-sdk-approved")]
-    pub anthropic_sdk_approved: bool,
-    /// OpenAI has approved hosted ChatGPT-plan use.
-    #[arg(long = "openai-hosted-approved")]
-    pub openai_hosted_approved: bool,
-    /// What a dry seat does: park (default), continue_on_local, overdraft.
-    #[arg(long, default_value = "park")]
-    pub dry: String,
-    /// Spend cap units when --dry is overdraft. Zero parks instead.
-    #[arg(long = "overdraft-cap", default_value_t = 0)]
-    pub overdraft_cap: u64,
-    /// Plan-window percent already used, when known.
-    #[arg(long = "plan-percent-used")]
-    pub plan_percent_used: Option<u8>,
-    /// Plan-window reset (epoch seconds), when known.
-    #[arg(long = "plan-resets-at")]
-    pub plan_resets_at: Option<u64>,
-    /// Judge dryness at this epoch second instead of the host clock.
-    #[arg(long, default_value_t = 0)]
-    pub now: u64,
-    /// Sign in with ChatGPT: our app registration's client id.
-    #[arg(long = "siwc-client-id")]
-    pub siwc_client_id: Option<String>,
-    /// Sign in with ChatGPT: the registered redirect URI.
-    #[arg(long = "siwc-redirect-uri")]
-    pub siwc_redirect_uri: Option<String>,
-    /// Sign in with ChatGPT: your PKCE verifier. Only its S256 challenge is
-    /// printed, inside the authorize URL; the verifier is never stored.
-    #[arg(long = "siwc-verifier")]
-    pub siwc_verifier: Option<String>,
-    /// Sign in with ChatGPT: OAuth state value.
-    #[arg(long = "siwc-state")]
-    pub siwc_state: Option<String>,
-    /// Sign in with ChatGPT: OAuth scope, when the registration asks for one.
-    #[arg(long = "siwc-scope")]
-    pub siwc_scope: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -457,6 +392,9 @@ pub enum TokenCommand {
     /// Mint a scoped credential for one named agent (Claude Code, Codex) on
     /// the stopped vault, for `oneiron mcp`.
     Agent(Box<TokenAgentArgs>),
+    /// Mint the host operator's own credential on the stopped self-hosted
+    /// vault: the operator's doors without the host's root (FIX 1814).
+    Operator(Box<commands::TokenOperatorArgs>),
     /// Revoke one previously minted token by its id.
     Revoke(Box<TokenRevokeArgs>),
 }
@@ -800,6 +738,14 @@ pub struct McpArgs {
     /// request fails as `server_unreachable`.
     #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
     pub idle_timeout_secs: u64,
+
+    /// Seconds one named tool may take, answer included, before it fails as
+    /// `server_unreachable`, instead of `--request-timeout-secs` for that
+    /// tool alone. Repeatable, one tool per flag: `--tool-timeout-secs
+    /// TOOL=SECS`. A `tools/call` naming the tool in `params.name` gets its
+    /// entry; every other request keeps the global value.
+    #[arg(long = "tool-timeout-secs", value_name = "TOOL=SECS")]
+    pub tool_timeout_secs: Vec<String>,
 }
 
 /// The connection `oneiron mcp` holds to its server.
@@ -1072,17 +1018,26 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         Command::Token(TokenCommand::Pair(args)) => commands::token_pair(*args),
         Command::Token(TokenCommand::Read(args)) => commands::token_read(*args),
         Command::Token(TokenCommand::Agent(args)) => commands::token_agent(*args),
+        Command::Token(TokenCommand::Operator(args)) => commands::token_operator(*args),
         Command::Token(TokenCommand::Revoke(args)) => commands::token_revoke(*args),
         // Blocking: the enrolment is redeemed over blocking HTTP.
         Command::Device(DeviceCommand::Enrol(args)) => {
             crate::logging::off_runtime("device enrol", move || commands::device_enrol(*args))
                 .await?
         }
+        // Blocking: the cloud registration is reached over blocking HTTP.
+        Command::Account(command) => {
+            crate::logging::off_runtime("account", move || commands::account(command)).await?
+        }
         Command::Api(args) => commands::api(args).await,
         Command::Mcp(args) => commands::mcp(args),
         Command::Wake(args) => crate::wake_adapters::command(args),
         Command::Hook(args) => {
             crate::logging::off_runtime("hook", move || commands::hook(args)).await
+        }
+        // Blocking: a login asks its origin through a spawned `oneiron mcp`.
+        Command::Hosted(command) => {
+            crate::logging::off_runtime("hosted", move || commands::hosted(command)).await?
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),

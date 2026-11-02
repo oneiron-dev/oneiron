@@ -43,9 +43,6 @@ pub const AFFECT_AROUSAL_STRETCH_MAX: f32 = 4.0;
 pub const AFFECT_EMOTION_WEIGHT_MAX: f32 = 0.4;
 /// Default stored arousal at which a claim joins the sensitivity floor.
 pub const AFFECT_FLOOR_AROUSAL_DEFAULT: f32 = 0.7;
-/// Most incoming `ClaimOf` rows read to find a claim's active VAD state.
-const CLAIM_VAD_STATE_SCAN_LIMIT: usize = 64;
-
 /// Per-vault affect retrieval policy. Every dial defaults off: like PPR's
 /// VAD α, enabling one is a deliberate per-vault decision.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -138,7 +135,7 @@ pub(super) fn stored_claim_vad(
         Some(EdgeKind::ClaimOf),
         None,
     )?;
-    for row in rows.take(CLAIM_VAD_STATE_SCAN_LIMIT) {
+    for row in rows {
         let state_id = row?.target;
         let Some(raw) = store
             .port_entity_record(rtxn, &state_id)?

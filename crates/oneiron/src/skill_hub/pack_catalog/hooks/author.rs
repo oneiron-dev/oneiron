@@ -1,4 +1,5 @@
-//! Who a pack hook's outcomes run as: the owner, or a foreign skill publisher.
+//! Who a pack hook's outcomes run as: the owner, a resident agent, or a
+//! foreign skill publisher.
 //! Entry: `HookAuthor` and `Vault::hook_author_in_txn`.
 //! Defines its own items.
 
@@ -7,8 +8,9 @@ use super::*;
 /// The foreign-actor kind a hub pack's publisher is (ARCH-0072).
 pub const FOREIGN_SKILL_PUBLISHER: &str = "skill_publisher";
 
-/// Who a hook runs as (ARCH-0080 §6, §9): the owner who bound it, or a hub
-/// pack's publisher as a foreign actor. The foreign fields name ARCH-0072's
+/// Who a hook runs as (ARCH-0080 §6, §7, §9): the owner who bound it, a
+/// resident agent that wrote it into the `local` pack, or a hub pack's
+/// publisher as a foreign actor. The foreign fields name ARCH-0072's
 /// foreign-actor admission: the actor's kind, its identity record, the hub
 /// it offers from and the one Grant that admits it, plus the vault-resident
 /// actor its outcomes stamp. Hub trust never chains to it.
@@ -16,6 +18,13 @@ pub const FOREIGN_SKILL_PUBLISHER: &str = "skill_publisher";
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum HookAuthor {
     Owner,
+    /// A resident agent's own hook: its outcomes run as the agent, and it
+    /// reads at the agent's ceiling unless the owner grants it otherwise.
+    Agent {
+        #[serde(with = "crate::serialize::entity_ref")]
+        #[schemars(with = "String")]
+        agent: EntityId,
+    },
     ForeignActor {
         actor_kind: String,
         identity: String,
@@ -71,5 +80,34 @@ impl Vault {
             identity,
             hub,
         })
+    }
+
+    /// The vault-resident ACTOR `identity` publishes from `hub` as: a
+    /// configured SKILL_HUB's publisher, the one its pack hooks run as, or the
+    /// engine publishing its seeded packs from its own derived hub. `None`
+    /// for any other pair, such as the owner's own and local packs, which
+    /// have no publisher actor. An issue signature about its artifact rides a
+    /// comm channel with this actor as counterparty (ARCH-0056, FIX 7829).
+    pub(crate) fn skill_publisher_actor_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hub: EntityId,
+        identity: &str,
+    ) -> Result<Option<EntityId>> {
+        if identity == super::super::builtin::ENGINE_PUBLISHER
+            && hub == super::super::builtin::engine_hub_id()?
+        {
+            return Ok(Some(foreign_publisher_actor(hub, identity)?));
+        }
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, &hub)?
+        else {
+            return Ok(None);
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_SKILL_HUB {
+            return Ok(None);
+        }
+        Ok(Some(foreign_publisher_actor(hub, identity)?))
     }
 }

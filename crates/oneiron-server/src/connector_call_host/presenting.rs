@@ -37,6 +37,9 @@ enum Door {
     },
     /// The custody record a `self.use` call names.
     Record(EntityId),
+    /// A record the use's own run found, presented through that run's seat
+    /// binding under the route effector's door policy (FIX 8334).
+    Run(EntityId, RunSecretHolder),
     /// The record the route's own secret name resolved to before the
     /// exchange was declared, presented by its id.
     Route(EntityId),
@@ -65,7 +68,10 @@ impl ServedConnectorCallHost {
                 target: SecretGrantTarget::Connector { name: route.name },
                 custody,
             }),
-            (None, Some(custody), _) => Some(Door::Record(custody)),
+            (None, Some(custody), _) => Some(match self.run {
+                Some(holder) => Door::Run(custody, holder),
+                None => Door::Record(custody),
+            }),
             (None, None, Some(secret_ref)) => {
                 Some(match self.vault.resolve_secret_ref(&secret_ref) {
                     Ok(Some(custody)) => Door::Route(custody),
@@ -76,7 +82,7 @@ impl ServedConnectorCallHost {
         };
         let text = match &door {
             Some(Door::Grant { custody, .. }) => self.vault.secret_clear_text(custody.as_ref()),
-            Some(Door::Record(custody) | Door::Route(custody)) => {
+            Some(Door::Record(custody) | Door::Route(custody) | Door::Run(custody, _)) => {
                 self.vault.secret_clear_text(Some(custody))
             }
             Some(Door::Unresolved) | None => String::new(),
@@ -109,18 +115,29 @@ impl Presenting {
             Ok(())
         };
         let effector = self.effector.as_str();
+        // A grant refusal at the send answers as its typed refusal (FIX 6673).
+        let mut grant_refused = false;
         let door = match door {
             Door::Grant {
                 grant,
                 target,
                 custody,
-            } => vault
-                .redeem_secret_grant_at_door(&grant, &target, &mut present)
-                .map(|redeemed| {
-                    custody.map(|custody| SentPresentation::cleared(custody, redeemed.generation))
-                }),
+            } => {
+                match vault.redeem_secret_grant_at_door(&grant, &target, &mut present) {
+                    Ok(redeemed) => Ok(custody
+                        .map(|custody| SentPresentation::cleared(custody, redeemed.generation))),
+                    Err(error) => {
+                        grant_refused = matches!(error, oneiron::Error::Secret(_));
+                        Ok(None)
+                    }
+                }
+            }
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
+                .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
+            // The record's handle text names it at the run's door.
+            Door::Run(custody, holder) => vault
+                .with_run_secret_for(&holder, &self.text, effector, &mut present)
                 .map(|receipt| Some(SentPresentation::cleared(custody, receipt.value_generation))),
             Door::Route(custody) => vault
                 .present_resolved_secret_at_door(&custody, effector, &mut present)
@@ -132,7 +149,14 @@ impl Presenting {
         *presented = door.ok().flatten();
         // Once the exchange ran, what the connector said is the delivery
         // fact, whatever the door reports after it.
-        sent.unwrap_or_else(|| Sent::not_sent(OutboundFailureKind::TransportNotStarted, None))
+        sent.unwrap_or_else(|| {
+            if grant_refused {
+                // A stale grant and its siblings refuse, they do not fail delivery (FIX 6673).
+                Sent::not_sent(OutboundFailureKind::Rejected, None)
+            } else {
+                Sent::not_sent(OutboundFailureKind::TransportNotStarted, None)
+            }
+        })
     }
 }
 
@@ -172,6 +196,9 @@ impl Presenting {
                 .is_ok(),
             Door::Record(custody) => vault
                 .inject_secret_record_at_door(&custody, effector, &mut present)
+                .is_ok(),
+            Door::Run(_, holder) => vault
+                .with_run_secret_for(&holder, &self.text, effector, &mut present)
                 .is_ok(),
             Door::Route(custody) => vault
                 .present_resolved_secret_at_door(&custody, effector, &mut present)

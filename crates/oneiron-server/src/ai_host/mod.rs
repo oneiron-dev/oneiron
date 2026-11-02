@@ -31,12 +31,16 @@ mod compaction;
 pub(crate) use compaction::tests::cross_the_passes;
 pub(crate) use compaction::{ChatBreakpointCall, ChatSelfMode};
 pub mod browser_planner;
+pub(crate) mod browser_program_admission;
+mod coach_browser_programs;
 pub(crate) mod coach_heal;
 mod coach_health;
 pub(crate) mod coach_host;
+mod coach_site_skills;
 mod code_fix;
 mod confession_wording;
 mod connector_event;
+pub(crate) use connector_event::run_connector_reply_job;
 mod contribution;
 mod dreamer;
 pub(crate) use dreamer::DreamerControl;
@@ -51,6 +55,7 @@ pub(crate) mod home_digests;
 pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
+pub(crate) mod live_lease;
 mod local_vision;
 pub(crate) mod payer_funding;
 mod policy;
@@ -160,6 +165,11 @@ pub struct AiHandle {
     writer_compaction: Arc<OnceLock<compaction::CodeModeCompaction>>,
     /// The wording runs are asked for their confession in (FIX 8696).
     confession: Arc<str>,
+    /// The control the Dreamer's passes are admitted and paused through,
+    /// when this host attached under one (managed serve's reap freeze, FIX
+    /// 6909): the owner's pause and resume doors set and clear their own
+    /// cause on it. `None` elsewhere.
+    dreamer_control: Option<DreamerControl>,
 }
 
 /// The running workers, owned by the serve path until shutdown.

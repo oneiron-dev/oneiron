@@ -215,8 +215,10 @@ pub(super) fn admit_selected_in_txn(
         selector,
         admission,
     };
-    let mut budget = crate::vault::MAX_EDGE_QUERY_RESULTS;
-    let Some((visible, seed)) = selection.candidate(id, &mut budget)? else {
+    // The walk runs to completion: authorized work is never cut at a count
+    // (FIX 8889); its size is observed, not refused.
+    let mut visits = 0_usize;
+    let Some((visible, seed)) = selection.candidate(id, &mut visits)? else {
         return Err(denied());
     };
     if facet_filter(admission.position.as_scope()).is_none() || visible || seed {
@@ -233,7 +235,7 @@ pub(super) fn admit_selected_in_txn(
         None,
         None,
     )? {
-        spend(&mut budget)?;
+        visits += 1;
         let edge = row?;
         if edge.kind == EdgeKind::SameAs
             && !super::scope::document_coreference_context_in_txn(
@@ -249,12 +251,14 @@ pub(super) fn admit_selected_in_txn(
             continue;
         }
         if selection
-            .candidate(edge.target, &mut budget)?
+            .candidate(edge.target, &mut visits)?
             .is_some_and(|(_, seed)| seed)
         {
+            observe_walk(id, visits);
             return Ok(());
         }
     }
+    observe_walk(id, visits);
     Err(denied())
 }
 
@@ -266,7 +270,7 @@ struct StoredSelection<'a, 'env> {
 }
 
 impl StoredSelection<'_, '_> {
-    fn candidate(&self, id: EntityId, budget: &mut usize) -> Result<Option<(bool, bool)>> {
+    fn candidate(&self, id: EntityId, visits: &mut usize) -> Result<Option<(bool, bool)>> {
         let Some(raw) = self.vault.get_raw_in(self.txn, &id)? else {
             return Ok(None);
         };
@@ -360,7 +364,7 @@ impl StoredSelection<'_, '_> {
                 Some(EdgeKind::FacetOf),
                 None,
             )? {
-                spend(budget)?;
+                *visits += 1;
                 let edge = row?;
                 let target_type = self.vault.get_entity_type_in_txn(self.txn, &edge.target)?;
                 // The same stored endpoint type table used by the export
@@ -380,11 +384,16 @@ impl StoredSelection<'_, '_> {
     }
 }
 
-fn spend(budget: &mut usize) -> Result<()> {
-    *budget = budget
-        .checked_sub(1)
-        .ok_or(Error::IndexOverflow("document selector"))?;
-    Ok(())
+/// Records a document selection walk past the vault's edge-query row: an
+/// observation of its size, never a refusal (FIX 8889).
+fn observe_walk(id: EntityId, visits: usize) {
+    if visits > crate::vault::MAX_EDGE_QUERY_RESULTS {
+        tracing::info!(
+            entity = %id.to_hex(),
+            visits,
+            "document selection walked past the edge-query row"
+        );
+    }
 }
 
 fn denied() -> Error {

@@ -36,6 +36,7 @@ use std::time::{Duration, Instant};
 use crate::clock::WaitClock;
 use crate::error::HostError;
 use crate::resource_memory::{FloorRefusal, SharedFloor};
+use crate::shutdown;
 use crate::spec::CallClass;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +139,7 @@ impl Shared {
                     waited: began.elapsed(),
                 });
             }
-            if stopped() {
+            if stopped() || shutdown::interrupted() {
                 used.growing -= 1;
                 drop(used);
                 self.freed.notify_all();
@@ -205,10 +206,6 @@ pub(crate) struct Lease {
     floors: Mutex<Leases>,
 }
 
-/// The floor's port asks for a deadline; a frame's wait has none, only
-/// what stops it (a process that ends, a call that is withdrawn).
-const UNTIMED: Duration = Duration::from_secs(60 * 60 * 24 * 365);
-
 impl Room {
     /// Room for a frame's `bytes`, as a live call grows: the machine's
     /// floor first, then the budget, until `stopped` says the frame is no
@@ -236,17 +233,15 @@ impl Room {
         if let Some(floor) = &self.floor
             && bytes > 0
         {
-            let deadline = Instant::now() + UNTIMED;
-            let held =
-                floor
-                    .0
-                    .lease(bytes, deadline, stopped)
-                    .map_err(|refused| match refused {
-                        FloorRefusal::Floor { needed, available } => {
-                            Unroomed::Floor { needed, available }
-                        }
-                        FloorRefusal::Deadline => Unroomed::Stopped,
-                    })?;
+            let held = floor
+                .0
+                .lease_untimed(bytes, &|| stopped() || shutdown::interrupted())
+                .map_err(|refused| match refused {
+                    FloorRefusal::Floor { needed, available } => {
+                        Unroomed::Floor { needed, available }
+                    }
+                    FloorRefusal::Deadline => Unroomed::Stopped,
+                })?;
             lock_leases(&lease.floors).0.push(held);
         }
         let grown = self.shared.grow(bytes, stopped).ok_or(Unroomed::Stopped)?;
@@ -440,13 +435,13 @@ impl CallRoom {
         let Some(floor) = &self.floor else {
             return Err(NativeRefusal::NoFloor);
         };
-        let ended = || stopped() || Instant::now() >= deadline;
+        let ended = || stopped() || Instant::now() >= deadline || shutdown::interrupted();
         if ended() {
             return Err(NativeRefusal::Deadline);
         }
         let lease = floor
             .0
-            .lease(bytes, deadline, stopped)
+            .lease(bytes, deadline, &ended)
             .map_err(|refused| match refused {
                 FloorRefusal::Floor { needed, available } => {
                     NativeRefusal::Floor { needed, available }
@@ -627,7 +622,7 @@ impl Budget {
                 });
             }
             let now = Instant::now();
-            if now >= deadline {
+            if now >= deadline || shutdown::interrupted() {
                 used.turns[rank].retain(|waiting| *waiting != turn);
                 drop(used);
                 shared.freed.notify_all();
@@ -635,7 +630,7 @@ impl Budget {
             }
             used = shared
                 .freed
-                .wait_timeout(used, deadline - now)
+                .wait_timeout(used, shutdown::bounded(deadline - now, RECHECK))
                 .unwrap_or_else(PoisonError::into_inner)
                 .0;
         }

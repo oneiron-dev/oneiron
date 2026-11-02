@@ -2,15 +2,16 @@
 //! cycle's sheet (FIX 4453), behind the same owner door as every other owner
 //! route. Each route runs its `vault.free_time.*` row's verb hooks once
 //! around the engine door, as the host doors do. A sheet carries the agent's
-//! short note and the spending records, never its diary.
+//! short note and the spending records, never its diary. A set records where
+//! the owner spoke from (`machine_routes::act_surface_admitted`, FIX 5721): audit only.
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Path, Query, State};
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::dreamer_runner::{
     self, FreeTimeCycleRequest, FreeTimeCyclesRequest, FreeTimePolicyRequest,
     FreeTimePolicySetRequest,
@@ -18,17 +19,53 @@ use oneiron::dreamer_runner::{
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::{json_payload, query_params};
+use super::machine_routes::act_surface_admitted;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/free-time/policy", get(policy).post(set_policy))
-        .route("/free-time/cycles", get(cycles))
-        .route("/free-time/cycles/{cycle}", get(cycle))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/free-time/policy",
+                summary: "An agent's free-time policy with its revision (agent: 32 hex): the total one cycle may spend, its daily clock in an IANA zone and any pinned split, or disabled when none is set.",
+                row: Some("vault.free_time.policy.get"),
+            },
+            get(policy),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/free-time/policy",
+                summary: "Sets an agent's free-time policy at the revision the owner read, or clears it when policy is absent; a clear ends its open cycle and the agent goes back to its nightly dreaming.",
+                row: Some("vault.free_time.policy.set"),
+            },
+            post(set_policy),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/free-time/cycles",
+                summary: "One page of an agent's free-time cycles, newest first (agent: 32 hex; cursor: the next a previous page answered; limit), each with its state, period and floor from its item receipts, and the cursor of the next page.",
+                row: Some("vault.free_time.cycles"),
+            },
+            get(cycles),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/free-time/cycles/{cycle}",
+                summary: "One free-time cycle's sheet (agent: 32 hex): its state, the floor and whether every item receipt read, the agent's short note, each item's receipt, and this server's spend records by label, apart from their own completeness; null when the agent has no such cycle. Never the agent's diary.",
+                row: Some("vault.free_time.cycle"),
+            },
+            get(cycle),
+        ),
+    ]
 }
 
 /// The agent a cycle's sheet is read for.
@@ -70,11 +107,14 @@ async fn policy(
 /// revision the owner read, or clears it when `policy` is absent.
 async fn set_policy(
     auth: CoreAuth,
+    headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<FreeTimePolicySetRequest>, JsonRejection>,
+    payload: OwnerJsonBody<FreeTimePolicySetRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let request = payload.read(&server).await?;
     let view = blocking(move || {
         let vault = server.vault();
         hooked_row(
@@ -84,7 +124,7 @@ async fn set_policy(
             request,
             |request: FreeTimePolicySetRequest| {
                 Ok(dreamer_runner::free_time_policy_set_as_owner(
-                    vault, &owner, &request,
+                    vault, &owner, surface, &request,
                 )?)
             },
         )

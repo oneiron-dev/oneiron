@@ -16,7 +16,6 @@ use crate::lens::generated_ui::{
     validate_generated_ui_state_bindings,
 };
 use crate::lens::self_ui::{SelfUiAction, SelfUiValue};
-use crate::lens::validate::{LensBudget, validate_lens_collection_len};
 use crate::lens::wire_ids::{
     LensAtomId, LensHandleName, LensHandleRole, SelfUiActionId, SelfUiOptionValue,
 };
@@ -214,9 +213,6 @@ impl LensRenderFrame {
         let scope = match &event.selection {
             // (3) Explicit: opaque row-id echoes, proved against this exact atom.
             GeneratedUiResultSetSelection::Explicit { row_ids } => {
-                validate_lens_collection_len("result set selection row ids", row_ids.len())?;
-                let mut budget = LensBudget::default();
-                budget.add_collection("result set selection row ids", row_ids.len())?;
                 if row_ids.is_empty() {
                     return Err(Error::InvalidConfig(
                         "result set explicit selections must name at least one row".to_string(),
@@ -457,7 +453,6 @@ impl LensRenderFrame {
 
         let mut args = action.args.clone();
         args.extend(resolved.into_iter().map(LensApprovedActionArg::BackingRef));
-        validate_lens_collection_len("result set approved action args", args.len())?;
         Ok(LensApprovedAction {
             command: declaration.action.command.clone(),
             args,

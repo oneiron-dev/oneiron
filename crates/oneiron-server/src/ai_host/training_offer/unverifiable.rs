@@ -16,8 +16,8 @@
 //! seat's month, so a window that would pass or fail closes as
 //! `unverifiable_mixed_model` instead, with their calls and cost.
 use super::{
-    DAY_SECS, DreamerAdmittedAttempt, OfferCheckInput, SeatUsage, Sources, TrainingOffer, Vault,
-    WINDOW_SECS,
+    DAY_SECS, DreamerAdmittedAttempt, OfferCheckInput, OfferCheckOutcome, SeatUsage, Sources,
+    TrainingOffer, Vault, WINDOW_SECS,
 };
 use crate::usage::UnpricedCache;
 
@@ -48,6 +48,16 @@ impl Alone {
             Self::NoModelRole => "unverifiable_no_model_role",
         }
     }
+
+    /// The typed outcome the check records beside its note (FIX 6315).
+    const fn outcome(self) -> OfferCheckOutcome {
+        match self {
+            Self::NoCalls => OfferCheckOutcome::UnverifiableNoCalls,
+            Self::NoMeter => OfferCheckOutcome::UnverifiableNoMeter,
+            Self::NotBound => OfferCheckOutcome::UnverifiableNotBound,
+            Self::NoModelRole => OfferCheckOutcome::UnverifiableNoModelRole,
+        }
+    }
 }
 
 /// The outcome code when the seat's calls on another model, or on none, were
@@ -63,6 +73,8 @@ enum Gap {
     NoUsage,
     /// No list price was frozen on it at admission.
     UnpricedModel,
+    /// Its frozen list price names no currency (FIX 9534).
+    UnknownCurrency,
     /// The list price frozen on it quotes no rate for cached tokens it
     /// measured.
     UnpricedCache,
@@ -77,9 +89,10 @@ enum Gap {
 impl Gap {
     /// Every kind, in the fixed order a note names them, after the codes
     /// that stand alone ([`Alone`]) and [`MIXED_MODEL`].
-    const ORDER: [Self; 6] = [
+    const ORDER: [Self; 7] = [
         Self::NoUsage,
         Self::UnpricedModel,
+        Self::UnknownCurrency,
         Self::UnpricedCache,
         Self::MixedCurrency,
         Self::SumOverflow,
@@ -91,10 +104,24 @@ impl Gap {
         match self {
             Self::NoUsage => "unverifiable_no_usage",
             Self::UnpricedModel => "unverifiable_unpriced_model",
+            Self::UnknownCurrency => "unverifiable_unknown_currency",
             Self::UnpricedCache => "unverifiable_unpriced_cache",
             Self::MixedCurrency => "unverifiable_mixed_currency",
             Self::SumOverflow => "unverifiable_sum_overflow",
             Self::Unclassified => "unverifiable_unclassified",
+        }
+    }
+
+    /// The typed outcome the check records beside its note (FIX 6315).
+    const fn outcome(self) -> OfferCheckOutcome {
+        match self {
+            Self::NoUsage => OfferCheckOutcome::UnverifiableNoUsage,
+            Self::UnpricedModel => OfferCheckOutcome::UnverifiableUnpricedModel,
+            Self::UnknownCurrency => OfferCheckOutcome::UnverifiableUnknownCurrency,
+            Self::UnpricedCache => OfferCheckOutcome::UnverifiableUnpricedCache,
+            Self::MixedCurrency => OfferCheckOutcome::UnverifiableMixedCurrency,
+            Self::SumOverflow => OfferCheckOutcome::UnverifiableSumOverflow,
+            Self::Unclassified => OfferCheckOutcome::UnverifiableUnclassified,
         }
     }
 }
@@ -116,6 +143,7 @@ pub(super) struct Unverifiable {
     /// The calls of each kind, as [`SeatUsage`] counted them.
     no_usage: u64,
     unpriced_model: u64,
+    unknown_currency: u64,
     /// In all and per unquoted dimension.
     unpriced_cache: UnpricedCache,
     mixed_currency: u64,
@@ -143,6 +171,7 @@ impl Unverifiable {
             currency: usage.currency.clone(),
             no_usage: usage.no_usage,
             unpriced_model: usage.unpriced_model,
+            unknown_currency: usage.unknown_currency,
             unpriced_cache: usage.unpriced_cache.clone(),
             mixed_currency: usage.mixed_currency,
             sum_overflow: usage.sum_overflow,
@@ -176,6 +205,7 @@ impl Unverifiable {
         match gap {
             Gap::NoUsage => self.no_usage,
             Gap::UnpricedModel => self.unpriced_model,
+            Gap::UnknownCurrency => self.unknown_currency,
             Gap::UnpricedCache => self.unpriced_cache.calls,
             Gap::MixedCurrency => self.mixed_currency,
             Gap::SumOverflow => self.sum_overflow,
@@ -208,6 +238,10 @@ impl Unverifiable {
                 "{calls} had no list price frozen on them at admission (no catalog row or \
                  convertible price for the model)"
             ),
+            Gap::UnknownCurrency => format!(
+                "{calls} carry a frozen list price whose provider named no currency, so no amount \
+                 is quoted"
+            ),
             Gap::UnpricedCache => {
                 format!("{calls} measured cached tokens their frozen list price quotes no rate for")
             }
@@ -223,6 +257,26 @@ impl Unverifiable {
             ),
             Gap::Unclassified => format!("{calls} have no price and a record that names no reason"),
         }
+    }
+
+    /// The outcome the check records: the code that stands alone, the
+    /// mixed-model head when the seat's other calls were counted out, else
+    /// the first gap kind present, in [`Gap::ORDER`].
+    fn outcome(&self) -> OfferCheckOutcome {
+        if let Some(alone) = self.alone {
+            return alone.outcome();
+        }
+        if self.counted_out > 0 {
+            return OfferCheckOutcome::UnverifiableMixedModel;
+        }
+        for gap in Gap::ORDER {
+            if self.calls_of(gap) > 0 {
+                return gap.outcome();
+            }
+        }
+        // Unreachable: `of` builds this only with a gap, and `unread` sets
+        // `alone`. The mixed head is the harmless fallback.
+        OfferCheckOutcome::UnverifiableMixedModel
     }
 
     /// The note of a code that stands alone.
@@ -294,6 +348,7 @@ impl Unverifiable {
                 observed_monthly_cost: None,
                 observed_score: None,
                 held: None,
+                outcome: self.outcome(),
                 note: Some(note),
                 source_rows: sources.rows(),
             },

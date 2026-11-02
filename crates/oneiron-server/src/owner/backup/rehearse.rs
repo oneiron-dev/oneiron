@@ -13,7 +13,7 @@ use super::{RestoreTarget, kind_counts, restore_target_seal, write_budget};
 use crate::machine::DiskFloor;
 
 /// What a rehearsal found in one backup.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Rehearsal {
     pub(crate) backup: PathBuf,
     pub(crate) checkpoint_id: String,
@@ -37,6 +37,10 @@ pub(crate) struct Rehearsal {
     /// set when it brought no training link key (FIX 5892).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) training_note: Option<String>,
+    /// The home tables the restored copy took from the image because the
+    /// live vault's rows did not read (FIX 5661 C2b).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) home_table_notes: Vec<String>,
     /// The world key pads the restored copy did not land at rest (KS-5):
     /// erased since the backup, or withheld by their world's sealed copies
     /// setting.
@@ -46,12 +50,16 @@ pub(crate) struct Rehearsal {
     /// (KS-6), by handle and generation, each with its remedy.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) credential_notes: Vec<String>,
+    /// What the restored copy did not carry of its source's current pad
+    /// objects (PAD-1), each as the engine words it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) pad_object_notes: Vec<String>,
 }
 
 /// A directory on the live vault's path that another user could change,
 /// found when a rehearsal or an activation read the vault off the disk. It
 /// still ran: the vault opens and writes there as it is.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct SharedPathWarning {
     pub(crate) directory: PathBuf,
     /// What another user could do there, and the `chmod` that stops it.
@@ -205,9 +213,19 @@ fn rehearse_into(
         unreadable_fields,
         shared_path: None,
         training_note: report.training_note,
+        home_table_notes: report
+            .home_table_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
         pad_notes: report.pad_notes.iter().map(ToString::to_string).collect(),
         credential_notes: report
             .credential_notes
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        pad_object_notes: report
+            .pad_object_notes
             .iter()
             .map(ToString::to_string)
             .collect(),

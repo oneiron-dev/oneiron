@@ -83,8 +83,14 @@ pub(crate) struct HttpAnchor {
 /// binding seed signs when it carries one.
 fn credentialed(
     request: RequestBuilder,
+    url: &str,
     credentials: &CustodyAnchorCredentials,
 ) -> oneiron::Result<RequestBuilder> {
+    // FIX 8637: the bearer and holder proof ride only verified `https://`,
+    // or `http://` on this machine; anything else fails before anything is sent.
+    if !super::anchor_transport::url_admits_credentials(url) {
+        return Err(failed("must use https://, or http:// only on this machine"));
+    }
     let request = request.bearer_auth(credentials.bearer());
     let Some(seed) = credentials.binding_seed() else {
         return Ok(request);
@@ -141,9 +147,10 @@ impl HttpAnchor {
                     let client = builder
                         .build()
                         .map_err(|_| failed("has no HTTP client on this host"))?;
-                    let response = credentialed(request(&client, &self.url), credentials)?
-                        .send()
-                        .map_err(|_| failed("is out of reach"))?;
+                    let response =
+                        credentialed(request(&client, &self.url), &self.url, credentials)?
+                            .send()
+                            .map_err(|_| failed("is out of reach"))?;
                     let status = response.status();
                     if !status.is_success() {
                         let refused = format!("refused the call (HTTP {})", status.as_u16());

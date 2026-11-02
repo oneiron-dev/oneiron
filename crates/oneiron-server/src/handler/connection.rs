@@ -16,6 +16,7 @@ use crate::protocol::{self, ProtocolError, SyncMessage};
 use crate::server::SyncServer;
 
 // The connection loop itself, apart so each file stays under the size bar.
+mod dispatch_error;
 mod run;
 
 /// Builds the WebSocket routes for the sync server.
@@ -71,6 +72,20 @@ async fn ws_upgrade_handler(
     // owner his supervisor attested. There each call it carries is admitted
     // under the reap freeze as one `POST /mcp` is (FIX 5128).
     if super::mcp_socket::requested(&ws) {
+        // A member whose supervisor signed the upgrade holds a socket that
+        // reaches the member doors and nothing more (FIX 1302 stage 2).
+        if let Some(holder) =
+            super::mcp_socket::signed_person_holder(&headers, &extensions, &server)
+        {
+            return super::mcp_socket::person_upgrade(ws, &headers, &extensions, server, holder);
+        }
+        // A stale owner sign-in, whose per-request booking doors serve him,
+        // holds a socket that books and nothing more (FIX 5935).
+        if let Some(holder) =
+            super::mcp_socket::stale_booking_holder(&headers, &extensions, &server)
+        {
+            return super::mcp_socket::booking_upgrade(ws, &headers, &extensions, server, holder);
+        }
         return super::mcp_socket::upgrade(ws, &headers, &extensions, server);
     }
     let auth = match CoreAuth::for_attested_request(&headers, &extensions, "/ws", &server) {
@@ -83,9 +98,15 @@ async fn ws_upgrade_handler(
             .map_err(|_| sync_upgrade_refused(&headers, &server))?,
     };
     // Full replication reads the whole vault, an owner act: a hosted
-    // operator's root is refused before the upgrade (FIX 2222).
-    crate::api::host_action::require_host_owner_act(&server, &auth)
-        .map_err(|_| StatusCode::FORBIDDEN.into_response())?;
+    // operator's root is refused before the upgrade (FIX 2222), with its
+    // typed body (FIX 6032). Every refusal stays this door's 403.
+    crate::api::host_action::require_host_owner_act(&server, &auth).map_err(|refused| {
+        if refused.status() == StatusCode::FORBIDDEN {
+            refused.into_response()
+        } else {
+            StatusCode::FORBIDDEN.into_response()
+        }
+    })?;
     let session_jti = auth.jti().map(str::to_owned);
     let owner = auth.managed_owner().is_some().then(|| auth.clone());
     // The socket's sync frames count under the actor its upgrade admitted,
@@ -109,10 +130,12 @@ async fn ws_upgrade_handler(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
-    // OF-237: over an embedded engine's channel or mesh the whole socket,
-    // hello included, lives under the engine's stop, which it answers itself,
-    // and the stop waits for it and every call it admitted from before the
-    // upgrade registers.
+    // OF-237: on a request carrying an upgrade lifetime (an embedded
+    // channel or mesh, or plain/managed serve through `upgrade_lifetime`)
+    // the whole socket, hello included, lives under the server's stop,
+    // which it answers itself, and the stop waits for it and every call it
+    // admitted from before the upgrade registers; without one it runs as
+    // before.
     let hold = crate::embedded::UpgradeHold::take(&extensions);
     let mut response = ws
         .max_frame_size(server.config.max_frame_size)
@@ -194,16 +217,25 @@ pub(super) fn session_credential_revoked(
     session_jti.is_some_and(|jti| is_revoked_or_unreadable(jti, revoked))
 }
 
+/// Whether the vault's Owners deleted it: its `shared-vault:deleted:v1`
+/// marker is present (OF-163). A session already open stops serving it, as
+/// the binding door refuses each new request (FIX 1930). Fail-closed on a
+/// marker read that fails, matching that door.
+pub(super) fn vault_deleted(vault: &oneiron::Vault) -> bool {
+    !matches!(vault.shared_vault_deletion(), Ok(None))
+}
+
 /// Whether this socket's caller no longer stands: its credential revoked
-/// ([`session_credential_revoked`]), or, for a managed vault's attested
-/// owner, whom no token id names, the vault no longer recording him as its
-/// live owner (FIX 5255).
+/// ([`session_credential_revoked`]), its vault deleted ([`vault_deleted`]),
+/// or, for a managed vault's attested owner, whom no token id names, the
+/// vault no longer recording him as its live owner (FIX 5255).
 fn session_gone(
     vault: &oneiron::Vault,
     session_jti: Option<&str>,
     owner: Option<&CoreAuth>,
 ) -> bool {
     session_credential_revoked(vault, session_jti)
+        || vault_deleted(vault)
         || owner.is_some_and(|owner| !owner.credential_is_live(vault))
 }
 
@@ -217,6 +249,11 @@ enum ConnEvent {
     Broadcast(Result<Option<Vec<u8>>, crate::broadcast::BroadcastError>),
     Direct(Option<Vec<u8>>),
     AppDelivery,
+    /// The socket's by-reference body transfers are due a poll (FIX 5489).
+    AssetBodies,
+    /// The home's own leaf-key requests are due an offer to this socket
+    /// (FIX 11785).
+    LeafKeys,
     /// A verb RPC run off the loop ended; its answer is already queued.
     Answered(Result<Result<(), ProtocolError>, tokio::task::JoinError>),
 }
@@ -254,6 +291,8 @@ fn privileged_sync_message(msg: &SyncMessage) -> bool {
         SyncMessage::RootUpdate(_) => false,
         SyncMessage::Ephemeral(_)
         | SyncMessage::LfsChunks(_)
+        | SyncMessage::AssetBody { .. }
+        | SyncMessage::LeafKey { .. }
         | SyncMessage::RootVersionVector(_)
         | SyncMessage::LeaseRequest { .. }
         | SyncMessage::Doc { .. }

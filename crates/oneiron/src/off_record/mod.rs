@@ -30,6 +30,7 @@
 pub mod anonymous_chat;
 mod lifecycle;
 mod promote;
+mod run_view;
 
 pub use lifecycle::{
     ExecutorUtterance, OffRecordBackendClass, OffRecordCloseOutcome, OffRecordCreator,
@@ -42,11 +43,18 @@ pub use promote::{
     OffRecordPromoteReceipt, PROMOTE_INITIATOR_OWNER, PROMOTE_INITIATOR_ROOM_HOLDER,
     PROMOTE_INITIATOR_ROOM_OWNER, PromoteOutcome,
 };
+pub use run_view::{
+    SessionCodeRun, SessionRunCards, SessionRunRead, SessionRunWait, SessionWaitAnswer,
+    answerable as session_wait_answerable,
+};
 
 pub(crate) use lifecycle::OffRecordSessionRegistry;
 /// The room's one shell-staging claim, held by the witness program's overlay
 /// landing across its write transaction.
 pub(crate) use lifecycle::OverlayShellReservation;
+/// An on-record stretch's saver check, which the witness program runs again
+/// in the write that lands its turn.
+pub(crate) use lifecycle::SaverCheck;
 /// ONE-1570 Arm B: the retrieval-run registration door. `context_pack.rs` and
 /// the recall host reach the room's telemetry handles through this path; the
 /// type stays crate-private, so no public surface gains a session channel.

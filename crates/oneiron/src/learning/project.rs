@@ -21,19 +21,17 @@ use crate::side_table::{self, Named, SideTable};
 use crate::temporal::TimeRange;
 
 use super::cell::{LearningCell, LearningPredicate};
+use super::conversion_chain;
 use super::estimate::{
     ESTIMATOR_VERSION, Estimate, EstimateForm, EstimateLabels, EstimateValue, OwnTally, Window,
     fold_value,
 };
-use super::evidence::{Anchor, CELL, CellRow, Observation, evidence_in_txn};
+use super::evidence::{Anchor, CELL, CellRow, EvidenceRow, Observation, evidence_in_txn};
 use super::judge::{JudgeConversion, conversions_in_txn};
 use super::prior::cell_prior_in_txn;
 
 /// Seconds in a day, for the window setting's unit.
 const DAY_SECS: f64 = 86_400.0;
-
-/// The longest chain of judge conversions a score follows.
-const MAX_CONVERSION_HOPS: usize = 8;
 
 /// The fitted value of a setting cell, cached beside its claim so the hot
 /// readers of [`learning_setting::setting_value`] pay one row read per scope.
@@ -193,6 +191,7 @@ fn fold_evidence_in_txn(
     let mut evidence = evidence_in_txn(vault, txn, digest)?;
     // Newest first, so the citations run newest to oldest.
     evidence.sort_by(|a, b| b.1.at.cmp(&a.1.at).then_with(|| a.0.cmp(&b.0)));
+    let version = measurement_version(&evidence);
 
     let mut tally = OwnTally::empty(row.form);
     let mut labels = EstimateLabels::default();
@@ -205,6 +204,11 @@ fn fold_evidence_in_txn(
         if ev.observation.form() != row.form {
             continue;
         }
+        // One measurement version per fold (FIX 7822): a row measured under
+        // another stays out of the mean, the counts and the citations.
+        if ev.measurement_version.is_some() && ev.measurement_version != version {
+            continue;
+        }
         let mut w = ev.weight * window.decay(now.saturating_sub(ev.at));
         if w <= 0.0 {
             continue;
@@ -215,12 +219,16 @@ fn fold_evidence_in_txn(
         {
             w /= rate;
         }
-        let (observation, converted) = if row.cell.predicate == LearningPredicate::Reliability
+        // Cyclic lineage folds as unknown.
+        let Some((observation, converted)) = (if row.cell.predicate
+            == LearningPredicate::Reliability
             || ev.observation.form() != EstimateForm::Beta
         {
             convert(&ev.observation, ev.judge.as_deref(), &conversions)
         } else {
-            (ev.observation.clone(), false)
+            Some((ev.observation.clone(), false))
+        }) else {
+            continue;
         };
         match (&mut tally, &observation) {
             (OwnTally::Beta { wins, losses }, Observation::Success(ok)) => {
@@ -251,6 +259,15 @@ fn fold_evidence_in_txn(
             }
             (OwnTally::Counts { counts }, Observation::Category(name)) => {
                 *counts.entry(name.clone()).or_insert(0.0) += w;
+            }
+            // A count-only outcome joins the counts beside the mean, cited,
+            // and adds no mass, no run and no judge label.
+            (OwnTally::Mean { .. }, Observation::CountOnly(name)) => {
+                *outcome_counts.entry(name.clone()).or_insert(0.0) += w;
+                if seen.insert(receipt.as_str()) {
+                    cited.push(receipt.clone());
+                }
+                continue;
             }
             _ => continue,
         }
@@ -290,17 +307,34 @@ fn fold_evidence_in_txn(
     })
 }
 
-/// Follows a score through the judge-swap maps. Converted binary scores
-/// become fractional Beta mass while retaining their original run weight.
-fn convert<'a>(
+/// The measurement version a cell's evidence folds under: the newest
+/// measured magnitude's, the latest in time and then in receipt. `None` when
+/// no magnitude names one; a row with no version folds under any.
+fn measurement_version(evidence: &[(String, EvidenceRow)]) -> Option<String> {
+    evidence
+        .iter()
+        .filter_map(
+            |(receipt, row)| match (&row.observation, &row.measurement_version) {
+                (Observation::Magnitude(_), Some(version)) => Some(((row.at, receipt), version)),
+                _ => None,
+            },
+        )
+        .max_by(|left, right| left.0.cmp(&right.0))
+        .map(|(_, version)| version.clone())
+}
+
+/// Follows a score through the whole accepted conversion chain; a cyclic
+/// lineage yields `None`. Converted binary scores become fractional Beta
+/// mass while retaining their original run weight.
+fn convert(
     observation: &Observation,
-    judge: Option<&'a str>,
-    conversions: &'a BTreeMap<String, JudgeConversion>,
-) -> (Observation, bool) {
-    let Some(mut judge) = judge else {
-        return (observation.clone(), false);
+    judge: Option<&str>,
+    conversions: &BTreeMap<String, JudgeConversion>,
+) -> Option<(Observation, bool)> {
+    let Some(judge) = judge else {
+        return Some((observation.clone(), false));
     };
-    let mut x = match observation {
+    let x = match observation {
         Observation::Magnitude(x) => *x,
         Observation::Success(ok) => {
             if *ok {
@@ -309,21 +343,14 @@ fn convert<'a>(
                 0.0
             }
         }
-        Observation::Category(_) => return (observation.clone(), false),
+        Observation::Category(_) | Observation::CountOnly(_) => {
+            return Some((observation.clone(), false));
+        }
     };
-    let mut converted = false;
-    for _ in 0..MAX_CONVERSION_HOPS {
-        let Some(conversion) = conversions.get(judge) else {
-            break;
-        };
-        x = conversion.map(x);
-        judge = &conversion.to_judge;
-        converted = true;
-    }
-    if converted {
-        (Observation::Magnitude(x), true)
-    } else {
-        (observation.clone(), false)
+    match conversion_chain::resolve(judge, x, conversions) {
+        conversion_chain::Resolved::Current => Some((observation.clone(), false)),
+        conversion_chain::Resolved::Converted(x) => Some((Observation::Magnitude(x), true)),
+        conversion_chain::Resolved::Invalid => None,
     }
 }
 
@@ -439,7 +466,8 @@ pub(crate) fn reproject_setting_cells_in_txn(
     Ok(())
 }
 
-/// The active, engine-written heads of `cell`.
+/// The active, engine-written heads of `cell`. A head whose owner has not
+/// yet answered its critical confirm is none yet (ARCH-0026 §G3).
 pub(crate) fn active_heads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -455,6 +483,7 @@ pub(crate) fn active_heads_in_txn(
             || body.lifecycle != ClaimLifecycleStatus::Active
             || body.source != Some(ClaimSource::Observed)
             || body.approval != ClaimApprovalStatus::Auto
+            || !crate::gate::claim_critical_confirm_settled_in_txn(&vault.store, txn, &id)?
         {
             continue;
         }
@@ -470,7 +499,7 @@ pub(crate) fn active_heads_in_txn(
     Ok(rows)
 }
 
-fn entity_header(
+pub(super) fn entity_header(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
@@ -513,10 +542,10 @@ fn retract_heads_in_txn(
 
 /// Keeps the fit cache in step with the claim, one row per scope: only a
 /// root-typed setting cell on its knob's global subject
-/// (`learning_setting::global_setting_subject`), with no executor, axis or
-/// consent scope, is the vault's fit. A project's or a skill's cell, or a
-/// non-root type's, caches under its own subject and type, so it never writes
-/// or clears the vault's (OF-542).
+/// (`learning_setting::global_setting_subject`), with no project, executor,
+/// axis or consent scope, is the vault's fit. A project's cell (FIX 6038), a
+/// skill's, or a non-root type's caches under its own project, subject and
+/// type, so it never writes or clears the vault's (OF-542).
 fn cache_setting_fit_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
@@ -538,7 +567,8 @@ fn cache_setting_fit_in_txn(
         != Some(cell.subject))
     .then_some(cell.subject);
     let type_node = (!type_ref.is_root()).then_some(type_ref.node_id.as_str());
-    let key = crate::learning_setting::setting_fit_key(setting_key, subject, type_node);
+    let key =
+        crate::learning_setting::setting_fit_key(setting_key, cell.project, subject, type_node);
     match estimate {
         Some(estimate) => SETTING_FIT.put(
             &vault.store,

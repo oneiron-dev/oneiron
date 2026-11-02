@@ -84,6 +84,10 @@ pub struct PairingRedeemed {
     pub pin: Option<AuthorityCheckpointPin>,
     /// The owner who made the link, as the link recorded it.
     pub(crate) link_owner: Option<crate::EntityId>,
+    /// The link paired again a machine the roster already holds, credential
+    /// only (FIX 8636): `machine` is its standing as it was, and nothing
+    /// joined the roster.
+    pub re_paired: bool,
 }
 /// Owner-approved identity constraints. Redemption can choose a connection key,
 /// but cannot replace these claims or add organization authority.
@@ -150,9 +154,11 @@ const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
 mod code;
 mod issue;
 mod principal;
+mod re_pairing;
 mod redeem;
 
 pub use code::{
     format_pairing_link, format_pinned_pairing_link, pairing_binding_transcript,
     pairing_binding_transcript_pinned, parse_pairing_link, parse_pinned_pairing_link,
 };
+pub use re_pairing::machine_possession_transcript;

@@ -5,7 +5,7 @@
 use super::*;
 
 /// Whether this vault has a data key, and whether this handle holds it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VaultKeyStatus {
     NoKey,
@@ -96,5 +96,33 @@ pub enum VaultKeyUnlock<'a> {
         vault_id: [u8; 32],
         pieces: &'a [crate::recovery::KitPiece],
         passphrase: Option<&'a crate::recovery::KitPassphrase>,
+        /// This host's keystore, as a sealed vault's pages unlock on it: the
+        /// piece of the kit it keeps for an install a carried device wrap
+        /// names joins `pieces`, so the owner gives one piece fewer here (FIX
+        /// 11976). `None` joins none.
+        keystore: Option<&'a Arc<dyn DeviceKeystore>>,
     },
+}
+
+impl<'a> VaultKeyUnlock<'a> {
+    /// This unlock with `keystore` as a data-key kit's
+    /// ([`VaultKeyUnlock::Kit`]), whose kept piece of the kit joins the pieces
+    /// given (FIX 11976). Every other unlock is as it was.
+    #[must_use]
+    pub fn with_kept_piece(self, keystore: Option<&'a Arc<dyn DeviceKeystore>>) -> Self {
+        match self {
+            Self::Kit {
+                vault_id,
+                pieces,
+                passphrase,
+                ..
+            } => Self::Kit {
+                vault_id,
+                pieces,
+                passphrase,
+                keystore,
+            },
+            unlock => unlock,
+        }
+    }
 }

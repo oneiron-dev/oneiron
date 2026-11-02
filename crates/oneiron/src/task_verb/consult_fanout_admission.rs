@@ -22,7 +22,9 @@ use crate::agent_dispatch::{
     WidthCheckClass, agent_dispatch_actor, decode_agent_dispatch_input,
 };
 use crate::consent::AuthenticatedOwner;
-use crate::edit_distance::escalation::{EscalationTrigger, standing_policy_for};
+use crate::edit_distance::escalation::{
+    EscalationTrigger, standing_policy_for, standing_policy_for_in,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::fanout_auto::{
@@ -282,7 +284,8 @@ impl Memory<'_> {
         self.with_verified_actor_write_txn(|txn| {
             self.require_fanout_ceiling(txn)?;
             if policy_in(self.vault(), txn, &run.input.policy_scope)? != governed
-                || standing_policy_for(self.vault(), &scope, EscalationTrigger::Budget)? != standing
+                || standing_policy_for_in(self.vault(), txn, &scope, EscalationTrigger::Budget)?
+                    != standing
             {
                 return Err(consult_refusal(
                     MEMORY_CODE_INVALID_STATE,
@@ -360,7 +363,7 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
                     replace_manifest_row(
                         entries,
@@ -418,7 +421,7 @@ impl Memory<'_> {
         self.vault()
             .memory(actor, crate::EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
                 rewrite_fanout_manifest(self.vault(), owner, txn, |entries| {
                     let position = manifest_row_or_insert(
                         entries,
@@ -512,7 +515,7 @@ impl Memory<'_> {
         let own = match status {
             Some(status) if status.payload.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE => {
                 agent_dispatch_actor(&decode_agent_dispatch_input(&status.payload.input)?)?
-                    == crate::WriteActor::new(self.actor(), self.actor_class())
+                    == self.write_actor()
             }
             _ => false,
         };

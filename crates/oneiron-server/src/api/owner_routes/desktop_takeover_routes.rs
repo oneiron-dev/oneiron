@@ -17,8 +17,7 @@ use std::convert::Infallible;
 use std::sync::{Arc, PoisonError, TryLockError};
 use std::time::Duration;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::header;
 use axum::response::sse::{Event, KeepAlive, Sse};
@@ -30,8 +29,9 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron_browser::{BrowserError, DesktopSession, PersonInput, Takeover, TakeoverRecord};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::EnvelopedApiError;
 use crate::owner::{OwnerError, OwnerResult};
@@ -43,20 +43,81 @@ use crate::server::{DesktopSeats, RunSeats, Seat, SeatGuest, SyncServer};
 /// keeps the same pace.
 const FRAME_EVERY: Duration = Duration::from_millis(500);
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/desktops", get(list))
-        .route("/desktops/take", post(take))
-        .route("/desktops/screen", post(screen))
-        .route("/desktops/stream", get(stream))
-        .route("/desktops/input", post(input))
-        .route("/desktops/return", post(hand_back))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/desktops",
+                summary: "Each bound run desktop whose guest started, with who has it, the agent's ask while it waits, and the holder's count of inputs.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/take",
+                summary: "The owner holds the run's desktop, asked or not, once the agent's call in flight ends.",
+                row: None,
+            },
+            post(take),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/screen",
+                summary: "The whole display as a PNG, unmasked, for the owner only: never kept, never a receipt.",
+                row: None,
+            },
+            post(screen),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/desktops/stream",
+                summary: "The run desktop's whole display as server-sent events while the owner watches or holds it: state, frame (changed PNGs as base64, paced), error, ended and refused events.",
+                row: None,
+            },
+            get(stream),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/input",
+                summary: "One click, type, key, hotkey or scroll from the owner who holds the desktop, at the pixels of the screen they were last shown.",
+                row: None,
+            },
+            post(input),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/desktops/return",
+                summary: "The owner hands the desktop back, from holding it or from the agent's ask unanswered.",
+                row: None,
+            },
+            post(hand_back),
+        ),
+    ]
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RunRequest {
     run: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/take`'s body (FIX 11611),
+/// shared with `POST /v1/owner/desktops/return`: [`RunRequest`].
+pub(crate) fn desktop_run_request_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RunRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/take`'s answer (FIX 11611):
+/// [`Takeover`].
+pub(crate) fn desktop_takeover_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<Takeover>()
 }
 
 #[derive(Deserialize)]
@@ -65,11 +126,17 @@ struct StreamQuery {
     run: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct InputRequest {
     run: String,
     action: PersonInput,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/input`'s body (FIX 11611):
+/// [`InputRequest`].
+pub(crate) fn desktop_input_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputRequest>()
 }
 
 #[derive(Serialize)]
@@ -86,15 +153,27 @@ struct DesktopList {
     desktops: Vec<DesktopView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct InputReply {
     inputs: u64,
 }
 
-#[derive(Serialize)]
+/// The OpenAPI schema of `POST /v1/owner/desktops/input`'s answer (FIX 11611):
+/// [`InputReply`].
+pub(crate) fn desktop_input_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<InputReply>()
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 struct ReturnReply {
     record: TakeoverRecord,
     receipt: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/desktops/return`'s answer (FIX 11611):
+/// [`ReturnReply`].
+pub(crate) fn desktop_return_reply_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReturnReply>()
 }
 
 /// `GET /v1/owner/desktops`: each run desktop whose guest started, its
@@ -130,10 +209,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn take(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRequest>,
 ) -> OwnerReply<Takeover> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let state = blocking(move || -> OwnerResult<Takeover> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let taken = on_desktop(&server, &request.run, |session| {
@@ -151,10 +230,10 @@ async fn take(
 async fn screen(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRequest>,
 ) -> Result<Response, EnvelopedApiError> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let png = blocking(move || -> OwnerResult<Vec<u8>> {
         owner.revalidate_principal_ref(server.vault())?;
         on_desktop(&server, &request.run, DesktopSession::person_screen)
@@ -176,10 +255,10 @@ async fn screen(
 async fn input(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<InputRequest>, JsonRejection>,
+    payload: OwnerJsonBody<InputRequest>,
 ) -> OwnerReply<InputReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<InputReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let action = request.action;
@@ -199,10 +278,10 @@ async fn input(
 async fn hand_back(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RunRequest>, JsonRejection>,
+    payload: OwnerJsonBody<RunRequest>,
 ) -> OwnerReply<ReturnReply> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let reply = blocking(move || -> OwnerResult<ReturnReply> {
         let by = owner.revalidate_principal_ref(server.vault())?;
         let run = run_of(&request.run)?;

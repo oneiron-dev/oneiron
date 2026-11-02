@@ -73,33 +73,59 @@ pub(crate) fn check_rewritten_reply_to(
     }
 }
 
-/// Runs `sign` with this host's authority key.
+/// Runs `sign` with this host's authority key: the managed issuer, else
+/// this install's own self-host root issuer (FIX-LIST 3018).
 pub(super) fn with_issuer<T>(
     server: &SyncServer,
     sign: impl FnOnce(&HostSlipIssuer) -> oneiron::Result<T>,
 ) -> OwnerResult<T> {
-    if let Some(issuer) = server.managed_issuer.as_ref() {
-        return Ok(sign(issuer)?);
-    }
-    let secret = server.config.auth_secret.as_deref().ok_or_else(|| {
+    let issuer = server.host_issuer().ok_or_else(|| {
         OwnerError::Refused(
             "this host holds no signing key; send an ask signed by the pinned key".to_owned(),
         )
     })?;
-    let issuer = HostSlipIssuer::from_secret(secret.as_bytes())?;
-    Ok(sign(&issuer)?)
+    Ok(sign(issuer)?)
 }
 
-/// Signs (unless the owner brought a signed ask) and queues one ask.
+/// What signs and queues a courtesy-delete ask: the vault, and this host's
+/// authority key when it holds one. A running server lends its own; the
+/// stopped-vault CLI lends the vault it opened and the issuer it loaded
+/// (FIX 4185), so both queue the same ask through [`send_with`].
+pub(crate) struct CourtesySender<'a> {
+    pub(crate) vault: &'a oneiron::Vault,
+    pub(crate) issuer: Option<&'a HostSlipIssuer>,
+}
+
+impl<'a> CourtesySender<'a> {
+    /// The running server's vault and authority key.
+    pub(crate) fn of(server: &'a SyncServer) -> Self {
+        Self {
+            vault: server.vault(),
+            issuer: server.host_issuer(),
+        }
+    }
+}
+
+/// Signs (unless the owner brought a signed ask) and queues the ask: one
+/// per page of a selection longer than a page (FIX 7941).
 pub(crate) fn send(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
     request: &CourtesyDeleteSendRequest,
 ) -> OwnerResult<CourtesyDeleteSent> {
-    let vault = server.vault();
+    send_with(&CourtesySender::of(server), owner, request)
+}
+
+/// [`send`] with the vault and key `sender` lends.
+pub(crate) fn send_with(
+    sender: &CourtesySender<'_>,
+    owner: &AuthenticatedOwner,
+    request: &CourtesyDeleteSendRequest,
+) -> OwnerResult<CourtesyDeleteSent> {
+    let vault = sender.vault;
     let pact = hex_field::<32>("pact", &request.pact)?;
     let destination = peer_url("peer", &request.peer, COOP_DELETION_PEER_PATH)?;
-    let signed = if let Some(signed) = &request.signed {
+    let pages = if let Some(signed) = &request.signed {
         let bytes = STANDARD
             .decode(signed)
             .map_err(|_| OwnerError::Invalid("signed must be base64".to_owned()))?;
@@ -108,7 +134,7 @@ pub(crate) fn send(
         if signed.body.pact_id != pact {
             return Err(OwnerError::Invalid("signed names another pact".to_owned()));
         }
-        signed
+        vec![signed]
     } else {
         let worlds = request
             .worlds
@@ -128,13 +154,28 @@ pub(crate) fn send(
         };
         let mut nonce = [0u8; 16];
         rand_core::OsRng.fill_bytes(&mut nonce);
-        with_issuer(server, |issuer| {
-            issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)
-        })?
+        let issuer = sender.issuer.ok_or_else(|| {
+            OwnerError::Refused(
+                "this host holds no signing key; send an ask signed by the pinned key".to_owned(),
+            )
+        })?;
+        issuer.sign_cooperative_deletion_request(vault, &pact, worlds, epoch_cutoff, nonce)?
     };
-    let notice =
-        vault.queue_cooperative_deletion_request_as(owner, &signed, &destination, now())?;
-    Ok(courtesy_delete_sent_ask(notice))
+    // Each page of the selection queues as its own ask (FIX 7941); the
+    // reply names the first in `request` and every page in `pages` (FIX
+    // 11802), and the sent list shows every one.
+    let mut queued = Vec::with_capacity(pages.len());
+    let mut first = None;
+    for signed in &pages {
+        let notice =
+            vault.queue_cooperative_deletion_request_as(owner, signed, &destination, now())?;
+        queued.push(notice.request_id.clone());
+        first = first.or(Some(notice));
+    }
+    let notice = first.ok_or_else(|| OwnerError::Invalid("the ask has no page".to_owned()))?;
+    let mut sent = courtesy_delete_sent_ask(notice);
+    sent.pages = queued;
+    Ok(sent)
 }
 
 /// Every ask this vault sent: the engine's ledger projection, shared with
@@ -191,12 +232,10 @@ pub(crate) fn answer(
             if let Err(refusal) = vault.recheck_owner(owner) {
                 return OwnerError::from(refusal);
             }
-            // A legal order's refusal keeps its typed notice and bound (FIX
-            // 2926); any other refusal reads as before.
-            match error {
-                oneiron::Error::LegalHold(_) => OwnerError::from(error),
-                error => OwnerError::Invalid(error.to_string()),
-            }
+            // Every engine refusal keeps its type (FIX 2923): a legal order's
+            // names its bound (FIX 2926), a hold on a partition an erase took
+            // names that state, and a malformed answer stays a bad request.
+            OwnerError::from(error)
         })?;
     if let Some(destination) = destination {
         let reply = with_issuer(server, |issuer| {

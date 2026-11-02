@@ -42,9 +42,10 @@ pub use image::{
     parse_exif_evidence, register_image_caption_recognizer, register_image_text_recognizer,
 };
 
+pub(crate) use self::admission::json_to_msgpack_value;
 pub use self::admission::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, admit_imported_entity,
-    admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
+    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, ImportedEvidenceScreen,
+    admit_imported_entity, admit_imported_evidence_claim, admit_imported_evidence_claim_typed,
     admit_imported_mention_claim,
 };
 pub(crate) use self::admission::{
@@ -98,9 +99,15 @@ use rmpv::Value as MsgpackValue;
 use serde_json::Value;
 
 mod audience;
+mod connector_conversation;
+pub use connector_conversation::ConnectorWitness;
+mod connector_witness_grant;
 pub use audience::{
     IMPORT_AUDIENCE_ONLY_ME, IMPORT_AUDIENCE_SOURCE, ImportAudience, ImportAudienceCluster,
     ImportAudienceOption, ImportAudienceState, MAX_IMPORT_AUDIENCE_PROJECTS, import_audience_topic,
+};
+pub(crate) use connector_witness_grant::{
+    CONNECTOR_WITNESS_READ_REASON, connector_witness_read_reason,
 };
 pub mod exports;
 pub mod history;

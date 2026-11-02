@@ -40,6 +40,7 @@ pub fn api_error_schema() -> Value {
                 "type": "array",
                 "items": { "type": "string" },
             },
+            "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
         },
     })
 }
@@ -72,6 +73,7 @@ pub fn api_error_envelope_schema() -> Value {
                         "type": "array",
                         "items": { "type": "string" },
                     },
+                    "legal_hold": { "$ref": "#/components/schemas/LegalHoldNoticeSchema" },
                 },
             },
         },
@@ -84,6 +86,7 @@ pub fn openapi_error_components() -> Value {
         "ErrorCode": error_code_schema(),
         "ApiError": api_error_schema(),
         "ApiErrorEnvelope": api_error_envelope_schema(),
+        "LegalHoldNoticeSchema": crate::api::legal_hold_schema::legal_hold_notice_schema(),
     })
 }
 
@@ -95,7 +98,11 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         ErrorCode::BadRequest => {
             optional_string(&mut properties, "field");
         }
-        ErrorCode::Forbidden => {
+        ErrorCode::Forbidden
+        | ErrorCode::HostActionRequiresSupportGrant
+        | ErrorCode::OwnerBindingRequired
+        | ErrorCode::CourtesyDeleteUnauthenticated
+        | ErrorCode::ControlScopeDenied => {
             optional_string(&mut properties, "requiredScope");
         }
         ErrorCode::NotFound => {
@@ -141,9 +148,9 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             properties.insert("header".to_owned(), json!({ "type": "string" }));
         }
         ErrorCode::UnsupportedCapability => {
+            // `verb` is optional: connector-only discovery errors omit it.
             required.extend([
                 "connector",
-                "verb",
                 "connectorKnown",
                 "supportedConnectors",
                 "supportedVerbs",

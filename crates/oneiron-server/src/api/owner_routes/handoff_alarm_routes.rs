@@ -7,24 +7,39 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{EmptyRequest, HandoffAlarmRequest};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, hooked_row};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/authority/handoff-alarms", get(list))
-        .route("/authority/handoff-alarms/acknowledge", post(acknowledge))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/authority/handoff-alarms",
+                summary: "Every saved alarm in the shape and order vault.authority.handoff_alarms answers (OF-158): unix seconds, oldest raised first, then by signer.",
+                row: Some("vault.authority.handoff_alarms"),
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/authority/handoff-alarms/acknowledge",
+                summary: "The owner has seen one alarm.",
+                row: Some("vault.authority.handoff_alarms.acknowledge"),
+            },
+            post(acknowledge),
+        ),
+    ]
 }
 
 /// `GET /v1/owner/authority/handoff-alarms`: every saved alarm in the
@@ -53,10 +68,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn acknowledge(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<HandoffAlarmRequest>, JsonRejection>,
+    payload: OwnerJsonBody<HandoffAlarmRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let alarm = blocking(move || {
         let vault = server.vault();
         hooked_row(

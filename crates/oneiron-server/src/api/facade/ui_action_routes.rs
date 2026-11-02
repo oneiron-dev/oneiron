@@ -57,8 +57,8 @@ use oneiron::EntityId;
 use oneiron::claim::ScopedReadResult;
 use oneiron::code_run::live_run::is_live_run_verb;
 use oneiron::lens::{
-    GeneratedUiActionEvent, GeneratedUiSurfaceCapabilities, GeneratedUiValidatedAction,
-    LensDefaultRequest, LensFrameCard, LensRenderId,
+    GeneratedUiActionEvent, GeneratedUiStreamProfile, GeneratedUiSurfaceCapabilities,
+    GeneratedUiValidatedAction, LensDefaultRequest, LensFrameCard, LensRenderId,
 };
 use oneiron::memory::{
     MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MemoryError,
@@ -85,8 +85,11 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 }
 
 /// `vault.lenses.default` on this server: the default lens read under the
-/// credential's own key at its locality, lowered once for the whole atom
-/// kit, its frame held for the card's events before the answer leaves.
+/// credential's own key at its locality, lowered once for the surface the
+/// call names (FIX 7969: its input's own `surface`, else `client_surface`,
+/// the profile its MCP call declared), else for the whole atom kit, its
+/// frame held beside exactly that render for the card's events before the
+/// answer leaves.
 /// Beside it, the rows its reads listed. A run-held render (`owner`, FIX
 /// 2612) holds its card for its creating run and subscription, replacing
 /// the card that run last rendered for it; any other holds it unowned.
@@ -94,16 +97,18 @@ pub(crate) async fn vault_lenses_default(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     owner: Option<CardOwner>,
+    client_surface: Option<GeneratedUiSurfaceCapabilities>,
     input: LensDefaultRequest,
 ) -> (MemoryResult<ScopedReadResult<LensFrameCard>>, Vec<EntityId>) {
     let (actor, class) = match facade_actor(server, auth) {
         Ok(bound) => bound,
         Err(refusal) => return (Err(refusal.into_memory_error()), Vec::new()),
     };
+    let surface = input.surface.clone().or(client_surface).unwrap_or_default();
     let rendered = {
         let server = Arc::clone(server);
         let auth = auth.clone();
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             let producers = oneiron::memory::ProducerRows::default();
             let rendered = credential_memory(&server.vault, Some(&auth), actor, class)
                 .at(auth.locality())
@@ -117,7 +122,7 @@ pub(crate) async fn vault_lenses_default(
         return (Err(internal("vault.lenses.default")), Vec::new());
     };
     let answer = rendered.and_then(|ScopedReadResult { value, receipt }| {
-        let (frame, card) = value.lower(&GeneratedUiSurfaceCapabilities::all_atom_kit())?;
+        let (frame, card) = value.lower(&surface)?;
         match owner {
             Some(owner) => {
                 server.lens_frames.replace_for_subscription(
@@ -140,8 +145,9 @@ pub(crate) async fn vault_lenses_default(
 }
 
 /// One event's body: the client's event, the key its dispatch replays
-/// under, and the selections the clicker made on the card, by the
-/// `selectionRef` each `vault.lenses.select` answered (FIX 3268).
+/// under, the selections the clicker made on the card, by the
+/// `selectionRef` each `vault.lenses.select` answered (FIX 3268), and the
+/// stream profile its answer is framed in (FIX 11399).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct UiEventRequest {
@@ -149,6 +155,11 @@ struct UiEventRequest {
     idempotency_key: String,
     #[serde(default)]
     selected_context: Vec<String>,
+    /// The stream profile this event's answer is framed in: a
+    /// patch-profile caller takes the card's refinement beside a local
+    /// action's `$state`. Omitted, the answer is today's plain JSON.
+    #[serde(default)]
+    stream: GeneratedUiStreamProfile,
 }
 
 /// One event on a held card. A deterministic tool's reply states its
@@ -201,6 +212,9 @@ async fn event_answer(
         .ok_or_else(rerender)?;
     // One event on a card at a time, from its validation to its effect.
     let mut state = held.state.lock().await;
+    // The stream profile this event's caller asked its answer framed in
+    // (FIX 11399): a patch-profile caller takes its refinement beside it.
+    let stream = request.stream;
     let validated = {
         let server = Arc::clone(&server);
         let auth = auth.clone();
@@ -208,7 +222,7 @@ async fn event_answer(
         let current = state.clone();
         let event = request.event;
         let selected = request.selected_context;
-        tokio::task::spawn_blocking(move || -> MemoryResult<GeneratedUiValidatedAction> {
+        super::clock_ingress::run_blocking(move || -> MemoryResult<GeneratedUiValidatedAction> {
             let memory =
                 credential_memory(&server.vault, Some(&auth), actor, class).at(auth.locality());
             let validated = memory.lens_frame_event(&held.frame, &held.render, &current, &event)?;
@@ -245,7 +259,28 @@ async fn event_answer(
             if !server.lens_frames.restate(&held, &next) {
                 return Err(rerender());
             }
-            let answer = serde_json::json!({ "$state": &next });
+            // A patch-profile caller (FIX 11399) also takes the refinement
+            // its held card needs: the whole card with its moved `$state` on
+            // the card's first change, a patch from the render its last
+            // answer left it holding after that. Every other caller answers
+            // as today.
+            let refinement = (stream == GeneratedUiStreamProfile::Patch).then(|| {
+                let mut new = held.render.clone();
+                new.state = next.clone();
+                if *state == held.render.state {
+                    return new.state_snapshot_segment();
+                }
+                let mut previous = held.render.clone();
+                previous.state = state.clone();
+                new.state_patch_segment(&previous)
+                    .unwrap_or_else(|_| new.state_snapshot_segment())
+            });
+            let answer = match &refinement {
+                Some(refinement) => {
+                    serde_json::json!({ "$state": &next, "refinement": refinement })
+                }
+                None => serde_json::json!({ "$state": &next }),
+            };
             *state = next;
             answer
         }
@@ -270,7 +305,7 @@ async fn event_answer(
             let server = Arc::clone(&server);
             let credential = auth.idempotency_principal();
             let key = request.idempotency_key;
-            let queued = tokio::task::spawn_blocking(move || {
+            let queued = super::clock_ingress::run_blocking(move || {
                 crate::ai_host::queue_lens_callback(
                     &server.vault,
                     &credential,
@@ -323,7 +358,8 @@ async fn dispatch_tool(
     validated: GeneratedUiValidatedAction,
     key: String,
 ) -> (Result<serde_json::Value, FacadeApiError>, CallStamp) {
-    let (bound, key) = match tool_bound(server, auth, held, &headers, &validated, key) {
+    let (bound, key) = match tool_bound(server, auth, held, &headers, &extensions, &validated, key)
+    {
         Ok(bound) => bound,
         Err(refused) => return (Err(refused), CallStamp::Unrecorded),
     };
@@ -347,6 +383,7 @@ fn tool_bound(
     auth: &CoreAuth,
     held: &Arc<HeldCard>,
     headers: &HeaderMap,
+    extensions: &Extensions,
     validated: &GeneratedUiValidatedAction,
     key: String,
 ) -> Result<(ActionBound, String), FacadeApiError> {
@@ -357,7 +394,9 @@ fn tool_bound(
     }
     // The owner act records where this request's own headers say he spoke
     // from (FIX 4625).
-    let surface = crate::api::owner_routes::machine_routes::act_surface(server, auth, headers);
+    let surface = crate::api::owner_routes::machine_routes::act_surface_admitted(
+        server, auth, headers, extensions,
+    );
     let mut bound = action_bound(server, auth, surface)?.ok_or_else(|| {
         FacadeApiError::forbidden(
             "an action runs under the credential's own read key",

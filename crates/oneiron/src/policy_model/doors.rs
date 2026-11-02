@@ -158,16 +158,21 @@ pub async fn enforce_hosted_relay(
     })
 }
 
-/// Validate a hosted door against the engine's existing notice bounds.
+/// Validate a hosted door against the engine's existing notice bounds: a
+/// bounded service notice, and the local-model offer, the owner's own
+/// alternative every kept halt names. The outage posture is the door's
+/// config, either one (WILL L06 02): under `Halt` an availability degrade
+/// stops the relay, under `ProceedReceipted` it proceeds with its degrade and
+/// receipt kept, and a pass that cannot run at all halts under both.
 pub fn validate_hosted_relay_notice(config: &super::PolicyModelConfig, body: &str) -> Result<()> {
-    if config.hosted_outage_policy != super::HostedOutagePolicy::Halt
-        || body.trim().is_empty()
+    if body.trim().is_empty()
         || body.len() > crate::store::GATE_SYSTEM_NOTICE_BODY_MAX_LEN
         || super::notice::safe_setting_change_offer(config.hosted_local_model_offer.as_ref())
             .is_none()
     {
         return Err(crate::Error::InvalidConfig(
-            "a hosted policy door needs halt posture, a bounded service notice and a local-model offer".to_owned(),
+            "a hosted policy door needs a bounded service notice and a local-model offer"
+                .to_owned(),
         ));
     }
     Ok(())

@@ -173,4 +173,9 @@ pub struct MessageDurability {
     pub document_exists: bool,
     /// Retained states of the document's op history, newest first. Empty before birth.
     pub document_history: Vec<MessageDocumentState>,
+    /// The reply assertions a MESSAGE born whole kept from its witness write
+    /// (FIX 10260); `None` for one that asserted none or was streamed, whose
+    /// receipts keep theirs.
+    #[serde(default)]
+    pub birth_assertions: Option<crate::memory::MessageReplyAssertions>,
 }

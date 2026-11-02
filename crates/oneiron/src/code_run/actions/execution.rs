@@ -249,6 +249,8 @@ impl ActionRegistry {
             },
             call.clone(),
         );
+        // The seats a spawn resolved ride its row, a failure's too (FIX 9180).
+        let seats = dispatcher.take_spawn_seats();
         let recorded = match &result {
             Ok(outcome) => outcome.clone(),
             Err(Error::Gate(crate::error::GateError::GateWriteRejected {
@@ -273,7 +275,8 @@ impl ActionRegistry {
                 .filter(|words| words.code == denied.outcome),
             _ => None,
         };
-        let mut row = CodeRunBridgeCall::record(0, &call, &recorded, frozen, frozen)?;
+        let mut row =
+            CodeRunBridgeCall::record(0, &call, &recorded, frozen, frozen)?.with_spawn_seats(seats);
         if let Some(words) = &refusal {
             super::payload::word_refusal(&mut row.outcome, words);
         }
