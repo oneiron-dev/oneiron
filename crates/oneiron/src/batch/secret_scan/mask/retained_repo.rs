@@ -21,6 +21,7 @@
 //! doors, their key bound and their container budget are unchanged.
 
 use std::ops::Range;
+use std::sync::Arc;
 
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
@@ -29,6 +30,8 @@ use super::super::container::{
     Stop, holds_spans, masked_retained_repo_copy, walk_retained_repo_members,
 };
 use super::super::release_hit;
+use super::body::reads_as_text;
+use super::text_log::{TextLog, TextSpans};
 use super::wipe::PlanValues;
 use super::{
     FileKey, FoundFile, Masker, REASON_KNOWN_VALUE, file_spans, merged, occurrences, offset,
@@ -145,7 +148,6 @@ fn place_leaf(
         None => Vec::new(),
     };
     let mut spans = file_spans(leaf);
-    spans.extend(extra.iter().cloned());
     // A value a structured reading places (a credential field), wherever
     // its bytes sit in the leaf.
     let mut fields = Masker {
@@ -153,7 +155,17 @@ fn place_leaf(
         at: Some((origin, PLACE.to_owned())),
         ..Masker::default()
     };
+    // A leaf no decoder takes is read as one text, whose spans are
+    // the ones just found: they are not found again (speed, FIX 12211).
+    if reads_as_text(leaf) {
+        let leaf_spans = TextSpans {
+            known: Vec::new(),
+            shapes: spans.clone(),
+        };
+        fields.text_log = TextLog::seeded(leaf, leaf_spans);
+    }
     fields.mask_body(leaf)?;
+    spans.extend(extra.iter().cloned());
     for found in fields.found {
         spans.extend(occurrences(leaf, &found.value).map(|span| (span, found.reason)));
     }
@@ -241,7 +253,7 @@ fn leaf_hit(bytes: &[u8]) -> Result<Option<&'static str>> {
 /// far, wiped when it drops. A value met again, in one blob or another,
 /// keeps the record it took the first time.
 pub(crate) struct RetainedRepoCustody {
-    known: Option<KnownValues>,
+    known: Option<Arc<KnownValues>>,
     minted: PlanValues<(String, EntityId)>,
 }
 
@@ -249,7 +261,7 @@ impl RetainedRepoCustody {
     /// The index as `wtxn` reads it, with nothing minted yet.
     pub(crate) fn load_in_writer(store: &Store, wtxn: &RwTxn<'_>) -> Result<Self> {
         Ok(Self {
-            known: KnownValues::load_in_writer(store, wtxn)?,
+            known: KnownValues::shared_in_writer(store, wtxn)?,
             minted: PlanValues::default(),
         })
     }

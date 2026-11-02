@@ -96,6 +96,15 @@ impl Spend {
         Ok(())
     }
 
+    /// The attempt completed, this spend settled with its terminal steps
+    /// pinned as paid (FIX 11555).
+    pub(super) fn completed(self) -> DreamerAttemptExecution {
+        DreamerAttemptExecution::Completed {
+            completed_units: self.units,
+            step_hashes: self.step_hashes,
+        }
+    }
+
     /// The attempt parked for `reason`, this spend kept.
     pub(super) fn park_with_spend(
         self,

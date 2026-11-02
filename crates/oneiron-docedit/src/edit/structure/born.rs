@@ -130,9 +130,11 @@ pub(super) fn add_connector(
                     end,
                     shape: match shape {
                         ShapeId::Native(id) => id,
-                        ShapeId::Creation(_) => {
-                            held.iter().filter_map(|(_, view)| view.id).next().unwrap_or(0)
-                        }
+                        ShapeId::Creation(_) => held
+                            .iter()
+                            .filter_map(|(_, view)| view.id)
+                            .next()
+                            .unwrap_or(0),
                     },
                     candidates: held
                         .iter()

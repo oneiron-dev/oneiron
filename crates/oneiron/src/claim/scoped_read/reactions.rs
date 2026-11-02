@@ -194,6 +194,7 @@ impl<'a> ScopedRead<'a> {
             room_peer: self.room_peer,
             own_owner_authority: self.own_owner_authority,
             records_cover: self.records_cover.clone(),
+            judged_at: self.judged_at,
         })
     }
 }

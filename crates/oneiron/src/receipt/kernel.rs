@@ -620,6 +620,9 @@ pub struct ReceiptScan {
     pub complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation: Option<ReceiptScanContinuation>,
+    /// Send receipt rows skipped as undecodable (FIX 12044): counted, never
+    /// read as receipts. A diagnostic of the scan.
+    pub undecodable: u32,
 }
 
 /// Boundaries of omitted data, not a snapshot or a globally ordered page token.
@@ -675,6 +678,7 @@ impl ReceiptScan {
             records,
             complete: true,
             continuation: None,
+            undecodable: 0,
         }
     }
 
