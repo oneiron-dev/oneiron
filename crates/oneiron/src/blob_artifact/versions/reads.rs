@@ -258,7 +258,13 @@ impl Vault {
             masked: false,
         }
         .verified()?;
-        sighted_bytes_in_txn(&self.store, rtxn, stored.into_owned(), SecretSight::Masked)
+        sighted_bytes_in_txn(
+            &self.store,
+            rtxn,
+            stored.into_owned(),
+            Some(&record.content_hash),
+            SecretSight::Masked,
+        )
     }
 }
 
