@@ -4,12 +4,14 @@
 //! wake that carried the event is input data; it never sends.
 
 use crate::Vault;
+use crate::channel_identity_provider::EMAIL_CHANNEL;
+use crate::channel_identity_selection::RelationshipContext;
 use crate::connector_key::events::ConnectorEvent;
 use crate::delivery_window::DeliveryWindowResolvedLevel;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::linkedin_connector::{LINKEDIN_CHANNEL, LinkedInSeatSandboxPolicy};
-use crate::surface_event::SurfaceConnectorPayload;
+use crate::surface_event::{SurfaceConnectorPayload, SurfaceEventDispatchRoute};
 
 use super::OutboundDeliveryWindowDecision;
 use super::dispatch_types::{
@@ -95,6 +97,14 @@ pub fn connector_reply_request(
     // provider sender key not yet a contact, or an unparsed sender's digest
     // key. The Gate reads it apart from the transport target (OF-218).
     .counterparty_ref(origin.counterparty.reference_key());
+    if origin.route == SurfaceEventDispatchRoute::ProposeConfirm && origin.channel == EMAIL_CHANNEL
+    {
+        // CC-the-agent mail is scheduling/logistics (ARCH-0063). Its intake
+        // stays ProposeConfirm; only this context's live autonomy envelope
+        // releases the reply without a press. No counterparty class is
+        // inferred from the sender or its address.
+        request = request.send_autonomy(RelationshipContext::SchedulingLogistics, None);
+    }
     // A LinkedIn reply carries its seat's facts: the installed connector's
     // (FIX 10905), so the kill switch, caps and cadence run on it.
     if origin.channel == LINKEDIN_CHANNEL {

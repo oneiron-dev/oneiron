@@ -5773,7 +5773,7 @@ declare const vault: Sdk.VaultHost & {
     subscriptions: {
       /** An agent's connector event subscriptions, standing and revoked, for the owner. */
       list(input: Sdk.ChannelSubscriptionsRequest): Promise<Sdk.ChannelSubscriptions | StoredResult>;
-      /** The owner subscribes an agent to the messages a built-in channel (slack or line) routes to it, so each one wakes the agent to answer. */
+      /** The owner subscribes an agent to the messages a built-in channel (slack, line or threaded email) routes to it, so each one wakes the agent to answer. */
       put(input: Sdk.ChannelSubscriptionRequest): Promise<Sdk.ChannelMessageSubscription | StoredResult>;
       /** The owner stops one connector event subscription; the agent's key for the channel stays. */
       revoke(input: Sdk.ChannelSubscriptionRevokeRequest): Promise<Sdk.ChannelSubscriptionRevoked | StoredResult>;

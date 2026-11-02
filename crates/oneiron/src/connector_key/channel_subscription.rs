@@ -8,20 +8,20 @@
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::surface_event::SURFACE_CONNECTOR_EVENT_PREDICATE;
+use crate::surface_event::{
+    SURFACE_CONNECTOR_EVENT_PREDICATE, SurfaceEventDispatchRoute, surface_connector_event_kind,
+};
 use crate::{Vault, agent_dispatch};
 
 use super::events::ConnectorEventFilter;
 use super::record::{ConnectorKeyRecord, ConnectorKeyStatus, normalize_connector_key};
 
-/// The connector event kind a channel message routed to its own actor
-/// wakes on (`surface_connector_event_kind(ActorSelf)`).
-const CHANNEL_MESSAGE_EVENT_KIND: &str = "message";
 /// The channels whose inbound messages a served host routes to an agent
-/// (its Slack and LINE webhooks).
-const SUBSCRIBABLE_CHANNELS: [&str; 2] = [
+/// (Slack, LINE and threaded email).
+const SUBSCRIBABLE_CHANNELS: [&str; 3] = [
     crate::channel_identity_provider::SLACK_CHANNEL,
     crate::channel_identity_provider::LINE_CHANNEL,
+    crate::channel_identity_provider::EMAIL_CHANNEL,
 ];
 
 /// One agent's standing subscription to a built-in channel's messages.
@@ -45,7 +45,7 @@ impl Vault {
     /// same key and filter is returned as it is.
     ///
     /// # Errors
-    /// The channel is not Slack or LINE, its built-in pack is not Active,
+    /// The channel is not Slack, LINE or email, its built-in pack is not Active,
     /// the agent cannot be dispatched, or its key for the channel is held
     /// (suspended or pending).
     pub fn subscribe_agent_to_channel_messages(
@@ -91,9 +91,14 @@ impl Vault {
                 id
             }
         };
+        let route = if connector == crate::channel_identity_provider::EMAIL_CHANNEL {
+            SurfaceEventDispatchRoute::ProposeConfirm
+        } else {
+            SurfaceEventDispatchRoute::ActorSelf
+        };
         let filter = ConnectorEventFilter {
             connector: connector.clone(),
-            event_kind: Some(CHANNEL_MESSAGE_EVENT_KIND.to_owned()),
+            event_kind: Some(surface_connector_event_kind(route).to_owned()),
             predicate: Some(SURFACE_CONNECTOR_EVENT_PREDICATE.to_owned()),
         };
         let standing = self

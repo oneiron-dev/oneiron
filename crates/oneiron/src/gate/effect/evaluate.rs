@@ -299,6 +299,14 @@ pub(crate) fn evaluate_external_effect_policy(
         .transpose()?
         .flatten();
     if let Some(effect) = input.external_effect.as_mut() {
+        // A proven envelope reservation is the live standing Grant that
+        // authorizes this send. An earlier matched grant keeps its ref when
+        // both cover the effect.
+        if effect.standing_grant_ref.is_none()
+            && let Some(reservation) = envelope_reservation.as_ref()
+        {
+            effect.standing_grant_ref = Some(reservation.consent_grant_ref().to_owned());
+        }
         effect.scoped_mcp_grant_authorized = scoped_mcp_grant_authorized;
         effect.mail_graduated = mail_graduated;
         effect.mail_approve_once = mail_retry_authorized || (mail_once && approve_once.is_some());
