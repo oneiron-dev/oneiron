@@ -18,7 +18,13 @@
 //! The owner-agent Grant enumeration every reader shares
 //! (`federation::agent_grants_for_store_in_txn`) reads it too, so a marked
 //! Grant re-put at its id gives no read or principal standing either.
+//!
+//! A membership change that deletes a Grant an owner's signed mint made also
+//! logs the host's signed withdrawal of it
+//! ([`crate::Vault::log_membership_grant_withdrawal_in_txn`], FIX 7135), so
+//! the authority audit pairs that mint with a revoke.
 
+use super::{AuthorityOp, HostSlipIssuer};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, HexId, Raw, SideTable};
@@ -114,5 +120,38 @@ pub(crate) fn grant_known_withdrawn_in_txn(
         Err(_) => match ISOLATION_NEW_CHECK_ERROR_MODE {
             NewCheckErrorMode::KeepExistingPath => false,
         },
+    }
+}
+
+impl crate::Vault {
+    /// The host's signed withdrawal of `grant`, a Grant an owner's signed
+    /// mint made (a GitPush grant or an owner's agent grant) that a
+    /// shared-vault membership change deletes in the caller's writer `txn`
+    /// (FIX 7135): the `SlipGrantRevoke` a guest revoke also logs, signed by
+    /// `issuer` as the host that carried the change, never as an owner act.
+    /// The authority audit lists it as that Grant's revoke beside its signed
+    /// mint, and every replica's fold withdraws any slip minted under it.
+    /// An issuer that is no live host of this vault's roster signs nothing
+    /// and refuses nothing: `false`, and the change lands as before.
+    ///
+    /// # Errors
+    /// A store, fold or clock failure, or an entry the fold did not count.
+    pub(crate) fn log_membership_grant_withdrawal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        issuer: &HostSlipIssuer,
+        grant: EntityId,
+    ) -> Result<bool> {
+        if super::slip_vault::require_host(&self.authority_view_readonly_in_txn(txn)?, issuer)
+            .is_err()
+        {
+            return Ok(false);
+        }
+        self.append_slip_op_in_txn(
+            txn,
+            issuer,
+            AuthorityOp::SlipGrantRevoke { grant_ref: grant },
+        )?;
+        Ok(true)
     }
 }

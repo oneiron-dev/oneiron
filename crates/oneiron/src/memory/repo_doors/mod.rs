@@ -202,15 +202,9 @@ pub(crate) fn refusal_error(refusal: RepoAccessRefusal) -> MemoryError {
 /// Whether `code` is one of the typed repo refusals, or one of a run
 /// proposal's or export's typed holds.
 pub(crate) fn is_repo_refusal_code(code: &str) -> bool {
-    [
-        RepoAccessRefusal::NoMembership,
-        RepoAccessRefusal::WrongRepo,
-        RepoAccessRefusal::WrongRef,
-        RepoAccessRefusal::PathOutsideScope,
-        RepoAccessRefusal::StaleLease,
-    ]
-    .iter()
-    .any(|refusal| refusal.public_code() == code)
+    RepoAccessRefusal::ALL
+        .iter()
+        .any(|refusal| refusal.public_code() == code)
         || [
             REPO_REVIEW_POLICY_REQUIRED,
             REPO_PROVENANCE_REQUIRED,
