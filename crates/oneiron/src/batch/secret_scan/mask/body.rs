@@ -60,7 +60,10 @@ fn opens_json(data: &[u8]) -> bool {
     data.iter()
         .find(|&&byte| !matches!(byte, b' ' | b'\n' | b'\t' | b'\r'))
         .is_some_and(|&byte| {
-            matches!(byte, b'{' | b'[' | b'"' | b'-' | b'0'..=b'9' | b't' | b'f' | b'n')
+            matches!(
+                byte,
+                b'{' | b'[' | b'"' | b'-' | b'0'..=b'9' | b't' | b'f' | b'n'
+            )
         })
 }
 
