@@ -48,6 +48,14 @@ const CHAIN_FILTERS: [&[u8]; 3] = [b"ASCII85Decode", b"LZWDecode", b"FlateDecode
 /// member: no text a rule reads runs across it.
 const STRING_BREAK: u8 = 0;
 
+/// What escapes a string's own break and escape bytes in an object's
+/// strings member (FIX 11551): the member of an object none of whose
+/// strings holds a break reads exactly as before.
+const STRING_ESCAPE: u8 = 1;
+
+/// The byte an escaped break reads as after the escape.
+const ESCAPED_BREAK: u8 = 2;
+
 /// The keywords each cross-reference offset in a PDF's bytes follows.
 const XREF_OFFSET_KEYWORDS: [&[u8]; 2] = [b"startxref", b"/Prev"];
 
@@ -193,35 +201,97 @@ fn strings_of_mut<'o>(object: &'o mut Object, found: &mut Vec<&'o mut Object>) {
 }
 
 /// `object`'s text strings as one member: each string's text, in order,
-/// [`STRING_BREAK`] between two. `None` when it holds none.
+/// [`STRING_BREAK`] between two. `None` when it holds none. When a string
+/// holds the break byte itself its member is escaped (FIX 11551): each
+/// string's breaks and escapes read escaped, so the breaks between two
+/// strings stay the member's only bare ones.
 fn strings_member(object: &Object) -> Option<Vec<u8>> {
     let mut strings = Vec::new();
     strings_of(object, &mut strings);
     if strings.is_empty() {
         return None;
     }
+    let texts: Vec<String> = strings.iter().map(|string| text(string)).collect();
+    let escaped = texts
+        .iter()
+        .any(|text| text.as_bytes().contains(&STRING_BREAK));
     let mut member = Vec::new();
-    for (at, string) in strings.into_iter().enumerate() {
+    for (at, text) in texts.iter().enumerate() {
         if at > 0 {
             member.push(STRING_BREAK);
         }
-        member.extend_from_slice(text(string).as_bytes());
+        if escaped {
+            escape_string(text.as_bytes(), &mut member);
+        } else {
+            member.extend_from_slice(text.as_bytes());
+        }
     }
     Some(member)
+}
+
+/// `text`'s bytes with each break and each escape escaped (FIX 11551): a
+/// break reads as the escape and [`ESCAPED_BREAK`], an escape as itself
+/// twice, so an escaped string holds no bare break.
+fn escape_string(text: &[u8], out: &mut Vec<u8>) {
+    for &byte in text {
+        if byte == STRING_BREAK {
+            out.extend_from_slice(&[STRING_ESCAPE, ESCAPED_BREAK]);
+        } else if byte == STRING_ESCAPE {
+            out.extend_from_slice(&[STRING_ESCAPE, STRING_ESCAPE]);
+        } else {
+            out.push(byte);
+        }
+    }
+}
+
+/// The reverse of [`escape_string`], over one masked part (FIX 11551). An
+/// escape the mask overwrote half of reads as its bytes are: never a
+/// refusal, and the overwritten bytes stay overwritten.
+fn unescape_string(part: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(part.len());
+    let mut bytes = part.iter();
+    while let Some(&byte) = bytes.next() {
+        if byte != STRING_ESCAPE {
+            out.push(byte);
+            continue;
+        }
+        match bytes.next().copied() {
+            Some(next) if next == STRING_ESCAPE => out.push(STRING_ESCAPE),
+            Some(next) if next == ESCAPED_BREAK => out.push(STRING_BREAK),
+            Some(next) => {
+                out.push(STRING_ESCAPE);
+                out.push(next);
+            }
+            None => out.push(STRING_ESCAPE),
+        }
+    }
+    out
 }
 
 /// Writes `masked`, an object's strings member once masked, back into
 /// `object`: each string whose text changed, encoded again. A member that no
 /// longer parts into the object's strings is a copy no reader here builds.
+/// A member an escaped object wrote (FIX 11551) parts the same way, each
+/// part unescaped before it is read back; the object still holds its plain
+/// strings here, so the escape reads from them exactly as the member did.
 fn write_strings(object: &mut Object, masked: &[u8]) -> Walked<()> {
     let mut strings = Vec::new();
     strings_of_mut(object, &mut strings);
+    let escaped = strings
+        .iter()
+        .any(|string| text(string).as_bytes().contains(&STRING_BREAK));
     let parts: Vec<&[u8]> = masked.split(|byte| *byte == STRING_BREAK).collect();
     if parts.len() != strings.len() {
         return Err(unreadable());
     }
     for (string, part) in strings.into_iter().zip(parts) {
-        if text(string).as_bytes() != part {
+        let plain = text(string);
+        if escaped {
+            let part = unescape_string(part);
+            if plain.as_bytes() != part.as_slice() {
+                *string = lopdf::text_string(&String::from_utf8_lossy(&part));
+            }
+        } else if plain.as_bytes() != part {
             *string = lopdf::text_string(&String::from_utf8_lossy(part));
         }
     }

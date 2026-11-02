@@ -137,8 +137,7 @@ impl DeviceSyncHost {
     ) -> Option<Self> {
         // The receiver runs whether or not the link opens (FIX 3396), its
         // imports admitted under the same freeze as the run (FIX 12038).
-        let removal =
-            removal_delivery::Receiver::start(&dial, mesh, &server.vault, freeze.clone());
+        let removal = removal_delivery::Receiver::start(&dial, mesh, &server.vault, freeze.clone());
         match open(server, dial, mesh, freeze, first).await {
             Ok(host) => Some(host.with_removal(removal)),
             Err(reason) => {

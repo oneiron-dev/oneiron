@@ -252,6 +252,13 @@ impl Vault {
         if blake3::hash(&bytes).as_bytes() != &serving.content_hash {
             return Err(Error::CorruptedIndex("blob export content hash"));
         }
-        crate::secret_custody::sighted_bytes_in_txn(&self.store, rtxn, bytes, sight).map(Some)
+        crate::secret_custody::sighted_bytes_in_txn(
+            &self.store,
+            rtxn,
+            bytes,
+            Some(&serving.content_hash),
+            sight,
+        )
+        .map(Some)
     }
 }
