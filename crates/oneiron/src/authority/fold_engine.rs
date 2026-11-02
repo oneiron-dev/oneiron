@@ -414,6 +414,7 @@ pub(super) fn fold_authority_log_once(
             valid_entries: BTreeSet::new(),
             roster: BTreeMap::new(),
             retired_keys: BTreeSet::new(),
+            host_custody: BTreeSet::new(),
             closed_handoffs: BTreeSet::new(),
             genesis_fragile: false,
             federation_pacts: BTreeMap::new(),

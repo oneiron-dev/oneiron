@@ -80,7 +80,8 @@ impl CitationCheck {
         for (index, item) in reply.candidates.iter().enumerate() {
             // The candidate's subject, value and admitted sources, apart
             // from whether each of its quotes bound.
-            let Ok((parsed, unbound)) = read_candidate(item, ctx, scope) else {
+            // A fallback returned above: this reply is a model's.
+            let Ok((parsed, unbound)) = read_candidate(item, ctx, scope, false) else {
                 continue;
             };
             if call

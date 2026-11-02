@@ -13,6 +13,15 @@
 //! and its retirement runs through custody's one finisher. Each key's
 //! metadata row (`key_custody:erasable_ref:v1:`) names it by ref; the
 //! exterior holder debt of a copy sent elsewhere is [`super::holders`]'s.
+//!
+//! `<compartment>/.erasable-refs/<ref hex>` holds each key's item, written
+//! and synced before its directory is made, whichever path makes it (a
+//! mint, an install, a fork's or a landing's copy, a retirement), and kept
+//! as long as that directory: a key is found by its ref in one open and one
+//! stat, never a listing of the compartment (FIX 11208). One ref names one
+//! item; a second item under the same ref is refused.
+
+use std::path::PathBuf;
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -21,7 +30,7 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
-use super::files::{EntryState, LocalCustody};
+use super::files::{EntryState, LocalCustody, exists, open_dir, read_whole, write_once};
 use super::identity::{CustodyId, CustodyKind, CustodySecret, CustodySubject};
 use super::retirement::{
     RetireCause, RetirementIntent, retirements_in_txn, stage_retirement_in_txn,
@@ -56,6 +65,9 @@ impl ErasablePurpose {
 /// The width of an erasable key's item: purpose (1) | parent (16) |
 /// incarnation (32) | ref (32).
 const ITEM_LEN: usize = 81;
+
+/// The compartment's directory of each key's item, by ref (FIX 11208).
+const REF_INDEX: &str = ".erasable-refs";
 
 /// One erasable key's full name.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -130,6 +142,11 @@ fn lead(purpose: ErasablePurpose, parent: &[u8; 16], incarnation: Option<&[u8; 3
         lead.extend_from_slice(incarnation);
     }
     lead
+}
+
+/// `<ref hex>`: a key's ref index entry.
+fn ref_name(key_ref: &[u8; 32]) -> String {
+    crate::entity_id::bytes_to_hex_lower(key_ref)
 }
 
 /// One key's metadata row: its purpose, parent and incarnation, by ref.
@@ -258,15 +275,47 @@ impl LocalCustody<'_> {
     }
 
     /// The key of ref `key_ref` this custody holds a directory for, live,
-    /// retired or never published, from its directory names alone: no
+    /// retired or never published: its ref index entry, then its directory,
+    /// one open and one stat whatever the compartment holds (FIX 11208). No
     /// metadata row is needed, so a writer that minted it and has not
-    /// committed finds it too.
+    /// committed finds it too; an entry whose directory was never made
+    /// names none.
     pub(crate) fn erasable_by_ref(&self, key_ref: &[u8; 32]) -> Result<Option<ErasableItem>> {
-        Ok(self
-            .subjects_with_prefix(CustodyKind::ErasableKey, &[])?
-            .iter()
-            .filter_map(|subject| ErasableItem::of_item(subject.item()))
-            .find(|item| &item.key_ref == key_ref))
+        let Some(filed) = read_whole(&self.ref_index_dir()?.join(ref_name(key_ref)))? else {
+            return Ok(None);
+        };
+        let item = ErasableItem::of_item(&filed)
+            .filter(|item| &item.key_ref == key_ref)
+            .ok_or_else(|| CustodyKind::ErasableKey.corrupt())?;
+        Ok(exists(&self.subject_dir(&item.subject(self)?)?)?.then_some(item))
+    }
+
+    fn ref_index_dir(&self) -> Result<PathBuf> {
+        Ok(self.compartment()?.join(REF_INDEX))
+    }
+
+    /// Files `subject`'s item under its ref, synced, before its directory
+    /// is made (FIX 11208): every path that makes an erasable key's
+    /// directory comes through here. An item already filed is kept; another
+    /// item under the same ref is refused. An item custody would not write
+    /// is not filed, as no lookup by ref ever named it.
+    pub(super) fn index_erasable(&self, subject: &CustodySubject) -> Result<()> {
+        let Some(item) = ErasableItem::of_item(subject.item()) else {
+            return Ok(());
+        };
+        let dir = self.ref_index_dir()?;
+        let name = ref_name(&item.key_ref);
+        let path = dir.join(&name);
+        let written = if exists(&path)? {
+            false
+        } else {
+            open_dir(&dir, true, Some(CustodyKind::ErasableKey))?;
+            write_once(&dir, &name, subject.item())?
+        };
+        if !written && read_whole(&path)?.as_deref() != Some(subject.item()) {
+            return Err(CustodyKind::ErasableKey.corrupt());
+        }
+        Ok(())
     }
 
     /// Where `item`'s key stands here.

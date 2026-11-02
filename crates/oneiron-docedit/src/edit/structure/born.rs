@@ -6,8 +6,8 @@
 use super::super::media::admit;
 use super::super::xml::{self, A, P, R};
 use super::{
-    A16, NewConnector, NewPicture, Plan, SHAPE_CREATION_EXT, end_of, highest_id, mint_guid,
-    shape_tree,
+    A16, NewConnector, NewPicture, Plan, SHAPE_CREATION_EXT, ShapeId, end_of, highest_id,
+    mint_guid, shape_tree,
 };
 use crate::deck::{ShapeKind, SlideView};
 use crate::design_plan::Rect;
@@ -98,9 +98,10 @@ pub(super) fn add_connector(
             "a connector frame has no negative extent",
         ));
     }
-    // Each end names one shape: every shape holding the id is a candidate,
-    // a group too, and more than one goes back to the caller to pick, before
-    // anything is written (FIX 8583).
+    // Each end names one shape, by native id or creation id: every shape
+    // holding it is a candidate, a group too, and more than one goes back to
+    // the caller to pick, before anything is written (FIX 8583, FIX 10386). A
+    // creation-id end glues to the native id of the shape it names.
     let ends: String = [("stCxn", "start", new.start), ("endCxn", "end", new.end)]
         .into_iter()
         .filter_map(|(local, end, at)| at.map(|at| (local, end, at)))
@@ -109,16 +110,32 @@ pub(super) fn add_connector(
                 .shapes
                 .iter()
                 .enumerate()
-                .filter(|(_, held)| held.id == Some(shape))
+                .filter(|(_, held)| match shape {
+                    ShapeId::Native(id) => held.id == Some(id),
+                    ShapeId::Creation(guid) => held.creation_id.as_deref() == Some(guid),
+                })
                 .collect();
             match held.as_slice() {
                 [(_, one)] if one.kind != ShapeKind::Group => {
-                    Ok(format!(r#"<a:{local} id="{shape}" idx="{site}"/>"#))
+                    let id = match shape {
+                        ShapeId::Native(id) => id,
+                        ShapeId::Creation(_) => {
+                            one.id.ok_or(EditRefusal::Missing("connector end shape"))?
+                        }
+                    };
+                    Ok(format!(r#"<a:{local} id="{id}" idx="{site}"/>"#))
                 }
                 [] | [_] => Err(EditRefusal::Missing("connector end shape")),
                 _ => Err(EditRefusal::AmbiguousEndpoint {
                     end,
-                    shape,
+                    shape: match shape {
+                        ShapeId::Native(id) => id,
+                        ShapeId::Creation(_) => held
+                            .iter()
+                            .filter_map(|(_, view)| view.id)
+                            .next()
+                            .unwrap_or(0),
+                    },
                     candidates: held
                         .iter()
                         .map(|(index, view)| AnchorCandidate {

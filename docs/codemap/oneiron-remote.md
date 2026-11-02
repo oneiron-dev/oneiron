@@ -18,7 +18,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedded/read_credential.rs` | src | s | 1 fn | — | A delegated reader's credential on an embedded handle (FIX 647): the verified slip the server's HTTP door… |
 | `src/error.rs` | src | s | 5 crate-vis | — | The SDK's half of the typed error contract (ONE-1441 §Typed error contract, I7) |
 | `src/export_to.rs` | src | s | 1 fn | — | `vault.export` written into the caller's sink (FIX 3676): over a server, the export is kept there as a… |
-| `src/generated/agent_verbs.rs` | src | generated | 1214 fn | — | — |
+| `src/generated/agent_verbs.rs` | src | generated | 1215 fn | — | — |
 | `src/in_process.rs` | src | s | 3 struct · 1 trait · 1 fn | InProcessReply, InProcessRequest, InProcessStream, InProcessTransport | A served client (OF-237): the remote backend over an `oneiron-server` this process runs, with no socket… |
 | `src/invocation.rs` | src | s | 2 fn · 1 crate-vis | — | Client invocation ids (ARCH-0080 §3, OF-580) |
 | `src/lens_frames.rs` | src | s | 2 struct · 1 enum · 2 fn | CloseLensFrameReply, LensFrameEventReply, LensFrameEventRequest | A host-rendered lens card's events and its close (OF-181), over the server routes `POST… |
