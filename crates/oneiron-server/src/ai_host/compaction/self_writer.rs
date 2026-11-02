@@ -35,6 +35,7 @@ use oneiron::compaction::{
 use oneiron::llm::{
     ContentPart, ModelId, ModelLocality, SelfCompactionDefault, SelfCompactionSource,
 };
+use oneiron::skill_optimize::union_source_rows;
 
 use super::live_fork::{LiveBind, bind_live_compaction_fork};
 use super::serve::{Admit, Served, product_of};
@@ -482,15 +483,16 @@ impl CompactionBackend for SelfCompactionBackend {
             calls: Vec::new(),
         };
         // The paid call, for its host to file in the model-step family on
-        // the run's captured route (FIX 4465 B), with the summary's own
-        // lineage: the request's sources, then each home part the call wore
-        // that they do not name (FIX 5977).
-        let mut sources = request.sources.clone();
-        for row in execution.home_dependencies() {
-            if !sources.contains(&row) {
-                sources.push(row);
-            }
-        }
+        // the run's captured route (FIX 4465 B), with the same complete
+        // witnessed set its admission carries. An unwitnessed window or live
+        // prefix leaves the sources unknown and the step unfiled (FIX 11937).
+        let sources = match (&execution.source, request.window_read_from_sources) {
+            (SelfCompactionSource::RetainedTurns, true) => union_source_rows([
+                Some(request.sources.clone()),
+                Some(execution.home_dependencies().collect::<Vec<_>>()),
+            ]),
+            _ => None,
+        };
         execution.calls = sent
             .map(|(request, response)| CompactionCall {
                 request,

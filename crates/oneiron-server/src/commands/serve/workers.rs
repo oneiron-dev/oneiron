@@ -130,11 +130,8 @@ pub(crate) async fn start_desktop_workers(
         .start_healer_oversight(crate::server::HEALER_OVERSIGHT_EVERY, || Some(()))
         .await?;
     // The `[linear]` mirror; its passes stop at the vault's deletion.
-    let linear_handle = crate::linear_host::spawn_configured(
-        sync_server.clone(),
-        admitted(),
-    )
-    .await?;
+    let linear_handle =
+        crate::linear_host::spawn_configured(sync_server.clone(), admitted()).await?;
     // The lifecycle's passes stop at the vault's deletion on plain serve;
     // the caller's admission, and its awake hold, is kept inside the gate.
     let lifecycle_admit = lifecycle_admission();
@@ -166,10 +163,7 @@ pub(crate) async fn start_desktop_workers(
             sync_server.spawn_media_embedding_worker_admitted(admitted()),
             // Each pass stops at the vault's deletion; a run is the owner's
             // foreground work and stays admitted, as on a managed host.
-            sync_server.spawn_resident_pump_admitted(
-                admitted(),
-                crate::server::admit_every_pass(),
-            ),
+            sync_server.spawn_resident_pump_admitted(admitted(), crate::server::admit_every_pass()),
             // The official CLIs' runs, on the person's own runtime (FIX 4552).
             sync_server.spawn_seat_host(),
             Some(sync_server.spawn_connector_settler_admitted(admitted())),
@@ -189,7 +183,10 @@ pub(crate) async fn start_desktop_workers(
     if !ai.bind_question_timer(&sync_server) {
         workers.push(crate::decision_graph::spawn(&sync_server, admitted()));
         // Due digests, which a Dreamer's timer would otherwise serve (OF-499).
-        workers.push(crate::ai_host::home_digests::spawn(&sync_server, admitted()));
+        workers.push(crate::ai_host::home_digests::spawn(
+            &sync_server,
+            admitted(),
+        ));
     }
     // Saved queries are evaluated over the vault's people in bounded wakes (ARCH-0059).
     workers.push(crate::saved_query_sweep::spawn(&sync_server, admitted()));
@@ -206,7 +203,10 @@ pub(crate) async fn start_desktop_workers(
     // The nightly Coach jobs that need the host's model or rules (OF-420).
     workers.push(crate::ai_host::coach_host::spawn(&sync_server, admitted()));
     // Queued browser program admissions run as their source caller (CUA E8b).
-    workers.push(crate::ai_host::browser_program_admission::spawn(&sync_server, admitted()));
+    workers.push(crate::ai_host::browser_program_admission::spawn(
+        &sync_server,
+        admitted(),
+    ));
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
     workers.extend(crate::decision_host::spawn_person_threshold_admitted(
         &sync_server,
@@ -217,7 +217,9 @@ pub(crate) async fn start_desktop_workers(
     // reads as none when it does not resolve; without one the env token,
     // as today. Its passes stop at the vault's deletion.
     let failure_signals_bearer = if config.failure_signals.key_secret.is_some() {
-        config.failure_signals.bearer_from_secret(sync_server.vault())
+        config
+            .failure_signals
+            .bearer_from_secret(sync_server.vault())
     } else {
         std::env::var("ONEIRON_FAILURE_SIGNALS_TOKEN")
             .ok()
@@ -275,11 +277,7 @@ pub(crate) async fn start_desktop_workers(
     // Authorized e-sign mail goes to the host's sender through its outbox;
     // without `--esign-delivery-outbox-dir` none runs (OF-415).
     workers.extend(config.esign_delivery_outbox_dir.clone().map(|dir| {
-        crate::api::spawn_esign_delivery_outbox(
-            Arc::clone(&sync_server),
-            admitted(),
-            dir,
-        )
+        crate::api::spawn_esign_delivery_outbox(Arc::clone(&sync_server), admitted(), dir)
     }));
     // The publisher training outbox, only with its flag (OF-420), and the
     // self-host shipper's descriptor fetch with it, only with its own (TL-6).
@@ -296,10 +294,7 @@ pub(crate) async fn start_desktop_workers(
     // Fact hooks (ARCH-0080) run unless `--no-hooks`; they stop with serve.
     #[cfg(feature = "code-sandbox-wasmtime")]
     if config.hooks {
-        workers.extend(
-            spawn_fact_hooks(&sync_server, admitted(), stopped.clone())
-            .await,
-        );
+        workers.extend(spawn_fact_hooks(&sync_server, admitted(), stopped.clone()).await);
     }
     // The API's CORS stays the API's: the artifact origin is never granted.
     let artifact_app = build_artifact_app(sync_server.clone());
