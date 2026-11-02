@@ -187,14 +187,15 @@ pub(in crate::commands::owner) fn restore_fresh(
     let machine_keystore = keystore.clone();
     // An unfinished creation at this path never served: remove it first (FIX 11948).
     oneiron::world_keys::remove_unfinished_sealed_creation(&config.vault_path)?;
-    let key = match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
-        Some(key) => key,
-        // With no keystore this device unlock refuses, naming the platform
-        // backend (FIX 12225): this host holds no device keys.
-        None => CheckpointKey::unlock_on_this_device(backup, keystore.as_ref()).map_err(|error| {
-            anyhow::anyhow!("backup {} does not open: {error}", backup.display())
-        })?,
-    };
+    let key =
+        match backup_key(backup, &config.vault_path, keystore.as_ref(), unlock, pins)? {
+            Some(key) => key,
+            // With no keystore this device unlock refuses, naming the platform
+            // backend (FIX 12225): this host holds no device keys.
+            None => CheckpointKey::unlock_on_this_device(backup, keystore.as_ref()).map_err(
+                |error| anyhow::anyhow!("backup {} does not open: {error}", backup.display()),
+            )?,
+        };
     let mut target = base_vault_config(config);
     target.page_seal = backup::restore_target_seal(RestoreTarget::Fresh {
         maximum_tier: config.maximum_tier,

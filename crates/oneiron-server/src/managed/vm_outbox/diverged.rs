@@ -121,16 +121,10 @@ impl MemberBoard {
         };
         let shown = self.statuses.iter().any(|status| match status {
             VmOutboxMemberStatus::DivergedUnagreed {
-                kind,
-                member,
-                held,
-                ..
+                kind, member, held, ..
             } => names(kind, member, held),
             VmOutboxMemberStatus::KeptAside {
-                kind,
-                member,
-                held,
-                ..
+                kind, member, held, ..
             } => removal && names(kind, member, held),
             VmOutboxMemberStatus::SourceDigestMismatch { .. } => false,
         });
