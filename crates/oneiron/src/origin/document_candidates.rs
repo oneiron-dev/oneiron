@@ -424,6 +424,7 @@ impl Vault {
                     content: file.1.clone(),
                     source_operation: Some(file.0.source_operation),
                     metadata_edit: Some(file.0.metadata_edit.clone()),
+                    withheld_base_blake3: None,
                 })
                 .collect(),
             created_at: row.received_at,
