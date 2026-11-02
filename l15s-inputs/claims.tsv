@@ -1,0 +1,501 @@
+w1-ines-varga	user name	Ines Varga
+w1-ines-varga	job title	operations lead at Kestrel Fabrication
+w1-ines-varga	work location	converted dairy barn in Arnholt
+w1-ines-varga	company product	build drone frames
+w1-ines-varga	main project	Project Larkspur folding survey-drone frame
+w1-ines-varga	today date	2026-10-27 Tuesday
+w1-ines-varga	manager	Dagny Holm CTO
+w1-ines-varga	weekly status note	status note to Dagny Holm every Thursday
+w1-ines-varga	Larkspur ship date	14 March promised to Vestergaard Surveying
+w1-ines-varga	pilot customer	Vestergaard Surveying
+w1-ines-varga	Vestergaard contact	Henrik Aas prefers phone call over email
+w1-ines-varga	carbon supplier	Brannock Composites
+w1-ines-varga	supplier account manager	Teodor Ilves at Brannock Composites
+w1-ines-varga	supplier call time	Tuesdays 10:30 with Teodor Ilves
+w1-ines-varga	machining location	Hall C
+w1-ines-varga	CNC machine	Morrow M-40 called Old Gus in Hall C
+w1-ines-varga	laser cutter location	mezzanine above paint booth
+w1-ines-varga	test fly location	Tolvik Flats
+w1-ines-varga	test pilot	Sunniva Brekke
+w1-ines-varga	QA lead	Yusuf Demir
+w1-ines-varga	QA failure process	fails go straight back to Hall C no exceptions
+w1-ines-varga	office extension	4417
+w1-ines-varga	office room	room 2.14 second floor
+w1-ines-varga	Larkspur specs path	/eng/larkspur/rev-d
+w1-ines-varga	Larkspur revision	Rev D current
+w1-ines-varga	Larkspur Rev C issue	hinge crack problem
+w1-ines-varga	arm hinge bolt torque	2.8 newton-metres
+w1-ines-varga	inventory system	Shelfwise
+w1-ines-varga	Larkspur part prefix	KF-LS-
+w1-ines-varga	freight company	Nordpil Freight
+w1-ines-varga	freight pickup time	16:00 weekdays
+w1-ines-varga	commute train	R7 from Lindberg arrives Arnholt 7:52
+w1-ines-varga	PO signing limit	up to 4,000 euros self sign
+w1-ines-varga	PO approval over limit	over 4,000 euros goes to Dagny Holm
+w1-ines-varga	battery supplier	Corvane Cells
+w1-ines-varga	Larkspur battery pack	CV-22 pack from Corvane Cells
+w1-ines-varga	test rig Wi-Fi	KF-RIG-5G keep laptops off
+w1-ines-varga	safety officer	Lotte Brandt
+w1-ines-varga	fire drill assembly	north car park
+w1-ines-varga	intern	Kaito Mori mentoring
+w1-ines-varga	intern project	hinge fatigue rig for Larkspur
+w1-ines-varga	GeoDrone Expo trip	May Linz to show Larkspur
+w1-ines-varga	build team chat	#larkspur-build
+w1-ines-varga	backup machine shop	Falk Precision in Moravik
+w1-ines-varga	Old Gus program change procedure	backup to shared drive, dry-run spindle off, test part scrap aluminium, Yusuf check, then production
+w1-ines-varga	time format preference	24-hour format
+w1-ines-varga	status summary limit	max three bullets
+w1-ines-varga	Vestergaard email policy	ask before emailing anyone at Vestergaard
+w1-ines-varga	supplier call time	Wednesdays 09:15 starting next week
+w1-ines-varga	supplier account manager	Marta Kessler
+w1-ines-varga	Larkspur ship date	28 April
+w1-ines-varga	office room	office 3.07 on the third floor
+w1-ines-varga	office extension	4429
+w1-ines-varga	weekly status note	send on Friday morning
+w1-ines-varga	new prototype build name	Project Ternwing
+w1-ines-varga	Project Ternwing wrap target date	19 May
+w1-ines-varga	today date	2026-10-29 Thursday
+w1-ines-varga	auxiliary motors supplier	Halden Dynamics
+w1-ines-varga	paint booth location	East Yard Annex
+w1-ines-varga	design engineer	Petra Lindqvist
+w1-ines-varga	frame tightening torque wrench	Torqline T-85
+w1-ines-varga	spares supplier	Vasker Parts
+w1-ines-varga	warehouse entry code	77410
+w1-ines-varga	demo client destination	Bregenz
+w1-ines-varga	inspection aircraft	Hawkeye H-12
+w1-ines-varga	customer contact	Maren Solberg
+w1-ines-varga	Vestergaard contact	Maren Solberg
+w1-ines-varga	client contact procedure	check with user before contacting client
+w1-ines-varga	test pilot	Eskil Ronne
+w1-ines-varga	test fly location	Skjerstad Meadows
+w1-ines-varga	today date	2026-10-30 Friday
+w1-ines-varga	glue supplier	Nordbond Adhesives
+w1-ines-varga	outdoor trial location	Havsborg Quarry
+w1-ines-varga	composites engineer	Sanna Roeg
+w1-ines-varga	equipment recalibration deadline	11 June
+w1-ines-varga	torque audit file	DX-47B
+w1-ines-varga	surge delivery backup logistics	Fenmark Logistics
+w1-ines-varga	batteries location for testing	Voltdeck V9
+w1-ines-varga	client showing date	30 July
+w1-ines-varga	stand two quad replacement part	KX-61 from spares
+w1-ines-varga	machining location	Hall B
+w1-ines-varga	CNC machine	Morrow M-40 called Old Gus in Hall B
+w1-ines-varga	QA failure process	fails go straight back to Hall B no exceptions
+w1-ines-varga	Larkspur revision	Rev E current
+w1-ines-varga	Larkspur specs path	/eng/larkspur/rev-e
+w1-ines-varga	powder coating supplier	Quayline Coatings
+w1-ines-varga	today date	2026-10-31 Saturday
+w1-ines-varga	ultrasonic cleaner model	Soniclear S-300
+w1-ines-varga	freight booking reference	BK-5391-QT
+w1-ines-varga	packaging audit date	14 August
+w1-ines-varga	logistics coordinator	Aldric Venn
+w1-ines-varga	prototype fasteners code	TW-118-ZK
+w1-ines-varga	tool crib manager	Bodil Kranz
+w1-ines-varga	checkout sheet holder	Bodil Kranz
+w1-ines-varga	backup generator installer	Voltmere Installations
+w1-ines-varga	laser cutter location	ground floor workshop
+w1-ines-varga	fire drill assembly	south lot entrance
+w1-ines-varga	safety officer	Mira Solberg
+w1-ines-varga	anodizing supplier	Selmark Anodizing
+w1-ines-varga	anodizing batch status	Selmark Anodizing running late on this batch
+w1-ines-varga	calibration assignment	Tomas Ervik to handle calibrations out at sites on 2026-11-02
+w1-ines-varga	today date	2026-11-01 Sunday
+w1-ines-varga	thermal imaging test equipment	Vireo T-57
+w1-ines-varga	thermal imaging test date	testing thermal imaging with Vireo T-57 on 2026-11-01
+w1-ines-varga	extra frames storage location	Stavdal North Depot
+w1-ines-varga	frames storage readiness date	extra frames at Stavdal North Depot should be all set for Thursday 2026-11-05
+w1-ines-varga	second pilot customer	Halvorsen Mapping
+w1-ines-varga	pilot paperwork send date	intro paperwork to Halvorsen Mapping to be sent on 2026-11-01 evening
+w1-ines-varga	drawings review date	looking at drawings together on 23 September
+w1-ines-varga	spare strut part number	KF-ST-418
+w1-ines-varga	safety walk-through sheet	QX-112-C
+w1-ines-varga	first build spray color	Dusk Teal Matte
+w1-ines-varga	morning gathering location	Room 4.13
+w1-ines-varga	morning gathering time	gathering each morning in Room 4.13
+w1-ines-varga	courier	Baltic Swift Logistics
+w1-ines-varga	backup machine shop	Hale Engineering Works
+w1-ines-varga	build team chat	#larkspur-sprint
+w2-solo-developer	business name	Northloop Studio Oy
+w2-solo-developer	official title	Solo Founder Developer
+w2-solo-developer	current date	2026-10-27 Tuesday
+w2-solo-developer	main app	Parcelpilot Pro
+w2-solo-developer	internal build name	Operation Firefly
+w2-solo-developer	work location today	Harborworks Hub Docks Desk 14B
+w2-solo-developer	shared office	Harborworks Hub Docks
+w2-solo-developer	Mara Quinn role	Interface Design Contractor
+w2-solo-developer	time format preference	24-hour clock
+w2-solo-developer	status summary limit	max three bullets
+w2-solo-developer	email permission	ask before emailing Bluebird Analytics Ltd
+w2-solo-developer	Jonas Beck role	Backend Support Contractor
+w2-solo-developer	client Bluebird Analytics Ltd	business client signed first
+w2-solo-developer	client Cedarline Logistics GmbH	business client signed second
+w2-solo-developer	client Northwind Bakery Chain	third company building for
+w2-solo-developer	Elias Ford role	business advisor
+w2-solo-developer	hosting provider	Nimbusgrid Hosting
+w2-solo-developer	deploy platform	Shipstack Deploy
+w2-solo-developer	code repo path	/repos/parcelpilot/main
+w2-solo-developer	staging box name	Staging Seagull
+w2-solo-developer	production server	Production Pelican
+w2-solo-developer	main laptop	Laptop Falcon
+w2-solo-developer	design tool	Figmaflow Studio
+w2-solo-developer	backup drive	Drive Tortoise
+w2-solo-developer	work tracking	Taskline Boards
+w2-solo-developer	team chat	#northloop-build
+w2-solo-developer	client channel	#parcelpilot-clients
+w2-solo-developer	help desk extension	4421
+w2-solo-developer	bill prefix	NL-2026-
+w2-solo-developer	server budget monthly	400 euros
+w2-solo-developer	go-live due date	2026-11-19
+w2-solo-developer	testing version	Version 2.4b
+w2-solo-developer	release procedure	freeze main branch, run smoke tests, tag release version, deploy via Shipstack, verify status page
+w2-solo-developer	quiet room request	Harbor Room B
+w2-solo-developer	presentation location	Hall C
+w2-solo-developer	mockup review time	Tuesdays 10:30
+w2-solo-developer	supplier catch up time	Fridays 16:00
+w2-solo-developer	client sync time	Wednesdays 09:00
+w2-solo-developer	release walkthrough time	Mondays 14:00
+w2-solo-developer	upcoming conference	Shipit Conf 2026
+w2-solo-developer	conference venue	Meridian Tower
+w2-solo-developer	live keys prefix	PP-LIVE-
+w2-solo-developer	signup site	getparcelpilot.com
+w2-solo-developer	support email	help@parcelpilot.app
+w2-solo-developer	release live time	Thursdays 21:00
+w2-solo-developer	backup kickoff time	Sundays 03:00
+w2-solo-developer	test device	Pixel 8a
+w2-solo-developer	desk display	Monitor Heron
+w2-solo-developer	keyboard name	Keyboard Badger
+w2-solo-developer	accounting partner	Ledgerly Partners
+w2-solo-developer	payment processor	Paylane Systems
+w2-solo-developer	analytics tool	Metricmoon Insights
+w2-solo-developer	error monitoring	Bugbeacon Alerts
+w2-solo-developer	status page	status.parcelpilot.app
+w2-solo-developer	standard agreement	MSA-2026-NL
+w2-solo-developer	onboard checklist	Onboard Checklist v3
+w2-solo-developer	demo reel	Demo Reel 7
+w2-solo-developer	press photos path	/press/kit-2026
+w2-solo-developer	guest wifi	Harborworks-Guest-5G
+w2-solo-developer	launch checklist file	launch-checklist.md
+w2-solo-developer	design review time	Thursdays at 11:30
+w2-solo-developer	design review time	Thursdays at 11:30
+w2-solo-developer	backend support contractor	Priya Nair
+w2-solo-developer	go-live due date	2026-11-26
+w2-solo-developer	coworking meeting room	Lighthouse Room D
+w2-solo-developer	coworking meeting room	Lighthouse Room D
+w2-solo-developer	server budget monthly	550 euros monthly
+w2-solo-developer	launch event venue	Hall D
+w2-solo-developer	current date	2026-10-29 Thursday
+w2-solo-developer	printer model by window	Printwell G6020
+w2-solo-developer	printer by window issue	keeps fading
+w2-solo-developer	Jonas Weber role	QA, just joined
+w2-solo-developer	client Harborline Foods Oy	signed as number four client
+w2-solo-developer	staging box Staging Albatross issue	timing out today 2026-10-29
+w2-solo-developer	build server after hours urgent line	Extension 7734
+w2-solo-developer	test tablet name	Tablet Kingfisher
+w2-solo-developer	Tablet Kingfisher issue	won't sync
+w2-solo-developer	video chat platform	Loopcall Meet
+w2-solo-developer	current contract renewal date	2027-03-12
+w2-solo-developer	backup coworking space	Pierpoint Annex Loft
+w2-solo-developer	release notes file	Releasebrief Quill
+w2-solo-developer	coworking desk number	Desk 22A
+w2-solo-developer	client sync time	Thursdays at 10:00
+w2-solo-developer	contractor invoice deadline	2026-11-12
+w2-solo-developer	Sofia Lindqvist role	Interface Design Intern
+w2-solo-developer	coffee machine name	Brewmaster 900 X
+w2-solo-developer	coffee machine location	kitchen
+w2-solo-developer	client Kettlemoor Retail AB	business client signed fifth
+w2-solo-developer	security audit provider	Sentinelcheck Audits Inc
+w2-solo-developer	security audit next week	times sent by Sentinelcheck Audits Inc
+w2-solo-developer	preview-site cache name	Cache Sparrow
+w2-solo-developer	preview-site cache cleared	Cache Sparrow cleared this morning 2026-10-30
+w2-solo-developer	invoices review time	Tuesdays at 13:00
+w2-solo-developer	website address renewal date	2028-06-18
+w2-solo-developer	spare router name	Router Puffin
+w2-solo-developer	tablet holder for client demos	Stand Oakwood
+w2-solo-developer	launch party venue	Aurora Suite K
+w2-solo-developer	Bluebird Analytics Ltd contact	Tom
+w2-solo-developer	Bluebird Analytics Ltd contact permission	ask before contacting
+w2-solo-developer	release dry run time	Tuesdays at 15:00
+w2-solo-developer	deployment window time	Fridays at 22:00
+w2-solo-developer	design contractor name	Lena Marsh
+w2-solo-developer	client Vellamo Crafts Oy	business customer signed sixth
+w2-solo-developer	Mikko Salmi role	helping with copy for the release
+w2-solo-developer	Ergoseat Volo 3	finally adjusted well
+w2-solo-developer	Pulsewatch S2	trying out on wrist today while working
+w2-solo-developer	Project Moonwake	internal codename for plugin effort
+w2-solo-developer	client build walkthrough date	2029-12-04
+w2-solo-developer	invoices sign-off time	Mondays at 09:30
+w2-solo-developer	Willow Cabin 4	use if main room occupied
+w2-solo-developer	reservation code	BK-Q7-VELA
+w2-solo-developer	support line alternative extension	Extension 5590 if no one answers
+w2-solo-developer	beta release version	Release 2.5c
+w2-solo-developer	support extension number	Extension 5590
+w2-solo-developer	conference building name	Aurora Pavilion
+w2-solo-developer	client Lakeside Printworks Oy	signed as number seven among our company accounts
+w2-solo-developer	Aaro Virtanen role	running user interviews, started 2026-11-01
+w2-solo-developer	plugin trial build tag	Tidechart Kappa 9
+w2-solo-developer	Board Gullwing	large board in the office
+w2-solo-developer	testing status	ran late
+w2-solo-developer	workshop location	Maple Hall C reserved for workshop with client
+w2-solo-developer	invoices review date	2030-02-14
+w2-solo-developer	earbuds testing	Soundpod Aero 2
+w2-solo-developer	NAS box holding backups	Archive Hedgehog
+w2-solo-developer	sprint review notes location	Sprintbrief Coral 4
+w2-solo-developer	demos location	Sunset Loft B
+w2-solo-developer	business advisor	Maya Chen
+w2-solo-developer	Elias Ford role	former business advisor
+w2-solo-developer	work location today	City Center Loft
+w2-solo-developer	backup kickoff time	Mondays 04:00 Sharp
+w3-shop-owner	shop name	Spokehaven Cycle Works
+w3-shop-owner	owner role	Jonas Heller, Owner Manager
+w3-shop-owner	today date	2026-10-27 Tuesday
+w3-shop-owner	delivery slip signed	signed as Jonas Heller Owner Manager, clear to start day
+w3-shop-owner	repair lead morning	Priya Nair leading repair benches through morning backlog
+w3-shop-owner	hire bikes person	Dario Venn out back getting hire bikes ready
+w3-shop-owner	front till cover	Lena Frost covering front till Saturday and Sunday
+w3-shop-owner	accounts review	Ellis Grant looking over accounts this afternoon, leave receipts in drawer
+w3-shop-owner	landlord	Harold Pike landlord stopped by about leaky back door
+w3-shop-owner	winter budgets meeting	Mara Quinn coming Thursday 2026-10-29 to look at winter budgets
+w3-shop-owner	business advisor	Mara Quinn helps think through business side
+w3-shop-owner	time format rule	write all times in 24-hour clock
+w3-shop-owner	status summary rule	limit status summaries to three bullets
+w3-shop-owner	email approval rule	ask before emailing Northwind Cycle Parts
+w3-shop-owner	parts supplier	Northwind Cycle Parts, most parts through them
+w3-shop-owner	derailleurs chase	chase Northwind Cycle Parts on derailleurs
+w3-shop-owner	tire shortage	Gripline Tire Co shorted two touring tires again
+w3-shop-owner	helmet supplier	Brighthelm Safety Gear supplies all helmets, dropped off new helmet display
+w3-shop-owner	coffee cart	Pedalbrew Coffee Cart running late today, usually handles coffee for Saturday rides
+w3-shop-owner	filing code servicing	autumn servicing jobs file under OVERHAUL-2026-A
+w3-shop-owner	filing code hire bikes	extra hire bikes paperwork file under RENTAL-EXPAND-07
+w3-shop-owner	winter storage code	customer bike storage for winter logged as STORE-WINTER-11
+w3-shop-owner	vendor call time	ring parts vendors Tuesdays at 10:30
+w3-shop-owner	vendor call nudge	give nudge before vendor call
+w3-shop-owner	shift sort time	sort shifts with team Mondays at 09:00
+w3-shop-owner	ledger review time	go over ledgers with bookkeeper Thursdays at 11:00
+w3-shop-owner	stock count time	count everything in back Fridays at 16:00
+w3-shop-owner	distributor delivery time	boxes from distributor land Wednesdays at 08:45
+w3-shop-owner	hire bikes roll in	hire bikes roll in Saturdays at 07:30
+w3-shop-owner	building owner meeting	catching up with building owner First Mondays 14:00
+w3-shop-owner	fall tune-ups deadline	all fall tune-ups wrapped by 2026-11-15
+w3-shop-owner	hire fleet deadline	bigger hire fleet ready by 2026-12-01
+w3-shop-owner	repair queue location	repair queue in Bay One where servicing done
+w3-shop-owner	spare frames location	spare frames locked in Unit Shed B for storage
+w3-shop-owner	rentals sign out location	rentals signed out at Front Counter A
+w3-shop-owner	extra stock location	extra stock piled in Back Room 2 as overflow
+w3-shop-owner	joint event location	joint event with neighboring town in Kestrel Harbor
+w3-shop-owner	supplier base location	parts orders ship from Norcross Village where supplier is based
+w3-shop-owner	checkout procedure	confirm booking ID, inspect tires and brakes, photograph bike condition, collect deposit and signature, then log checkout in Wheelbook
+w3-shop-owner	Old Bessie issue	Old Bessie wobbling during wheel true, stand getting tired
+w3-shop-owner	Puffy Dragon issue	Puffy Dragon kept cutting out, compressor needs look this afternoon
+w3-shop-owner	booking system	Wheelbook Pro is booking system
+w3-shop-owner	accounts system	Ledgerline Daily used for accounts
+w3-shop-owner	rental contracts path	signed rental contracts saved to /spokehaven/rentals/agreements
+w3-shop-owner	repair photos path	today's job pictures uploaded to /spokehaven/repairs/photos2026
+w3-shop-owner	crew channel	drop note in #spokehaven-crew for whole crew
+w3-shop-owner	rentals channel	check in with rentals team in #rentals-desk
+w3-shop-owner	head mechanic ext	head mechanic on Ext 201
+w3-shop-owner	front desk ext	front desk on Ext 202
+w3-shop-owner	workshop phone ext	workshop phone on Ext 203
+w3-shop-owner	parts spending limit	keep parts spending under 4,000 euros this month
+w3-shop-owner	rental deposit	collect 150 euros deposit on rentals
+w3-shop-owner	strip down price	full strip-down in workshop is 89 euros
+w3-shop-owner	VeloFest posters	sorting posters for Marlow Bay VeloFest coming up this autumn
+w3-shop-owner	Harbor Lights Ride support	set aside tools for support at Harbor Lights Ride for charity next week
+w3-shop-owner	battery swap log	log battery swap under EB-FLEET-09 for hire fleet
+w3-shop-owner	locks supplier	Ironclasp Locks Ltd makes locks we stock, late delivery
+w3-shop-owner	cleaning crew	Tidy Spokes Crew handles cleaning
+w3-shop-owner	electrics contractor	Volta Fixers look after electrics, checking shutters this afternoon
+w3-shop-owner	insurance provider	Harborcover Insurance arranges cover, renewal forms sent
+w3-shop-owner	lease agreement code	unit paperwork filed under LEASE-MB-44, agreement for Marlow Bay shop
+w3-shop-owner	key order quote	next key order quote ACC-7741-NW
+w3-shop-owner	tire order code	ordering tires use ACC-3390-GL at checkout
+w3-shop-owner	shift pattern week	crew on Split Shifts Daily this week
+w3-shop-owner	Autumn Velo Season prep	Blue Mule fueled up for afternoon drop-offs
+w3-shop-owner	customer visit	Jonah Reed stopped by, back tomorrow for tune-up, keep file handy
+w3-shop-owner	vendor call time	Wednesdays at 09:45
+w3-shop-owner	head mechanic	Sofia Lind
+w3-shop-owner	autumn overhaul deadline	2026-11-22
+w3-shop-owner	repair queue location	Bay Three
+w3-shop-owner	distributor delivery time	Thursdays at 08:15
+w3-shop-owner	rental expansion deadline	2026-12-10
+w3-shop-owner	today date	2026-10-29 Thursday
+w3-shop-owner	new apprentice	Theo Marsh started 2026-10-29 morning, apprenticing with us, timecard added
+w3-shop-owner	painting contractor signed	Colorweld Coatings Inc signed 2026-10-29 afternoon to do painting
+w3-shop-owner	spring tuneup filing code	TUNEUP-2028-S set up for spring tuneup, tracking stays clean
+w3-shop-owner	extra storage rental	Willow Annex Nine rented for extra storage space
+w3-shop-owner	deliveries handler	Priya Noll helped on afternoon run, handling deliveries going forward
+w3-shop-owner	weekend repairs deadline	weekend repairs wrapped by 2027-03-14
+w3-shop-owner	pad shelf stock	Stopbite Ultra Z stocked on pad shelf 2026-10-29
+w3-shop-owner	client meeting time	seeing clients Tuesdays at 10:30
+w3-shop-owner	new bench name	Steel Badger
+w3-shop-owner	safety review audit	AUDIT-2027-31 opened 2026-10-29 for safety review, give nudge if paperwork is missing
+w3-shop-owner	staff rota meeting time	Tuesdays at 08:30
+w3-shop-owner	spare frames location	spare frames locked in Unit Shed C for storage
+w3-shop-owner	cleaning crew	Sparkle Wheels Team handles cleaning
+w3-shop-owner	new wheels supplier	Veloforge Components Ltd
+w3-shop-owner	workshop apprentice mentor	Clara Moss
+w3-shop-owner	extra repair alcove	Alcove Six
+w3-shop-owner	new tool cabinet name	Copper Anvil
+w3-shop-owner	winter promo code	WINTER-2029-C
+w3-shop-owner	deliveries handler	Swiftspoke Deliveries Co
+w3-shop-owner	training date	2029-02-04
+w3-shop-owner	outside box	BOX-5521-Z
+w3-shop-owner	weekend charge	Nadia Cole Saturdays and Sundays
+w3-shop-owner	storage cage for putting things away	Cage Twelve
+w3-shop-owner	ledger review time	bookkeeper review slot Fridays at 10:00
+w3-shop-owner	building owner meeting	landlord meeting Second Tuesdays 15:00
+w3-shop-owner	rentals sign out location	rentals signed out at Side Desk B
+w3-shop-owner	courier pickup time	Thursdays at 14:20
+w3-shop-owner	frames person	Oscar Brent does our frames
+w3-shop-owner	tubes supplier	Tubeline Rubber House
+w3-shop-owner	seats supplier	Comfisaddle Bikes Ltd
+w3-shop-owner	service lube	Slickchain Gold X used on services
+w3-shop-owner	Tall Giraffe	rack up front for displaying bikes
+w3-shop-owner	Green Heron	lift used for servicing, squeaking again
+w3-shop-owner	test rides location	Cinder Fox Trail
+w3-shop-owner	vintage project code	VINTAGE-2030-R
+w3-shop-owner	Bramley Handmade Fair	trade show where we are exhibiting next weekend
+w3-shop-owner	rental fleet delivery	Sundays at 08:00 going forward
+w3-shop-owner	email approval Northwind Cycle Parts	check with user before contacting Northwind Cycle Parts
+w3-shop-owner	overflow stock room	Front Room 4
+w3-shop-owner	weekend clerk	Mia Holt starting now
+w3-shop-owner	morning shift manager	Iris Vale runs the morning shift
+w3-shop-owner	commuter build rear light	Glowtrail Beacon Mini
+w3-shop-owner	district cargo client	Bramblewick Bakery Co
+w3-shop-owner	fork upgrade filing code	FORK-2032-B7
+w3-shop-owner	Bramblewick Bakery Co cargo bike	called about cargo bike again, prioritize
+w3-shop-owner	holiday orders cutoff	2031-10-26
+w3-shop-owner	Jonas location	up in Juniper Loft Five tinkering with new prototype frames
+w3-shop-owner	wheel tension tool	Tensogrip Meter Duo
+w3-shop-owner	city bike decals supplier	Stripefinch Graphics Ltd
+w3-shop-owner	Saturday stall location	Larkspur Plaza Stall early Saturday
+w3-shop-owner	staff shift pattern	Double Cover Weekends
+w3-shop-owner	rental assistant name	Sasha Cole
+w3-shop-owner	front desk ext	Ext 210
+w4-grad-student	workplace	Northbridge Acoustics Institute
+w4-grad-student	city	Bergenfield
+w4-grad-student	current_date	2026-10-27 Tuesday
+w4-grad-student	role	Acoustics Doctoral Researcher
+w4-grad-student	thesis_advisor	Henrik Dahl
+w4-grad-student	thesis_status	needs new plots for slides
+w4-grad-student	catch_up_time	Tuesdays 09:30
+w4-grad-student	bench_mate	Sofia Lindqvist
+w4-grad-student	lab_mate_1	Jonas Weber
+w4-grad-student	lab_mate_2	Amara Okafor
+w4-grad-student	today_activity	running between measurements
+w4-grad-student	time_format	24-hour clock
+w4-grad-student	status_summary_limit	three bullets max
+w4-grad-student	email_permission	ask before emailing FjordSonics Ltd
+w4-grad-student	lab_equipment_caretaker	Milo Renner
+w4-grad-student	project_echo_dune	thesis codename
+w4-grad-student	today_plan	analysis for Project EchoDune later
+w4-grad-student	project_reef_pulse	other project codename
+w4-grad-student	conference_abstract_due	2026-11-20
+w4-grad-student	course_current	ACU-201
+w4-grad-student	seminar_time	Thursdays 10:00
+w4-grad-student	group_meeting	Fridays 16:00
+w4-grad-student	post_meeting_location	chamber in Hall C
+w4-grad-student	afternoon_location	Room 204
+w4-grad-student	instrument_reservation	Mondays 13:00
+w4-grad-student	heron_array_issue	needed new cable
+w4-grad-student	wasp_probe_issue	acting up this morning
+w4-grad-student	signal_software	WaveSim 6.2
+w4-grad-student	analysis_software	EchoLab R2026a
+w4-grad-student	echo_lab_chat_status	starting a bit late
+w4-grad-student	acu201_tutors_plan	share tutorial slides after lunch
+w4-grad-student	afternoon_extension	Ext 4471
+w4-grad-student	delivery_door	Door 7B
+w4-grad-student	chamber_procedure	check calendar availability, reserve slot online, log calibration data, notify technician, then clean chamber after
+w4-grad-student	main_supplier	SonarTek Components
+w4-grad-student	sensor_contact	Petra Voss
+w4-grad-student	equipment_budget_limit	4000 euros
+w4-grad-student	trip_grant_limit	1200 euros
+w4-grad-student	field_test_location	Kaldvik Harbor
+w4-grad-student	calibration_location	Pier Building
+w4-grad-student	morning_location	Room 312 desk
+w4-grad-student	advisor_meeting_location	Room 405
+w4-grad-student	department_lead	Ingrid Solberg
+w4-grad-student	external_collaborator	Tomas Reyes
+w4-grad-student	ethics_clearance	EA-2026-084
+w4-grad-student	sonar_prototype	SN-114
+w4-grad-student	dataset_version	v3.2
+w4-grad-student	journal_club	Wednesdays 14:00
+w4-grad-student	safety_training_time	Mondays 08:30
+w4-grad-student	office_hours	Tuesdays 11:00
+w4-grad-student	handout_location	printer room in Hall B
+w4-grad-student	login	esorensen01
+w4-grad-student	room_reservation_system	book.nai.example
+w4-grad-student	calibration_date	2026-09-15
+w4-grad-student	thesis_submission_deadline	2027-03-01
+w4-grad-student	poster_printer	PrintHaus Nord
+w4-grad-student	group_meeting_speaker	Lena Hauge
+w4-grad-student	tomorrow_discussion	SoundField Vol 44
+w4-grad-student	funding_paperwork	GR-8891
+w4-grad-student	travel_agent	NordFly Travel
+w4-grad-student	fieldwork_departure	2026-11-05
+w4-grad-student	storage_shelf	Shelf K4
+w4-grad-student	late_stay_permit	L-22
+w4-grad-student	advisor weekly meeting time	Wednesdays 09:30
+w4-grad-student	email permission for FjordSonics Ltd	ask Elin before emailing FjordSonics Ltd
+w4-grad-student	sensor contact	Elias Lind
+w4-grad-student	conference deadline date	2026-12-02
+w4-grad-student	anechoic chamber room	Hall D
+w4-grad-student	instrument booking slot	Mondays at 15:00
+w4-grad-student	office desk room	Room 318
+w4-grad-student	current_date	2026-10-29 Thursday
+w4-grad-student	lab member Petra Novak	set up at bench with rest of us now, arriving after the other three in the lab
+w4-grad-student	Project TideGlass testing need	needs testing time tomorrow 2026-10-30
+w4-grad-student	workshop location	Brekvik
+w4-grad-student	workshop timing	next week, running workshop at Brekvik, packing tonight
+w4-grad-student	Sealfin Unit use	bring for hydrophone demo in tank
+w4-grad-student	Kelphonic Systems O-rings status	still hasn't shipped
+w4-grad-student	Kelphonic Systems spares coverage	covers spares for us
+w4-grad-student	deployed hydrophone tag	QT-207
+w4-grad-student	hydrophone QT-207 recalibration deadline	workshop needs it back for recalibration by 2027-01-20
+w4-grad-student	afternoon outing	Skerry Point Cabin to prep for field work
+w4-grad-student	invited talk speaker next week	Marco Feld confirmed he'll do our invited talk next week
+w4-grad-student	Saturday recordings review time	Saturdays at 13:30 blocked for going through recordings together
+w4-grad-student	seminar_time	Fridays at 14:00
+w4-grad-student	FjordSonics Ltd contact permission	check with Elin before contacting FjordSonics Ltd
+w4-grad-student	advisor office room	Room 312
+w4-grad-student	thesis_submission_deadline	2027-03-15
+w4-grad-student	Project LumenReef	fourth project assigned to Elin this year
+w4-grad-student	Clara Voss	researcher visiting for a few weeks, stopping by to review data with Elin
+w4-grad-student	calibrator location	Locker C9 where Elin keeps field gear
+w4-grad-student	SonoScope license	SonoScope 7.1 license activated by IT for analysis this afternoon
+w4-grad-student	workshop location	Haldenvik
+w4-grad-student	prototype XR-509	prototype stamped XR-509 to log after tank run
+w4-grad-student	Otter Pod	field unit rattling again
+w4-grad-student	prototype review	Thursdays at 10:00 with everyone
+w4-grad-student	backup location	/vault/northpine/stage
+w4-grad-student	grant cover sheet	GR-7742 added for grant reviewers
+w4-grad-student	journal_club	Thursdays at 15:00
+w4-grad-student	FjordSonics Ltd contact	Kari
+w4-grad-student	reverb chamber room	Room 312
+w4-grad-student	office_hours	Wednesdays at 10:00
+w4-grad-student	Project CoralVeil	fifth project running
+w4-grad-student	intern shadowing this week	Freya Nilsen
+w4-grad-student	sonar cable supplier	Nordvik Cable Works
+w4-grad-student	calibration dive date	2026-11-18
+w4-grad-student	hydrophone storage location	Bay Nordvik 5
+w4-grad-student	overnight run backup location	Vault Drive Delta
+w4-grad-student	Elin location Tuesdays	by the posters at 11:00
+w4-grad-student	Bergen ferry receipt filing code	TR-5520
+w4-grad-student	technician visiting for calibration	Anders Holm
+w4-grad-student	lab seminar speaker	Priya Nair
+w4-grad-student	printer room location	Room C3
+w4-grad-student	field trip date	2026-11-12
+w4-grad-student	Project KelpCircuit running number	sixth
+w4-grad-student	field assistant name	Marta Ellingsen
+w4-grad-student	Marta Ellingsen start assisting	just started assisting Elin out in the field
+w4-grad-student	Marta Ellingsen calendar invite	add to calendar invite for field work
+w4-grad-student	Baltic Acoustic Supply supplier status	now supplying all our gear
+w4-grad-student	today files archive filing code	DA-4470
+w4-grad-student	PR-6034 filing purpose	filed for the new cables
+w4-grad-student	seminar tomorrow location	Room 214
+w4-grad-student	seminar slides status	still finishing slides
+w4-grad-student	array calibration service	NordCal Acoustics calibrating our array this week
+w4-grad-student	Harbor Review Board review timing	looks at our project next month
+w4-grad-student	safety_training_time	Tuesdays at 09:30
+w4-grad-student	calibration_location	Harbor Annex Hall
+w4-grad-student	storage_shelf	Rack Q9
+w0-probe	probe token	zqxwvprobe claim visibility marker
