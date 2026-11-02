@@ -79,13 +79,26 @@ impl Store {
         config: &VaultConfig,
         lease: &VaultWriterLease,
     ) -> Result<Self> {
-        Self::open_with_lease(
+        let mut store = Self::open_with_lease(
             path,
             config,
             STORAGE_ABI_VERSION,
             DefaultPolicySeedMode::Required,
             Some(lease),
-        )
+        )?;
+        store.owner.opened_with_writer_lease = true;
+        Ok(store)
+    }
+
+    /// The canonical root this store opened at, the path its process-wide
+    /// registries key on.
+    pub(crate) fn canonical_root(&self) -> &Path {
+        &self.owner._registered_path.path
+    }
+
+    /// This open took the vault's writer lease, though no handle holds it yet.
+    pub(crate) fn opened_with_writer_lease(&self) -> bool {
+        self.owner.opened_with_writer_lease
     }
 }
 

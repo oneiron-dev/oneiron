@@ -531,6 +531,9 @@ impl Vault {
         // Cloned before `config` moves into the handle: the retained copy is
         // the pairing `validate_open_config` already accepted.
         let privacy = config.privacy.clone();
+        // One spent set per environment in this process (FIX 12023 W0, P2),
+        // taken before `store` moves into the handle.
+        let spent_nonces = crate::authority::SpentNonces::shared_for(store.canonical_root());
         let vault = Self {
             model_seats: std::sync::Mutex::new(crate::llm::seat::SeatPool::new()),
             vault_id: super::VaultId::resolve_at_open(
@@ -573,7 +576,7 @@ impl Vault {
             voice_ref_guard: Default::default(),
             trusted_contact_send_order: Default::default(),
             pending_owner_export_receipts: Default::default(),
-            spent_nonces: Default::default(),
+            spent_nonces,
             housekeeping: Default::default(),
             entity_docs: std::sync::Mutex::new(crate::entity_doc::EntityDocRegistry::default()),
             #[cfg(feature = "sync")]
