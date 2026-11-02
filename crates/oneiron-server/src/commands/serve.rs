@@ -311,6 +311,17 @@ pub(crate) async fn build_server(
     let (embedder, gpu_poller) = build_embedder(&vault, config, broker.as_ref()).await?;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), None).await?;
 
+    // The private feedback endpoint's bearer (FIX 5013): a named vault
+    // secret wins, and reads as none when it does not resolve; without one
+    // the env token, as today.
+    let feedback_bearer = if config.feedback.key_secret.is_some() {
+        config.feedback.bearer_from_secret(&vault)
+    } else {
+        std::env::var("ONEIRON_FEEDBACK_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+            .map(zeroize::Zeroizing::new)
+    };
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
     let sync_server = SyncServer::new(vault, server_config)
@@ -334,10 +345,7 @@ pub(crate) async fn build_server(
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
-                bearer: std::env::var("ONEIRON_FEEDBACK_TOKEN")
-                    .ok()
-                    .filter(|token| !token.is_empty())
-                    .map(zeroize::Zeroizing::new),
+                bearer: feedback_bearer,
             }
         }))
         .with_feedback_triage(config.feedback.triage.clone())

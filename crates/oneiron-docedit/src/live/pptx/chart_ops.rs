@@ -551,7 +551,12 @@ pub(super) fn lower_chart(
             }
         }
         if moved {
-            emit(ChartEdit::SetPlot { plot: out }, &mut scratch, &mut edits, mint);
+            emit(
+                ChartEdit::SetPlot { plot: out },
+                &mut scratch,
+                &mut edits,
+                mint,
+            );
         }
     }
     edits

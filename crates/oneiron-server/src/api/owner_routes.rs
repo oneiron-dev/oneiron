@@ -104,6 +104,7 @@ pub(super) mod shared_training_setup_routes;
 pub(super) mod skill_judge_routes;
 pub(super) mod space_posting_routes;
 pub(super) mod steer_routes;
+mod stream_recovery_routes;
 mod support_grant_routes;
 mod support_repair_routes;
 mod training_swap_routes;
@@ -186,6 +187,7 @@ fn owner_tables() -> OwnerTable {
         secret_found_routes::owner_table(),
         secret_lift_routes::owner_table(),
         steer_routes::owner_table(),
+        stream_recovery_routes::owner_table(),
         training_swap_routes::owner_table(),
         usage_repair_routes::owner_table(),
         conversation_learning_routes::owner_table(),
