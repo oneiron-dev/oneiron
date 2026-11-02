@@ -23,10 +23,6 @@ use crate::llm::decision::questions::{
 use crate::llm::decision::{DecisionQuestion, DecisionRung, TypedDecision};
 use crate::memory::{MemoryError, MemoryResult};
 
-/// The most graph units one ask names or selects: the engine's own bound on
-/// a graph ask's selection.
-pub const GRAPH_ASK_MAX_UNITS: usize = 4096;
-
 /// The shipped seed of the vault's question call budget
 /// ([`crate::llm::decision::questions::QUESTION_CALL_BUDGET_MS`]): an
 /// `ai.verdict` call's default.
@@ -47,8 +43,8 @@ pub struct GraphAskRequest {
     /// `{"kind":"score","min":..,"max":..}` or `{"kind":"box"}`.
     #[schemars(with = "serde_json::Value")]
     pub question: DecisionQuestion,
-    /// The graph units asked about: distinct, at most
-    /// [`GRAPH_ASK_MAX_UNITS`]. Each is read under the caller's own scoped
+    /// The graph units asked about: distinct, as many as the caller names
+    /// (Rule 5). Each is read under the caller's own scoped
     /// read; a unit it cannot read is passed over as a missing one is, and
     /// appears nowhere in the answer.
     #[serde(default)]
@@ -57,8 +53,9 @@ pub struct GraphAskRequest {
     /// type, up to `limit`.
     #[serde(default)]
     pub select: Option<GraphAskSelection>,
-    /// The highest rung that may answer; `big` when absent. A graph answer
-    /// never queues an owner ask, so `human` is refused.
+    /// The highest rung that may answer; `big` when absent. `human` asks the
+    /// next authorised role for a unit no model rung settles: the caller as
+    /// the responsible actor, climbing to the vault's owners (OF-506).
     #[serde(default)]
     pub ceiling: Option<DecisionRung>,
     /// Each unit's own clock on the ladder, 1 to 60000 milliseconds; the
@@ -77,12 +74,12 @@ pub struct GraphAskRequest {
     pub posture: Option<crate::config::HostingPrivacyPosture>,
     /// The lines each unit is judged by, as a standing question's
     /// `criteria`: `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each
-    /// at most 16 nonempty lines of at most 512 bytes. A yes/no question's
+    /// a list of nonempty lines of at most 512 bytes. A yes/no question's
     /// rungs read them as its rubric; another contract's call carries them
     /// in its state. None when absent.
     #[serde(default)]
     #[schemars(with = "Option<serde_json::Value>")]
-    pub criteria: Option<QuestionCriteria>,
+    pub criteria: Option<QuestionCriteria<String>>,
 }
 
 /// A graph ask's type selection: the engine's by-type entry
@@ -92,22 +89,16 @@ pub struct GraphAskRequest {
 pub struct GraphAskSelection {
     /// The entity type, by its registry number.
     pub entity_type: u8,
-    /// At most this many units, 1 to [`GRAPH_ASK_MAX_UNITS`].
+    /// At most this many units, 1 or more.
     pub limit: usize,
 }
 
 impl GraphAskRequest {
     /// The ask's bounds, checked before any model work: the per-unit clock,
-    /// the ceiling, one selection of at most [`GRAPH_ASK_MAX_UNITS`]
-    /// distinct units, and the question itself.
+    /// one selection of distinct units, and the question itself. A ceiling
+    /// of human asks the next authorised role (OF-506), never stops at big.
     pub fn validate(&self) -> MemoryResult<()> {
         crate::memory::caps::check_deadline_ms(self.unit_deadline_ms)?;
-        if self.ceiling == Some(DecisionRung::Human) {
-            return Err(MemoryError::bad_request_with(
-                "vault.graph.ask never queues an owner ask",
-                &["Name a ceiling below human; big is the highest a graph answer climbs."],
-            ));
-        }
         match (&self.select, self.units.is_empty()) {
             (Some(_), false) => {
                 return Err(MemoryError::bad_request_with(
@@ -123,12 +114,6 @@ impl GraphAskRequest {
             }
             _ => {}
         }
-        if self.units.len() > GRAPH_ASK_MAX_UNITS {
-            return Err(MemoryError::bad_request_with(
-                format!("vault.graph.ask names more than {GRAPH_ASK_MAX_UNITS} units"),
-                &["Ask over fewer units at once."],
-            ));
-        }
         let mut seen = HashSet::with_capacity(self.units.len());
         if !self.units.iter().all(|unit| seen.insert(*unit)) {
             return Err(MemoryError::bad_request_with(
@@ -137,11 +122,11 @@ impl GraphAskRequest {
             ));
         }
         if let Some(select) = self.select
-            && (select.limit == 0 || select.limit > GRAPH_ASK_MAX_UNITS)
+            && select.limit == 0
         {
             return Err(MemoryError::bad_request_with(
-                format!("select.limit must be between 1 and {GRAPH_ASK_MAX_UNITS}"),
-                &["Select fewer units at once."],
+                "select.limit must be at least 1",
+                &["Select one unit or more."],
             ));
         }
         if self
@@ -151,7 +136,7 @@ impl GraphAskRequest {
         {
             return Err(MemoryError::bad_request_with(
                 "the criteria are not valid",
-                &["Give each list at most 16 nonempty lines of at most 512 bytes."],
+                &["Give each list nonempty lines of at most 512 bytes."],
             ));
         }
         self.question.validate().map_err(|_| {
@@ -310,8 +295,8 @@ pub struct QuestionCreateRequest {
     /// binding?, criteria?, audience?, posture?, media?, deadline_ms?}`.
     /// `question` is `{text, class, contract, accept_type}`, with no `id` or
     /// `version`: the engine owns both and refuses either. `criteria` is
-    /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each at most 16
-    /// lines of 512 bytes; `audience` is `asker`; `posture` is `managed`,
+    /// `{yes_if_all, no_if_any, not_a_reason_to_say_no}`, each a list of
+    /// lines of at most 512 bytes; `audience` is `asker`; `posture` is `managed`,
     /// `relay` or `self-host` (absent: the vault's); `media` is `{images,
     /// audio}` (each absent: on); `deadline_ms` is each call's clock, 1 to
     /// 60000.
@@ -360,7 +345,7 @@ pub struct QuestionPaused {
 /// question's backfill. From `at` (now when absent) the question pump
 /// answers, once, each covered unit with no answer at `expected_version`.
 /// A later schedule replaces it and an edit retires it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct QuestionBackfillRequest {
     pub id: EntityId,
@@ -369,6 +354,11 @@ pub struct QuestionBackfillRequest {
     /// When the backfill falls due, in unix seconds.
     #[serde(default)]
     pub at: Option<u64>,
+    /// An explicit recipe for a graph question: each unit and the exact
+    /// sources its answer is shown, in place of the unit's neighbours
+    /// (FIX 2383). Absent or empty: the default neighbourhood recipe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<crate::llm::decision::questions::GraphQuestionInput>,
 }
 
 /// `vault.questions.read`'s input: one of the caller's standing questions,
@@ -380,6 +370,14 @@ pub struct QuestionReadRequest {
     /// A past version; the current one when absent.
     #[serde(default)]
     pub version: Option<u32>,
+}
+
+/// `vault.questions.outcome_windows`'s input: the caller's standing question
+/// whose closed outcome windows to read, across its versions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct QuestionOutcomeWindowsRequest {
+    pub id: EntityId,
 }
 
 /// `vault.questions.answers`'s input: the caller's standing question whose

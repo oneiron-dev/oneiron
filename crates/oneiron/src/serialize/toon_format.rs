@@ -83,6 +83,27 @@ fn write_toon_array_header(
     fields: Option<&[String]>,
     depth: usize,
 ) {
+    write_toon_table_header(out, key, length, fields, depth, false);
+}
+
+fn write_toon_keyed_table_header(
+    out: &mut String,
+    key: Option<&str>,
+    length: usize,
+    fields: &[String],
+    depth: usize,
+) {
+    write_toon_table_header(out, key, length, Some(fields), depth, true);
+}
+
+fn write_toon_table_header(
+    out: &mut String,
+    key: Option<&str>,
+    length: usize,
+    fields: Option<&[String]>,
+    depth: usize,
+    keyed: bool,
+) {
     if let Some(key) = key {
         write_indent(out, depth * 2);
         write_toon_key(out, key);
@@ -90,7 +111,11 @@ fn write_toon_array_header(
 
     out.push('[');
     out.push_str(&length.to_string());
-    out.push(']');
+    if keyed {
+        out.push_str(":]");
+    } else {
+        out.push(']');
+    }
 
     if let Some(fields) = fields {
         out.push('{');
@@ -104,6 +129,30 @@ fn write_toon_array_header(
     }
 
     out.push(':');
+}
+
+fn write_toon_keyed_row(
+    out: &mut String,
+    row: &Map<String, Value>,
+    fields: &[String],
+    indent: usize,
+) {
+    write_indent(out, indent);
+    if let Some(id) = row.get("id") {
+        write_toon_primitive(out, id);
+    } else {
+        out.push_str("null");
+    }
+    out.push(':');
+
+    for (field_index, field) in fields.iter().enumerate() {
+        out.push(if field_index == 0 { ' ' } else { ',' });
+        if let Some(value) = row.get(field) {
+            write_toon_primitive(out, value);
+        } else {
+            out.push_str("null");
+        }
+    }
 }
 
 fn write_toon_primitive_array(out: &mut String, key: Option<&str>, values: &[Value], depth: usize) {
@@ -125,6 +174,21 @@ fn write_toon_tabular_array(
     fields: &[String],
     depth: usize,
 ) {
+    if let Some(entity_fields) = toon_entity_fields(fields) {
+        write_toon_keyed_table_header(out, key, values.len(), &entity_fields, depth);
+        out.push('\n');
+        for (row_index, value) in values.iter().enumerate() {
+            let Some(row) = value.as_object() else {
+                continue;
+            };
+            write_toon_keyed_row(out, row, &entity_fields, (depth + 1) * 2);
+            if row_index + 1 < values.len() {
+                out.push('\n');
+            }
+        }
+        return;
+    }
+
     write_toon_array_header(out, key, values.len(), Some(fields), depth);
     out.push('\n');
 
@@ -246,6 +310,21 @@ fn write_toon_list_item_tabular_array(
     fields: &[String],
     depth: usize,
 ) {
+    if let Some(entity_fields) = toon_entity_fields(fields) {
+        write_toon_keyed_table_header(out, None, values.len(), &entity_fields, depth);
+        out.push('\n');
+        for (row_index, value) in values.iter().enumerate() {
+            let Some(row) = value.as_object() else {
+                continue;
+            };
+            write_toon_keyed_row(out, row, &entity_fields, (depth + 2) * 2);
+            if row_index + 1 < values.len() {
+                out.push('\n');
+            }
+        }
+        return;
+    }
+
     out.push('[');
     out.push_str(&values.len().to_string());
     out.push_str("]{");
@@ -279,6 +358,16 @@ fn write_toon_list_item_tabular_array(
             out.push('\n');
         }
     }
+}
+
+fn toon_entity_fields(fields: &[String]) -> Option<Vec<String>> {
+    fields.iter().any(|field| field == "id").then(|| {
+        fields
+            .iter()
+            .filter(|field| *field != "id")
+            .cloned()
+            .collect()
+    })
 }
 
 fn toon_tabular_fields(values: &[Value]) -> Option<Vec<String>> {

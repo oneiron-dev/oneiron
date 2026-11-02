@@ -1,13 +1,13 @@
-//! Decision host person-threshold refresh.
+//! Decision host person- and think-threshold refresh.
 //! Entry: spawn_person_threshold.
 //! Definitions: this module owns the listed functions; types stay in the parent.
 
 use super::{Arc, PERSON_THRESHOLD_SWEEP, SyncServer};
 
-/// Keeps the host's person row on the newest accepted Coach revision: it
-/// re-reads after each committed change, and every sweep for an accept whose
-/// commit sent no change signal. `None` when the recipe names no person
-/// question.
+/// Keeps the host's person and think rows on the newest accepted Coach
+/// revisions (FIX 2437): it re-reads after each committed change, and every
+/// sweep for an accept whose commit sent no change signal. `None` when the
+/// recipe names neither row.
 pub(crate) fn spawn_person_threshold(
     server: &Arc<SyncServer>,
 ) -> Option<tokio::task::JoinHandle<()>> {
@@ -21,7 +21,10 @@ pub(crate) fn spawn_person_threshold_admitted(
     server: &Arc<SyncServer>,
     admit: crate::server::HousekeepingAdmission,
 ) -> Option<tokio::task::JoinHandle<()>> {
-    server.decision_host().person_start?;
+    let host = server.decision_host();
+    if host.person_start.is_none() && host.think_start.is_none() {
+        return None;
+    }
     let weak = Arc::downgrade(server);
     // Subscribed before the first read, so no change between them is lost.
     let mut changes = server.vault().subscribe_proactivity_changes();
@@ -37,9 +40,9 @@ pub(crate) fn spawn_person_threshold_admitted(
                 let Some(_admission) = admission else {
                     return Ok(());
                 };
-                server
-                    .decision_host()
-                    .refresh_person_threshold(server.vault())
+                let host = server.decision_host();
+                host.refresh_person_threshold(server.vault())?;
+                host.refresh_think_threshold(server.vault())
             })
             .await;
             match ran {

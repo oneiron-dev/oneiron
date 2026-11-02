@@ -2,8 +2,9 @@
 
 use super::{
     McpCallContext, McpCarrierPolicy, McpGatewayError, McpServed, execute_mcp_board_verb,
-    mcp_current_board, mcp_endpoint_result, mcp_page_cursor_error, mcp_preflight_page,
-    mcp_release_listed, mcp_request_id, mcp_resolve_page, mcp_scoped_tasks_section,
+    mcp_current_board, mcp_endpoint_result, mcp_facade_error, mcp_page_cursor_error,
+    mcp_preflight_page, mcp_release_listed, mcp_request_id, mcp_resolve_page,
+    mcp_scoped_tasks_section,
 };
 use crate::error::{ApiError, ApiErrorDetails, ErrorCode};
 use crate::mcp::McpActorClass;
@@ -23,7 +24,8 @@ fn mcp_tasks_section(
     rows: oneiron::context_board::TasksSectionRows,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Result<(Value, crate::mcp::McpPageSource), McpGatewayError> {
-    let (section, scope_omitted) = mcp_scoped_tasks_section(server, actor, rows, &[], served)?;
+    let (section, scope_omitted) =
+        mcp_scoped_tasks_section(server, actor, rows, &[], served, &Default::default())?;
     // The footer type is `oneiron::context_board::tasks::TasksOverflow`,
     // whose module is private and which `context_board` does not
     // re-export, so the method item cannot be named from this crate.
@@ -159,8 +161,9 @@ pub(crate) async fn execute_mcp_generated_verb(
             )
         } else {
             let (output, source, carrier, producer_epoch) = if args.tool.memory_method().is_some() {
+                // The native read fan-out, on the heap (FIX 12072).
                 let (output, capabilities, producers) =
-                    super::memory_response::execute(server, &args, actor).await?;
+                    Box::pin(super::memory_response::execute(server, &args, actor)).await?;
                 served.extend(producers);
                 // One native response, with its own bounded query/batch
                 // semantics. Do not invent an MCP cursor over nested DTOs.
@@ -183,8 +186,15 @@ pub(crate) async fn execute_mcp_generated_verb(
                 } else {
                     None
                 };
-                let produced =
-                    execute_mcp_agent_verb(server, &args, actor, &mut served, &mut hooks).await;
+                // The generated verb table's fan-out, on the heap (FIX 12072).
+                let produced = Box::pin(execute_mcp_agent_verb(
+                    server,
+                    &args,
+                    actor,
+                    &mut served,
+                    &mut hooks,
+                ))
+                .await;
                 let produced = match produced {
                     // A verb hook's stop is a result the client reads, not a
                     // refusal (ARCH-0080 §3).
@@ -225,6 +235,15 @@ pub(crate) async fn execute_mcp_generated_verb(
     .await?;
     // The granted budget is ENFORCED here, not merely reported.
     mcp_cap_verb_rows(&mut output, &mut page, snapshot.source);
+    // A continuation that goes back inside the call's own argument (FIX 9175).
+    if let Some(resume) = snapshot
+        .source
+        .resume
+        .filter(|resume| resume.within.is_some())
+    {
+        let arguments = serde_json::to_value(&args.payload.arguments).unwrap_or_default();
+        page.resume_within(resume, arguments.get(resume.argument));
+    }
     // A step's type feedback leaves on its own release (FIX 10390).
     let feedback = super::type_feedback_release::hold_verb_feedback(args.tool.name, &mut output);
     let structured = json!({
@@ -365,6 +384,20 @@ pub(crate) fn mcp_text_content(text: impl Into<String>) -> Value {
 }
 
 pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
+    if let Some(legal_hold) = error.legal_hold().cloned().map(Box::new) {
+        return McpGatewayError::new(-32020, "legal_hold", error.message())
+            .with_legal_hold(legal_hold);
+    }
+    // The typed 403 refusals answer as the facade's copy of each does: one
+    // MCP code and stable kind, whichever door reported it (FIX 11434).
+    let typed = match error.code() {
+        ErrorCode::HostActionRequiresSupportGrant => Some(MCP_HOST_ACTION_REFUSED),
+        ErrorCode::OwnerBindingRequired => Some(MCP_OWNER_BINDING_REQUIRED),
+        _ => None,
+    };
+    if let Some(kind) = typed {
+        return McpGatewayError::new(-32020, kind, error.message());
+    }
     let code = match error.code() {
         ErrorCode::BadRequest => -32602,
         ErrorCode::NotFound => -32004,
@@ -384,6 +417,10 @@ pub(crate) fn mcp_api_error(error: ApiError) -> McpGatewayError {
 /// The stable MCP kind of the typed refusal a host credential gets where no
 /// host acts as a person (FIX 2222); its code is -32020, as every refusal's.
 pub(super) const MCP_HOST_ACTION_REFUSED: &str = "host_action_requires_support_grant";
+
+/// The stable MCP kind of the typed refusal an owner act gets without the
+/// owner binding it needs (FIX 11434); its code is -32020 too.
+pub(super) const MCP_OWNER_BINDING_REQUIRED: &str = "owner_binding_required";
 
 pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> McpGatewayError {
     // ONE-1936: a stale write-verb target gets its own stable kind, not the
@@ -424,75 +461,8 @@ pub(crate) fn mcp_engine_error(context: &'static str, error: oneiron::Error) -> 
         ErrorKind::HostActionRequiresSupportGrant => {
             McpGatewayError::new(-32020, MCP_HOST_ACTION_REFUSED, error.to_string())
         }
+        ErrorKind::LegalHold => mcp_facade_error(oneiron::MemoryError::from(error)),
         _ => McpGatewayError::new(-32603, "engine_error", format!("{context}: {error}")),
-    }
-}
-
-/// Maps a typed engine facade error onto the gateway's JSON-RPC vocabulary.
-pub(crate) fn mcp_facade_error(error: oneiron::MemoryError) -> McpGatewayError {
-    if let Some(stop) = error.hook {
-        return mcp_hook_stop(*stop);
-    }
-    if let Some(correction) = error.wrong_root {
-        let mut refusal = McpGatewayError::new(-32601, "wrong_root", error.message);
-        refusal.wrong_root = Some(correction);
-        return refusal;
-    }
-    let code = match error.code.as_str() {
-        oneiron::MEMORY_CODE_NOT_FOUND => -32004,
-        // OF-123: an effect whose person is not settled yet is a typed
-        // refusal like these, never an argument error; its kind below names it.
-        oneiron::MEMORY_CODE_FORBIDDEN
-        | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
-        | oneiron::memory::MEMORY_CODE_BUDGET_SPENT
-        | oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED
-        | oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED
-        | oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT
-        | oneiron::workspace_roster::MEMORY_CODE_AGENT_THREAD_WALK_IN_FORBIDDEN
-        | oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR
-        | oneiron::MEMORY_CODE_INVALID_STATE => -32020,
-        oneiron::MEMORY_CODE_INTERNAL | oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => -32603,
-        _ => -32602,
-    };
-    // A paid call's own refusals keep their names: a client tells a spent
-    // line from a model that did not answer without reading the sentence.
-    let kind = match error.code.as_str() {
-        oneiron::memory::MEMORY_CODE_BUDGET_SPENT => Some("budget_spent"),
-        oneiron::memory::MEMORY_CODE_MODEL_UNAVAILABLE => Some("model_unavailable"),
-        // OF-123: an effect whose person is not settled yet keeps its name
-        // too, so an agent reads it as `error.data.error_code`, not prose.
-        oneiron::memory::MEMORY_CODE_IDENTITY_UNSETTLED => Some("identity_unsettled"),
-        // FIX 2222: one stable kind for the typed host refusal, whichever
-        // door reported it.
-        oneiron::memory::MEMORY_CODE_HOST_ACTION_REFUSED => Some(MCP_HOST_ACTION_REFUSED),
-        // WILL-PLAN L13 row 03: the room's audience gave no consent to this
-        // management; an agent reads the name, not the sentence.
-        oneiron::memory::MEMORY_CODE_ROOM_MANAGEMENT => {
-            Some("off_record_room_management_consent_unavailable")
-        }
-        // FIX 7650: a foreign guest's proposal spool met the host's disk
-        // floor; the agent reads the name, not the sentence.
-        oneiron_contracts::memory::MEMORY_CODE_SANDBOX_PROPOSAL_DISK_FLOOR => {
-            Some("sandbox_proposal_disk_floor")
-        }
-        _ => None,
-    };
-    if let Some(kind) = kind {
-        // A model that did not answer says when to call again (FIX 3194).
-        return McpGatewayError {
-            retry_after: error.retry_after,
-            ..McpGatewayError::new(code, kind, error.message)
-        };
-    }
-    // A facade refusal carrying a successor keeps the same stable kind and
-    // typed data the engine-error path emits (ONE-1936) — one vocabulary for
-    // one condition, whichever door reported it.
-    match error.successor_short_id {
-        Some(successor_short_id) => {
-            McpGatewayError::new(code, "write_verb_target_stale", error.message)
-                .with_successor_short_id(successor_short_id)
-        }
-        None => McpGatewayError::new(code, "facade_error", error.message),
     }
 }
 
@@ -606,10 +576,25 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("hook".to_owned(), json!(*stop));
     }
+    if let Some(legal_hold) = error.legal_hold
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("legal_hold".to_owned(), json!(*legal_hold));
+    }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
     {
         object.insert("retry_after".to_owned(), json!(retry_after));
+    }
+    if let Some(resets_at) = error.resets_at
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("resets_at".to_owned(), json!(*resets_at));
+    }
+    if !error.reason_codes.is_empty()
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("reason_codes".to_owned(), json!(error.reason_codes));
     }
     if let Some(steps) = error.program_steps
         && let Some(object) = data.as_object_mut()
@@ -711,17 +696,25 @@ async fn mcp_task_row<T: Send + 'static>(
     row: impl FnOnce(&oneiron::Memory<'_>) -> oneiron::memory::MemoryResult<T> + Send + 'static,
 ) -> Result<(oneiron::memory::MemoryResult<T>, Vec<oneiron::EntityId>), McpGatewayError> {
     let (server, actor) = (Arc::clone(server), actor.clone());
+    // A code-mode call writes for the leased run its origin seals, on this
+    // thread too (FIX 10748).
+    let run_writes = surface
+        .run
+        .as_ref()
+        .and_then(|run| oneiron::skill_attribution::RunWriteToken::of_origin(&run.origin));
     tokio::task::spawn_blocking(move || {
         let producers = oneiron::memory::ProducerRows::default();
-        let output = server
-            .decision_host()
-            .task_decisions()
-            .map_err(oneiron::memory::MemoryError::from)
-            .and_then(|decisions| {
-                row(&surface
-                    .memory(&server, &actor, &producers)
-                    .with_task_decisions(decisions))
-            });
+        let output = oneiron::skill_attribution::with_run_write_token(run_writes.as_ref(), || {
+            server
+                .decision_host()
+                .task_decisions()
+                .map_err(oneiron::memory::MemoryError::from)
+                .and_then(|decisions| {
+                    row(&surface
+                        .memory(&server, &actor, &producers)
+                        .with_task_decisions(decisions))
+                })
+        });
         (output, producers.take())
     })
     .await
@@ -763,7 +756,9 @@ use super::{board_setup, skill_execution, verb_hooks};
 #[path = "generated/agent_verb_dispatch.rs"]
 mod agent_verb_dispatch;
 use agent_verb_dispatch::execute_mcp_agent_verb;
-pub(crate) use agent_verb_dispatch::{execute_agent_verb_input, mcp_agent_verb_arguments};
+pub(crate) use agent_verb_dispatch::{
+    execute_agent_verb_input, mcp_agent_verb_arguments, mcp_agent_verb_input,
+};
 
 #[cfg(test)]
 mod tests {

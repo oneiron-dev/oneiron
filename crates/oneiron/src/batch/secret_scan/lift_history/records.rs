@@ -160,7 +160,7 @@ pub(super) fn remark(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<D
 /// beside its marks, past the owner's rulings in the record; `true` when
 /// one was added.
 fn remark_file(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId, bytes: &[u8]) -> Result<bool> {
-    let Some(known) = KnownValues::load_in_writer(&vault.store, txn)? else {
+    let Some(known) = KnownValues::shared_in_writer(&vault.store, txn)? else {
         return Ok(false);
     };
     let kept = KeptValues::for_records_in_txn(&vault.store, txn, [*id])?;
@@ -187,9 +187,10 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
         return Ok(Done::Clean);
     };
     let raw = vault.materialized_row_in_txn(txn, &id, raw)?;
-    // A record a writer has cleaned since the census read it is done.
+    // A record a writer has cleaned since the census read it is done; a
+    // file still settles a known-value hit (FIX 8647).
     let Some(reason) = hit(vault, txn, &id, &raw)? else {
-        return Ok(Done::Clean);
+        return remark(vault, txn, key);
     };
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("lift sweep entity header"))?;
@@ -198,7 +199,6 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     }
     // A record's prose lives in its document, whose history no door
     // rewrites: its keys are marked through the document's own door.
-    #[cfg(feature = "sync")]
     if header.entity_type != ENTITY_TYPE_NOTE
         && crate::entity_doc::has_record_head(&vault.store, txn, &id)?
     {
@@ -207,8 +207,17 @@ pub(super) fn lift(vault: &Vault, txn: &mut RwTxn<'_>, key: &[u8]) -> Result<Don
     }
     match header.entity_type {
         ENTITY_TYPE_NOTE => {
-            crate::note::lift_note_in_txn(vault, txn, id)?;
-            after_rewrite(vault, txn, &id, reason, false)
+            // Its document's history no door rewrites either: each text the
+            // census reads is marked where it is kept (FIX 2967).
+            let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+            let mut kept = vec![body.to_vec()];
+            for (_, text) in index_text(vault, txn, &id)?
+                .into_iter()
+                .chain(record_text::staged(vault, txn, &id)?)
+            {
+                kept.push(text.into_bytes());
+            }
+            crate::note::lift_note_in_txn(vault, txn, id, &kept).map(super::retained::text_done)
         }
         ENTITY_TYPE_ASSET => {
             mark_file(vault, txn, &id, &header, &raw)?;
@@ -271,17 +280,16 @@ fn hit(vault: &Vault, txn: &RoTxn<'_>, id: &EntityId, raw: &[u8]) -> Result<Opti
     ) {
         return Ok(None);
     }
-    if let Some(reason) = raw
-        .get(ENTITY_METADATA_HEADER_LEN..)
-        .and_then(write_payload_hit)
-    {
+    // A NOTE's text its lift marked is done (FIX 2967).
+    let note = header.entity_type == ENTITY_TYPE_NOTE;
+    let body = raw.get(ENTITY_METADATA_HEADER_LEN..).unwrap_or_default();
+    if let Some(reason) = record_text::unmarked_hit(vault, txn, note, body)? {
         return Ok(Some(reason));
     }
-    if let Some(reason) = index_text(vault, txn, id)?
-        .iter()
-        .find_map(|(_, text)| write_payload_hit(text.as_bytes()))
-    {
-        return Ok(Some(reason));
+    for (_, text) in index_text(vault, txn, id)? {
+        if let Some(reason) = record_text::unmarked_hit(vault, txn, note, text.as_bytes())? {
+            return Ok(Some(reason));
+        }
     }
     record_text::hit(vault, txn, id, header.entity_type)
 }

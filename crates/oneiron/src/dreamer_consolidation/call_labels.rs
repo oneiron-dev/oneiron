@@ -36,8 +36,10 @@ use crate::llm::decision::DecisionWireLabels;
 
 mod decision_rungs;
 mod relationships;
+mod subject;
 pub(super) use decision_rungs::LabelledRungs;
 pub(super) use relationships::{CandidateRel, relationship_lines};
+pub(super) use subject::subject_label;
 
 /// The key a call's label binding rides under in the host's own
 /// provider-options namespace.
@@ -230,6 +232,15 @@ impl CallLabelMap {
                     *id,
                 )
             })
+    }
+
+    /// Every row this call labelled, its questions aside: each id its
+    /// rendered input names (FIX 6998).
+    pub(super) fn rows(&self) -> impl Iterator<Item = EntityId> + '_ {
+        self.ids
+            .iter()
+            .filter(|(kind, _)| **kind != LabelKind::Question)
+            .flat_map(|(_, ids)| ids.iter().copied())
     }
 
     /// The id `label` names in this call, when it names one.

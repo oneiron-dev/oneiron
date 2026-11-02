@@ -130,13 +130,17 @@ fn refusal(error: MemoryError) -> EnvelopedApiError {
     let api = match error.code.as_str() {
         MEMORY_CODE_NOT_FOUND => ApiError::not_found("message_result", None),
         MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),
-        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => ApiError::new(
+        MEMORY_CODE_FORBIDDEN => ApiError::new(
             error.message,
             ApiErrorDetails::Forbidden {
                 required_scope: None,
             },
             error.suggestions,
         ),
+        // The authority log's refusal keeps its own code (FIX 6032).
+        MEMORY_CODE_OWNER_BINDING_REQUIRED => {
+            ApiError::owner_binding_required(error.message, None, error.suggestions)
+        }
         _ => {
             tracing::error!(code = %error.code, "message result read failed");
             ApiError::internal_server_error("message result read failed")

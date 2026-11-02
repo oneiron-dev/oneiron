@@ -4,13 +4,14 @@ use std::fmt;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::connector_key::EffectorBudgetCharge;
 use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::outbound_chokepoint::OutboundEffectResult;
 use crate::outbound_grant::StandingOutboundGrant;
 use crate::outbound_intent_ledger::{
-    BudgetClass, FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason,
-    IntentLedgerError, IntentResolution, IntentState, OutboundSendOutcome, UnconfirmedDelivery,
+    FrozenOutboundCall, IntentDispatchResult, IntentEscalationReason, IntentLedgerError,
+    IntentResolution, IntentState, OutboundSendOutcome, UnconfirmedDelivery,
 };
 
 use super::authority::{OutboundBindingAuthority, observed_freeze_events_since};
@@ -42,9 +43,26 @@ pub struct ScopedMcpDispatchResult {
     held_ask: Option<super::approval::HeldConnectorAsk>,
     /// The ledger stopped the call while its delivery was still unknown.
     delivery_unresolved: bool,
+    /// The governing key's budget charge for this dispatch, as the
+    /// chokepoint made it: its post-debit read, matched rows and fired ladder
+    /// events, the catalog pool's beside them (FIX 3759). An echo of the
+    /// charge, never a second delivery lane; `None` when no key governed or
+    /// a replay charged nothing.
+    pub budget_charge: Option<EffectorBudgetCharge>,
+    /// A full count-bound budget window paced the call until this engine
+    /// instant, Unix seconds (FIX 8686): it was not sent, recorded or
+    /// charged, and goes again once its windows open.
+    paced_until: Option<u64>,
 }
 
 impl ScopedMcpDispatchResult {
+    /// When a full count-bound budget window paced this call, the instant
+    /// (Unix seconds) its windows all open again (FIX 8686).
+    #[must_use]
+    pub fn paced_until(&self) -> Option<u64> {
+        self.paced_until
+    }
+
     /// FIX 6424 part 3: the approve-once digest (64 lower-hex) the Gate
     /// decision that held this call names, copied from it: the owner's press
     /// on it releases exactly this prepared call. `None` for any other
@@ -107,6 +125,8 @@ impl fmt::Debug for ScopedMcpDispatchResult {
             .field("gate_reasons", &self.gate_reasons)
             .field("held_ask", &self.held_ask)
             .field("delivery_unresolved", &self.delivery_unresolved)
+            .field("budget_charge", &self.budget_charge)
+            .field("paced_until", &self.paced_until)
             .finish()
     }
 }
@@ -141,19 +161,18 @@ pub(super) fn execute_scoped_mcp_outbound_call<S: OutboundResultSender>(
         call_seq,
     );
     let idempotency_supported = prepared_call.idempotency_supported();
-    // The Send class follows the catalog entry (ONE-1794): only a
-    // counterparty-communication connector's calls debit `Sends` rows.
+    // The Send class follows the dispatched tool's own effect (FIX 8688): a
+    // tool its approved slate row declares read-only never debits `Sends`;
+    // any other tool on a counterparty-communication catalog does.
     let budget_class = {
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        if crate::connector_key::scoped_server_debits_sends_in_txn(
+        crate::connector_key::scoped_tool_effect_in_txn(
             &vault.store,
             &txn,
             &call.server,
-        )? {
-            BudgetClass::Send
-        } else {
-            BudgetClass::Operation
-        }
+            prepared_call.is_read_only(),
+        )?
+        .budget_class()
     };
     let prepared = crate::outbound_chokepoint::PreparedEffect {
         attempt_id,
@@ -310,6 +329,8 @@ fn dispatch_result<S>(
         gate_reasons,
         held_ask: None,
         delivery_unresolved,
+        budget_charge: effect.budget_charge,
+        paced_until: effect.paced_until,
     }
 }
 
@@ -513,6 +534,10 @@ impl<S: OutboundResultSender> crate::outbound_chokepoint::OutboundTransport
 
     fn settled_result(&self) -> Option<&[u8]> {
         self.settled_body.as_deref()
+    }
+
+    fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
+        self.inner.remote_task()
     }
 }
 

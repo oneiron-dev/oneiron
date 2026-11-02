@@ -1,13 +1,18 @@
 #!/usr/bin/env bash
-# Builds the desktop guest image on a Linux host and prints its local image
-# id (`sha256:<64 hex>`), the value `[desktop] image` pins. Nothing is pushed
-# to a registry. See README.md.
+# Builds the desktop guest image on a Linux host and prints its image id:
+# the config digest (`sha256:<64 hex>`), the id a VM vault's guest-runtime
+# descriptor and its podman store name (FIX 8938). Nothing is pushed to a
+# registry. See README.md.
 #
 # It builds `cua-driver` from trycua/cua at CUA_REV (cloned into
 # ONEIRON_CUA_SRC when there is none), and oneiron-fence and oneiron-guest
 # from this checkout as it stands, then builds the Dockerfile here with the
-# driver's sha256. Every other line of output goes to stderr, so stdout holds
-# the image id alone.
+# driver's sha256. The Dockerfile is the only route.
+# --store-id prints instead the id this docker store answers the image as
+# (`docker image inspect` .Id): the manifest digest under the containerd
+# image store, the config digest under the classic one. Both ids also go
+# to stderr, as does every other line of output, so stdout holds the image
+# id alone.
 set -euo pipefail
 
 # trycua/cua release 0.36.0 (MIT); the wire the engine speaks is this one's.
@@ -19,6 +24,61 @@ CUA_REV=6d6c734c127025fb39ad5d585a10382808b39dc1
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(git -C "$here" rev-parse --show-toplevel)
+
+usage() {
+  echo "usage: build.sh [--store-id]" >&2
+  exit 2
+}
+
+print=config
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --store-id) print=store; shift ;;
+    *) usage ;;
+  esac
+done
+
+# The one stdout line: the config digest, or with --store-id the store's id.
+emit() {
+  local store=$1 config=$2
+  echo "this docker store answers the image as $store; its config digest is $config" >&2
+  if [ "$print" = store ]; then echo "$store"; else echo "$config"; fi
+}
+
+# The archive's ids, as its own manifest.json and index.json name them:
+# `<config digest> <manifest digest or -> <tag>`. The config digest is
+# checked against the config's bytes (guest/browser/build.sh and
+# deploy/firecracker/build.py archive_image read it the same way).
+archive_ids() {
+  python3 - "$1" <<'PY'
+import hashlib
+import json
+import sys
+import tarfile
+from pathlib import PurePosixPath
+
+with tarfile.open(sys.argv[1]) as tar:
+    listed = tar.extractfile("manifest.json")
+    manifest = json.load(listed) if listed else None
+    if not isinstance(manifest, list) or len(manifest) != 1 or not isinstance(manifest[0], dict):
+        sys.exit("an image archive's manifest must name exactly one image")
+    config = manifest[0].get("Config")
+    member = tar.extractfile(config) if isinstance(config, str) else None
+    if member is None:
+        sys.exit("an image archive holds no config its manifest names")
+    digest = hashlib.sha256(member.read()).hexdigest()
+    if PurePosixPath(config).name.removesuffix(".json") != digest:
+        sys.exit("an image archive's config is not the bytes its name says")
+    try:
+        index = json.load(tar.extractfile("index.json"))
+        manifests = index["manifests"]
+        named = manifests[0]["digest"] if len(manifests) == 1 else "-"
+    except (AttributeError, KeyError, TypeError, ValueError):
+        named = "-"
+    tags = manifest[0].get("RepoTags") or ["-"]
+print(f"sha256:{digest} {named} {tags[0]}")
+PY
+}
 
 if [ ! -d "$ONEIRON_CUA_SRC/.git" ]; then
   git clone https://github.com/trycua/cua "$ONEIRON_CUA_SRC" >&2
@@ -68,4 +128,9 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 
-echo "$image"
+# The config digest comes from the saved image's own manifest.json,
+# whichever id this store's --iidfile gave.
+"$ONEIRON_DESKTOP_DOCKER" save -o "$context/image.tar" "$image" >&2
+ids=$(archive_ids "$context/image.tar")
+read -r config _ _ <<< "$ids"
+emit "$("$ONEIRON_DESKTOP_DOCKER" image inspect --format '{{.Id}}' "$image")" "$config"

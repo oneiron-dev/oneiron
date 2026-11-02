@@ -1,7 +1,7 @@
 //! Generic bounded static HTTP index. No marketplace-specific URL rules: the
 //! engine's own schema-1 index, or the agentskills.io well-known discovery
 //! index (`/.well-known/agent-skills/index.json`) any publisher serves.
-use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_FILES, MAX_HUB_PACKAGE_TOTAL_BYTES};
+use super::package::{MAX_HUB_FILE_BYTES, MAX_HUB_PACKAGE_TOTAL_BYTES};
 use super::package_codec::invalid;
 use super::{HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillHubAdapter, SkillHubKind};
 use crate::{entity_id::EntityId, error::Result};
@@ -125,9 +125,8 @@ impl HttpEndpointSkillHubAdapter {
             .schema
             .as_deref()
             .is_some_and(|schema| schema != WELL_KNOWN_SCHEMA)
-            || index.skills.len() > 4096
         {
-            return Err(invalid("unsupported or oversized discovery index"));
+            return Err(invalid("unsupported discovery index"));
         }
         let mut names = std::collections::BTreeSet::new();
         for entry in &index.skills {
@@ -151,8 +150,8 @@ impl HttpEndpointSkillHubAdapter {
     fn index(value: serde_json::Value) -> Result<Index> {
         let index: Index =
             serde_json::from_value(value).map_err(|_| invalid("invalid hub index"))?;
-        if index.schema != 1 || index.packages.len() > 4096 {
-            return Err(invalid("unsupported or oversized hub index"));
+        if index.schema != 1 {
+            return Err(invalid("unsupported hub index"));
         }
         let mut aliases = std::collections::BTreeSet::new();
         for entry in &index.packages {
@@ -164,7 +163,6 @@ impl HttpEndpointSkillHubAdapter {
                 || entry.description.len() > 4096
                 || entry.version.len() > 128
                 || entry.files.is_empty()
-                || entry.files.len() > MAX_HUB_PACKAGE_FILES
             {
                 return Err(invalid("invalid or duplicate hub index entry"));
             }
@@ -368,9 +366,11 @@ impl HttpEndpointSkillHubAdapter {
                 Ok(vec![HubFile::new("SKILL.md", bytes)])
             }
             (Some("archive"), Some(url), _) => {
+                // The package fetch deadline the file list reads under.
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
                 let bytes = self.fetch(&self.same_origin(url)?, MAX_HUB_PACKAGE_TOTAL_BYTES)?;
                 check_digest(entry, &bytes)?;
-                let files = super::skill_archive::skill_archive(&bytes)?;
+                let files = super::skill_archive::skill_archive(&bytes, deadline)?;
                 crate::skill::canonical_skill_tree_hash(
                     files
                         .iter()
@@ -378,7 +378,7 @@ impl HttpEndpointSkillHubAdapter {
                 )?;
                 Ok(files)
             }
-            (None, _, Some(files)) if !files.is_empty() && files.len() <= MAX_HUB_PACKAGE_FILES => {
+            (None, _, Some(files)) if !files.is_empty() => {
                 crate::skill::canonical_skill_tree_hash(
                     files.iter().map(|f| (f.as_str(), &[][..])),
                 )?;

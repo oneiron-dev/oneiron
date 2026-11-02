@@ -1,5 +1,5 @@
 //! Anthropic block-indexed SSE decoder, including thinking and tool input.
-use super::wire::{anthropic_finish_reason, parse_anthropic_usage};
+use super::wire::{anthropic_finish_reason, parse_anthropic_usage, unreported_finish_reason};
 use super::{
     AnthropicMessagesProviderStream, AnthropicMessagesStreamFrame, classify_anthropic_status,
 };
@@ -30,7 +30,10 @@ impl Default for AnthropicMessagesStreamAccumulator {
             tool_has_delta: Default::default(),
             signatures: BTreeMap::new(),
             usage: LlmUsage::zero(),
-            finish_reason: FinishReason::Stop,
+            // `Stop` is a claim the provider makes about the reply. A stream
+            // that reports no stop reason made none, so it finishes unreported
+            // until a message delta carries one (FIX 7804).
+            finish_reason: unreported_finish_reason(),
         }
     }
 }

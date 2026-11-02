@@ -149,6 +149,7 @@ pub(super) fn pack_signal_from_retrieval(signal: RetrievalSignal) -> Signal {
         | RetrievalSignal::Salience
         | RetrievalSignal::Confidence
         | RetrievalSignal::Gravity
+        | RetrievalSignal::Relevance
         | RetrievalSignal::Rerank => {
             unreachable!("blend/rerank score components are not context-pack retrieval channels")
         }
@@ -222,6 +223,7 @@ pub(super) fn skipped_by_profile_pack() -> ContextPack {
         tokens: super::PackTokenStats::default(),
         items_truncated: super::PackItemAccounting::item_budget(),
         items_dropped: super::PackItemAccounting::token_budget(),
+        deadline_exceeded: false,
     };
     let retrieval_quality = RetrievalQualityReport::default();
     ContextPack {

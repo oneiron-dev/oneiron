@@ -3,10 +3,14 @@ use super::ScopedRead;
 use super::agent_grants::{AskedFilter, HeldGrants};
 use crate::EntityId;
 use crate::access_grant::AccessContext;
-use crate::claim::{ClaimBody, decode_claim_body};
+use crate::claim::{ClaimBody, RelationshipScope, decode_claim_body};
+use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::federation::Scope;
-use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY};
+use crate::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY,
+    ENTITY_TYPE_TURN,
+};
 use crate::store::Store;
 use std::cell::RefCell;
 
@@ -27,10 +31,10 @@ fn private_scope(scope: Option<&rmpv::Value>) -> bool {
     private.unwrap_or(false)
 }
 
-/// The relationship a claim is scoped to and whether it is private, as
-/// relationship reads see them.
-pub(crate) fn claim_access_axes(body: &ClaimBody) -> (Option<EntityId>, bool) {
-    (body.rel, private_scope(body.scope.as_ref()))
+/// The relationship key a claim is scoped to (`all`, or its whole set) and
+/// whether it is private, as relationship reads see them.
+pub(crate) fn claim_access_axes(body: &ClaimBody) -> (RelationshipScope, bool) {
+    (body.rel.clone(), private_scope(body.scope.as_ref()))
 }
 
 /// The relationship authority the row checks of one read share in its one
@@ -130,11 +134,16 @@ impl<'v> ScopedRead<'v> {
             })
     }
 
+    /// Whether the relationship gate admits the claim `id` in `txn`, judged
+    /// by the reader's grants and memberships `authority` holds for this
+    /// serving txn: loaded at the first claim that needs them, then reused,
+    /// as [`Self::relationship_raw_allowed_in`] reuses them (FIX 11915).
     pub(super) fn relationship_claim_allowed_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         body: &ClaimBody,
+        authority: &HeldAuthority<'v>,
     ) -> Result<bool> {
         if !self.relationship_gated_in(txn)? {
             return Ok(true);
@@ -143,6 +152,36 @@ impl<'v> ScopedRead<'v> {
         if self.support_disclosure_admits_in(txn, id, &read)? {
             return Ok(true);
         }
+        let mut held = authority.0.borrow_mut();
+        let context = match held.take() {
+            Some(context) => context,
+            None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
+        };
+        let allowed = read.allowed_by(&context);
+        *held = Some(context);
+        Ok(allowed)
+    }
+
+    /// [`Self::relationship_claim_allowed_in`] for a claim that may never
+    /// have landed, from the relationship axes and record Scope its Gate
+    /// decision kept (FIX 7499). No stored row names it, so no support slip
+    /// can name it either: only the reader's memberships and grants decide.
+    pub(super) fn relationship_axes_allowed_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        space: RelationshipScope,
+        private: bool,
+        record: &Scope,
+    ) -> Result<bool> {
+        if !self.relationship_gated_in(txn)? {
+            return Ok(true);
+        }
+        let read = RelationshipRead::Gated {
+            kind: ENTITY_TYPE_CLAIM,
+            space,
+            private,
+            record: record.clone(),
+        };
         let context = AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?;
         Ok(read.allowed_by(&context))
     }
@@ -212,9 +251,72 @@ impl<'v> ScopedRead<'v> {
             Some(context) => context,
             None => AccessContext::load(self.vault, txn, self.actor_key.principal_ref)?,
         };
-        let allowed = read.allowed_by(&context);
+        let allowed = read.allowed_by(&context)
+            || self.conversation_message_granted_in(txn, id, &read, &context);
         *held = Some(context);
         Ok(allowed)
+    }
+
+    /// Whether `context` holds a live read grant over the conversation the
+    /// MESSAGE `id` is part of (FIX 10895): a MESSAGE that names no
+    /// relationship and no private scope, which no membership or
+    /// relationship grant admits, is read on a `ConversationMessages` grant
+    /// over its conversation, found on this read's content as the
+    /// transcript finds it (the MESSAGE PartOf a TURN, the TURN ChildOf the
+    /// conversation). The grant stands in for the relationship check alone;
+    /// every other check on the row still binds. Edges that do not read
+    /// admit nothing.
+    fn conversation_message_granted_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        read: &RelationshipRead,
+        context: &AccessContext<'_>,
+    ) -> bool {
+        let RelationshipRead::Gated {
+            kind: ENTITY_TYPE_MESSAGE,
+            space: None,
+            private: false,
+            record,
+        } = read
+        else {
+            return false;
+        };
+        if !context.holds_conversation_grants() {
+            return false;
+        }
+        self.edge_targets_in(txn, id, EdgeKind::PartOf, ENTITY_TYPE_TURN)
+            .iter()
+            .flat_map(|turn| {
+                self.edge_targets_in(txn, turn, EdgeKind::ChildOf, ENTITY_TYPE_CONVERSATION)
+            })
+            .any(|conversation| {
+                context.allows_conversation_message_at_snapshot(conversation, record)
+            })
+    }
+
+    /// The targets of `id`'s outgoing `kind` edges whose rows are of
+    /// `entity_type`, on this read's content; none when the edges do not
+    /// read.
+    fn edge_targets_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        kind: EdgeKind,
+        entity_type: u8,
+    ) -> Vec<EntityId> {
+        let Ok(edges) = self.out_edges_in(txn, id, Some(kind)) else {
+            return Vec::new();
+        };
+        edges
+            .filter_map(|edge| edge.ok().map(|edge| edge.target))
+            .filter(|target| {
+                self.entity_record_in(txn, target)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|row| row.entity_type == entity_type)
+            })
+            .collect()
     }
 }
 
@@ -226,11 +328,12 @@ pub(crate) enum RelationshipRead {
     /// (`false`).
     Decided(bool),
     /// The reader's memberships and grants decide, from the row's kind, the
-    /// relationship it is scoped to, whether it is private, and its record
-    /// position.
+    /// relationships it is scoped to (`None` for none named or `all`; a
+    /// CLAIM's whole set, a MESSAGE's or SUMMARY's one), whether it is
+    /// private, and its record position.
     Gated {
         kind: u8,
-        space: Option<EntityId>,
+        space: RelationshipScope,
         private: bool,
         record: Scope,
     },
@@ -251,12 +354,22 @@ impl RelationshipRead {
     pub(crate) fn allowed_by(&self, context: &AccessContext<'_>) -> bool {
         match self {
             Self::Decided(allowed) => *allowed,
+            // A scoped row reads through any one relationship of its set the
+            // reader may read; the explicit empty set names none.
             Self::Gated {
                 kind,
-                space,
+                space: None,
                 private,
                 record,
-            } => context.allows_at_snapshot(*kind, *space, *private, record),
+            } => context.allows_at_snapshot(*kind, None, *private, record),
+            Self::Gated {
+                kind,
+                space: Some(ids),
+                private,
+                record,
+            } => ids
+                .iter()
+                .any(|id| context.allows_at_snapshot(*kind, Some(*id), *private, record)),
         }
     }
 }
@@ -370,7 +483,7 @@ where
     };
     Ok(RelationshipRead::Gated {
         kind,
-        space,
+        space: crate::claim::relationship_scope_of(space),
         private,
         record,
     })

@@ -14,13 +14,16 @@ use crate::error::Result;
 use crate::error::SyncEngineContext;
 #[cfg(feature = "sync")]
 use crate::error::{Error, SyncProtocolPruneScope, SyncProtocolValidation};
-use crate::ports::{DocumentRowStore, DocumentUpdateKey, UpdateSeq, WindowDeletionRows};
+use crate::ports::{DocumentRowStore, WindowDeletionRows};
 use crate::side_table::{self, Raw, SideTable};
 #[cfg(feature = "sync")]
 use crate::sync::window_rows::{
     WINDOW_FULL_RESYNC_MARKER, WINDOW_SHALLOW_FENCE, WINDOW_SNAPSHOT, WINDOW_STATE_VECTOR,
     WINDOW_UPDATE,
 };
+
+#[cfg(feature = "sync")]
+mod documents;
 
 /// Per-window outcome of [`compact_window`].
 #[cfg(feature = "sync")]
@@ -88,17 +91,11 @@ fn persisted_window_labels(vault: &Vault) -> Result<(BTreeSet<String>, bool)> {
             }
         }
     }
-    // Entity-document carriers. An update numbered by an entity-document generation
-    // (`{:020}`) does not spell a sequence here and is reported as malformed.
+    // Entity-document carriers: an update at a sequence or at an entity-document generation
+    // (`{:020}`, FIX 10159) labels its slot; a key that spells neither is malformed.
     let snapshots = vault.store.port_document_snapshot_slots(&rtxn)?;
     let updates = vault.store.port_document_update_keys(&rtxn)?;
-    let updates = updates.into_iter().map(|key| match key {
-        Some(DocumentUpdateKey {
-            slot,
-            seq: UpdateSeq::Sequence(_),
-        }) => Some(slot),
-        _ => None,
-    });
+    let updates = updates.into_iter().map(|key| key.map(|key| key.slot));
     for slot in snapshots.into_iter().chain(updates) {
         match slot {
             Some(slot) => {
@@ -156,17 +153,33 @@ pub(super) fn compact_all_windows(
         WindowSweepState::AllCompacted
     };
 
+    let owners = documents::SlotOwners::read(vault)?;
     for label in &labels {
         if let Some(hex) = label.strip_prefix("e:") {
-            let id = EntityId::from_hex(hex)?;
-            let erase = erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
-            // A held document keeps its bytes (OF-470): it waits, as a live
-            // one does. Its erase checks the hold again in its own txn.
-            if erase && document_held(vault, id)? {
-                run.windows_deferred_held += 1;
-                if matches!(state, WindowSweepState::AllCompacted) {
-                    state = WindowSweepState::Deferred;
+            // A slot no live entity owns (orphan, moved away, shared) is
+            // compacted only to carry out the erase or withdrawal of its own
+            // id, as before; otherwise it keeps its rows, which neither its
+            // birth's owner nor the NOTE loader can read (FIX 11188).
+            let (id, erase) = match owners.entity(vault, hex)? {
+                Some(id) => {
+                    let erase =
+                        erased.contains(&id) || drops_withdrawn_document(vault, &id, withdrawn)?;
+                    (id, erase)
                 }
+                None => {
+                    let id = EntityId::from_hex(hex)?;
+                    if !erased.contains(&id) && !drops_withdrawn_document(vault, &id, withdrawn)? {
+                        tracing::warn!("sweep: document slot with no live owner left as it is");
+                        continue;
+                    }
+                    (id, true)
+                }
+            };
+            // A held document keeps its bytes and its history, erased or not
+            // (OF-470, FIX 10160): it waits, as a live one does. Its writer
+            // checks the hold again, and a hold placed since defers it too.
+            if super::holds::document_held(vault, id, erase)? {
+                super::holds::defer_held(run, &mut state);
                 continue;
             }
             match vault.compact_document_for_sweep(id, erase) {
@@ -175,6 +188,9 @@ pub(super) fn compact_all_windows(
                     if matches!(state, WindowSweepState::AllCompacted) {
                         state = WindowSweepState::Deferred;
                     }
+                }
+                Err(err) if super::holds::refused_by_hold(&err) => {
+                    super::holds::defer_held(run, &mut state);
                 }
                 Err(err) => state = WindowSweepState::Failed(format!("{:?}", err.kind())),
                 Ok(true) => run.windows_compacted += 1,
@@ -233,10 +249,10 @@ pub(super) fn compact_all_windows(
                     state = WindowSweepState::Deferred;
                 }
             }
-            // Counted with the raced: nothing was written and the next pass
-            // cuts again.
+            // Counted on its own (FIX 6629): nothing was written and the
+            // next pass cuts again.
             Ok(CompactOutcome::UnprovedDefer) => {
-                run.windows_deferred_raced += 1;
+                run.windows_deferred_unproved += 1;
                 if matches!(state, WindowSweepState::AllCompacted) {
                     state = WindowSweepState::Deferred;
                 }
@@ -252,6 +268,8 @@ pub(super) fn compact_all_windows(
             }
         }
     }
+    let scrub_sends = !withdrawn.due.is_empty() || full_carriers;
+    super::corrupt::settle_unlabelled_sends(vault, scrub_sends, &mut state)?;
     Ok(state)
 }
 
@@ -352,10 +370,12 @@ pub(super) fn compact_window_with(
     }
 
     // A shallow snapshot drops every row's history, and the erased and
-    // withdrawn rows' bytes with it: each row the window carries, live or
-    // tombstoned, is one this compaction destroys. A legal hold on any of
-    // them keeps the whole window (OF-470), judged in the write txn below.
-    let destroyed = carried_ids(&doc);
+    // withdrawn rows' bytes with it: each row the window carries or carried,
+    // live or tombstoned, and each pad among its values, is one this
+    // compaction destroys. A legal hold on any of them, or on such a pad's
+    // world, keeps the whole window (OF-470, FIX 3061), judged in the write
+    // txn below. Read from the merged window before any scrub.
+    let destroyed = crate::sync::carrier_holds::CarrierInventory::of_window(&doc);
 
     // §8c.2 live-map residue scrub: a concurrent re-put that won LWW over
     // the tombstone commit's key-delete leaves erased payload LIVE in the
@@ -474,12 +494,12 @@ pub(super) fn compact_window_with(
 
         // A legal hold keeps every row it names (OF-470): one this
         // compaction would destroy keeps the window as it is.
-        if let Err(refused) = vault.store.reject_legal_holds_in_txn(
+        if let Err(refused) = destroyed.reject_held_in_txn(
+            &vault.store,
             wtxn,
-            &destroyed,
             &crate::store::legal_hold::HoldActor::TIMER,
         ) {
-            held.set(true);
+            held.set(super::holds::refused_by_hold(&refused));
             return Err(refused);
         }
 
@@ -561,27 +581,6 @@ fn scrub_stateless_window_sends(vault: &Vault, window: &str) -> Result<CompactOu
     }
 }
 
-/// Every row id window `doc` carries, live or tombstoned.
-#[cfg(feature = "sync")]
-fn carried_ids(doc: &loro::LoroDoc) -> Vec<EntityId> {
-    let mut ids = BTreeSet::new();
-    for map in ["entities", "tombstones"] {
-        doc.get_map(map).for_each(|key, _| {
-            if let Ok(id) = EntityId::from_hex(key) {
-                ids.insert(id);
-            }
-        });
-    }
-    ids.into_iter().collect()
-}
-
-/// Whether a standing legal hold names entity document `id`.
-#[cfg(feature = "sync")]
-fn document_held(vault: &Vault, id: EntityId) -> Result<bool> {
-    let rtxn = vault.store.env.read_txn()?;
-    crate::store::legal_hold::held_in_txn(&vault.store, &rtxn, id.as_bytes())
-}
-
 /// Whether entity document `id` goes with a due withdrawn generation: its
 /// row holds no newer generation, so every document carrier and queued edit
 /// frame of it is the withdrawn generation's. Beside a newer generation the
@@ -598,7 +597,7 @@ fn drops_withdrawn_document(
     if !withdrawn.due.contains(id) {
         return Ok(false);
     }
-    let Some(&cutoff) = withdrawn.cutoffs.get(id) else {
+    let Some(cutoff) = withdrawn.cutoffs.get(id).map(|cutoff| cutoff.generation) else {
         return Ok(false);
     };
     let rtxn = vault.store.env.read_txn()?;

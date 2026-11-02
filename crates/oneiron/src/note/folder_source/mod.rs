@@ -38,7 +38,10 @@ use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault};
 
+mod original;
 mod reconcile;
+
+pub use original::{FileOriginal, OriginalBytes};
 
 const SOURCES: SideTable<String, FolderSource, Named> = SideTable::new(&side_table::FOLDER_SOURCE);
 const FILES: SideTable<String, FolderSourceFile, Named> =
@@ -148,6 +151,9 @@ pub struct FolderSourceFile {
     pub file_hash: String,
     /// The hash of the text the vault took from the file, when known.
     pub landed_hash: String,
+    /// The mentions targets this file's import landed (FIX 1363): the only
+    /// edges a rescan deletes for it, never one another writer added.
+    pub landed_links: Vec<EntityId>,
     /// The hash of the file's bytes, when its text was extracted from them
     /// (a PDF): its revision. A change to the bytes alone moves no text.
     pub raw_hash: Option<String>,
@@ -156,6 +162,11 @@ pub struct FolderSourceFile {
     /// folder attached as notes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub meta: Option<FileMeta>,
+    /// The kept original of the file's bytes as its last rescan read them
+    /// (FIX 7779); a continuation part names its file's. None when no
+    /// original was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<FileOriginal>,
 }
 
 impl FolderSourceFile {
@@ -174,6 +185,10 @@ impl FolderSourceFile {
 pub struct FolderFile {
     pub path: String,
     pub markdown: String,
+    /// The file's links as the host resolved them against the whole folder
+    /// read, by path (FIX 1363); none when the read skipped files, so the
+    /// rescan cannot tell a dropped link from an unread name.
+    pub links: Option<Vec<String>>,
 }
 
 /// What the host read of an attached folder at one rescan.

@@ -23,7 +23,7 @@ use crate::error::OffRecordError;
 /// A generation-stamped, structurally shared overlay read view.
 pub(crate) struct OverlaySnapshot {
     pub(super) state: Arc<OverlayState>,
-    pub(super) _lease: Lease,
+    pub(super) lease: Lease,
 }
 
 pub(crate) enum SnapshotLookup {
@@ -348,6 +348,7 @@ impl OverlaySnapshot {
     ) -> Result<PromotePlan> {
         let mut ops = Vec::new();
         let mut cut_from = Vec::new();
+        let mut source_runs = Vec::new();
         let mut replayed = Vec::new();
         let mut source_learned_at = BTreeSet::new();
         for entry in self
@@ -361,6 +362,7 @@ impl OverlaySnapshot {
             source_learned_at.insert(entry.learned_at);
             ops.push(promotion_replay_op(entry)?);
             cut_from.push(entry.seq);
+            source_runs.push(entry.source_run.clone());
         }
 
         // In-room aliases, read from the overlay's OWN short-id tables. Base
@@ -378,16 +380,21 @@ impl OverlaySnapshot {
             }
         }
 
-        Ok(PromotePlan {
+        let mut plan = PromotePlan {
             ops,
             replayed,
             temporary_short_ids,
             source_learned_at: source_learned_at.into_iter().collect(),
             cut_from,
+            source_runs,
             turn,
             conversation,
             appends,
-        })
+            charge: None,
+        };
+        // The copies are the room's memory while the promotion runs.
+        plan.charge = Some(self.lease.charge_plan(&plan));
+        Ok(plan)
     }
 
     #[cfg(test)]

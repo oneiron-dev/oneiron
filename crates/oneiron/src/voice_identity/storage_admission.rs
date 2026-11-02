@@ -1,7 +1,7 @@
 //! Sidecar row access, the one deletion routine, enrollment laws, and match/clustering/invite-elimination admission.
 
 use crate::ports::EntityStoreRead;
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashSet};
 
 use heed::{RoTxn, RwTxn};
 
@@ -13,14 +13,13 @@ use crate::store::Store;
 
 use super::codec_records::decode_print_record;
 use super::math_keys::{
-    corrupt_voice_row, cosine_similarity, digest16, invalid_voice, l2_normalize, require_non_empty,
+    corrupt_voice_row, digest16, invalid_voice, l2_normalize, require_non_empty,
     require_session_key, voice_cosine_in_space,
 };
 use super::types::{
-    VOICE_CALIBRATION_MIN_LANGUAGES, VOICE_MAX_MATCH_SEGMENTS, VoiceConsentEventV1,
-    VoiceConsentState, VoiceEnrollmentOrigin, VoiceEnrollmentRequest, VoiceEnrollmentSampleV1,
-    VoiceMatchRequest, VoicePrintCalibration, VoicePrintRecordV1, VoiceSegmentEmbeddingInput,
-    VoiceSessionRosterV1,
+    VOICE_CALIBRATION_MIN_LANGUAGES, VoiceConsentEventV1, VoiceConsentState, VoiceEnrollmentOrigin,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoiceMatchRequest, VoicePrintCalibration,
+    VoicePrintPurpose, VoicePrintRecordV1, VoiceSegmentEmbeddingInput, VoiceSessionRosterV1,
 };
 use crate::error::RegistryError;
 
@@ -75,7 +74,7 @@ pub(super) fn read_consent_event(
     CONSENT.get(store, rtxn, &(*subject, digest))
 }
 
-fn read_consent_events(
+pub(super) fn read_consent_events(
     store: &Store,
     rtxn: &RoTxn<'_>,
     subject: &EntityId,
@@ -415,11 +414,8 @@ pub(super) fn admit_match_segments(
     require_non_empty(&request.recording_id, "voice recording id")?;
     require_non_empty(&request.space_id, "voice embedding space id")?;
     request.policy.validate()?;
-    if request.segments.len() > VOICE_MAX_MATCH_SEGMENTS {
-        return Err(invalid_voice(
-            "voice match request exceeds the supported segment count",
-        ));
-    }
+    // No segment count refuses a match: every segment is matched, and the
+    // residuals cluster in bounded tiles (FIX 10216).
 
     let mut seen: HashSet<&str> = HashSet::with_capacity(request.segments.len());
     let mut dimension: Option<usize> = None;
@@ -454,12 +450,18 @@ pub(super) fn admit_match_segments(
     Ok(segments)
 }
 
+/// The active prints a match serving `purpose` in `space_id` may read on
+/// this machine now (FIX 10215, FIX 10217): see
+/// [`super::recognition::admit_recognition_candidate_in`]. A print that may
+/// not take part is no candidate, never a low score.
 pub(super) fn load_match_candidates(
-    store: &Store,
+    vault: &crate::Vault,
     rtxn: &RoTxn<'_>,
     space_id: &str,
+    purpose: &VoicePrintPurpose,
     now: u64,
 ) -> Result<Vec<VoiceMatchCandidate>> {
+    let store = &vault.store;
     let mut candidates = Vec::new();
     for subject in active_print_subjects(store, rtxn)? {
         let Some(record) = read_active_print(store, rtxn, &subject)? else {
@@ -473,6 +475,9 @@ pub(super) fn load_match_candidates(
         if record.delete_after.is_some_and(|deadline| deadline <= now) {
             // Past its retention deadline the print is owed a hard delete;
             // until the prune lands it recognizes no one.
+            continue;
+        }
+        if !super::recognition::admit_recognition_candidate_in(vault, rtxn, &record, purpose)? {
             continue;
         }
         candidates.push(VoiceMatchCandidate {
@@ -517,44 +522,13 @@ pub(super) fn best_enrolled_match<'a>(
 /// At a fixed linkage threshold single linkage is exactly the connected
 /// components of the "cosine at or above threshold" graph, so the result does
 /// not depend on merge order at all. Clusters come back ordered by their
-/// earliest member in the caller's canonical segment order.
+/// earliest member in the caller's canonical segment order. Every residual
+/// takes part, in bounded tiles over one union-find (FIX 10216).
 pub(super) fn cluster_residuals(
     vectors: &[&[f32]],
     residual_threshold: f32,
 ) -> Result<Vec<Vec<usize>>> {
-    fn find(parent: &mut [usize], mut node: usize) -> usize {
-        while parent[node] != node {
-            parent[node] = parent[parent[node]];
-            node = parent[node];
-        }
-        node
-    }
-
-    let count = vectors.len();
-    let mut parent: Vec<usize> = (0..count).collect();
-
-    for left in 0..count {
-        for right in (left + 1)..count {
-            if cosine_similarity(vectors[left], vectors[right])? >= residual_threshold {
-                let (root_left, root_right) = (find(&mut parent, left), find(&mut parent, right));
-                if root_left != root_right {
-                    let (low, high) = if root_left < root_right {
-                        (root_left, root_right)
-                    } else {
-                        (root_right, root_left)
-                    };
-                    parent[high] = low;
-                }
-            }
-        }
-    }
-
-    let mut clusters: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
-    for index in 0..count {
-        let root = find(&mut parent, index);
-        clusters.entry(root).or_default().push(index);
-    }
-    Ok(clusters.into_values().collect())
+    super::match_work::cluster_residual_tiles(vectors, residual_threshold)
 }
 
 /// Law 7: name the unique remaining attendee, or keep everyone anonymous.

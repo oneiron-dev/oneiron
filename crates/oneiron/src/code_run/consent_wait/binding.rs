@@ -8,6 +8,7 @@ use crate::Vault;
 use crate::code_run::storage::derived_executor_id;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::runtime_hooks::verb::VerbAskCredentialSource;
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::task_verb::sdk::AgentVerb;
 
@@ -29,9 +30,25 @@ const CODE_CONSENT_BINDING_DOMAIN: &[u8] = b"oneiron:code-consent-binding:v1";
 
 /// Whether a code-mode call of `verb` binds a code consent wait when its
 /// effect is held for consent alone (CALLS: first adapter). 1a binds
-/// `connector.call`; every other verb keeps its own wait.
+/// `connector.call`; a browser click, click at a point or batch binds the
+/// act its grant's press held (FIX 10423), as do a library run's steps and
+/// every desktop verb that can press (FIX 11499). Every other verb keeps
+/// its own wait.
 pub(crate) fn code_consent_binds(verb: AgentVerb) -> bool {
-    verb == AgentVerb::ConnectorCall
+    matches!(
+        verb,
+        AgentVerb::ConnectorCall
+            | AgentVerb::SelfBrowserClick
+            | AgentVerb::SelfBrowserClickAt
+            | AgentVerb::SelfBrowserBatch
+            | AgentVerb::SelfBrowserLibraryRun
+            | AgentVerb::SelfDesktopClick
+            | AgentVerb::SelfDesktopClickAt
+            | AgentVerb::SelfDesktopType
+            | AgentVerb::SelfDesktopKey
+            | AgentVerb::SelfDesktopHotkey
+            | AgentVerb::SelfDesktopBatch
+    )
 }
 
 /// The wait id one write site's held call takes: derived from its write
@@ -78,6 +95,22 @@ pub(crate) fn code_consent_waits_bound_to_in_txn(
         }
     }
     Ok(bound)
+}
+
+/// Every code consent wait's row, for a host's settler pass over waits no
+/// connector row drives (FIX 11498). A row that does not decode binds none.
+pub(crate) fn code_consent_wait_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<CodeConsentWaitRow>> {
+    let mut rows = Vec::new();
+    for row in WAITS.iter_raw_from(&vault.store, txn, &[])? {
+        let (_, bytes) = row?;
+        if let Ok(row) = WAITS.decode_value(&bytes) {
+            rows.push(row);
+        }
+    }
+    Ok(rows)
 }
 
 /// Writes one wait's row at its next revision.
@@ -128,10 +161,12 @@ pub(crate) fn mint_code_consent_wait_in_txn(
             return Ok(None);
         };
         let slip = verified.claims().slip_id;
+        // Only the very slip the witness verifies as: an instrument that
+        // names none beside a slip's witness is no instrument of this call.
         if credential
             .instrument
             .as_ref()
-            .is_some_and(|instrument| instrument.slip != slip)
+            .is_some_and(|instrument| instrument.slip() != Some(slip))
         {
             return Ok(None);
         }
@@ -230,29 +265,69 @@ pub(super) fn binding_digest(binding: &CodeConsentBinding) -> [u8; 32] {
     {
         Some(instrument) => {
             field(&instrument.vault);
-            field(&instrument.slip);
-            field(&instrument.fingerprint);
+            match &instrument.source {
+                VerbAskCredentialSource::Slip { slip, fingerprint } => {
+                    field(b"slip");
+                    field(slip);
+                    field(fingerprint);
+                }
+                VerbAskCredentialSource::AttestedOwner { holder } => {
+                    field(b"attested_owner");
+                    field(holder.as_bytes());
+                }
+            }
             field(&instrument.ceiling);
         }
         None => field(&[]),
     }
-    let call = binding.pending.connector_call();
-    field(call.call_ref.as_bytes());
-    field(&call.attempt_id);
-    field(&call.call_seq.to_le_bytes());
-    field(call.grant_ref.as_bytes());
-    field(call.key_ref.as_bytes());
-    field(call.name.as_bytes());
-    field(call.server.as_bytes());
-    field(call.tool.as_bytes());
-    field(call.endpoint.as_bytes());
-    field(&call.manifest_hash);
-    field(call.protocol_revision.as_bytes());
-    field(
-        call.credential_record
-            .as_ref()
-            .map_or(&[][..], |record| &record.as_bytes()[..]),
-    );
+    match &binding.pending {
+        CodeConsentPendingEffect::ConnectorCall(call) => {
+            field(call.call_ref.as_bytes());
+            field(&call.attempt_id);
+            field(&call.call_seq.to_le_bytes());
+            field(call.grant_ref.as_bytes());
+            field(call.key_ref.as_bytes());
+            field(call.name.as_bytes());
+            field(call.server.as_bytes());
+            field(call.tool.as_bytes());
+            field(call.endpoint.as_bytes());
+            field(&call.manifest_hash);
+            field(call.protocol_revision.as_bytes());
+            field(
+                call.credential_record
+                    .as_ref()
+                    .map_or(&[][..], |record| &record.as_bytes()[..]),
+            );
+        }
+        CodeConsentPendingEffect::BrowserAction(action) => {
+            field(b"browser_action");
+            for text in [
+                &action.act,
+                &action.operands,
+                &action.class,
+                &action.role,
+                &action.name,
+                &action.locator,
+                &action.tab,
+                &action.session,
+                &action.need,
+            ] {
+                field(text.as_bytes());
+            }
+            for text in [&action.page, &action.document, &action.stopped] {
+                field(&[u8::from(text.is_some())]);
+                field(text.as_deref().unwrap_or_default().as_bytes());
+            }
+            field(&[u8::from(action.hook_pre.is_some())]);
+            field(
+                &action
+                    .hook_pre
+                    .as_ref()
+                    .and_then(|snapshot| rmp_serde::to_vec_named(snapshot).ok())
+                    .unwrap_or_default(),
+            );
+        }
+    }
     *hasher.finalize().as_bytes()
 }
 
@@ -266,7 +341,25 @@ pub(crate) fn code_consent_binds_held_call(
     let txn = vault.store.env.read_txn()?;
     Ok(
         read_code_consent_wait_in_txn(vault, &txn, wait_id)?.is_some_and(|row| {
-            row.settlement.is_none() && row.binding.pending.connector_call().call_ref == call_ref
+            row.settlement.is_none()
+                && row
+                    .binding
+                    .pending
+                    .connector_call()
+                    .is_some_and(|call| call.call_ref == call_ref)
+        }),
+    )
+}
+
+/// Whether wait `wait_id` binds a browser act a press held and is still
+/// open (FIX 10423): the dispatcher parks a browser call's run on the wait
+/// its own site minted only then. A wait whose ask never opened settled
+/// refused, so its call answers as before.
+pub(crate) fn code_consent_binds_held_browser(vault: &Vault, wait_id: EntityId) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(
+        read_code_consent_wait_in_txn(vault, &txn, wait_id)?.is_some_and(|row| {
+            row.settlement.is_none() && row.binding.pending.browser_action().is_some()
         }),
     )
 }

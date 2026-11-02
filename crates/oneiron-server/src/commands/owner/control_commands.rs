@@ -64,7 +64,9 @@ pub fn handoff_alarms(command: HandoffAlarmsCommand) -> anyhow::Result<()> {
 }
 
 /// The owner's learned-setting rows on a stopped vault; `serve` answers the
-/// same at `/v1/owner/settings/learning`.
+/// same at `/v1/owner/settings/learning`. Each operation runs its
+/// `vault.settings.learning*` row's verb hooks once around the engine door,
+/// as the route does (FIX 9479).
 pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow::Result<()> {
     use crate::cli::{LearningSettingModeArg, LearningSettingsCommand};
     use oneiron::learning_setting_choice::SpawnChoice;
@@ -84,11 +86,16 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, "GET /v1/owner/settings/learning")?;
     let owner = local_owner(&vault)?;
+    let actor = owner_actor(&vault)?;
     let view = match command {
-        LearningSettingsCommand::List(args) => doors::learning_settings_as_owner(
+        LearningSettingsCommand::List(args) => hooked_row(
             &vault,
-            &owner,
-            &LearningSettingsRequest { key: args.key },
+            actor,
+            "vault.settings.learning",
+            LearningSettingsRequest { key: args.key },
+            |request: LearningSettingsRequest| {
+                Ok(doors::learning_settings_as_owner(&vault, &owner, &request)?)
+            },
         )?,
         LearningSettingsCommand::Put(args) => {
             let raw = args.value.trim();
@@ -119,9 +126,10 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
                     None,
                 ),
             };
-            doors::put_learning_setting_as_owner(
+            hooked_row(
                 &vault,
-                &owner,
+                actor,
+                "vault.settings.learning.put",
                 LearningSettingPut {
                     key: args.key,
                     mode: mode(args.mode),
@@ -133,17 +141,28 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
                     project: args.project,
                     task_type: args.task_type,
                 },
+                |request: LearningSettingPut| {
+                    Ok(doors::put_learning_setting_as_owner(
+                        &vault, &owner, request,
+                    )?)
+                },
             )?
         }
-        LearningSettingsCommand::Clear(args) => doors::clear_learning_setting_as_owner(
+        LearningSettingsCommand::Clear(args) => hooked_row(
             &vault,
-            &owner,
+            actor,
+            "vault.settings.learning.clear",
             LearningSettingClear {
                 key: args.key,
                 mode: mode(args.mode),
                 goal: args.goal,
                 project: args.project,
                 task_type: args.task_type,
+            },
+            |request: LearningSettingClear| {
+                Ok(doors::clear_learning_setting_as_owner(
+                    &vault, &owner, request,
+                )?)
             },
         )?,
     };
@@ -153,7 +172,8 @@ pub fn learning_settings(command: crate::cli::LearningSettingsCommand) -> anyhow
 /// The context-widen proposals agents raised (OF-568), on a stopped vault;
 /// `serve` answers the same at `/v1/owner/widen-proposals`. Approve and
 /// decline act as the board above, so the local owner must own the board's
-/// TASK.
+/// TASK. Each operation runs its `vault.widen_proposals*` row's verb hooks
+/// once around the engine door, as the route does (FIX 9479).
 pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Result<()> {
     use crate::cli::{WidenProposalStateArg, WidenProposalsCommand};
     use oneiron::agent_dispatch::widen_doors::{
@@ -166,34 +186,52 @@ pub fn widen_proposals(command: crate::cli::WidenProposalsCommand) -> anyhow::Re
     let config = resolve_serve_config(serve)?;
     let vault = open_vault(&config, "GET /v1/owner/widen-proposals")?;
     let owner = local_owner(&vault)?;
-    match command {
+    let actor = owner_actor(&vault)?;
+    let answer = match command {
         WidenProposalsCommand::List(args) => {
             let state = args.state.map(|state| match state {
                 WidenProposalStateArg::Pending => WidenProposalState::Pending,
                 WidenProposalStateArg::Approved => WidenProposalState::Approved,
                 WidenProposalStateArg::Declined => WidenProposalState::Declined,
             });
-            emit(&doors::widen_proposals_as_owner(
+            hooked_row(
                 &vault,
-                &owner,
-                &WidenProposalsRequest { state },
-            )?)
+                actor,
+                "vault.widen_proposals",
+                WidenProposalsRequest { state },
+                |request: WidenProposalsRequest| {
+                    Ok(doors::widen_proposals_as_owner(&vault, &owner, &request)?)
+                },
+            )?
         }
-        WidenProposalsCommand::Approve(args) => emit(&doors::approve_widen_proposal_as_owner(
+        WidenProposalsCommand::Approve(args) => hooked_row(
             &vault,
-            &owner,
-            &WidenProposalAnswer {
+            actor,
+            "vault.widen_proposals.approve",
+            WidenProposalAnswer {
                 proposal_id: args.proposal_id,
             },
-        )?),
-        WidenProposalsCommand::Decline(args) => emit(&doors::decline_widen_proposal_as_owner(
+            |answer: WidenProposalAnswer| {
+                Ok(doors::approve_widen_proposal_as_owner(
+                    &vault, &owner, &answer,
+                )?)
+            },
+        )?,
+        WidenProposalsCommand::Decline(args) => hooked_row(
             &vault,
-            &owner,
-            &WidenProposalAnswer {
+            actor,
+            "vault.widen_proposals.decline",
+            WidenProposalAnswer {
                 proposal_id: args.proposal_id,
             },
-        )?),
-    }
+            |answer: WidenProposalAnswer| {
+                Ok(doors::decline_widen_proposal_as_owner(
+                    &vault, &owner, &answer,
+                )?)
+            },
+        )?,
+    };
+    emit(&answer)
 }
 
 /// The owner's legal holds (OF-470) on a stopped vault; `serve` answers the
@@ -445,6 +483,7 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
                     query_media: None,
                     family,
                     targets,
+                    source_refs: Vec::new(),
                     author: args.author,
                 },
                 sdk::put_embedding_space_probe_as,
@@ -461,16 +500,24 @@ pub fn embedding_spaces(command: crate::cli::EmbeddingSpacesCommand) -> anyhow::
 /// The owner's ask guests (OF-232) on a stopped vault; `serve` answers the
 /// same at `/v1/owner/guests/revoke`. A revoke signs each pact disconnect
 /// with the host's own key, the config's auth secret `serve` signs with; a
-/// config without one has no host key, and the revoke refuses.
+/// config without one has no host key, and the revoke refuses. With
+/// `--peer`, or a `peer` a verb hook put in its input, the committed revoke
+/// queues the route's courtesy-delete asks with the same key (FIX 4185); an
+/// ask that does not queue never undoes the revoke.
 pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
     use crate::cli::GuestsCommand;
+    use crate::owner::courtesy_delete::CourtesySender;
+    use crate::owner::guest_revoke;
     match command {
         GuestsCommand::Revoke(args) => {
             let grant = hold_id_arg(&args.grant_ref)?;
+            // A peer the owner typed that the ask would refuse is refused
+            // before anything runs, as on the route (FIX 4186).
+            guest_revoke::check_peer(args.peer.as_deref())?;
             let config = resolve_serve_config(&args.serve)?;
             let vault = open_vault(&config, "POST /v1/owner/guests/revoke --data -")?;
             let owner = local_owner(&vault)?;
-            let secret = config
+            config
                 .sync_server_config()
                 .auth_secret
                 .filter(|secret| !secret.is_empty())
@@ -479,7 +526,8 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
                         "the config names no auth secret, so this host has no key to sign the guest's pact disconnects"
                     )
                 })?;
-            let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+            // This install's own issuer seed signs them (FIX-LIST 3018).
+            let issuer = super::host_issuer(&config, &vault, false)?;
             // The row's verb hooks run once around the engine door, as the
             // route's do (FIX 1752).
             let answer = hooked_row(
@@ -488,11 +536,24 @@ pub fn guests(command: crate::cli::GuestsCommand) -> anyhow::Result<()> {
                 "vault.guests.revoke",
                 oneiron::task_verb::sdk::GuestRevokeRequest {
                     grant_ref: grant,
-                    peer: None,
+                    peer: args.peer,
                 },
                 |request: oneiron::task_verb::sdk::GuestRevokeRequest| {
                     let outcome = vault.revoke_guest_access(&owner, &issuer, request.grant_ref)?;
-                    Ok(oneiron::receipt::project_guest_revoke(outcome))
+                    let mut revoked = oneiron::receipt::project_guest_revoke(outcome);
+                    // The hook's final input names the peer, as the route
+                    // reads it.
+                    let sender = CourtesySender {
+                        vault: &vault,
+                        issuer: Some(&issuer),
+                    };
+                    guest_revoke::queue_courtesy_deletes_with(
+                        &sender,
+                        &owner,
+                        request.peer.as_deref(),
+                        &mut revoked,
+                    );
+                    Ok(revoked)
                 },
             )?;
             emit(&answer)

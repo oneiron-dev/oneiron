@@ -11,7 +11,10 @@
 //! A route ([`MediaVoiceRoute`]) is one media rung. The host picks it before
 //! any work from the vault's voice row for the lane
 //! (`Vault::select_voice_backend`), and the vault's inference policy admits
-//! it; a call never falls back to another target. A banked voice
+//! it. A stock call never falls back to another target. A banked sentence
+//! whose rung's provider is down is spoken by the next bound target that
+//! holds the voice, in that target's own binding, never in another voice
+//! (FIX 3195). A banked voice
 //! ([`VoiceRender::Bank`]) renders only on its recorded clone for the
 //! route's target (ARCH-0061 §5: identity lives in the bank, vendors are
 //! render targets), or, on a target that keeps no clone (the own-server
@@ -149,6 +152,10 @@ pub enum VoiceMediaWork {
         /// The banked voice it renders in, checked again before the call
         /// and before its audio is handed back.
         voice: Option<BankVoiceBinding>,
+        /// The other bound targets holding the same voice, in the order
+        /// the worker tries them when a rung's provider is down (FIX 3195).
+        /// Empty for stock speech, which never falls back.
+        fallbacks: Vec<(MediaVoiceRoute, BankVoiceBinding)>,
     },
     /// One cut utterance to hear, as one `ai.transcribe` call.
     Transcribe {
@@ -338,9 +345,15 @@ enum Phase {
 pub struct MediaTtsAdapter<Q> {
     vault: Arc<Vault>,
     route: MediaVoiceRoute,
+    /// The other speech rungs that may hold a banked voice, bound at start
+    /// and tried in order when a rung's provider is down (FIX 3195).
+    fallbacks: Vec<MediaVoiceRoute>,
     render: VoiceRender,
     queue: Q,
     binding: Option<BankVoiceBinding>,
+    /// Every target the banked voice bound on at start, the lane's route
+    /// first when it bound; empty for stock speech.
+    bound: Vec<(MediaVoiceRoute, BankVoiceBinding)>,
     generation: Option<GenerationEpoch>,
     phase: Phase,
     buffer: String,

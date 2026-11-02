@@ -1,4 +1,4 @@
-//! Skill roles and the bounded executable call contract.
+//! Skill roles and the executable call contract.
 
 use crate::error::{ArtifactError, Error, Result};
 use rmpv::Value;
@@ -45,25 +45,38 @@ fn invalid(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidSkillBody(reason))
 }
 
-fn valid_shape(shape: &JsonValue, depth: usize) -> bool {
-    if depth > 8 {
-        return false;
-    }
-    match shape {
-        JsonValue::String(kind) => matches!(
-            kind.as_str(),
-            "string" | "number" | "integer" | "boolean" | "object" | "array" | "null"
-        ),
-        JsonValue::Object(fields) => {
-            !fields.is_empty()
-                && fields.len() <= 64
-                && fields.iter().all(|(key, value)| {
-                    !key.is_empty() && key.len() <= 128 && valid_shape(value, depth + 1)
-                })
+/// A shape is a kind name, a non-empty object of named shapes or a one-item
+/// array of a shape, at any width and depth: the walk keeps its own stack, so
+/// no field count, nesting or encoded-size ceiling refuses it (FIX 10156).
+fn valid_shape(shape: &JsonValue) -> bool {
+    let mut pending = vec![shape];
+    while let Some(shape) = pending.pop() {
+        let valid = match shape {
+            JsonValue::String(kind) => matches!(
+                kind.as_str(),
+                "string" | "number" | "integer" | "boolean" | "object" | "array" | "null"
+            ),
+            JsonValue::Object(fields) => {
+                !fields.is_empty()
+                    && fields.iter().all(|(key, value)| {
+                        pending.push(value);
+                        !key.is_empty() && key.len() <= 128
+                    })
+            }
+            JsonValue::Array(items) => match items.as_slice() {
+                [item] => {
+                    pending.push(item);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if !valid {
+            return false;
         }
-        JsonValue::Array(items) => items.len() == 1 && valid_shape(&items[0], depth + 1),
-        _ => false,
     }
+    true
 }
 
 impl SkillCallContract {
@@ -82,9 +95,7 @@ impl SkillCallContract {
             ));
         }
         for shape in [&self.arguments, &self.returns] {
-            if !valid_shape(shape, 0)
-                || serde_json::to_vec(shape).map_or(true, |encoded| encoded.len() > 16_384)
-            {
+            if !valid_shape(shape) {
                 return Err(invalid(
                     "call arguments and returns must be bounded non-null JSON contracts",
                 ));

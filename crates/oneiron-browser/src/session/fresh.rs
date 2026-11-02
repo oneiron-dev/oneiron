@@ -127,6 +127,11 @@ impl BrowserSession {
         library: &mut dyn WorkflowLibrary,
         input: ProposeInput,
     ) -> Result<ProposeOutput, BrowserError> {
+        // The snapshots' bounds the call names stand from now on (FIX
+        // 11580), as a switch's do.
+        if let (Some(bounds), Some(collector)) = (&input.snapshot_bounds, &self.snapshots) {
+            OriginSnapshots::bound(collector, bounds);
+        }
         let solved = match check_solved(self, input)? {
             Ok(solved) => solved,
             Err(refused) => return Ok(refused),
@@ -172,6 +177,8 @@ impl BrowserSession {
         }
         let mut output = output?;
         if let Some(replay) = output.replay.as_mut() {
+            // The replay's last open's site skills, read on its own guest.
+            fresh.deliver_batch_site_skills(replay);
             self.page_replay(replay);
         }
         Ok(output)

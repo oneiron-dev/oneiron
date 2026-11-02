@@ -115,7 +115,10 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
         .map_err(|error| anyhow::anyhow!("read {}: {error}", path.display()))?;
     anyhow::ensure!(folder.is_dir(), "{} is not a folder", path.display());
     let mut counts = NoteCounts::default();
-    let mut notes = read_folder(&folder, &mut counts)?;
+    // The files held by name ride in the batch too, bound by its digest, and
+    // are kept as their originals once the owner approves (FIX 11587): a
+    // one-shot import names no ledger row, so the approve keeps them outright.
+    let (mut notes, name_only) = read_folder(&folder, &mut counts)?;
     super::progress(&format!("read {} note(s)", notes.len()));
     let folder = folder
         .to_str()
@@ -180,12 +183,15 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             title,
             written_at: note.written_at,
             markdown,
+            // The file's bytes ride in the batch, bound by its digest, and
+            // are kept as its original once the owner approves (FIX 7779).
+            original: note.original.take(),
         });
     }
     let earlier_titles = earlier_titles(&vault, &folder, &notes, &standings)?;
     let (links, link_counts) = resolve_links(&notes, &standings, &earlier_titles);
 
-    let batch = if files.is_empty() {
+    let batch = if files.is_empty() && name_only.is_empty() {
         None
     } else {
         let batch = ImportedNoteBatch {
@@ -193,6 +199,7 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
             folder: folder.clone(),
             notes: files,
             links,
+            name_only,
         };
         let digest = note_imports::digest(&vault, &owner, &batch)?;
         let (note_count, link_count) = (batch.notes.len(), batch.links.len());
@@ -255,6 +262,8 @@ pub(in crate::commands) fn import_notes(args: ImportNotesArgs) -> anyhow::Result
 
 /// A frontmatter `type` as stdout shows it: a short name as it is, anything
 /// else (prose, a long value) as `(other)`, so no note text reaches stdout.
+/// A name the release filter reads as a credential is `(other)` too (FIX
+/// 9475), whatever the vault's secret scan is set to.
 fn shown_label(label: Option<&str>) -> &str {
     match label {
         None => "",
@@ -262,7 +271,10 @@ fn shown_label(label: Option<&str>) -> &str {
             if label.len() <= 64
                 && label
                     .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b)) =>
+                    .all(|b| b.is_ascii_alphanumeric() || b"._/-".contains(&b))
+                && !oneiron::batch::export::redact_credentials(&mut serde_json::Value::from(
+                    label,
+                )) =>
         {
             label
         }

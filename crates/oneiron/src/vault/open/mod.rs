@@ -113,7 +113,9 @@ impl Vault {
     /// holds open, as a managed host's isolation probe does. The writer lease
     /// and, on Linux, the LMDB environment bind that descriptor, so a
     /// directory renamed in under `path` after the caller's checks is refused,
-    /// never opened. Refuses unless `path` still names `directory`.
+    /// never opened. Refuses unless `path` still names `directory`. A lease
+    /// another host holds for one owner act is waited out as
+    /// [`Self::open_owned`] waits it out (FIX 5897).
     #[cfg(unix)]
     pub fn open_owned_held(
         directory: std::fs::File,
@@ -122,7 +124,7 @@ impl Vault {
     ) -> Result<Self> {
         validate_open_config(&config)?;
         let canonical = path.as_ref().canonicalize()?;
-        let lease = VaultWriterLease::acquire_held(directory, &canonical)?;
+        let lease = VaultWriterLease::acquire_held_after_owner_act(directory, &canonical)?;
         Self::open_leased(&canonical, config, lease)
     }
 
@@ -507,26 +509,6 @@ impl Vault {
         text_index_trusted: bool,
         seed_mode: DefaultPolicySeedMode,
     ) -> Result<Self> {
-        // The document runtime is optional, but its ownership of stored bodies is
-        // not. A featureless handle must never overwrite a pointer or delete its
-        // row while leaving document history, forks and citation quotes behind.
-        #[cfg(not(feature = "sync"))]
-        {
-            use crate::side_table::{self, HexId, Named, SideTable};
-            const HEADS: SideTable<HexId, rmpv::Value, Named> =
-                SideTable::new(&side_table::ENTITY_DOC_HEAD);
-            let txn = store.env.read_txn()?;
-            if HEADS
-                .iter_raw_from(&store, &txn, &[])?
-                .next()
-                .transpose()?
-                .is_some()
-            {
-                return Err(Error::InvalidConfig(
-                    "this vault contains entity documents and requires the sync feature".to_owned(),
-                ));
-            }
-        }
         crate::batch::sweep_scope_stamps(&store)?;
         // ONE-1890: the seeded system-agent roster reconciles on EVERY seeded
         // open, fresh and existing, in its own write transaction before any
@@ -570,6 +552,7 @@ impl Vault {
             writer_lease: None,
             privacy,
             text_index_trusted: std::sync::atomic::AtomicBool::new(text_index_trusted),
+            owed_vad_drain_stalled_at: std::sync::atomic::AtomicU64::new(0),
             // Opens FULL; only a ctl-driven shed parks it, an inbound resume unparks it.
             slim: crate::slim::SlimController::default(),
             wake_policy_timer_owned: std::sync::atomic::AtomicBool::new(false),
@@ -608,6 +591,8 @@ impl Vault {
             attempt_cancels: Default::default(),
             active_wakes: Default::default(),
             code_consent_host: Default::default(),
+            managed_owner_check: Default::default(),
+            served_transports: Default::default(),
             coach_weave_digest_host: Default::default(),
             origin_mirror_wake: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -634,7 +619,6 @@ impl Vault {
         // anchor to the content bytes, so only the holder index is rebuilt.
         crate::skill_hub::backfill_content_hash_index_if_needed(&vault)?;
         vault.backfill_row_deletion_fences_on_open()?;
-        vault.backfill_consult_party_facts_on_open()?;
         vault.backfill_origin_cas_intents_on_open()?;
         if matches!(seed_mode, DefaultPolicySeedMode::Required) {
             // The seeded births below stamp the owner's `substrate` FACET,
@@ -648,6 +632,7 @@ impl Vault {
                 if !vault.local_hard_delete_marker_exists_in_txn(wtxn, &owner)? {
                     vault.stage_embedded_owner_actor_in_txn(wtxn, 0)?;
                 }
+                crate::agent_def::ensure_seeded_agent_persons_in_txn(&vault, wtxn)?;
                 Ok(())
             })?;
             // An untouched seeded policy manifest takes the one this build
@@ -669,6 +654,7 @@ impl Vault {
             crate::skill_hub::seed_bootstrap_skills(&vault)?;
             crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
             crate::skill_hub::seed_default_skill_hub(&vault)?;
+            crate::comm::seed_claim_class_descriptors(&vault)?;
             crate::workspace_roster::seed_root_project(&vault)?;
         }
         vault.lfs_chunk_parameters()?;
@@ -689,6 +675,7 @@ impl Vault {
         // The image a restore in this vault's place set aside reads, and
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
+        vault.resolve_pending_credential_restores_logged();
         Ok(vault)
     }
 

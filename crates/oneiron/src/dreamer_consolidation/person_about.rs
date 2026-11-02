@@ -8,9 +8,12 @@
 //! band whose facts differ from the band below it, reads the facts again, and
 //! lands every line in one write. The board reads the stored line of the
 //! highest band at or below the reader's ceiling; no model runs at render.
-//! A CLAIM write about a person hides its lines at once, in the write's own
+//! A CLAIM write about a person, and a door that drops one of its facts
+//! without a new body (FIX 3196), hide its lines at once, in that door's own
 //! transaction, until the next pass reads the facts again.
 
+use super::request_sources::{CallBackend, SourcedBackend};
+use super::residency::spent_or_deferred;
 use super::resources::document_version;
 use super::step_charge::StepChargeTally;
 use super::support::{DREAMER_PERSON_ABOUT_ATTEMPT_TYPE, invalid_consolidation};
@@ -20,10 +23,7 @@ use crate::dreamer_runner::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerConsolidationScope, DreamerParkCause,
     DreamerRunnerStore,
 };
-use crate::dreamer_wake::{
-    DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, DreamerAttemptExecutor,
-    WakeAttemptContext,
-};
+use crate::dreamer_wake::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
 use crate::error::{Error, Result};
 use crate::llm::{
     BudgetGuard, CallClass, CallEnvelope, CallPurpose, ContentPart, DurableStepContext,
@@ -37,6 +37,13 @@ use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
+
+mod claim_hooks;
+mod sources;
+
+pub(crate) use claim_hooks::{
+    erase_person_about_in_txn, mark_person_about_dropped_in_txn, mark_person_about_moved_in_txn,
+};
 
 /// The four sensitivity bands, public (0) to restricted (3).
 const TOP_BAND: u8 = 3;
@@ -72,8 +79,9 @@ struct PersonAbout {
     /// The lines the Dreamer's newest landing replaced, kept so the owner
     /// can revert it (owner ruling 10-18: each Dreamer change revertible).
     previous: Option<PriorAbout>,
-    /// A CLAIM write about the person landed since a wake pass last read its
-    /// facts: the board shows no line until one reads them again.
+    /// A CLAIM write about the person, or a door that dropped one of its
+    /// facts, landed since a wake pass last read them: the board shows no
+    /// line until one reads them again.
     moved: bool,
 }
 
@@ -89,6 +97,9 @@ struct PriorAbout {
 struct AboutLine {
     band: u8,
     text: String,
+    /// The CLAIM ids the line stands on: exactly the facts at or below
+    /// `band` the line was written from, never the person's every CLAIM.
+    fact_claim_ids: Vec<EntityId>,
 }
 
 /// One fact about a person, as the Dreamer may read it.
@@ -237,7 +248,7 @@ fn person_about_input(person: EntityId) -> rmpv::Value {
     )])
 }
 
-fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
+pub(crate) fn person_of_about_input(input: &rmpv::Value) -> Result<EntityId> {
     let rmpv::Value::Map(entries) = input else {
         return Err(invalid_consolidation("person about input is not a map"));
     };
@@ -322,82 +333,6 @@ pub(crate) fn enqueue_person_about_on_wake(vault: &Vault, now: u64) -> Result<()
     Ok(())
 }
 
-/// Hides the `about` lines of the PERSON a CLAIM is about, and of the one its
-/// stored body was about, until a wake pass reads their facts again. Runs in
-/// the CLAIM put's transaction, before the new body replaces the stored one.
-pub(crate) fn mark_person_about_moved_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    claim: EntityId,
-    body: &crate::claim::ClaimBody,
-) -> Result<()> {
-    let stored = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, &claim)?
-        .filter(|raw| {
-            crate::batch::EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-        })
-        .and_then(|raw| {
-            crate::claim::decode_claim_body(
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
-                true,
-            )
-            .ok()
-        })
-        .map(|stored| stored.subject);
-    for subject in std::iter::once(body.subject).chain(stored) {
-        let ClaimSubject::Entity(person) = subject else {
-            continue;
-        };
-        let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
-            continue;
-        };
-        if !row.moved {
-            row.moved = true;
-            PERSON_ABOUT.put(store, txn, &person, &row)?;
-        }
-    }
-    Ok(())
-}
-
-/// The erase hook's PEOPLE half (FIX 3155): an erased fact takes the
-/// `about` lines of the PERSON it was about, and their kept before-image,
-/// with it, so no stored line still says what the fact said; the next wake
-/// pass writes new lines from the facts left. An erased PERSON takes its
-/// whole row. Runs in the erasing transaction, before the tear.
-pub(crate) fn erase_person_about_in_txn(
-    store: &crate::store::Store,
-    txn: &mut heed::RwTxn<'_>,
-    id: &EntityId,
-) -> Result<()> {
-    if PERSON_ABOUT.get(store, txn, id)?.is_some() {
-        PERSON_ABOUT.delete(store, txn, id)?;
-        return Ok(());
-    }
-    let subject = crate::ports::EntityStoreRead::port_entity_raw_wiped(store, txn, id)?
-        .filter(|raw| {
-            crate::batch::EntityMetadataHeader::parse(raw)
-                .is_some_and(|header| header.entity_type == ENTITY_TYPE_CLAIM)
-        })
-        .and_then(|raw| {
-            crate::claim::decode_claim_body(
-                raw.get(crate::batch::ENTITY_METADATA_HEADER_LEN..)?,
-                true,
-            )
-            .ok()
-        })
-        .map(|body| body.subject);
-    let Some(ClaimSubject::Entity(person)) = subject else {
-        return Ok(());
-    };
-    let Some(mut row) = PERSON_ABOUT.get(store, txn, &person)? else {
-        return Ok(());
-    };
-    row.moved = true;
-    row.lines.clear();
-    row.previous = None;
-    PERSON_ABOUT.put(store, txn, &person, &row)
-}
-
 /// The owner's revert of the Dreamer's newest `about` landing for `person`:
 /// the lines it replaced stand again on the facts they were written from,
 /// so the board shows them only while those facts hold, and the Dreamer
@@ -466,6 +401,9 @@ impl Vault {
 pub struct PersonAboutExecutor<'a, E> {
     inner: E,
     backend: &'a dyn LlmBackend,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    sourced: Option<&'a dyn SourcedBackend>,
     guard: &'a BudgetGuard,
     actor: WriteActor,
     model: ModelId,
@@ -478,6 +416,7 @@ impl<'a, E> PersonAboutExecutor<'a, E> {
     pub fn new(
         inner: E,
         backend: &'a dyn LlmBackend,
+        sourced: Option<&'a dyn SourcedBackend>,
         guard: &'a BudgetGuard,
         actor: WriteActor,
         model: ModelId,
@@ -487,6 +426,7 @@ impl<'a, E> PersonAboutExecutor<'a, E> {
         Self {
             inner,
             backend,
+            sourced,
             guard,
             actor,
             model,
@@ -532,12 +472,16 @@ impl<E> PersonAboutExecutor<'_, E> {
         let digest = facts_digest(&facts, TOP_BAND);
         // An earlier attempt already wrote from these facts.
         if written == Some(digest) || facts.is_empty() {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         let locality = self
             .inference
             .selected_locality()
             .ok_or_else(|| Error::InvalidConfig("about host binding needs locality".into()))?;
+        let keyless = self.inference.selected_keyless();
         let mut charges = StepChargeTally::default();
         let mut lines: Vec<AboutLine> = Vec::new();
         let mut below: Option<[u8; 32]> = None;
@@ -552,9 +496,15 @@ impl<E> PersonAboutExecutor<'_, E> {
                 && let Some(last) = lines.last()
             {
                 let text = last.text.clone();
-                lines.push(AboutLine { band, text });
+                let fact_claim_ids = last.fact_claim_ids.clone();
+                lines.push(AboutLine {
+                    band,
+                    text,
+                    fact_claim_ids,
+                });
                 continue;
             }
+            let fact_claim_ids = admitted.iter().map(|fact| fact.claim).collect::<Vec<_>>();
             let request = LlmRequest {
                 model: self.model.clone(),
                 envelope: CallEnvelope {
@@ -575,6 +525,7 @@ impl<E> PersonAboutExecutor<'_, E> {
                     ),
                     response_format: ResponseFormat::Text,
                     locality,
+                    host_keyless: keyless,
                 }
                 .with_purpose_defaults(),
                 messages: vec![
@@ -596,14 +547,26 @@ impl<E> PersonAboutExecutor<'_, E> {
                 provider_options: BTreeMap::new(),
                 host_segments: None,
             };
-            let mut request = ctx
-                .vault
-                .authorize_model_role(super::DREAMER_NARRATIVE_ROLE, request, &self.inference)?
-                .into_request();
-            super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)?;
-            let step_hash = request
-                .canonical_hash()
-                .map_err(|_| invalid_consolidation("about request did not hash"))?;
+            let authorized = match ctx.vault.authorize_model_role(
+                super::DREAMER_NARRATIVE_ROLE,
+                request,
+                &self.inference,
+            ) {
+                Ok(authorized) => authorized,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            let mut request = authorized.into_request();
+            if let Err(error) = super::roles::bind_reasoning(ctx.vault, self.backend, &mut request)
+            {
+                return spent_or_deferred(error, ctx, &charges);
+            }
+            let Ok(step_hash) = request.canonical_hash() else {
+                return spent_or_deferred(
+                    invalid_consolidation("about request did not hash"),
+                    ctx,
+                    &charges,
+                );
+            };
             let step_ctx = DurableStepContext {
                 vault: ctx.vault,
                 attempt_id,
@@ -613,40 +576,45 @@ impl<E> PersonAboutExecutor<'_, E> {
                 deadline: Some(ctx.deadline),
                 now_ms: ctx.now_ms,
             };
+            let backend =
+                CallBackend::new(self.backend, self.sourced, Some(fact_claim_ids.clone()));
             let response = match call_as_step_checked(
                 &step_ctx,
-                self.backend,
+                backend.get(),
                 self.guard,
                 request,
                 &check_about_reply,
             )
             .await
             {
-                Ok(StepOutcome::Finished { response, .. }) => {
-                    charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)?;
+                Ok(StepOutcome::Finished {
+                    response, memoized, ..
+                }) => {
+                    if let Err(error) =
+                        charges.record_terminal(ctx.vault, attempt_id, step_hash, &response.usage)
+                    {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
+                        return spent_or_deferred(error, ctx, &charges);
+                    }
                     response
                 }
                 Ok(StepOutcome::Trapped { .. }) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: "durable step trapped for resume".to_owned(),
-                        cause: DreamerParkCause::Signal,
-                    });
+                    return Ok(charges
+                        .park_for("durable step trapped for resume", DreamerParkCause::Signal));
                 }
                 Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                     charges.record_usage(&usage);
                     return Ok(charges.checkpoint());
                 }
                 Err(DurableStepError::DeadlineHardCut) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                        cause: DreamerParkCause::Checkpoint,
-                    });
+                    return Ok(charges.checkpoint());
                 }
                 Err(DurableStepError::FinalizeRefused) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: "wake pass finalize window".to_owned(),
-                        cause: DreamerParkCause::Checkpoint,
-                    });
+                    return Ok(
+                        charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint)
+                    );
                 }
                 // An empty line the check refused was paid and never
                 // memoized: it is asked again after its retry delay (FIX
@@ -655,12 +623,13 @@ impl<E> PersonAboutExecutor<'_, E> {
                     charges.record_usage(&usage);
                     return Ok(charges.park_for(&errors.join("; "), DreamerParkCause::Retry));
                 }
-                Err(DurableStepError::Engine(error)) => return Err(error),
+                Err(DurableStepError::Engine(error)) => {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 Err(other) => {
-                    return Ok(DreamerAttemptExecution::Park {
-                        reason: other.to_string(),
-                        cause: DreamerParkCause::of_step(&other),
-                    });
+                    return Ok(
+                        charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other))
+                    );
                 }
             };
             let text = match about_line(&response) {
@@ -668,10 +637,19 @@ impl<E> PersonAboutExecutor<'_, E> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431, OF-193a).
                 Err(reason) => {
-                    return charges.park_refused_reply(ctx.vault, attempt_id, step_hash, reason);
+                    return match charges
+                        .park_refused_reply(ctx.vault, attempt_id, step_hash, reason)
+                    {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => spent_or_deferred(error, ctx, &charges),
+                    };
                 }
             };
-            lines.push(AboutLine { band, text });
+            lines.push(AboutLine {
+                band,
+                text,
+                fact_claim_ids,
+            });
             below = Some(band_digest);
             if ctx.deadline.expired() {
                 return Ok(charges.checkpoint());
@@ -680,8 +658,14 @@ impl<E> PersonAboutExecutor<'_, E> {
         // The lines must stand on the facts as they are: a fact that moved
         // while the model wrote sends the attempt round again, soon.
         let now_facts = {
-            let txn = snapshot(ctx.vault)?;
-            person_facts(ctx.vault, &read, &txn, person)?
+            let txn = match snapshot(ctx.vault) {
+                Ok(txn) => txn,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            };
+            match person_facts(ctx.vault, &read, &txn, person) {
+                Ok(now_facts) => now_facts,
+                Err(error) => return spent_or_deferred(error, ctx, &charges),
+            }
         };
         if facts_digest(&now_facts, TOP_BAND) != digest {
             return Ok(DreamerAttemptExecution::Deferred {
@@ -690,10 +674,23 @@ impl<E> PersonAboutExecutor<'_, E> {
                     .now_ms
                     .div_ceil(1_000)
                     .saturating_add(FACTS_DRIFT_RETRY_SECS),
+                step_hashes: charges.step_hashes.clone(),
             });
         }
         let at = ctx.now_ms.div_ceil(1_000);
-        ctx.vault.with_write_txn(|txn| {
+        let landed = match ctx.vault.with_write_txn(|txn| {
+            // FIX 8697: an erase that lands between the snapshot above and
+            // this write must not have its text put back. The PERSON and the
+            // exact facts the lines stand on are read again through this
+            // write's own snapshot; a stale landing writes nothing, and the
+            // next pass rebuilds from the facts left.
+            if !crate::consent::person_is_live_in_txn(ctx.vault, txn, &person)? {
+                return Ok(false);
+            }
+            let now_facts = person_facts(ctx.vault, &read, txn, person)?;
+            if facts_digest(&now_facts, TOP_BAND) != digest {
+                return Ok(false);
+            }
             let mut row = PERSON_ABOUT
                 .get(&ctx.vault.store, txn, &person)?
                 .unwrap_or_default();
@@ -704,10 +701,23 @@ impl<E> PersonAboutExecutor<'_, E> {
             });
             row.written = digest;
             row.at = at;
-            PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)
-        })?;
+            PERSON_ABOUT.put(&ctx.vault.store, txn, &person, &row)?;
+            Ok(true)
+        }) {
+            Ok(landed) => landed,
+            Err(error) => return spent_or_deferred(error, ctx, &charges),
+        };
+        if !landed {
+            tracing::warn!(
+                target: "oneiron::dreamer",
+                code = "person_about_stale_landing",
+                person = %person.to_hex(),
+                "a stale person about landing wrote nothing; the next pass rebuilds"
+            );
+        }
         Ok(DreamerAttemptExecution::Completed {
             completed_units: charges.units,
+            step_hashes: charges.step_hashes.clone(),
         })
     }
 }

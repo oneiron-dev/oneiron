@@ -63,7 +63,9 @@ pub enum ProducerTarget {
     PolicyManifest {
         /// The manifest.
         manifest: EntityId,
-        /// blake3 of its stored row when the finding was filed: the base a fix is against.
+        /// blake3 of its stored body when the finding was filed: the base a fix is against. The
+        /// row's header is not hashed, so a rewrite of the same body keeps the revision, as its
+        /// trust does (FIX 7344).
         revision: [u8; 32],
     },
     /// The config every run of the finding recorded it ran under, the same one each time.
@@ -196,10 +198,11 @@ pub(crate) fn bind_producer(
         && let Some(raw) = vault.get_raw(manifest)?
         && EntityMetadataHeader::parse(&raw)
             .is_some_and(|header| header.entity_type == ENTITY_TYPE_POLICY_MANIFEST)
+        && let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..)
     {
         return Ok(ProducerTarget::PolicyManifest {
             manifest: *manifest,
-            revision: *blake3::hash(&raw).as_bytes(),
+            revision: *blake3::hash(body).as_bytes(),
         });
     }
     let mut configs = runs
@@ -347,6 +350,7 @@ impl Vault {
                 now,
             )?;
             crate::failure_ladder::oversight::proposed_in_txn(self, txn, &issue_id.to_hex(), now)?;
+            crate::failure_ladder::oversight::routed_in_txn(self, txn, &issue_id.to_hex(), now)?;
             blocked_reports::record_issue_settled_in_txn(self, txn, &issue_id, proposal, now)?;
             Ok(true)
         })?;
@@ -620,7 +624,10 @@ fn skill_in_force(
 }
 
 /// The manifest's row in force: present, read by a resolved policy that is not fail-closed,
-/// and among its contributors, trusted. Its row records no time it took effect.
+/// and among its contributors, trusted; each revision its body's digest (FIX 7344). It is in
+/// force from the second this vault first trusted that body, which a rewrite of the same body
+/// keeps (FIX 10936); the row's own time moves with any such rewrite, so it is never read. A
+/// stamp with no time (the bootstrap seed's) counts from the pass that first proves it.
 fn manifest_in_force(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -647,16 +654,25 @@ fn manifest_in_force(
             continue;
         };
         if crate::gate::manifest_authenticity::manifest_is_trusted(&vault.store, txn, id, body)? {
-            trusted_contributors.push((*id, *blake3::hash(&row).as_bytes()));
+            trusted_contributors.push((*id, *blake3::hash(body).as_bytes()));
         }
     }
-    let revision = *blake3::hash(&raw).as_bytes();
+    let Some(body) = raw.get(ENTITY_METADATA_HEADER_LEN..) else {
+        return Ok(EffectiveRevision::Unknown);
+    };
+    let revision = *blake3::hash(body).as_bytes();
     if !trusted_contributors.contains(&(manifest, revision)) {
         return Ok(EffectiveRevision::Unknown);
     }
+    let from = crate::gate::manifest_authenticity::manifest_trusted_at(
+        &vault.store,
+        txn,
+        &manifest,
+        body,
+    )?;
     Ok(EffectiveRevision::InForce {
         revision: bytes_to_hex_lower(&revision),
-        from: None,
+        from,
         proof: EffectProof::PolicyManifest {
             manifest,
             revision,

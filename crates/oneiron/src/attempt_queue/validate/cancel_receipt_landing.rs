@@ -18,7 +18,7 @@ use super::field_validators::{
     ERR_CANCEL_RECEIPT_RESERVE_UNITS, ERR_CANCEL_RECEIPT_SEQUENCE,
     ERR_CANCEL_RECEIPT_TERMINAL_ORDER, ERR_CANCELLATION_MALFORMED, ERR_RESERVE_OVERSPENT,
     validate_intervention_actor, validate_optional_cancel_status, validate_optional_failure_reason,
-    validate_optional_resume_point,
+    validate_optional_intervention_note, validate_optional_resume_point,
 };
 use crate::error::ArtifactError;
 
@@ -351,6 +351,10 @@ pub(in crate::attempt_queue) fn append_attempt_event(
     note: Option<String>,
     now: u64,
 ) -> Result<()> {
+    // Checked as the decoder checks it, so no appended event poisons the row
+    // it is appended to (FIX 9580).
+    validate_intervention_actor(&actor)?;
+    validate_optional_intervention_note(note.as_deref())?;
     let sequence = match record.events.last() {
         Some(event) => event
             .sequence

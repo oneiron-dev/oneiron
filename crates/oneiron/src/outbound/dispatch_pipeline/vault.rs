@@ -11,6 +11,7 @@ impl Vault {
     /// frozen step identity follows the replay contract. New admission and
     /// Pending retry verify the step and resident restriction in the effect
     /// Gate transaction; terminal replay returns its recorded outcome first.
+    /// Its ordinary outbound-family receipt is filed once (FIX 8816).
     pub fn dispatch_outbound_intent_from_step<S: OutboundExecutionSink>(
         &self,
         attempt_id: crate::attempt_queue::AttemptId,
@@ -19,9 +20,21 @@ impl Vault {
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
         let binding = crate::llm::StepEffectBinding::for_request(attempt_id, step_request)?;
-        OutboundDispatchPipeline.dispatch_from_step(self, request, sink, binding)
+        let result = OutboundDispatchPipeline.dispatch_from_step(self, request, sink, binding)?;
+        crate::receipt::record_direct_dispatch_receipt(self, result.receipt.clone())?;
+        Ok(result)
     }
 
+    /// Dispatches a host-owned outbound effect and commits its ordinary
+    /// outbound-family receipt, including held, denied and uncertain outcomes
+    /// ([`OutboundDispatchPipeline::dispatch`], FIX 8816). Engine-owned
+    /// connector TASKs use their existing task receipt writer through the
+    /// crate's receipt-free doors.
+    ///
+    /// # Errors
+    /// Returns the dispatch error or a receipt persistence failure. On a
+    /// retry, the engine intent ledger resolves a possibly-sent effect before
+    /// the canonical receipt is recorded; no transport is blindly repeated.
     pub fn dispatch_outbound_intent<S: OutboundExecutionSink>(
         &self,
         request: OutboundDispatchRequest,
@@ -30,23 +43,17 @@ impl Vault {
         OutboundDispatchPipeline.dispatch(self, request, sink)
     }
 
-    /// Dispatches a host-owned outbound effect and commits its ordinary
-    /// outbound-family receipt, including held, denied and uncertain outcomes.
-    /// Engine-owned connector TASKs use their existing task receipt writer;
-    /// direct host connectors use this recorded entry instead.
+    /// The same recorded door as [`Self::dispatch_outbound_intent`], by its
+    /// explicit name: the receipt is filed once, there.
     ///
     /// # Errors
-    /// Returns the dispatch error or a receipt persistence failure. On a
-    /// retry, the engine intent ledger resolves a possibly-sent effect before
-    /// the canonical receipt is recorded; no transport is blindly repeated.
+    /// As [`Self::dispatch_outbound_intent`].
     pub fn dispatch_outbound_intent_recorded<S: OutboundExecutionSink>(
         &self,
         request: OutboundDispatchRequest,
         sink: &mut S,
     ) -> std::result::Result<OutboundDispatchResult, OutboundDispatchError> {
-        let result = self.dispatch_outbound_intent(request, sink)?;
-        crate::receipt::record_direct_dispatch_receipt(self, result.receipt.clone())?;
-        Ok(result)
+        self.dispatch_outbound_intent(request, sink)
     }
 
     /// A Linear mirror mutation, recorded like

@@ -17,7 +17,9 @@ use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
+mod history;
 mod repo_index;
+pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
 /// Location of the body text. Editable metadata shares its owning document.
@@ -38,6 +40,10 @@ pub(super) struct Head {
     pub field: TextField,
     pub generation: u64,
     pub pending: u64,
+    /// The frontier of the document's birth here from its record's own text
+    /// (FIX 8942); `None` for a document carried from another machine,
+    /// rebuilt or born of anything else.
+    pub birth_frontier: Option<Vec<u8>>,
 }
 
 /// Pointer from an entity to its owning document, plus generation/pending
@@ -116,6 +122,35 @@ pub(super) fn load(
     Ok(doc)
 }
 
+/// The write door's scan of a document's new `text`: a text whose only hits
+/// are values the lift sweep lifted from this document before is admitted
+/// for them, and marked again (OF-067); any other hit refuses.
+fn door_scan(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    _entity: &EntityId,
+    h: &Head,
+    text: &str,
+) -> Result<bool> {
+    let store = &vault.store;
+    match crate::batch::secret_scan::scan_content_in_txn(store, txn, text.as_bytes()) {
+        Ok(()) => Ok(false),
+        Err(refusal) => match super::lift::screened_in_txn(store, txn, h, text)? {
+            Some(screened)
+                if crate::batch::secret_scan::scan_content_in_txn(
+                    store,
+                    txn,
+                    screened.as_bytes(),
+                )
+                .is_ok() =>
+            {
+                Ok(true)
+            }
+            _ => Err(refusal),
+        },
+    }
+}
+
 pub(super) fn persist(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
@@ -123,6 +158,21 @@ pub(super) fn persist(
     h: &mut Head,
     doc: &EntityDoc,
     before: Option<&loro::VersionVector>,
+) -> Result<()> {
+    persist_scanned(vault, txn, entity, h, doc, before, door_scan)
+}
+
+/// [`persist`], its new text read by `scan` in place of the write door's
+/// own scan: the sync plane admits a text whatever it holds (FIX 8872).
+/// `scan` answers whether the text is marked again once it is stored.
+pub(super) fn persist_scanned(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    entity: &EntityId,
+    h: &mut Head,
+    doc: &EntityDoc,
+    before: Option<&loro::VersionVector>,
+    scan: impl FnOnce(&Vault, &mut RwTxn<'_>, &EntityId, &Head, &str) -> Result<bool>,
 ) -> Result<()> {
     let store = &vault.store;
     // A MESSAGE or TURN whose text changes owes its turn a sieve read and,
@@ -133,25 +183,8 @@ pub(super) fn persist(
         Some(entity_type) => text_changed(store, txn, entity, doc)?.then_some(entity_type),
         None => None,
     };
-    // A text whose only hits are values the lift sweep lifted from this
-    // document before is admitted for them, and marked again (OF-067).
     let text = doc.text();
-    let remark = match crate::batch::secret_scan::scan_content_in_txn(store, txn, text.as_bytes()) {
-        Ok(()) => false,
-        Err(refusal) => match super::lift::screened_in_txn(store, txn, h, &text)? {
-            Some(screened)
-                if crate::batch::secret_scan::scan_content_in_txn(
-                    store,
-                    txn,
-                    screened.as_bytes(),
-                )
-                .is_ok() =>
-            {
-                true
-            }
-            _ => return Err(refusal),
-        },
-    };
+    let remark = scan(vault, txn, entity, h, &text)?;
     // A NOTE written on this plane keeps the NOTE door's body bound and its
     // seal (OF-073 stage 1).
     if vault.get_entity_type_in_txn(txn, entity)? == Some(crate::registry::ENTITY_TYPE_NOTE) {
@@ -194,6 +227,16 @@ pub(super) fn persist(
     }
     if remark {
         super::lift::remark_entity_text_in_txn(vault, txn, entity, &text)?;
+    }
+    // A live edit wakes the questions watching the unit or its RESTS_ON
+    // sources, as a batch write does; the door wakes the pump after commit.
+    crate::llm::decision::questions::project_arrivals_in_txn(
+        store,
+        txn,
+        &std::collections::BTreeSet::from([*entity]),
+    )?;
+    if crate::llm::decision::questions::unit_watched_in_txn(store, txn, entity)? {
+        crate::batch::queue_proactivity_change(vault, txn);
     }
     Ok(())
 }
@@ -342,12 +385,18 @@ impl Vault {
                 header.entity_type,
                 &pointer,
             )?;
+            // A row its writing door already stamped keeps that birth on its
+            // document's birth commit (FIX 10929).
+            let born = crate::provenance::birth::row_birth_in_txn(&self.store, txn, entity)?;
+            // The birth commit names the birth actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, birth_actor)?;
             let doc = EntityDoc::open_with_metadata(
                 *entity,
                 &initial,
                 &metadata,
-                birth_actor,
+                (birth_actor, stamp),
                 header.occurred_start,
+                born.as_ref().map(|birth| &birth.made_by),
             )?;
             super::forks::bind_actor(self, txn, &doc, birth_actor, header.occurred_start)?;
             // The immutable envelope, type/time indexes and other body fields do
@@ -379,8 +428,21 @@ impl Vault {
                 field: field.clone(),
                 generation: 0,
                 pending: 0,
+                birth_frontier: Some(doc.frontier()),
             };
-            persist(self, txn, entity, &mut h, &doc, None)
+            persist(self, txn, entity, &mut h, &doc, None)?;
+            // A MESSAGE's quotes taken of its atomic text are pinned at the
+            // birth frontier, as a stream or quote birth pins them (FIX 4840).
+            if header.entity_type == crate::registry::ENTITY_TYPE_MESSAGE {
+                crate::conversation_dag::pin_body_quotes_at_message_birth_in_txn(
+                    self,
+                    txn,
+                    entity,
+                    &initial,
+                    birth_actor,
+                )?;
+            }
+            Ok(())
         })?;
         registry.remove(entity);
         Ok(())
@@ -644,7 +706,14 @@ pub(crate) fn record_document(
     let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
     match frontier {
-        Some(frontier) => doc.fork(frontier).map(Some),
+        Some(frontier) => {
+            // A read at the live frontier reads the live document: no fork.
+            if frontier == doc.frontier().as_slice() {
+                Ok(Some(doc))
+            } else {
+                doc.fork(frontier).map(Some)
+            }
+        }
         None => Ok(Some(doc)),
     }
 }
@@ -657,71 +726,13 @@ pub(crate) fn record_body_at(
     frontier: &[u8],
 ) -> Result<Vec<u8>> {
     let h = head(store, txn, entity)?;
-    let doc = load(store, txn, &h)?.fork(frontier)?;
-    body_with_document(&h.field, body, &doc)
-}
-
-/// One state of an entity's document, as [`record_body_history_in_txn`]
-/// lists it.
-pub(crate) struct RetainedBody {
-    /// The frontier [`super::source_frontier_in_txn`] names the state by.
-    pub(crate) frontier: Vec<u8>,
-    /// The record body there ([`resolve_record_body`] at that state).
-    pub(crate) body: Vec<u8>,
-}
-
-/// `entity`'s record body at the states its document's retained history
-/// names, newest first: the current one, then for each of the newest
-/// `limit` changes the state it left and the state it was made on (its
-/// dependencies, which name a merged state the next edit followed). `None`
-/// for an unmigrated row. A state of concurrent heads no later change was
-/// made on, or whose history was purged, is not listed.
-pub(crate) fn record_body_history_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    entity: &EntityId,
-    body: &[u8],
-    limit: usize,
-) -> Result<Option<Vec<RetainedBody>>> {
-    if !has_record_head(store, txn, entity)? {
-        return Ok(None);
-    }
-    let h = head(store, txn, entity)?;
     let doc = load(store, txn, &h)?;
-    let current = doc.doc.oplog_frontiers();
-    let mut frontiers = vec![current.encode()];
-    let mut visited = 0;
-    doc.doc
-        .travel_change_ancestors(&current.to_vec(), &mut |meta| {
-            let last = meta.id.inc(i32::try_from(meta.len).unwrap_or(i32::MAX) - 1);
-            frontiers.push(loro::Frontiers::from_id(last).encode());
-            if !meta.deps.is_empty() {
-                frontiers.push(meta.deps.encode());
-            }
-            visited += 1;
-            if visited < limit {
-                std::ops::ControlFlow::Continue(())
-            } else {
-                std::ops::ControlFlow::Break(())
-            }
-        })
-        .map_err(|_| Error::CorruptedIndex("document change history"))?;
-    let mut states: Vec<RetainedBody> = Vec::with_capacity(frontiers.len());
-    for frontier in frontiers {
-        let mut pin = h.incarnation.clone().into_bytes();
-        pin.extend_from_slice(&frontier);
-        if states.iter().any(|state| state.frontier == pin) {
-            continue;
-        }
-        let Ok(version) = doc.fork(&frontier) else {
-            continue;
-        };
-        states.push(RetainedBody {
-            frontier: pin,
-            body: body_with_document(&h.field, body, &version)?,
-        });
+    // A read at the live frontier reads the live document: no fork.
+    if frontier == doc.frontier().as_slice() {
+        return body_with_document(&h.field, body, &doc);
     }
-    Ok(Some(states))
+    let version = doc.fork(frontier)?;
+    body_with_document(&h.field, body, &version)
 }
 
 /// A typed read projection of the body and metadata at one document version.

@@ -124,7 +124,9 @@ impl Vault {
                     .filter(|entry| open(&entry.state))
                     .map(|entry| entry.item.seq)
                     .collect();
-                self.land_shape_journal(owner, slips, &mut journal, &waiting, now)?;
+                // An inbox group holds proposals, never the creator's
+                // conversation-learning answer (FIX 5603).
+                self.land_shape_journal(owner, slips, &mut journal, &waiting, None, now)?;
             }
             InboxBulkVerb::RejectAll => {
                 for entry in &mut journal.items {

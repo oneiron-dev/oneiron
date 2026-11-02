@@ -161,6 +161,33 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// `Ping` or an image manifest, the carrier stays at wire revision 2, and
 /// this version stays 3.
 ///
+/// VM diverged-copy notice (FIX 11736, FIX 11737): after the owner answers
+/// a copy the carrier never agreed on, the guest tells the host
+/// ([`VmOutboxFrame::DivergenceCleared`](crate::vm_outbox::VmOutboxFrame::DivergenceCleared)):
+/// a guest copy removed or moved aside clears the host's refusal of its own
+/// version, and a host copy the owner kept moves aside on the host. It
+/// carries a build floor, at the engine revision it merged in: carrier
+/// revision 3 ([`VM_OUTBOX_WIRE_REVISION`](crate::vm_outbox::VM_OUTBOX_WIRE_REVISION)),
+/// and each end refuses the other's revision 2 at the hello, with no reader
+/// of it kept. The host library, the guest image and its companion are all
+/// at or after the floor, and LC's image acceptance moves its outbox
+/// revision to 3 at the floor. No `Ping` field is added and this version
+/// stays 3.
+///
+/// VM kept-aside copy removal (FIX 11985): the guest's notice names what it
+/// tells the host
+/// ([`VmOutboxNoticeAction`](crate::vm_outbox::VmOutboxNoticeAction)), and
+/// the host answers a removal of its kept-aside copy
+/// ([`VmOutboxFrame::AsideRemoved`](crate::vm_outbox::VmOutboxFrame::AsideRemoved))
+/// and a keep of one with its move's result
+/// ([`VmOutboxFrame::AsideKept`](crate::vm_outbox::VmOutboxFrame::AsideKept), FIX 12010).
+/// It carries a build floor, at the engine revision it merged in: carrier
+/// revision 4, and each end refuses the other's revision 3 at the hello,
+/// with no reader of it kept. The host library, the guest image and its
+/// companion are all at or after the floor, and LC's image acceptance moves
+/// its outbox revision to 4 at the floor. No `Ping` field is added and this
+/// version stays 3.
+///
 /// VM custody anchor channels (FIX 6517): a vault VM's custody anchor
 /// exchange and proxy ([`vm_anchor`](crate::vm_anchor): vsock ports 1031 and
 /// 1033, their records and the credential payload, `serve`'s
@@ -384,6 +411,95 @@ pub const SLIM_CONTRACT_VERSION: u32 = 2;
 /// after the floor, both reap pulls and the push consumer included. No
 /// migration, missing-field default, shim or reader of a whole-list push or
 /// pull is kept, and this version stays 3.
+///
+/// Owner shed admission (FIX 10157): the facade's `vault.slim.drop_heavy`
+/// answer (the engine's `slim::public::SlimDropOutcome`) gains the status
+/// `nothing_pending`, with no other key: the owner's request waited while
+/// more than one outbound step was pending, then found none pending on a
+/// FULL vault, so no shed was owed and none ran. It carries a build floor,
+/// at the engine revision it merged in, with no `Ping` field: a client that
+/// reads the status runs against an engine at or after the floor, and no
+/// reader of an answer without it is kept. The supervisor's `Shed` ctl
+/// request and its answers are unchanged, and this version stays 3.
+///
+/// Catalog rate currency (FIX 9534): a model catalog cost (the engine's
+/// `llm::LlmCatalogCost`, on every facade, SDK and binding surface that
+/// carries a catalog entry, and in each stored registry row and mesh peer
+/// row) carries `currency`, the provider's three-letter code or `null` when
+/// it named none (a missing key reads as `null`, FIX 11778), and a usage
+/// rate snapshot (the host's `UsageCostRates`, on usage events posted and
+/// stored) now requires `currency` as a code or `null` in place of a code
+/// alone. An unpriced call gains the reason `unknown_currency`: rates with
+/// a `null` currency that are not zero throughout, kept with their snapshot,
+/// and no amount. Only a legacy pre-9534 stored copy of the installed
+/// first-party model pack's row, which has always quoted US dollars, reads
+/// a missing `currency` key as `USD`: its source rows name that pack (FIX
+/// 11778 narrows the pack decode out; first-party bytes name their own
+/// currency). It carries a build floor, at the engine revision it merged
+/// in, with no `Ping` field: a reader or writer of catalog rows or usage
+/// events runs at or after the floor, and no other missing-field default or
+/// reader of a row without it is kept. This version stays 3.
+///
+/// Wire health check revisions (FIX 9531): each kept call-volume question is
+/// a health check of its own on the owner's `/v1/owner/wire-health` read,
+/// its `subject` the crossed set's digest and the question's sequence
+/// (`wire:<digest>:<seq>`), with its own question and unit. An answered
+/// check's `state.by` gains the value `cover`: the answer to an earlier
+/// revision of the same crossed set that still covered it, whose `question`
+/// and `unit` it cites, and it was not asked itself. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of the checks runs against an engine at or after the floor, and no reader
+/// of a check without it is kept. This version stays 3.
+///
+/// Custom endpoint usage (FIX 7765): an unpriced call gains the reason
+/// `custom_endpoint`, on usage events posted and stored: a call on the
+/// owner's own key whose route goes to no provider API origin a catalog price
+/// is quoted for, with a token count and no `costRates`. Such a call logs
+/// token counts only, whatever price its model id has. It carries a build
+/// floor, at the engine revision it merged in, with no `Ping` field: a reader
+/// of usage events runs at or after the floor, and no reader of an event
+/// without it is kept. This version stays 3.
+///
+/// Backup handoff readiness (FIX 6705): a managed vault's readiness on
+/// `Ping` gains the facility `backup_handoff` and the reason
+/// `install_failed`: its backup handoff policy could not be installed, so
+/// its pruning past `keep` is held and every backup is kept; backups are
+/// still taken and the vault serves. It carries a build floor, at the engine
+/// revision it merged in, with no `Ping` field: a supervisor that reads the
+/// readiness runs at or after the floor, and no reader of a readiness
+/// without them is kept. This version stays 3.
+///
+/// Superseded wire health checks (FIX 10868): a check on the owner's
+/// `/v1/owner/wire-health` read gains the state `superseded`, with `by`, the
+/// subject of the later revision of the same crossed set that was held while
+/// it was still held or asked, and `question` and `unit`, the ones it was
+/// asked on or `null`. A superseded check is never asked or polled again;
+/// the later revision is asked in its place. It carries a build floor, at the
+/// engine revision it merged in, with no `Ping` field: a reader of the checks
+/// runs against an engine at or after the floor, and no reader of a check
+/// without it is kept. This version stays 3.
+///
+/// Checkpoint host-order holds and mode-root trust (FIX 6598, 6817, 968): a
+/// restore input's `host_holds` requires `origin`, `live_source` or
+/// `checkpoint_artifact` with the member's `snapshot_id`, `recipient_id`,
+/// `recipient_epoch` and `member_blake3`; the plan takes an optional
+/// `backup_mode_roots`, only on an artifact-backed wake or migrate; and a
+/// receipt's `source` carries `mode_root_policy_digest` only where a
+/// delegation from the vault's mode roots admitted the signer. They carry a
+/// build floor, at the engine revision they merged in, with no `Ping`
+/// field: a supervisor sends and reads them only with engines and vault VM
+/// images at or after it, no reader without them is kept, the restore input
+/// and receipt schemas stay 1, and this version stays 3.
+///
+/// A vault's deletion on `Ping` (FIX 11710,
+/// [`PingDeletion`](crate::PingDeletion)): an optional `deletion`, present
+/// once the vault's Owners deleted it, with `deleted_at` and
+/// `backup_retain_until`. It carries a build floor, at the engine revision
+/// it merged in, with no revision field: a vault built before it sends
+/// none, so a supervisor reads an absent `deletion` as a standing vault
+/// only from installed engines at or after the floor, and as unknown from
+/// one before it. A block that does not read is unknown too, never a failed
+/// `Ping`. This version stays 3.
 pub const CONTRACT_VERSION: u32 = 3;
 
 /// True when a peer advertising `version` accepts the SLIM ctl surface.

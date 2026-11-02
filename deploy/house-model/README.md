@@ -240,6 +240,21 @@ pages and recurrent slot are freed; `stats` (`exl3_stats.py`: allocator
 reservations, pages, queue; `detail: "cheap"` skips the tensor walk);
 `drain` -> `drained`, with no deadline; `shutdown`.
 
+Scheduling (codec v1.3, `exl3_executor.py`, DESIGN-V2 R4) is advertised as
+`capabilities.scheduling` `{minor: 3, policy, chunked_prefill, update}`. A
+`generate` body, never its params, may name `work_class` (`foreground`, the
+default, or `background`), `priority` (0 or 1), `deadline` (the
+microseconds left at send) and `admission` (`{grant_id, revision,
+resource_class, profile_id, envelope_mib}`). A malformed field, a grant for
+another resource class or a stale grant revision is refused before any
+work; a call with no grant is admitted and counted. The owner thread's
+`admitted` event and every terminal carry cheap stats and a `scheduling`
+receipt. `schedule` (`{revision, action: yield | resume | reprioritize,
+...}`) on the call's own connection is applied between engine rounds and
+answered `schedule_ack`. A cancel the Generator cannot complete keeps the
+call's pages, place and reservation charged until its Job ends, and the call
+ends with `final` error `release_failed`, never `released`.
+
 ## The EXL3 scheduler
 
 One scheduler thread owns the exllamav3 generator (INF 1, FIX 6566). An HTTP
@@ -263,8 +278,20 @@ belongs to. The same code runs one request at a time and up to four.
   holds `CLOSE_ROOM_TOKENS` (16) for the closed thought and the answer's
   re-encode. A request that does not fit waits; its context is never shrunk,
   its size never refused, and no running job is evicted for it. Admission is
-  strict arrival order, so a long request is never starved by short ones
-  behind it. The `context_length_exceeded` 400 is unchanged.
+  strict order (arrival order among equals, see **Order**), so a long
+  request is never starved by short ones behind it. The
+  `context_length_exceeded` 400 is unchanged.
+- **Order (R4).** Under the default `--scheduling-policy class_deadline_v1`
+  the next request admitted is the best ranked one (work class, priority,
+  deadline, arrival) the host has not paused, and every engine round runs
+  the Jobs `exl3_executor.py` chooses. A call that names nothing is
+  foreground, so traffic that names nothing runs in arrival order as
+  before. While foreground work is present, one background Job runs a round
+  (`BACKGROUND_ACTIVE_LIMIT`), round-robin, no more background is admitted,
+  and a background prefill runs 256 tokens a round (`PREFILL_CHUNK_TOKENS`);
+  Jobs left out keep their pages, place and state. With no foreground work,
+  background uses all four places. `--scheduling-policy fifo` runs every
+  admitted Job every round, as before R4.
 - **Thinking.** A thinking request keeps one place and its pages through both
   passes. The reasoning job ends, then the answer job starts with what is
   left of `max_tokens`; the two never run at once. If the answer's re-encode

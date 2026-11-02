@@ -1,14 +1,16 @@
 //! The payoff table and the planner card (ARCH-0003 #learning-views,
 //! ARCH-0079 #scoring, #works-well-for).
 //!
-//! The payoff table is a view over team receipts, keyed by task type,
+//! The payoff table is a view over team receipts, keyed by scope (the
+//! receipt's frozen project, or the vault), task type,
 //! pattern, model ids, team shape and who decided, with coverage and
 //! confession counts. Confessions are control evidence beside the row, never
 //! a payoff input. The coordination-cost breakdown sits beside elapsed time
 //! and calls as a diagnostic. The planner card is the view the planner reads
 //! at spawn: this task type's payoff rows and each candidate pattern skill's
 //! estimate, own runs, origin and UNTESTED mark, ranked by the shared
-//! posterior's mean plus its exploration bonus.
+//! selector ranking ([`rank_by_estimate`]): the posterior's mean plus its
+//! exploration bonus.
 
 use std::collections::BTreeMap;
 
@@ -16,11 +18,12 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::learning::coordination::coordination_cost_in_txn;
+use crate::learning::ranking::rank_by_estimate;
 use crate::learning::read::read_learning_in_txn;
 use crate::learning::{LearningRead, TypeRef};
 
 use super::pattern::{PatternSkill, TeamPattern, model_mix, pattern_cell, pattern_skill_in_txn};
-use super::receipt::{TeamReceipt, team_receipts_in_txn};
+use super::receipt::{ReceiptScan, TeamReceipt, team_receipts_in_txn};
 
 /// The exploration weight of the planner card's ranking, the same derivation
 /// the skill selector uses.
@@ -29,6 +32,8 @@ pub const PATTERN_EXPLORATION: f64 = 0.25;
 /// One payoff row.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PayoffRow {
+    /// The receipts' frozen project; `None` is the vault's runs.
+    pub project: Option<EntityId>,
     pub type_ref: TypeRef,
     pub pattern: TeamPattern,
     pub pattern_skill: Option<EntityId>,
@@ -73,6 +78,7 @@ struct Acc {
 }
 
 type RowKey = (
+    Option<EntityId>,
     TypeRef,
     TeamPattern,
     Option<EntityId>,
@@ -83,6 +89,7 @@ type RowKey = (
 
 fn row_key(receipt: &TeamReceipt) -> RowKey {
     (
+        receipt.project,
         receipt.type_ref.clone(),
         receipt.pattern,
         receipt.pattern_skill.as_ref().map(|s| s.skill),
@@ -92,41 +99,27 @@ fn row_key(receipt: &TeamReceipt) -> RowKey {
     )
 }
 
-/// The payoff table, optionally for one task type.
+/// The payoff table of every scope, optionally for one task type; each
+/// scope's receipts are rows of their own.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn payoff_table(vault: &Vault, type_ref: Option<&TypeRef>) -> Result<Vec<PayoffRow>> {
     let rtxn = vault.store.env.read_txn()?;
-    payoff_rows_in_txn(vault, &rtxn, type_ref, true)
+    payoff_rows_in_txn(vault, &rtxn, ReceiptScan::AllScopes(type_ref), true)
 }
 
-/// The payoff table's outcome counts in the caller's snapshot: the same
-/// rows, with no coordination-cost diagnostic read (its wait, reuse and
-/// duplicate columns stay empty).
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn payoff_outcomes_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    type_ref: Option<&TypeRef>,
-) -> Result<Vec<PayoffRow>> {
-    payoff_rows_in_txn(vault, txn, type_ref, false)
-}
-
-/// The payoff rows in `txn`, each team's coordination cost read beside its
-/// outcome when `costs` asks for it.
+/// The payoff rows of the receipts `scan` keeps in `txn`, each team's
+/// coordination cost read beside its outcome when `costs` asks for it.
 fn payoff_rows_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    type_ref: Option<&TypeRef>,
+    scan: ReceiptScan<'_>,
     costs: bool,
 ) -> Result<Vec<PayoffRow>> {
     let mut rows: BTreeMap<RowKey, Acc> = BTreeMap::new();
-    for receipt in team_receipts_in_txn(vault, txn, type_ref)? {
+    for receipt in team_receipts_in_txn(vault, txn, scan)? {
         let acc = rows.entry(row_key(&receipt)).or_default();
         acc.teams += 1;
         match receipt.outcome.as_ref().map(|o| o.success) {
@@ -172,10 +165,11 @@ fn payoff_rows_in_txn(
     Ok(rows
         .into_iter()
         .map(
-            |((type_ref, pattern, pattern_skill, models, shape, decided_by), acc)| {
+            |((project, type_ref, pattern, pattern_skill, models, shape, decided_by), acc)| {
                 #[allow(clippy::cast_precision_loss)]
                 let teams = acc.teams.max(1) as f64;
                 PayoffRow {
+                    project,
                     type_ref,
                     pattern,
                     pattern_skill,
@@ -211,32 +205,46 @@ pub struct PatternCardEntry {
     pub score: f64,
 }
 
-/// What the planner reads at spawn for one task type.
+/// What the planner reads at spawn for one task type in one scope.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannerCard {
+    /// The run's project; `None` is the vault.
+    pub project: Option<EntityId>,
     pub type_ref: TypeRef,
     pub executor_mix: String,
+    /// The scope's own payoff rows, else the vault's (each row names its
+    /// scope).
     pub rows: Vec<PayoffRow>,
     /// Highest score first; ties by skill id.
     pub patterns: Vec<PatternCardEntry>,
 }
 
-/// Builds the planner card for `type_ref` and an executor mix, ranking the
-/// candidate pattern skills by the shared posterior. `type_parents` is the
-/// type's ancestry from its parent up to the root.
+/// Builds the planner card for `type_ref` in `project`'s scope (`None`,
+/// the vault's) and an executor mix, ranking the candidate pattern skills
+/// by the shared posterior. `type_parents` is the type's ancestry from its
+/// parent up to the root.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn planner_card(
     vault: &Vault,
+    project: Option<EntityId>,
     type_ref: &TypeRef,
     type_parents: &[TypeRef],
     models: &[String],
     candidates: &[EntityId],
 ) -> Result<PlannerCard> {
     let rtxn = vault.store.env.read_txn()?;
-    planner_card_in_txn(vault, &rtxn, type_ref, type_parents, models, candidates)
+    planner_card_in_txn(
+        vault,
+        &rtxn,
+        project,
+        type_ref,
+        type_parents,
+        models,
+        candidates,
+    )
 }
 
 /// [`planner_card`] in the caller's snapshot.
@@ -247,6 +255,7 @@ pub fn planner_card(
 pub(crate) fn planner_card_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
+    project: Option<EntityId>,
     type_ref: &TypeRef,
     type_parents: &[TypeRef],
     models: &[String],
@@ -255,7 +264,7 @@ pub(crate) fn planner_card_in_txn(
     let executor_mix = model_mix(models);
     let mut entries = Vec::with_capacity(candidates.len());
     for skill in candidates {
-        let cell = pattern_cell(*skill, &executor_mix, type_ref);
+        let cell = pattern_cell(*skill, &executor_mix, project, type_ref);
         let read = read_learning_in_txn(vault, txn, &cell, type_parents)?;
         entries.push(PatternCardEntry {
             skill: *skill,
@@ -264,22 +273,26 @@ pub(crate) fn planner_card_in_txn(
             score: 0.0,
         });
     }
-    let total: f64 = entries.iter().map(|e| e.read.estimate.runs).sum();
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let total = (total.ceil() as u64).max(1);
-    for entry in &mut entries {
-        entry.score =
-            entry.read.estimate.mean() + entry.read.estimate.bonus(total, PATTERN_EXPLORATION);
+    let patterns = rank_by_estimate(
+        entries,
+        PATTERN_EXPLORATION,
+        |entry| &entry.read.estimate,
+        |entry| entry.skill,
+    )
+    .into_iter()
+    .map(|(entry, score)| PatternCardEntry { score, ..entry })
+    .collect();
+    let mut rows = payoff_rows_in_txn(vault, txn, ReceiptScan::Scoped(project, type_ref), true)?;
+    // A project with no team receipts of its own reads the vault's rows, as
+    // they are: each keeps `project: None`, never the project's own runs.
+    if rows.is_empty() && project.is_some() {
+        rows = payoff_rows_in_txn(vault, txn, ReceiptScan::Scoped(None, type_ref), true)?;
     }
-    entries.sort_by(|a, b| {
-        b.score
-            .total_cmp(&a.score)
-            .then_with(|| a.skill.cmp(&b.skill))
-    });
     Ok(PlannerCard {
+        project,
         type_ref: type_ref.clone(),
         executor_mix,
-        rows: payoff_rows_in_txn(vault, txn, Some(type_ref), true)?,
-        patterns: entries,
+        rows,
+        patterns,
     })
 }

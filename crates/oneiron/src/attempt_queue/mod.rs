@@ -21,8 +21,10 @@ mod encoding;
 mod engine;
 mod executor;
 mod fanout_hold;
+mod index;
 mod observe;
 mod payload_erase;
+mod payload_rebind;
 mod ports;
 mod read_set;
 mod result;
@@ -57,6 +59,7 @@ pub use fanout_hold::{FANOUT_HOLD_ACTOR, HoldAttemptForFanout};
 pub use read_set::{AttemptReadSet, ReadSetProducer};
 pub(crate) use telemetry::AttemptQueueCleanupMetrics;
 pub use telemetry::AttemptQueueCleanupMetricsSnapshot;
+pub use types::AttemptTerminalExhaust;
 pub use types::{
     AbandonAttempt, AbandonOutcome, AttemptEvent, AttemptId, AttemptInterventionEffect,
     AttemptInterventionKind, AttemptPlacement, AttemptQueueCleanupReport, AttemptQueueRetryReason,
@@ -68,7 +71,7 @@ pub use types::{
 
 pub(crate) use encoding::{decode_record, rebuild_checkpoint_indexes};
 pub(crate) use payload_erase::{
-    attempt_payload_family, attempt_payload_owners, attempt_payload_stub,
+    attempt_payload_family, attempt_payload_owners, attempt_payload_scan, attempt_row_opaque,
     erase_attempt_payload_actor_in_txn, erase_attempt_payload_actors_in_txn,
     retire_attempt_payload_in_txn,
 };

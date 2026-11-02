@@ -18,6 +18,8 @@ import type {
   CheckpointPin,
   ClaimInput,
   CommitReceipt,
+  EngineReply,
+  EngineRequest,
   FacadeReceipt,
   HostRootProfile,
   MemoryPack,
@@ -75,9 +77,15 @@ vaultIdentityMention(input: unknown): unknown
 vaultShapeRead(input: unknown): unknown
 vaultShapePlan(input: unknown): unknown
 vaultShapeApply(input: unknown): unknown
+vaultShapePlanCard(input: unknown): unknown
+vaultShapeItemsReceipt(input: unknown): unknown
+vaultShapeGroups(input: unknown): unknown
+vaultShapeGroupsResolve(input: unknown): unknown
 selfMessage(input: unknown): unknown
 selfGrantsAsk(input: unknown): unknown
+selfGrantsAsked(input: unknown): unknown
 vaultCompanionsAccessRequestsAnswer(input: unknown): unknown
+selfGrantsAnswer(input: unknown): unknown
 vaultPersonasPreview(input: unknown): unknown
 vaultPersonasExport(input: unknown): unknown
 vaultPersonasEdit(input: unknown): unknown
@@ -92,6 +100,7 @@ vaultFanoutSlots(input: unknown): unknown
 vaultFanoutLaunch(input: unknown): unknown
 selfBudget(input: unknown): unknown
 selfBudgetLand(input: unknown): unknown
+selfBillingAccountFile(input: unknown): unknown
 vaultBudgetsLeaseOpen(input: unknown): unknown
 vaultBudgetsLease(input: unknown): unknown
 vaultBudgetsLeaseTopUp(input: unknown): unknown
@@ -105,8 +114,11 @@ vaultBudgetsRsi(input: unknown): unknown
 vaultBudgetsRsiTopUp(input: unknown): unknown
 vaultBudgetsRsiHold(input: unknown): unknown
 vaultBudgetsRsiHoldResume(input: unknown): unknown
+vaultBudgetsResidentShares(input: unknown): unknown
+vaultBudgetsResidentSharesSet(input: unknown): unknown
 vaultRunnersSeatsQuotas(input: unknown): unknown
 vaultRunnersSeatsTopUp(input: unknown): unknown
+vaultRunnersSeatsResume(input: unknown): unknown
 vaultFanoutResume(input: unknown): unknown
 vaultFanoutResumeAs(input: unknown): unknown
 vaultFanoutAck(input: unknown): unknown
@@ -120,10 +132,11 @@ vaultFlushStream(input: unknown): unknown
 vaultFinalizeStream(input: unknown): unknown
 vaultCancelStream(input: unknown): unknown
 vaultMessageStreamPartial(input: unknown): unknown
+vaultMessageStreamsRefused(input: unknown): unknown
 vaultMessagesDurability(input: unknown): unknown
 vaultWitness(turn: WitnessTurn): WitnessReceipt
 vaultClaimsUpsert(input: unknown): unknown
-vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined): MemoryPack
+vaultRecall(query: string, effort: string | undefined, scope: RecallScope | undefined, limit: number | undefined, format: string | undefined, as_of: number | undefined, deadline_ms: number | undefined, media: RecallMedia | undefined, query_affect: QueryAffect | undefined, token_budget: number | undefined, reader_agent_ref: string | undefined): MemoryPack
 vaultRetrievalAgingGet(input: unknown): unknown
 vaultRetrievalAgingConfigure(input: unknown): unknown
 vaultRetrievalWeightsGet(input: unknown): unknown
@@ -168,11 +181,14 @@ vaultRetrievalPolicyEvaluate(input: unknown): unknown
 vaultRetrievalPolicyAdmit(input: unknown): unknown
 vaultRetrievalPolicyUpdate(input: unknown): unknown
 vaultExport(input: unknown): unknown
+vaultExportTransferRead(input: unknown): unknown
+vaultExportTransferRelease(input: unknown): unknown
 selfCredentialAttenuate(input: unknown): unknown
+selfActor(input: unknown): unknown
 vaultScopePosition(input: unknown): unknown
 vaultScopeCeiling(input: unknown): unknown
 vaultExportScoped(input: unknown): unknown
-vaultReceipts(limit: number | undefined, kinds: string[] | undefined): FacadeReceipt[]
+vaultReceipts(input: unknown): unknown
 vaultAssetsIngest(input: unknown): unknown
 vaultAssetsResolve(input: unknown): unknown
 vaultSearchVector(input: unknown): unknown
@@ -202,6 +218,7 @@ vaultCampaignProgramUpdate(input: unknown): unknown
 vaultCampaignProgramArchive(input: unknown): unknown
 vaultTurnProgramsArm(input: unknown): unknown
 vaultTurnProgramsDisarm(input: unknown): unknown
+vaultTurnProgramsRebind(input: unknown): unknown
 selfSavedQueryCreate(input: unknown): unknown
 selfSavedQueryRead(input: unknown): unknown
 selfSavedQueryUpdate(input: unknown): unknown
@@ -227,6 +244,7 @@ vaultWeaveOwnerDigestRender(input: unknown): unknown
 vaultInboxConcernsReview(input: unknown): unknown
 vaultInboxLens(input: unknown): unknown
 vaultInboxGroups(input: unknown): unknown
+vaultInboxGroupsResolve(input: unknown): unknown
 vaultWeaveDigestRender(input: unknown): unknown
 vaultWeaveLinkCorrections(input: unknown): unknown
 selfInboxLens(input: unknown): unknown
@@ -268,6 +286,7 @@ vaultSkillsOptimizePreferencesGet(input: unknown): unknown
 vaultSkillsOptimizePreferencesSet(input: unknown): unknown
 vaultSkillsOptimizeTradeoffAsks(input: unknown): unknown
 vaultSkillsOptimizeTradeoffAsksPick(input: unknown): unknown
+vaultSkillsOptimizeTradeoffAsksResolve(input: unknown): unknown
 vaultSkillsGovernanceGet(input: unknown): unknown
 vaultSkillsGovernanceSet(input: unknown): unknown
 vaultPacksHooksBind(input: unknown): unknown
@@ -312,6 +331,7 @@ vaultPacksSetupVerify(input: unknown): unknown
 vaultAuthorityAudit(input: unknown): unknown
 vaultAuthorityHistoryExport(input: unknown): unknown
 vaultAuthorityHistoryImport(input: unknown): unknown
+vaultAuthorityClockRepair(input: unknown): unknown
 vaultWireHealthThresholdsGet(input: unknown): unknown
 vaultWireHealthThresholdsSet(input: unknown): unknown
 vaultSlimPolicy(input: unknown): unknown
@@ -325,6 +345,8 @@ vaultMeshBindMachine(input: unknown): unknown
 vaultMeshSetAlpnGrant(input: unknown): unknown
 vaultMeshRevokeMachine(input: unknown): unknown
 vaultMeshDial(input: unknown): unknown
+vaultOutboxDivergedList(input: unknown): unknown
+vaultOutboxDivergedAnswer(input: unknown): unknown
 vaultInspectionResolve(input: unknown): unknown
 vaultSharedProposeDelete(input: unknown): unknown
 vaultSharedProposeTransfer(input: unknown): unknown
@@ -358,6 +380,7 @@ vaultSharedPolicyGet(input: unknown): unknown
 vaultSharedPolicyPropose(input: unknown): unknown
 vaultSharedPolicyAnswer(input: unknown): unknown
 vaultSharedPolicyChange(input: unknown): unknown
+vaultSharedPolicyChanges(input: unknown): unknown
 vaultFederationCoreferenceLink(input: unknown): unknown
 vaultFederationCoreferenceConfirm(input: unknown): unknown
 vaultFederationCoreferenceShareConsent(input: unknown): unknown
@@ -417,6 +440,10 @@ vaultOffRecordRecall(input: unknown): unknown
 vaultOffRecordNotesCreate(input: unknown): unknown
 vaultOffRecordClaimsUpsert(input: unknown): unknown
 selfOffRecordExecute(input: unknown): unknown
+selfOffRecordResultsList(input: unknown): unknown
+selfOffRecordResultsRead(input: unknown): unknown
+selfOffRecordWaitsGet(input: unknown): unknown
+selfOffRecordWaitsAnswer(input: unknown): unknown
 vaultOffRecordRoomsStatus(input: unknown): unknown
 vaultOffRecordRoomsStart(input: unknown): unknown
 vaultOffRecordRoomsWitness(input: unknown): unknown
@@ -462,6 +489,7 @@ vaultCoachTrainingOffersCandidatesPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsPrepare(input: unknown): unknown
 vaultCoachTrainingOffersPilotsComplete(input: unknown): unknown
 vaultCoachTrainingOffersPilotsGet(input: unknown): unknown
+vaultCoachTrainingOffersSources(input: unknown): unknown
 vaultResearchBind(input: unknown): unknown
 vaultResearchFork(input: unknown): unknown
 vaultResearchWeave(input: unknown): unknown
@@ -483,6 +511,9 @@ vaultResearchRecordBenchmark(input: unknown): unknown
 vaultAuthorityHandoffAlarms(input: unknown): unknown
 vaultAuthorityHandoffAlarmsAcknowledge(input: unknown): unknown
 vaultRootsRequestsCancel(input: unknown): unknown
+vaultRootsRequestsCreate(input: unknown): unknown
+vaultRootsRequestsList(input: unknown): unknown
+vaultOwnerWorkGet(input: unknown): unknown
 vaultCleanupRun(input: unknown): unknown
 vaultCleanupReview(input: unknown): unknown
 vaultCleanupDecide(input: unknown): unknown
@@ -490,6 +521,7 @@ vaultArchiveDeletePreview(input: unknown): unknown
 vaultArchiveDeleteConfirm(input: unknown): unknown
 vaultUsageEventsUndecodable(input: unknown): unknown
 vaultUsageEventsRemoveUndecodable(input: unknown): unknown
+vaultUsageRepairReceipts(input: unknown): unknown
 vaultEntitiesMention(input: unknown): unknown
 vaultLegalHoldsPlace(input: unknown): unknown
 vaultLegalHoldsWiden(input: unknown): unknown
@@ -557,6 +589,12 @@ vaultSettingsLearning(input: unknown): unknown
 vaultSettingsLearningPut(input: unknown): unknown
 vaultSettingsLearningClear(input: unknown): unknown
 vaultSecretsLiftHistory(input: unknown): unknown
+vaultSecretsRegister(input: unknown): unknown
+vaultSecretsRotate(input: unknown): unknown
+vaultSecretsRewrap(input: unknown): unknown
+vaultSecretsRevoke(input: unknown): unknown
+vaultSecretsCustodyGet(input: unknown): unknown
+vaultSecretsCustodySubmit(input: unknown): unknown
 vaultWidenProposals(input: unknown): unknown
 vaultWidenProposalsApprove(input: unknown): unknown
 vaultWidenProposalsDecline(input: unknown): unknown
@@ -568,9 +606,11 @@ vaultSettingsWakePolicySet(input: unknown): unknown
 vaultSettingsInferenceDefaults(input: unknown): unknown
 vaultSettingsInferenceDefaultsReplace(input: unknown): unknown
 vaultLensesPropose(input: unknown): unknown
+vaultLensesProposeFromPack(input: unknown): unknown
 vaultLensesActivate(input: unknown): unknown
 vaultLensesDeactivate(input: unknown): unknown
 vaultLensesList(input: unknown): unknown
+vaultLensesExportPack(input: unknown): unknown
 vaultLensesSelect(input: unknown): unknown
 vaultLensesResolve(input: unknown): unknown
 vaultLensesResultSetAction(input: unknown): unknown
@@ -666,6 +706,7 @@ vaultCodeImportsGet(input: unknown): unknown
 vaultCodeIngressGet(input: unknown): unknown
 vaultCodeOriginRegister(input: unknown): unknown
 vaultCodeOriginMirrorGet(input: unknown): unknown
+vaultCodeOriginMirrorPlan(input: unknown): unknown
 vaultCodeOriginMirrorSet(input: unknown): unknown
 vaultCodeOriginMirrorStrategy(input: unknown): unknown
 vaultCodeOriginMirrorClear(input: unknown): unknown
@@ -724,6 +765,8 @@ vaultAgentsGrantsMint(input: unknown): unknown
 vaultAgentsGrantsRevoke(input: unknown): unknown
 vaultRepoGitPushMint(input: unknown): unknown
 vaultRepoGitPushRevoke(input: unknown): unknown
+vaultConnectorsReadGrantsGrant(input: unknown): unknown
+vaultConnectorsReadGrantsRevoke(input: unknown): unknown
 vaultRepoAnchorBind(input: unknown): unknown
 vaultRepoSnapshotsGet(input: unknown): unknown
 vaultRepoSnapshotsRead(input: unknown): unknown
@@ -756,6 +799,7 @@ vaultTaskTypesGet(input: unknown): unknown
 vaultAgentsSpawnGet(input: unknown): unknown
 vaultAgentsSpawn(input: unknown): unknown
 vaultTasksCancelForce(input: unknown): unknown
+vaultTasksCommWidenRevoke(input: unknown): unknown
 vaultRunsBranchesGet(input: unknown): unknown
 vaultRunsPause(input: unknown): unknown
 vaultRunsResume(input: unknown): unknown
@@ -828,6 +872,7 @@ vaultProjectsGoalDismiss(input: unknown): unknown
 vaultProjectsRouteTradeoff(input: unknown): unknown
 vaultConversationsTurnContinue(input: unknown): unknown
 vaultConversationsTurnRetry(input: unknown): unknown
+vaultConversationsTurnRebind(input: unknown): unknown
 vaultMessagesReact(input: unknown): unknown
 vaultRoomsHost(input: unknown): unknown
 vaultRoomsHostPin(input: unknown): unknown
@@ -847,6 +892,9 @@ vaultSkillsOutcomesProject(input: unknown): unknown
 vaultSkillsOutcomesGet(input: unknown): unknown
 vaultModelsManifestRead(input: unknown): unknown
 vaultModelsManifestReplace(input: unknown): unknown
+vaultSettingsWebConnector(input: unknown): unknown
+vaultSettingsWebConnectorReplace(input: unknown): unknown
+vaultConnectorsWebUsage(input: unknown): unknown
 vaultModelsOneironerBind(input: unknown): unknown
 vaultModelsRoutesRead(input: unknown): unknown
 vaultModelsRoutesReplace(input: unknown): unknown
@@ -869,6 +917,7 @@ aiStreamsAbort(input: unknown): unknown
 aiStreamsTerminal(input: unknown): unknown
 aiReply(input: unknown): unknown
 vaultReceiptsContext(input: unknown): unknown
+vaultReceiptsCraftReplyManifest(input: unknown): unknown
 aiVoiceAsrOpen(input: unknown): unknown
 aiVoiceAsrHypothesis(input: unknown): unknown
 aiVoiceAsrFinalize(input: unknown): unknown
@@ -889,6 +938,7 @@ vaultModelsTrialsNominate(input: unknown): unknown
 vaultModelsTrialsGet(input: unknown): unknown
 vaultModelsTrialsApprove(input: unknown): unknown
 vaultModelsTrialsRun(input: unknown): unknown
+vaultModelsTrialsResendArm(input: unknown): unknown
 vaultModelsTrialsComplete(input: unknown): unknown
 vaultModelsBindingsPropose(input: unknown): unknown
 vaultModelsBindingsGet(input: unknown): unknown
@@ -909,6 +959,7 @@ aiEmbed(input: unknown): unknown
 aiVideo(input: unknown): unknown
 aiVideoPoll(input: unknown): unknown
 aiVideoCancel(input: unknown): unknown
+aiAskImage(input: unknown): unknown
 aiVerdict(input: unknown): unknown
 vaultGraphAsk(input: unknown): unknown
 vaultGraphAdmit(input: unknown): unknown
@@ -917,6 +968,7 @@ vaultQuestionsEdit(input: unknown): unknown
 vaultQuestionsPause(input: unknown): unknown
 vaultQuestionsBackfill(input: unknown): unknown
 vaultQuestionsRead(input: unknown): unknown
+vaultQuestionsOutcomeWindows(input: unknown): unknown
 vaultQuestionsAnswers(input: unknown): unknown
 vaultQuestionsRefresh(input: unknown): unknown
 vaultQuestionsOutcomes(input: unknown): unknown
@@ -927,6 +979,7 @@ vaultDecisionsBandsLearn(input: unknown): unknown
 vaultDecisionsBandsEnforce(input: unknown): unknown
 vaultDecisionsAsksAnswer(input: unknown): unknown
 vaultDecisionsAsksClimb(input: unknown): unknown
+vaultDecisionsAsksConfirmGrant(input: unknown): unknown
 selfDecisionsAsks(input: unknown): unknown
 connectorList(input: unknown): unknown
 connectorStatus(input: unknown): unknown
@@ -1049,6 +1102,7 @@ vaultRunsProgramHoldRelease(input: unknown): unknown
 vaultConsolidationHomeGet(input: unknown): unknown
 vaultConsolidationHomePick(input: unknown): unknown
 vaultConsolidationLineage(input: unknown): unknown
+vaultConsolidationCandidateDecisions(input: unknown): unknown
 vaultConsolidationPromote(input: unknown): unknown
 vaultConsolidationPin(input: unknown): unknown
 vaultConsolidationFrontier(input: unknown): unknown
@@ -1070,6 +1124,7 @@ vaultSieveLease(input: unknown): unknown
 vaultSieveLeaseRefill(input: unknown): unknown
 vaultFreeTimePolicyGet(input: unknown): unknown
 vaultFreeTimePolicySet(input: unknown): unknown
+vaultFreeTimePolicySetAs(input: unknown): unknown
 vaultFreeTimeCycles(input: unknown): unknown
 vaultFreeTimeCycle(input: unknown): unknown
 vaultClaimsVet(input: unknown): unknown
@@ -1151,6 +1206,10 @@ vaultIdentityResolve(input: unknown): unknown
 vaultIdentityEventsGet(input: unknown): unknown
 vaultIdentityProposalsResolve(input: unknown): unknown
 vaultIdentityProposalsForPair(input: unknown): unknown
+vaultCustodyMembersDrainBegin(input: unknown): unknown
+vaultCustodyMembersDrainCommit(input: unknown): unknown
+vaultCustodyMembersDrainFolder(input: unknown): unknown
+vaultCustodyMembersReenrol(input: unknown): unknown
 connectorAnswer(input: unknown): unknown
 selfBrowserOpen(input: unknown): unknown
 selfBrowserObserve(input: unknown): unknown
@@ -1200,6 +1259,7 @@ selfFocusUnsubscribe(input: unknown): unknown
   retry(pending: unknown, verb: string, input: unknown): unknown
   lensFrameEvent(cardId: string, request: unknown): unknown
   closeLensFrame(cardId: string): unknown
+  exportTo(path: string, format: string | undefined): unknown
 }
 
 /** The static half napi-rs generates for a `#[napi(factory)]` constructor. */
@@ -1216,6 +1276,7 @@ interface NativeClientConstructor {
     dimensions: number | undefined,
     hostRootSecret: Uint8Array,
     deviceClass: string | undefined,
+    holdCheckpointRootSigner: boolean | undefined,
   ): NativeClient
   connect(url: string, key: string): NativeClient
   /** `pin` is absent when the vault has no attested checkpoint. */
@@ -1231,9 +1292,21 @@ export interface NativeEngineOptions {
   cpuMillisPerSecond?: number
 }
 
+/** A connection the app holds to its engine's server (FIX 4895). */
+export interface NativeEngineConnection {
+  send(bytes: Uint8Array): void
+  receive(): Uint8Array
+  close(): void
+}
+
 /** The engine-backed served client's native half, present only in an `engine` build. */
 export interface NativeEngine {
   client(key: string): NativeClient
+  localClient(): NativeClient
+  request(request: EngineRequest): EngineReply
+  requestArtifact(request: EngineRequest): EngineReply
+  connect(): NativeEngineConnection
+  connectArtifact(): NativeEngineConnection
   wake(): void
   stop(): void
   close(): void

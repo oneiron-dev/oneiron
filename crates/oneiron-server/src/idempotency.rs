@@ -92,8 +92,24 @@ impl IdempotencyStore {
         else {
             return Ok(IdempotencyLookup::Miss);
         };
+        // The erased marker of a retired entry that never decoded is that
+        // entry erased: answered so, before any decode, never a miss and
+        // never a second run (FIX 9390), until it expires from the time it
+        // retired, as a decoded entry does from its creation (FIX 10710). A
+        // marker that kept no time never expires.
+        let Ok(raw) = oneiron::store::http_response_read(store_key.as_bytes(), &raw) else {
+            if oneiron::store::http_opaque_retired_at(&raw).is_some_and(|retired_at| {
+                self.now_secs().saturating_sub(retired_at) >= IDEMPOTENCY_TTL.as_secs()
+            }) {
+                self.vault
+                    .sync_state_delete(store_key)
+                    .map_err(IdempotencyStoreError::storage)?;
+                return Ok(IdempotencyLookup::Miss);
+            }
+            return Ok(IdempotencyLookup::Erased);
+        };
 
-        let stored = StoredIdempotencyEntry::decode(&raw).map_err(IdempotencyStoreError::decode)?;
+        let stored = StoredIdempotencyEntry::decode(raw).map_err(IdempotencyStoreError::decode)?;
         // Expiry is a delete, never an erase: the entry's instance keeps its
         // key, and the binding goes at the next checkpoint (KS-2B2).
         if self.now_secs().saturating_sub(stored.created_at_secs) >= IDEMPOTENCY_TTL.as_secs() {
@@ -117,9 +133,11 @@ impl IdempotencyStore {
         }
 
         // An intent no outcome settled: the first run never finished (FIX
-        // 9527).
+        // 9527), with the writes it committed (FIX 10379).
         if stored.status == intent::INTENT_STATUS {
-            return Ok(IdempotencyLookup::Interrupted);
+            return Ok(IdempotencyLookup::Interrupted {
+                committed_writes: stored.committed_writes,
+            });
         }
         let response = CachedHttpResponse::of_stored(stored)?;
         Ok(IdempotencyLookup::Replay(response))
@@ -183,8 +201,12 @@ enum IdempotencyLookup {
     Conflict,
     /// An erase of an owner took the cached response (KS-2B2).
     Erased,
-    /// The first request's intent stands with no outcome (FIX 9527).
-    Interrupted,
+    /// The first request's intent stands with no outcome (FIX 9527): the
+    /// writes committed while it ran, each counted in its own transaction
+    /// (FIX 10379).
+    Interrupted {
+        committed_writes: u32,
+    },
 }
 
 #[derive(Clone)]
@@ -302,6 +324,7 @@ impl CachedHttpResponse {
                 ..Default::default()
             },
             erased: false,
+            committed_writes: 0,
             erase_drops: stamp.erase_drops,
         }
     }
@@ -398,11 +421,13 @@ impl fmt::Display for IdempotencyStoreError {
     }
 }
 
+mod body_read;
 mod caller;
 mod intent;
 mod reclaim;
 mod request;
 
+pub(crate) use self::intent::{REPLY_NOT_KEPT_STATE, run_under_intent, run_under_intent_owned};
 pub(crate) use self::request::{idempotency_for_mutating_form, idempotency_middleware};
 
 #[cfg(test)]

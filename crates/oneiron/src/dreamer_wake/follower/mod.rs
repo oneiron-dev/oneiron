@@ -147,8 +147,10 @@ pub(crate) fn route_in_txn(
     if session.state.handed.contains(&span.id) {
         return Ok(false);
     }
-    let mut log = Log::load_in_txn(&vault.store, txn, &session)?;
-    let routed = log::frame_span_in_txn(vault, txn, &mut session, &mut log, span)?.is_some();
+    // The span's chunk is found by key (FIX 8531), never by loading every
+    // frame; only a chunk not yet framed appends one.
+    let routed = state::framed_span_in_txn(&vault.store, txn, &session, span)?.is_some()
+        || log::frame_span_in_txn(vault, txn, &mut session, &mut Log::empty(), span)?.is_some();
     if !routed {
         session.state.handed.push(span.id);
     }
@@ -164,6 +166,27 @@ pub(crate) fn route_in_txn(
 /// it queued.
 pub(crate) fn wake_in_txn(vault: &Vault, txn: &mut heed::RwTxn<'_>, now: u64) -> Result<bool> {
     if !policy_in_txn(vault, txn)?.follower_enabled || !novelty_owed_in_txn(vault, txn)? {
+        return Ok(false);
+    }
+    enqueue_in_txn(
+        &DreamerRunnerStore::new(vault),
+        txn,
+        None,
+        &session_key()?,
+        now,
+    )?;
+    Ok(true)
+}
+
+/// The sieve pass's wake, for a pass that just queued spans: queues the
+/// follower when it is on, without the queue-wide novelty scan, since every
+/// new span owes the novelty rung. Returns whether it queued.
+pub(crate) fn wake_queued_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    now: u64,
+) -> Result<bool> {
+    if !policy_in_txn(vault, txn)?.follower_enabled {
         return Ok(false);
     }
     enqueue_in_txn(

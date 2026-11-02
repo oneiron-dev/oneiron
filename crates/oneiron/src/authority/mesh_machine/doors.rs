@@ -71,6 +71,24 @@ impl Vault {
         })
     }
 
+    /// The MACHINE whose address names endpoint `key`, read for the owner
+    /// (FIX 8622): every MACHINE row, however many the owner keeps, counted
+    /// as the owner's bind counts them, where the lookup any key may make
+    /// stops at its bound. Two MACHINEs naming the key refuse, as there.
+    pub fn mesh_machine_by_endpoint_as_owner(
+        &self,
+        owner: &AuthenticatedOwner,
+        key: [u8; 32],
+    ) -> Result<Option<(EntityId, MeshMachineAddress)>> {
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_in_txn(self, &txn)?;
+        let mut count = ScanCount::start(&self.store, &txn, EngineScan::MachineRows, &[])?;
+        let found = self.mesh_machine_by_endpoint_in_txn(&txn, key, Some(&mut count))?;
+        drop(txn);
+        count.finish(self);
+        Ok(found)
+    }
+
     /// Host binding: both pairing and transport keys prove the same binding.
     /// Address and authority commit atomically, initially with no ALPN grants.
     pub fn bind_mesh_machine(
@@ -274,7 +292,8 @@ impl Vault {
         {
             return Err(invalid_authority());
         }
-        if let Some(previous) = claims.alpns.remove(alpn) {
+        let previous = claims.alpns.remove(alpn);
+        if let Some(previous) = previous {
             self.append_slip_op_in_txn(
                 &mut txn,
                 issuer,
@@ -327,6 +346,9 @@ impl Vault {
         super::super::measure_authority_work(&self.store.limit_watch, claims.alpns.len());
         self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
+        if previous.is_some() {
+            self.store.notify_credential_revocations();
+        }
         Ok(())
     }
 
@@ -366,9 +388,13 @@ impl Vault {
         for id in claims.alpns.values() {
             self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id: *id })?;
         }
+        let revoked = !claims.alpns.is_empty();
         claims.alpns.clear();
         self.write_mesh_authority_in_txn(&mut txn, issuer, claims)?;
         txn.commit()?;
+        if revoked {
+            self.store.notify_credential_revocations();
+        }
         Ok(())
     }
 }

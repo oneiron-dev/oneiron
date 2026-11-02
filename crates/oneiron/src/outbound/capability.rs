@@ -1,3 +1,7 @@
+//! Outbound capability vocabulary and registry reads.
+//! Entry: `outbound_capability_manifests`.
+//! Defines its own items.
+
 use std::sync::OnceLock;
 
 use serde::Serialize;
@@ -122,6 +126,42 @@ pub struct OutboundVerbContract {
     pub retry_class: OutboundRetryClass,
     #[serde(rename = "capability_vs_permission")]
     pub capability_vs_permission: OutboundCapabilityPermission,
+}
+
+/// How a retry of one admitted send may go once an attempt may have delivered
+/// (FIX 8814): logical supersession is not provider retry safety.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum OutboundReplaySafety {
+    /// The provider dedupes the send by the key the transport presents.
+    ProviderKey,
+    /// The send lands on the same target each time (an edit in place, an
+    /// iMIP revision on its UID and SEQUENCE): a replay replaces, never adds.
+    StableTarget,
+    /// A replay can add a second delivery: an uncertain attempt is reconciled
+    /// before any resend, never resent on its own.
+    Reconcile,
+}
+
+/// The verb whose replacement is a new superseding message rather than an
+/// edit of the original (FIX 8814): it carries no provider dedupe.
+const SUPERSEDING_SEND_VERB: &str = "replace";
+
+impl OutboundVerbContract {
+    /// This verb's replay safety (FIX 8814): a provider-native key, a
+    /// replacement that lands on a stable target, or neither. A superseding
+    /// send is reconciled before any resend.
+    pub(crate) fn replay_safety(&self) -> OutboundReplaySafety {
+        match self.retry_class {
+            OutboundRetryClass::IdempotentNative => OutboundReplaySafety::ProviderKey,
+            OutboundRetryClass::ReplaceIdempotent if self.kind == SUPERSEDING_SEND_VERB => {
+                OutboundReplaySafety::Reconcile
+            }
+            OutboundRetryClass::ReplaceIdempotent => OutboundReplaySafety::StableTarget,
+            OutboundRetryClass::IdempotentEmulated | OutboundRetryClass::NonIdempotentInterrupt => {
+                OutboundReplaySafety::Reconcile
+            }
+        }
+    }
 }
 
 /// Per-connector capability manifest.

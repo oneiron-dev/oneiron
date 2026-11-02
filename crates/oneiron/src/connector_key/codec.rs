@@ -1,3 +1,7 @@
+//! Connector key body encoding and validation.
+//! Entry: `CONNECTOR_KEY_SCHEMA_VERSION`.
+//! Defines its own items.
+
 use std::io::Cursor;
 
 use rmpv::Value;

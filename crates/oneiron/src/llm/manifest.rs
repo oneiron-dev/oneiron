@@ -51,8 +51,9 @@ pub enum ModelRole {
     AudioVad,
     TtsDeferred,
     /// The Local-vision slot's small vision model: reads an image's full
-    /// pixels and answers a question about them in text (`ask_image`,
-    /// OF-329), through the LLM slot. No model is chosen for it.
+    /// pixels and answers a question about them in text or a Box as the
+    /// Local rung (`ask_image`, OF-329), through the LLM slot. No model is
+    /// chosen for it.
     LocalVision,
     /// The Coach's own seat (agent-mind AGM-5): its agent-health asks,
     /// code-fix drafts and session-end distill. Optional: with no seat of its
@@ -163,27 +164,8 @@ pub struct ModelBinding {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reads_audio: bool,
 }
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ConfidenceBand {
-    Low,
-    Medium,
-    High,
-    Certain,
-}
-impl ConfidenceBand {
-    fn for_confidence(value: u32) -> Option<Self> {
-        match value {
-            0..=499_999 => Some(Self::Low),
-            500_000..=799_999 => Some(Self::Medium),
-            800_000..=979_999 => Some(Self::High),
-            980_000..=1_000_000 => Some(Self::Certain),
-            _ => None,
-        }
-    }
-}
+// The band and basis vocabulary is the claim's own (FIX 7761).
+pub use crate::claim::{ConfidenceBand, VerdictBasis};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VerdictMode {
@@ -199,12 +181,6 @@ pub struct VerdictBinding {
     pub floor: ConfidenceBand,
     pub mode: VerdictMode,
 }
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VerdictBasis {
-    CalibratedModel,
-    DeterministicFallback,
-}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CalibratedVerdict {
@@ -215,9 +191,12 @@ pub struct CalibratedVerdict {
     pub basis: VerdictBasis,
 }
 impl CalibratedVerdict {
+    /// The verdict's own shape: a confidence of at most one, in millionths.
+    /// Its band is the producer's, kept as given: no fixed cutoff table
+    /// rewrites or refuses it (FIX 7761).
     pub fn validate(&self) -> Result<()> {
-        if ConfidenceBand::for_confidence(self.confidence_millionths) != Some(self.band) {
-            return Err(invalid("verdict confidence and band mismatch"));
+        if self.confidence_millionths > 1_000_000 {
+            return Err(invalid("verdict confidence is past one"));
         }
         Ok(())
     }

@@ -8,7 +8,9 @@
 //! slip minted under it, and keeps a withdrawal row, so a repeat revoke
 //! reports the first one with `changed: false`. Every slip door also checks a
 //! grant-bound slip's grant when it reads the slip, so a slip minted on another
-//! replica and merged after the withdrawal stands no longer than its grant. A host answers with
+//! replica and merged after the withdrawal stands no longer than its grant,
+//! and the withdrawal logs a signed `SlipGrantRevoke`, so every replica's fold
+//! tombstones such a slip as this host's does (FIX 1978). A host answers with
 //! [`crate::receipt::project_guest_revoke`] over the outcome.
 //!
 //! The outcome names each ended pact the grant governed (FIX 1634), the
@@ -45,14 +47,43 @@ struct GuestWithdrawal {
     revoked_at: u64,
 }
 
+/// Whether this vault withdrew the guest Grant a slip's `grant_ref` names
+/// (FIX-LIST 1978): what the merged fold tombstones a guest slip by here,
+/// beside the signed `SlipGrantRevoke` every replica folds. A
+/// `grant_ref` that names no entity id is no guest Grant. A row that cannot
+/// be read answers by [`super::ISOLATION_NEW_CHECK_ERROR_MODE`]: not known,
+/// with a warning, so the fold stands as it did before the check.
+pub(super) fn guest_grant_known_withdrawn_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    grant_ref: &str,
+) -> bool {
+    let Ok(grant) = EntityId::from_hex(grant_ref) else {
+        return false;
+    };
+    match WITHDRAWN.get(store, txn, &grant) {
+        Ok(withdrawal) => withdrawal.is_some(),
+        Err(error) => match super::ISOLATION_NEW_CHECK_ERROR_MODE {
+            super::NewCheckErrorMode::KeepExistingPath => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a guest withdrawal did not read; the merged fold keeps that grant's slips as they stand"
+                );
+                false
+            }
+        },
+    }
+}
+
 impl Vault {
     /// Mints the capability slip of one Ask or active Connect guest (OF-232; canon names no
     /// issuance door, Engine ruling 2026-10-17): the vault owner's act, under
     /// the host's `issuer`, for the live, unwithdrawn guest FEDERATION_GRANT
     /// `grant_ref`. The slip's signed claims name that grant, carry its
-    /// scope, hold for its member, and bind `holder_key`, the public key the
-    /// guest generated on their own device; no private key is delivered
-    /// anywhere. It lives until `expires_at`, and withdrawing the grant
+    /// scope, hold for its member, and bind the public key the guest
+    /// generated on their own device: the one their ask carried into the
+    /// grant (FIX-LIST 1978), else the owner's `holder_key`; with neither,
+    /// the mint refuses. No private key is delivered anywhere. It lives until `expires_at`, and withdrawing the grant
     /// ([`Vault::revoke_guest_access`]) tombstones it. `comm` is the owner's
     /// cap on whom the guest may message (FIX 3899); `None` is the vault's.
     pub fn mint_guest_slip(
@@ -60,7 +91,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         issuer: &HostSlipIssuer,
         grant_ref: EntityId,
-        holder_key: [u8; 32],
+        holder_key: Option<[u8; 32]>,
         expires_at: u64,
         comm: Option<super::CommReach>,
     ) -> Result<CapabilitySlip> {
@@ -84,6 +115,16 @@ impl Vault {
         if !grant.confers_at(now) || expires_at <= now {
             return Err(invalid_authority());
         }
+        let holder_key = grant
+            .guest
+            .as_ref()
+            .and_then(|guest| guest.holder_key)
+            .or(holder_key)
+            .ok_or_else(|| {
+                Error::InvalidConfig(
+                    "holder_key is required: the guest's grant carries no key of theirs".to_owned(),
+                )
+            })?;
         // FIX 7928/7929: an Ask guest's slip signs its disclosure as its record
         // bound; a Connect guest's meets its pact's current effective scope.
         let (scope, records) = super::current_scope::guest_slip_bounds(&fold, &grant_ref, &grant);
@@ -221,7 +262,8 @@ impl Vault {
     /// Withdraws one guest's access at this host (OF-232), an ask guest's or a
     /// Connect peer's guest grant (FIX 3016), in one writer:
     /// deletes the guest's FEDERATION_GRANT, disconnects each live pact the
-    /// grant still governs, tombstones every slip minted under the grant, and
+    /// grant still governs, retires the grant's scope opening keys,
+    /// tombstones every slip minted under the grant, and
     /// keeps the withdrawal, so a repeat returns the first revoke with
     /// `changed: false` and no slips. `owner` authorizes the act; `issuer` is
     /// the host's own signing key, which alone signs the disconnects and the
@@ -234,9 +276,13 @@ impl Vault {
         issuer: &HostSlipIssuer,
         grant_ref: EntityId,
     ) -> Result<GuestRevokeOutcome> {
-        self.with_write_txn_grouped(|txn| {
+        let outcome = self.with_write_txn_grouped(|txn| {
             self.revoke_guest_access_in_txn(txn, owner, issuer, grant_ref)
-        })
+        })?;
+        if !outcome.revoked_slips.is_empty() {
+            self.store.notify_credential_revocations();
+        }
+        Ok(outcome)
     }
 
     /// [`Self::revoke_guest_access`] in the caller's writer: the whole
@@ -285,7 +331,19 @@ impl Vault {
         {
             self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
         }
+        // The grant's scope opening key of every epoch retires with it, as a
+        // disconnect's does, so no signed commitment of its pacts tests a
+        // guessed scope again (FIX 7907).
+        crate::store::grant_scope_custody::retire_scope_keys(&self.store, txn, &grant_ref)?;
         let revoked_slips = self.revoke_grant_slips_in_txn(txn, issuer, grant_ref)?;
+        // The signed withdrawal of every slip under the grant: each replica's
+        // fold and every checkpoint image carry it, so a slip another replica
+        // minted under the grant and merges later is tombstoned there too
+        // (FIX 1978).
+        self.append_slip_op_in_txn(txn, issuer, AuthorityOp::SlipGrantRevoke { grant_ref })?;
+        // The withdrawal stays known here and reaches its peers, in this
+        // writer (FIX-LIST 5107, 10772).
+        super::withdraw_grant_row_in_txn(&self.store, txn, grant_ref)?;
         apply_ops(
             &self.store,
             &self.config,

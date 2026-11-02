@@ -5,26 +5,32 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EdgeActorClass;
 use oneiron::memory::DiaryReadOutcome;
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/pads/read", post(read))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![(
+        OwnerRoute {
+            method: "post",
+            path: "/pads/read",
+            summary: "The owner reads an agent's sealed pads.",
+            row: None,
+        },
+        post(read),
+    )]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadPads {
     /// Whose sealed pads, as 32 hex.
@@ -33,14 +39,20 @@ struct ReadPads {
     reason: String,
 }
 
+/// The OpenAPI schema of `POST /v1/owner/pads/read`'s body (FIX 11611): [`ReadPads`].
+/// Its answer reuses [`super::diary_routes::diary_read_outcome_schema`].
+pub(crate) fn read_pads_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReadPads>()
+}
+
 /// `POST /v1/owner/pads/read`: the owner reads an agent's sealed pads.
 async fn read(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReadPads>, JsonRejection>,
+    payload: OwnerJsonBody<ReadPads>,
 ) -> OwnerReply<DiaryReadOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let outcome = blocking(move || -> OwnerResult<DiaryReadOutcome> {
         let agent = entity_id("agent", &request.agent)?;

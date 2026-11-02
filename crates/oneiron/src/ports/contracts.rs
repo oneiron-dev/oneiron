@@ -22,6 +22,10 @@ impl Transactions for Vault {
     type Write<'a> = heed::RwTxn<'a>;
 }
 
+/// One batch-get work unit: a batch request is served whole in the caller's
+/// transaction, chunk by chunk, never refused for its count (FIX 10038).
+const BATCH_GET_CHUNK: usize = 1_024;
+
 pub trait EntityStore: super::EntityStoreRead {
     fn port_entity_get(&self, txn: &Self::Read<'_>, id: &EntityId) -> Result<Option<EntityRecord>>;
     fn port_entity_put(
@@ -37,10 +41,15 @@ pub trait EntityStore: super::EntityStoreRead {
         txn: &Self::Read<'_>,
         ids: &[EntityId],
     ) -> Result<Vec<Option<EntityRecord>>> {
-        if ids.len() > 100_000 {
-            return Err(crate::Error::IndexOverflow("entity batch get"));
+        // The full request, in bounded chunks in the caller's txn: order,
+        // duplicates and `None` positions are kept, however many ids it names.
+        let mut out = Vec::with_capacity(ids.len());
+        for chunk in ids.chunks(BATCH_GET_CHUNK) {
+            for id in chunk {
+                out.push(self.port_entity_get(txn, id)?);
+            }
         }
-        ids.iter().map(|id| self.port_entity_get(txn, id)).collect()
+        Ok(out)
     }
     fn port_list_turns_by_session(
         &self,
@@ -228,12 +237,15 @@ pub trait ShortIdStore: super::ShortIdStoreRead {
         txn: &Self::Read<'_>,
         refs: &[(&str, u8)],
     ) -> Result<Vec<Option<HydratedShortId>>> {
-        if refs.len() > 100_000 {
-            return Err(crate::Error::IndexOverflow("short id batch"));
+        // The full request, in bounded chunks in the caller's txn: order,
+        // duplicates and `None` positions are kept, however many refs it names.
+        let mut out = Vec::with_capacity(refs.len());
+        for chunk in refs.chunks(BATCH_GET_CHUNK) {
+            for (id, hash) in chunk {
+                out.push(self.port_short_id_resolve(txn, id, *hash)?);
+            }
         }
-        refs.iter()
-            .map(|(id, hash)| self.port_short_id_resolve(txn, id, *hash))
-            .collect()
+        Ok(out)
     }
 }
 pub trait TombstoneStore: super::TombstoneStoreRead {

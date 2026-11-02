@@ -14,8 +14,6 @@ use crate::disclosure::{PREDICATE_DISCLOSURE_ATTENDEE_ASK, attendee_ask_ref};
 
 pub(super) const ATTENDEE_ENTRY: &str = "tasks.attendee_entry";
 const ENTRY_ID_DOMAIN: &[u8] = b"oneiron.tasks.attendee_entry.v1";
-const MAX_ATTENDEE_KEY_BYTES: usize = 128;
-const MAX_ATTENDEE_CANDIDATES: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -53,17 +51,15 @@ impl AttendeeEntryFact {
                 session_key,
                 speaker_key,
             } => {
+                // A key's length and the candidate count are observed where
+                // the entry is admitted (FIX 10171), never refused here.
                 for key in [session_key, speaker_key] {
-                    if key.trim().is_empty()
-                        || key.trim() != key
-                        || key.len() > MAX_ATTENDEE_KEY_BYTES
-                    {
+                    if key.trim().is_empty() || key.trim() != key {
                         return Err(invalid());
                     }
                 }
                 let distinct: std::collections::BTreeSet<_> = self.candidates.iter().collect();
                 if (self.ask_group.is_none() && !self.candidates.is_empty())
-                    || self.candidates.len() > MAX_ATTENDEE_CANDIDATES
                     || distinct.len() != self.candidates.len()
                 {
                     return Err(invalid());
@@ -193,6 +189,7 @@ fn admit_in_txn(
             };
             fact.validate()?;
             put(vault, txn, entry_ref, ATTENDEE_ENTRY, &fact, entered_at)?;
+            observe_entry(vault, txn, entry_ref, &fact);
             // The newcomer barrier's first arm, before the commit: output
             // marked before this entry no longer goes out into its
             // container. Its commit moves the mark again; a rollback only
@@ -229,6 +226,57 @@ fn admit_in_txn(
         first,
         ask_pending,
     })
+}
+
+/// A first entry's candidate count and its longest key, each against its
+/// scan row (FIX 10171): what the entry once refused past is observed, never
+/// refused. A threshold row that does not read skips the observation, never
+/// the entry; the crossing waits for the vault's next write of its own.
+fn observe_entry(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entry_ref: EntityId,
+    fact: &AttendeeEntryFact,
+) {
+    let longest_key = match &fact.attendee {
+        ContainerAttendee::Speaker {
+            session_key,
+            speaker_key,
+        } => session_key.len().max(speaker_key.len()),
+        ContainerAttendee::Person(_) => 0,
+    };
+    for (scan, rows) in [
+        (
+            crate::scan_check::EngineScan::AttendeeIdentityCandidates,
+            fact.candidates.len(),
+        ),
+        (
+            crate::scan_check::EngineScan::AttendeeIdentityKeyBytes,
+            longest_key,
+        ),
+    ] {
+        if let Ok(mut count) =
+            crate::scan_check::ScanCount::start(&vault.store, txn, scan, entry_ref.as_bytes())
+        {
+            count.rows(rows);
+            count.defer(&vault.store);
+        }
+    }
+}
+
+impl crate::memory::Memory<'_> {
+    /// Admits `spec`, the "who is this?" ask of an entry this call records,
+    /// in `txn`, the entry's own writer (FIX 10172): the entry and its ask
+    /// commit together, so no other asker or device is left a pending ask
+    /// it cannot raise. The caller holds this surface's task-work turn and
+    /// has verified its write on `txn`.
+    pub(crate) fn compose_attendee_entry_ask_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        spec: &crate::task_verb::TaskAskSpec,
+    ) -> crate::memory::MemoryResult<crate::task_verb::TaskAskReceipt> {
+        self.tasks_ask_composed_in_txn(txn, spec, None)
+    }
 }
 
 /// The entry fact `id` names; `None` for any other row.

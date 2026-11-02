@@ -9,7 +9,8 @@ mod speech;
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
 use super::driver::EngineNativeExecutor;
 use super::host::{
-    RecordingJsHost, executor_boundary_contract, executor_system_prompt, executor_turn_instruction,
+    CallableChecks, RecordingJsHost, executor_boundary_contract, executor_system_prompt,
+    executor_turn_instruction,
 };
 use super::record::{
     LoadedReplayRecord, PromptBinding, REPLAY_METADATA_SCHEMA_VERSION, StepResultDigests,
@@ -154,15 +155,48 @@ impl EngineNativeExecutor<'_> {
             };
             let request =
                 self.build_llm_request(config, &record, &wire_prompt.text, continuation.as_ref())?;
-            if let Some(reason) = self.feed_compaction(config, &record, &request)? {
-                return Ok(self.outcome(
-                    EngineExecutorStatus::WindowFull {
-                        next_step_seq: completed_steps,
-                        reason,
-                    },
-                    steps_run,
-                    record,
-                ));
+            match self.feed_compaction(config, &record, &request)? {
+                Ok(Some(reason)) => {
+                    return Ok(self.outcome(
+                        EngineExecutorStatus::WindowFull {
+                            next_step_seq: completed_steps,
+                            reason,
+                        },
+                        steps_run,
+                        record,
+                    ));
+                }
+                Ok(None) => {}
+                Err(stop) => {
+                    let Some(wait) = turn_hook_wait(&stop) else {
+                        return Err(Error::from(stop).into());
+                    };
+                    let key = wait_key(&record, &wait);
+                    if !self.storage.park_wait(&key)? {
+                        return Ok(self.outcome(
+                            EngineExecutorStatus::Waiting(wait),
+                            steps_run,
+                            record,
+                        ));
+                    }
+                    // The ask settled before the park: retry the same sealed
+                    // invocation once, with its fold marks still pending.
+                    self.storage.clear_wait(&key)?;
+                    match self.feed_compaction(config, &record, &request)? {
+                        Ok(Some(reason)) => {
+                            return Ok(self.outcome(
+                                EngineExecutorStatus::WindowFull {
+                                    next_step_seq: completed_steps,
+                                    reason,
+                                },
+                                steps_run,
+                                record,
+                            ));
+                        }
+                        Ok(None) => {}
+                        Err(stop) => return Err(Error::from(stop).into()),
+                    }
+                }
             }
             // Rule 5 (FIX 4197): the first step past the `[limits]
             // executor_run_steps` row asks whether everything is okay, once
@@ -180,10 +214,19 @@ impl EngineNativeExecutor<'_> {
                 &wire_prompt.stamp.resolved_fingerprint,
             );
             let response = {
+                let sources = self.step_source_rows(config, &record);
                 let _generating = self.gated_write.activity_generating();
-                self.backend.generate(request, self.lease).await
+                self.backend
+                    .generate_sourced(request, self.lease, sources)
+                    .await
             }?;
-            self.post_turn_hooks(turn, &response)?;
+            let execution_text = self.post_turn_hooks(turn, &response)?;
+            // Only the post-hook execution view is healed below. The raw
+            // provider response stays separate as evidence (FIX 9840).
+            let mut execution_response = response.clone();
+            execution_response.message.content = vec![ContentPart::Text {
+                text: execution_text,
+            }];
             // The provider that answered is the one this turn's program
             // speaks for: each verb call it makes carries the name (OF-560).
             self.gated_write
@@ -203,7 +246,7 @@ impl EngineNativeExecutor<'_> {
                 code: script,
                 trailing_speak,
                 repairs,
-            } = heal_executor_reply(&response)?;
+            } = heal_executor_reply(&execution_response)?;
             record_script_output(
                 &self.storage,
                 &mut record,
@@ -233,7 +276,9 @@ impl EngineNativeExecutor<'_> {
                 self.legibility,
             )
             .with_recoverable_outputs(&self.storage, &record, recoverable)?
-            .with_skill_executor(&config.model);
+            .with_skill_executor(&config.model)
+            .with_result_share(&self.result_share)
+            .with_callable_checks(CallableChecks::new(self.code_check, completed_steps));
             let step = JsCodeModeStep {
                 run_id: config.run_id,
                 seq: completed_steps,
@@ -255,6 +300,7 @@ impl EngineNativeExecutor<'_> {
                 Err(err) => {
                     // A cancelled root fails the step: the bridge rows it
                     // left stay recorded, and no wait it reached hides that.
+                    let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait.filter(|_| !cancel.is_cancelled());
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
@@ -268,6 +314,7 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            callable_rows,
                             durable_wait,
                             format!("Runtime error after host bridge calls: {err}"),
                             repairs.healed(),
@@ -294,6 +341,7 @@ impl EngineNativeExecutor<'_> {
                 // The guest saw a typed Denied/Failed response (budget
                 // attached) at the chokepoint; the STEP still fails with
                 // the original error after persisting the bridge rows.
+                let callable_rows = host.result_rows();
                 let durable_wait = host.durable_wait;
                 let bridge_calls = host.bridge_calls;
                 let captured = host.captured;
@@ -306,6 +354,7 @@ impl EngineNativeExecutor<'_> {
                     bridge_start,
                     bridge_calls,
                     captured,
+                    callable_rows,
                     durable_wait,
                     format!("Host bridge call failed: {failure}"),
                     repairs.healed(),
@@ -330,6 +379,7 @@ impl EngineNativeExecutor<'_> {
             let (bodies, runtime_output_paths) = match step_bodies {
                 Ok(found) => found,
                 Err(err) => {
+                    let callable_rows = host.result_rows();
                     let durable_wait = host.durable_wait;
                     let bridge_calls = host.bridge_calls;
                     let captured = host.captured;
@@ -343,6 +393,7 @@ impl EngineNativeExecutor<'_> {
                             bridge_start,
                             bridge_calls,
                             captured,
+                            callable_rows,
                             durable_wait,
                             format!(
                                 "Runtime output recording failed after host bridge calls: {err}"
@@ -362,11 +413,20 @@ impl EngineNativeExecutor<'_> {
                 bridge_start as u64,
                 &host.bridge_calls,
             )?;
+            record.record_callable_rows(host.result_rows());
             record.bridge_calls.extend(host.bridge_calls);
             // Bridge results too large for one reply and stored values, as
             // bodies; the calls' rows and the step's bindings carry their
             // handles.
             record.outputs.extend(host.captured);
+            // The board frames its answers carried, for the model's view of
+            // the step (FIX 2135).
+            super::board_frames::record_step_board_frames(
+                &self.storage,
+                &mut record,
+                completed_steps,
+                bridge_start,
+            );
             // The names the step bound join the record in this same
             // checkpointed append; a rebound name keeps its place.
             let bindings: Vec<_> = host

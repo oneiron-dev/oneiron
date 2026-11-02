@@ -4,6 +4,8 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
+use tokio::task::JoinSet;
+
 use super::{build_cors_layer, should_warn_public_bind_without_auth, weak_auth_secret_warning};
 use crate::build_app;
 use crate::build_artifact_app;
@@ -21,7 +23,7 @@ mod workers;
 pub(crate) use self::hooks::hook_sandbox;
 #[cfg(feature = "code-sandbox-wasmtime")]
 pub(crate) use self::hooks::spawn_fact_hooks;
-use self::page_seal::open_served_vault_anchored;
+pub(crate) use self::page_seal::open_served_vault_anchored;
 pub use self::page_seal::{OpenedServedVault, open_served_vault};
 pub(crate) use self::workers::start_desktop_workers;
 
@@ -144,6 +146,14 @@ pub(super) async fn serve_anchored(
             // A wake pass keeps a plugged-in laptop awake until it ends; on battery
             // normal idle sleep holds (ruled 2026-10-08).
             let awake = awake_host.keep_awake(AwakePolicy::default());
+            // It follows the power source while held; a host whose changes
+            // cannot be observed says so once (FIX 9547).
+            awake.on_unobserved(|| {
+                tracing::warn!(
+                    reason = "power_source_unobserved",
+                    "power-source changes are not observed; a wake assertion follows the source sampled as its holds began"
+                );
+            });
             // A live model run holds the same assertion through each admitted call,
             // not only a wake pass (Docs Q18).
             oneiron_vault_contract::host_adapters::hold_awake_for_runs({
@@ -204,7 +214,8 @@ pub(super) async fn serve_anchored(
         return Err(error);
     }
     // Ready and bound: a client on this host can find it now. The file goes
-    // when this returns, a clean stop or a late startup error alike.
+    // when serving stops and this returns; a startup error returned above,
+    // before it was written.
     #[cfg(unix)]
     let _registered =
         super::local_servers::register(vault_id, bound, &config.vault_path, files.as_ref());
@@ -220,19 +231,26 @@ pub(super) async fn serve_anchored(
     // Past the floor the API listener's sockets may take the pool's owner
     // reserve, which this server judges (FIX 8274).
     let limits = config.limits.connections();
-    let pool = crate::http_listener::ConnectionPool::new(&limits, questions);
+    let pool = crate::http_listener::ConnectionPool::new(
+        &limits,
+        questions,
+        Some(Arc::clone(&mesh_server.retained)),
+    );
     let floor_vault = mesh_server.vault();
     floor_vault.lend_host_net_floor(pool.host_net_floor());
     // Foreign guests' proposal spools keep the disk floor uploads keep, on
     // its one shared ledger (FIX 7650).
     floor_vault.lend_proposal_spool(Arc::new(mesh_server.transfers.disk.clone()));
     let owner_judge = Arc::clone(&mesh_server);
+    // Each listener's connections are tasks of its set here (FIX 9261).
+    let (mut api_http, mut artifact_http) = (JoinSet::new(), JoinSet::new());
     let api = crate::http_listener::serve_api_with_pool(
         listener,
         app,
         &pool,
         limits,
         owner_judge,
+        &mut api_http,
         api_stop,
     );
     let artifacts = crate::http_listener::serve_with_pool(
@@ -240,6 +258,7 @@ pub(super) async fn serve_anchored(
         artifact_app,
         &pool,
         limits,
+        &mut artifact_http,
         artifact_stop,
     );
     let serving = async {
@@ -258,6 +277,12 @@ pub(super) async fn serve_anchored(
             tracing::warn!("connections still open after the drain grace; stopping anyway");
         }
     }
+    // Every connection closed, or the grace ran out and the race dropped the
+    // listeners with some still open. Those are ended and reaped here, as
+    // embedded serve does, so an upgrade one never finished gives back its
+    // place before the drain waits for the upgrades (FIX 9261).
+    api_http.shutdown().await;
+    artifact_http.shutdown().await;
     // Outside the grace: every upgraded socket and the calls it admitted end
     // before the device-sync connection, the mesh and the workers stop.
     stop::stop_serving(&mesh_server, mesh, device_sync, upgrades).await;
@@ -286,6 +311,17 @@ pub(crate) async fn build_server(
     let (embedder, gpu_poller) = build_embedder(&vault, config, broker.as_ref()).await?;
     let tagger = crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), None).await?;
 
+    // The private feedback endpoint's bearer (FIX 5013): a named vault
+    // secret wins, and reads as none when it does not resolve; without one
+    // the env token, as today.
+    let feedback_bearer = if config.feedback.key_secret.is_some() {
+        config.feedback.bearer_from_secret(&vault)
+    } else {
+        std::env::var("ONEIRON_FEEDBACK_TOKEN")
+            .ok()
+            .filter(|token| !token.is_empty())
+            .map(zeroize::Zeroizing::new)
+    };
     // Reloads persisted CRDT state (d:root + d:w:* in sync_state) — a fresh
     // boot must not silently discard previously relayed updates/tombstones.
     let sync_server = SyncServer::new(vault, server_config)
@@ -309,13 +345,13 @@ pub(crate) async fn build_server(
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
-                bearer: std::env::var("ONEIRON_FEEDBACK_TOKEN")
-                    .ok()
-                    .filter(|token| !token.is_empty())
-                    .map(zeroize::Zeroizing::new),
+                bearer: feedback_bearer,
             }
         }))
-        .with_feedback_triage(config.feedback.triage.clone());
+        .with_feedback_triage(config.feedback.triage.clone())
+        // The `[policy]` section's owner-plane wording and settings (FIX
+        // 5042); an embedding host may set its own after this.
+        .with_owner_policy_config(config.policy.owner_policy_config());
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server
@@ -342,7 +378,7 @@ pub(crate) async fn build_server(
 /// them through [`build_server`]; managed serve builds them here too. A
 /// `key_secret` endpoint, rung or pool sends through `broker`.
 pub(crate) async fn build_embedder(
-    vault: &oneiron::Vault,
+    vault: &Arc<oneiron::Vault>,
     config: &ServeConfig,
     broker: Option<&crate::models::BrokerContext>,
 ) -> anyhow::Result<(
@@ -363,7 +399,11 @@ pub(crate) async fn build_embedder(
     let gpu_poller = gpu
         .as_ref()
         .map(crate::runtime::GpuPool::spawn_health_poller);
-    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok()));
+    // Each pod batch's rows are judged by the vault's world release, held
+    // weakly (FIX 9486).
+    let release: Arc<dyn crate::embedder::PodRelease> =
+        Arc::new(crate::embedder::VaultRelease::new(vault));
+    let gpu_route = gpu.map(|pool| (pool, vault.derivation_scope().ok(), release));
     let embedder_config = config.embedder.clone();
     let broker = broker.cloned();
     let embedder = crate::logging::off_runtime("embedder slot task", move || {
@@ -374,8 +414,8 @@ pub(crate) async fn build_embedder(
             receipts,
             broker.as_ref(),
         )?;
-        if let (Some(slot), Some((pool, scope))) = (&slot, gpu_route) {
-            crate::embedder::route_batches_through(slot, pool, scope)?;
+        if let (Some(slot), Some((pool, scope, release))) = (&slot, gpu_route) {
+            crate::embedder::route_batches_through(slot, pool, scope, release)?;
         }
         anyhow::Ok(slot)
     })
@@ -407,14 +447,16 @@ fn refuse_unauthenticated_public_bind(
 /// The root project the vault seeds at its first open takes the owner's first
 /// signature here, through the host's project.write slip (OF-497). A host
 /// with no secret has no issuer, and a relay signs nothing; either leaves the
-/// root unsigned. A root that is already signed is left alone.
+/// root unsigned. A root that is already signed is left alone. The root
+/// signs with this install's own issuer seed for the vault (FIX-LIST 3018),
+/// drawn here only for a vault no root has reached yet.
 pub(crate) fn sign_root_project(
     vault: &oneiron::Vault,
     secret: Option<&str>,
 ) -> anyhow::Result<()> {
-    let Some(secret) = secret.filter(|secret| !secret.is_empty()) else {
+    if secret.is_none_or(str::is_empty) {
         return Ok(());
-    };
+    }
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return Ok(());
     }
@@ -425,7 +467,7 @@ pub(crate) fn sign_root_project(
     if !unsigned {
         return Ok(());
     }
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(secret.as_bytes())?;
+    let issuer = vault.bootstrap_host_slip_issuer()?;
     vault.ensure_host_root_slip(&issuer)?;
     let owner = crate::owner::local_owner(vault)?;
     vault.sign_owner_project(&owner, &vault.owner_project_signer(&issuer)?, root)?;

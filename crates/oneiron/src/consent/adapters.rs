@@ -53,6 +53,9 @@ fn access_grant_scope_selectors(scope: &AccessGrantScope) -> Result<Vec<String>>
         | AccessGrantScope::RelationshipClaims { space_ref } => {
             Ok(vec![format!("space:{}", space_ref.to_hex())])
         }
+        AccessGrantScope::ConversationMessages { conversation_ref } => {
+            Ok(vec![format!("conversation:{}", conversation_ref.to_hex())])
+        }
         AccessGrantScope::CompanionProfile {
             person_ref,
             facet_ref,

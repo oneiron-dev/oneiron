@@ -79,6 +79,13 @@ pub(super) fn setup_tool_schema() -> Value {
                 "minimum": 1,
                 "maximum": MCP_BOARD_BUDGET_TOK_MAX,
             },
+            // The explicit override's bounds are its u32 decode domain: zero
+            // is a literal zero cap, never "unset" (FIX 9506).
+            "board_budget_override_tok": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": MCP_BOARD_BUDGET_TOK_MAX,
+            },
             "page": page_request_schema(),
             "cache": cache_hint_schema(),
         }),

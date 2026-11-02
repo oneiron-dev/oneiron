@@ -42,9 +42,36 @@ pub(crate) async fn row_hooks_pre_with(
     resume: RowHookResume,
     turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
 ) -> Result<VerbHookPre, MemoryError> {
+    let (pre, _) = row_hooks_pre_decided(
+        server, reader, check, actor, class, invocation, verb, args, resume, turn,
+    )
+    .await?;
+    Ok(pre)
+}
+
+/// [`row_hooks_pre_with`], beside each hook `ai.verdict` decision its chain
+/// answered (FIX 10425): the chain runs on a blocking thread, where only
+/// this collection sees them. Record only: no ceiling is set and no
+/// verdict changes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "row_hooks_pre_with's inputs, unchanged"
+)]
+async fn row_hooks_pre_decided(
+    server: &Arc<SyncServer>,
+    reader: Option<ScopedReadActorKey>,
+    check: Option<RewriteAdmit>,
+    actor: EntityId,
+    class: EdgeActorClass,
+    invocation: Option<InvocationId>,
+    verb: &str,
+    args: serde_json::Value,
+    resume: RowHookResume,
+    turn: Option<Arc<oneiron::work_line::TaskWorkTurn>>,
+) -> Result<(VerbHookPre, Vec<serde_json::Value>), MemoryError> {
     let server = Arc::clone(server);
     let verb = verb.to_owned();
-    tokio::task::spawn_blocking(move || {
+    let chain = move || -> Result<VerbHookPre, MemoryError> {
         let _drain = resume.drain.as_ref().map(VerbAskDrainPermit::enter);
         let call = VerbCall {
             verb: verb.clone(),
@@ -53,6 +80,7 @@ pub(crate) async fn row_hooks_pre_with(
             class: hook_class(class),
             scope: None,
             board_epoch: None,
+            turn: None,
             domain: verb_hook_boundary::row_domain(&verb),
             reader,
         };
@@ -85,6 +113,10 @@ pub(crate) async fn row_hooks_pre_with(
             oneiron::task_verb::sdk::validate_input(&verb, args).is_ok()
         });
         Ok(pre)
+    };
+    clock_ingress::run_blocking(move || {
+        let (ended, decided) = crate::hook_verdict::collect_hook_decisions(chain);
+        ended.map(|pre| (pre, decided))
     })
     .await
     .map_err(|_| hooks_did_not_finish())?
@@ -97,10 +129,26 @@ pub(crate) async fn row_hooks_post(
     pre: VerbHookPre,
     result: serde_json::Value,
 ) -> Result<serde_json::Value, MemoryError> {
+    let (output, _) = row_hooks_post_decided(server, pre, result).await?;
+    Ok(output)
+}
+
+/// [`row_hooks_post`], beside each hook `ai.verdict` decision its chain
+/// answered (FIX 10425), as [`row_hooks_pre_decided`] collects them.
+async fn row_hooks_post_decided(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    result: serde_json::Value,
+) -> Result<(serde_json::Value, Vec<serde_json::Value>), MemoryError> {
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || verb_hook_boundary::row_post(&server.vault, pre, result))
-        .await
-        .map_err(|_| hooks_did_not_finish())?
+    clock_ingress::run_blocking(move || {
+        let (output, decided) = crate::hook_verdict::collect_hook_decisions(move || {
+            verb_hook_boundary::row_post(&server.vault, pre, result)
+        });
+        output.map(|output| (output, decided))
+    })
+    .await
+    .map_err(|_| hooks_did_not_finish())?
 }
 
 /// A row that failed after its pre chain ran (the door, its input's decode
@@ -109,7 +157,7 @@ pub(crate) async fn row_hooks_post(
 /// The caller returns its own error.
 pub(crate) async fn row_hooks_abort(server: &Arc<SyncServer>, pre: VerbHookPre) {
     let server = Arc::clone(server);
-    let kept = tokio::task::spawn_blocking(move || verb_hook_boundary::abort(&server.vault, pre));
+    let kept = clock_ingress::run_blocking(move || verb_hook_boundary::abort(&server.vault, pre));
     if let Err(error) = kept.await {
         tracing::warn!(%error, "a failed row's pre hook records were not kept");
     }
@@ -134,6 +182,19 @@ pub(super) async fn facade_hooks_pre(
     verb: &str,
     value: serde_json::Value,
 ) -> Result<VerbHookPre, FacadeApiError> {
+    let (pre, _) = facade_hooks_pre_counted(server, call, verb, value).await?;
+    Ok(pre)
+}
+
+/// [`facade_hooks_pre`], beside each hook `ai.verdict` decision the chain
+/// answered (FIX 10425), for a row whose answer counts its hooks' decisions
+/// among its own ([`facade_hooks_post_counted`]).
+pub(super) async fn facade_hooks_pre_counted(
+    server: &Arc<SyncServer>,
+    call: &FacadeCall<'_>,
+    verb: &str,
+    value: serde_json::Value,
+) -> Result<(VerbHookPre, Vec<serde_json::Value>), FacadeApiError> {
     let auth = call.auth();
     // A hosted operator's root acts as nobody (FIX 2222): no hook runs for
     // it, and its typed refusal comes before any row door's own (FIX 4371).
@@ -198,7 +259,7 @@ pub(super) async fn facade_hooks_pre(
     };
     let check = Some(facade_rewrite_admit(server, auth, &value));
     // A host-door row holds no task-work turn before its pre chain.
-    Ok(row_hooks_pre_with(
+    Ok(row_hooks_pre_decided(
         server, reader, check, actor, class, invocation, verb, value, resume, None,
     )
     .await?)
@@ -229,7 +290,7 @@ pub(super) fn export_admits(server: &SyncServer, auth: &CoreAuth) -> Result<(), 
         // The attested owner carries no slip: its request's own owner
         // proof, as the export revalidates it in its snapshot.
         if auth.managed_owner().is_some() {
-            let owner = host_doors::owner_proof(auth, server, "vault.export")?;
+            let owner = host_doors::support::owner_proof(auth, server, "vault.export")?;
             server.vault.admit_authenticated_owner_export(&owner)?;
         }
         return Ok(());
@@ -254,4 +315,22 @@ pub(super) async fn facade_hooks_post(
     output: serde_json::Value,
 ) -> Result<serde_json::Value, FacadeApiError> {
     Ok(row_hooks_post(server, pre, output).await?)
+}
+
+/// [`facade_hooks_post`] for a browser batch or library run (FIX 10425):
+/// the hook decisions its pre chain answered (`decided`) and its post
+/// chain's join the answer's own decisions, so a library run's
+/// `model_free` reads them as its code-mode door's does (FIX 8042). Record
+/// only: nothing is capped and no verdict changes.
+pub(super) async fn facade_hooks_post_counted(
+    server: &Arc<SyncServer>,
+    pre: VerbHookPre,
+    verb: &str,
+    output: serde_json::Value,
+    mut decided: Vec<serde_json::Value>,
+) -> Result<serde_json::Value, FacadeApiError> {
+    let (mut output, mut after) = row_hooks_post_decided(server, pre, output).await?;
+    decided.append(&mut after);
+    crate::api::mcp_gateway::count_hook_decisions(verb, &mut output, decided);
+    Ok(output)
 }

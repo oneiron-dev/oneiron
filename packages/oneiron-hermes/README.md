@@ -32,6 +32,11 @@ holds one at a time.
   witnessed as a note and kept as one claim (`hermes.memory.note` or
   `hermes.memory.user`), keyed by the entry, so a replace updates it and a
   remove closes it.
+- **Claim subjects:** a kept claim about the user is about the person the
+  agent's credential acts for, and one about the agent's own work is about
+  its own actor (`self.actor`, read once per session), so later sessions
+  recall it. Where the vault names no such ref, the claim stays on this
+  session's conversation.
 - **Tools:** `oneiron_recall` and `oneiron_remember`. Hermes reserves the
   `memory` tool name for its own store.
 - **Compression and session switches** wait for the writes in flight first.

@@ -1,42 +1,10 @@
 //! Typed owner projections of linked working views and account-local cache use.
-use super::FacadeApiError;
-use super::host_doors::support::{Listed, credential_listing};
+use super::host_doors::support::Listed;
+use super::host_doors::support::owner_action::as_owner;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
-use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::code_view_doors::*;
-use oneiron::memory::{Memory, MemoryError, MemoryResult};
 use std::sync::Arc;
-
-async fn as_owner<T: Send + 'static>(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    verb: &'static str,
-    act: impl FnOnce(&Memory<'_>, &AuthenticatedOwner) -> MemoryResult<T> + Send + 'static,
-) -> Listed<T> {
-    let admitted = || {
-        let owner = super::owner_binding::facade_owner(server, auth, verb)?;
-        let caller =
-            super::facade_actor(server, auth).map_err(FacadeApiError::into_memory_error)?;
-        Ok::<_, MemoryError>((owner, caller))
-    };
-    let (owner, caller) = match admitted() {
-        Ok(admitted) => admitted,
-        Err(error) => return (Err(error), Vec::new()),
-    };
-    // The agent an MCP call's verified credential registered, read here on
-    // the async side: the blocking closure cannot see the call's task-local
-    // (FIX 8960). Its per-file reads that say why may ask for real bytes.
-    let recipient = crate::api::mcp_gateway::skill_execution::mcp_call_recipient();
-    credential_listing(server, auth, caller, verb, move |_, _, memory| {
-        let memory = match recipient {
-            Some(recipient) => memory.for_repo_reveal_recipient(recipient),
-            None => memory,
-        };
-        act(&memory, &owner)
-    })
-    .await
-}
 
 pub(crate) async fn vault_code_views_materialize(
     server: &Arc<SyncServer>,

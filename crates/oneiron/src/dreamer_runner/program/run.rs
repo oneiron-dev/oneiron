@@ -18,8 +18,9 @@
 //! step's evidence whole. A body the wall refuses, or one that settles after
 //! its actor's erase, is not kept; the step settles all the same.
 
+mod page;
+
 use std::collections::BTreeSet;
-use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
@@ -30,11 +31,12 @@ use crate::attempt_queue::{
 use crate::batch::secret_scan::{SidePart, admit_side_parts};
 use crate::code_run::{CodeRunReplayGeneration, CodeRunReplayRecord};
 use crate::entity_id::EntityId;
-use crate::error::{Error, ErrorKind, Result};
+use crate::error::{Error, Result};
 use crate::outbound_intent_ledger::IntentLedgerRecord;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::side_table::{self, Named, SideKey, SideTable};
 
+pub(super) use self::page::program_steps_page_in_txn;
 use super::ATTEMPT;
 use super::types::code_run_bytes;
 
@@ -189,60 +191,6 @@ pub(super) fn program_step_in_txn(
     let family = crate::store::ResponseFamily::ProgramStep;
     let raw = crate::store::ResponseRead::of(family, &STEP.key_bytes(key), &raw).present()?;
     Ok(STEP.decode_value(raw).ok())
-}
-
-/// One page of a program run's STEP rows, for its reads.
-pub(super) struct ProgramStepPage {
-    /// Each step by its ref, in key order.
-    pub(super) steps: Vec<(EntityId, TurnProgramStep)>,
-    /// Rows of the page that do not decode (FIX 5736): skipped, never a
-    /// refusal of the page.
-    pub(super) undecodable: u64,
-    /// Whether a row follows the page.
-    pub(super) more: bool,
-}
-
-/// Up to `limit` of `code_run`'s steps in key order, after the step `after`
-/// when one is named. Every step id lies between the least and the greatest
-/// id that is not reserved, so the range holds this run's rows alone.
-pub(super) fn program_steps_page_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    code_run: EntityId,
-    after: Option<EntityId>,
-    limit: usize,
-) -> Result<ProgramStepPage> {
-    let mut least = [0_u8; 16];
-    least[15] = 1;
-    let mut greatest = [u8::MAX; 16];
-    greatest[15] = u8::MAX - 1;
-    let from = match after {
-        Some(step) => (code_run, step),
-        None => (code_run, EntityId::from_bytes(least)?),
-    };
-    let to = (code_run, EntityId::from_bytes(greatest)?);
-    let start = if after.is_some() {
-        Bound::Excluded(&from)
-    } else {
-        Bound::Included(&from)
-    };
-    let mut page = ProgramStepPage {
-        steps: Vec::new(),
-        undecodable: 0,
-        more: false,
-    };
-    for row in STEP.iter_range(vault, txn, start, Bound::Included(&to))? {
-        if page.steps.len() >= limit {
-            page.more = true;
-            break;
-        }
-        match row {
-            Ok(((_, step), held)) => page.steps.push((step, held)),
-            Err(error) if error.kind() == ErrorKind::SideTableRow => page.undecodable += 1,
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(page)
 }
 
 /// Whether `attempt` still holds the lease `owner` took at `generation`.
@@ -465,6 +413,7 @@ pub(crate) fn bind_program_write_in_txn(
     )? {
         return Err(invalid("a program write lost its lease"));
     }
+    super::authority::require_program_authority_in_txn(vault, wtxn, write.attempt)?;
     let key = (write.code_run, write.receipt);
     let issued = write.issued();
     if let Some(held) = STEP.get(vault, &*wtxn, &key)?
@@ -741,23 +690,25 @@ pub(super) fn undecodable_actor_steps_in_txn(
 }
 
 /// The steps an erase of one actor reaches: each settled step that keeps a
-/// body, and each step whose row does not decode.
+/// body, and each step whose row does not decode. A step already held as
+/// the erased marker is neither.
 struct ActorSteps {
     bodied: Vec<((EntityId, EntityId), TurnProgramStep)>,
     undecodable: Vec<(EntityId, EntityId)>,
 }
 
 /// The steps under each code run `actor`'s attempt stamps name, read on
-/// `txn`. A key that does not decode names no step and is left as it is.
+/// `txn`; the stamps by their actor index (FIX 5735). A stamp that does not
+/// decode names no actor. A key that does not decode names no step and is
+/// left as it is.
 fn actor_steps_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: &EntityId,
 ) -> Result<ActorSteps> {
     let mut code_runs = BTreeSet::new();
-    for row in ATTEMPT.iter_raw_from(vault, txn, &[])? {
-        let (_, bytes) = row?;
-        if let Ok(stamp) = ATTEMPT.decode_value(&bytes)
+    for attempt in super::index::actor_attempts_in_txn(vault, txn, actor)? {
+        if let Some(stamp) = ATTEMPT.get_lenient(vault, txn, &attempt)?
             && stamp.actor == *actor
         {
             code_runs.insert(turn_program_code_run(&stamp.admission)?);
@@ -773,7 +724,15 @@ fn actor_steps_in_txn(
             let Some(key) = <(EntityId, EntityId) as SideKey>::decode_key(&key) else {
                 continue;
             };
-            match STEP.decode_value(&bytes) {
+            // An erased marker (FIX 6227) is already out of reach: neither a
+            // body nor a row that does not decode, so its bytes stay and the
+            // step still reads as erased (FIX 10709).
+            let family = crate::store::ResponseFamily::ProgramStep;
+            let raw = match crate::store::ResponseRead::of(family, &STEP.key_bytes(&key), &bytes) {
+                crate::store::ResponseRead::ErasedOpaque(_) => continue,
+                crate::store::ResponseRead::Present(raw) => raw,
+            };
+            match STEP.decode_value(raw) {
                 Ok(step)
                     if matches!(
                         step.state,

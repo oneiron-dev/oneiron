@@ -28,6 +28,21 @@ struct NoteProse<'a> {
 const NOTE_PROSE_ROW: &str = "memory.author_note";
 const NOTE_PROSE_FIELD: &str = "/markdown";
 
+/// The `unlinked` facts a NOTE's `markdown` earns for `memory`'s writer, the
+/// read [`Memory::author_note`] runs, for a bound raw put of a NOTE body
+/// (FIX 3734).
+pub(super) fn note_prose_unlinked(
+    memory: &Memory<'_>,
+    markdown: &str,
+) -> MemoryResult<Vec<crate::receipt::ReferenceRefusalFacts>> {
+    unlinked_prose_links(
+        memory,
+        NOTE_PROSE_ROW,
+        &NoteProse { markdown },
+        &[NOTE_PROSE_FIELD],
+    )
+}
+
 impl Memory<'_> {
     // ── B2 migrator write-verb group ────────────────────────────────────
 
@@ -61,13 +76,28 @@ impl Memory<'_> {
         target: TakeTarget,
         markdown: impl Into<String>,
     ) -> MemoryResult<EntityRefReceipt> {
-        self.author_note(&NoteWriteEnvelope {
-            kind: NoteKind::parse("opinion/take").expect("shipped kind"),
-            scope: NoteScope::About(target),
-            markdown: markdown.into(),
-            source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
-            mask: None,
-        })
+        self.author_take_in_world(target, markdown, None)
+    }
+
+    /// [`Self::author_take`] born in `world`, as
+    /// [`Self::author_note_in_world`] places it: a writer that knows its
+    /// source's world passes it, and `None` is base reality.
+    pub(crate) fn author_take_in_world(
+        &self,
+        target: TakeTarget,
+        markdown: impl Into<String>,
+        world: Option<crate::EntityId>,
+    ) -> MemoryResult<EntityRefReceipt> {
+        self.author_note_in_world(
+            &NoteWriteEnvelope {
+                kind: NoteKind::parse("opinion/take").expect("shipped kind"),
+                scope: NoteScope::About(target),
+                markdown: markdown.into(),
+                source_revision_ref: *self.vault.store.clock.entity_id()?.as_bytes(),
+                mask: None,
+            },
+            world,
+        )
     }
 
     /// A reviewer's preserved dissent on `target` (OF-352): an opinion like
@@ -91,6 +121,18 @@ impl Memory<'_> {
     /// Diary requests are actor-private and owner-only to write. A scope/kind
     /// mismatch or a foreign owner is refused before any row is staged.
     pub fn author_note(&self, envelope: &NoteWriteEnvelope) -> MemoryResult<EntityRefReceipt> {
+        self.author_note_in_world(envelope, None)
+    }
+
+    /// [`Self::author_note`] placed in `world`: the NOTE's birth writes
+    /// `NOTE ─InWorld→ world` in the same content transaction as its body and
+    /// attribution edges, as a notes import does. `None` writes no placement
+    /// edge, so the NOTE is base reality.
+    pub fn author_note_in_world(
+        &self,
+        envelope: &NoteWriteEnvelope,
+        world: Option<crate::EntityId>,
+    ) -> MemoryResult<EntityRefReceipt> {
         // OF-063 prose links (FIX 1228): the one engine write every take,
         // dissent and diary entry passes through reads its markdown for links
         // its writer cannot resolve, once per write, whatever door it came
@@ -160,19 +202,27 @@ impl Memory<'_> {
                     &["Use TakeTarget::Subject to take a position on a non-claim entity."],
                 ));
             }
-            content.apply_batch(
-                self.vault
-                    .batch_in()
-                    .mask(envelope.mask)
-                    .put_authored_note(&note_id, &self.actor, occurred, at, &body)
-                    .edge(
-                        &note_id,
-                        EdgeKind::AuthoredBy,
-                        &self.actor,
-                        registered_edge_weight(EdgeKind::AuthoredBy),
-                    )
-                    .edge(&note_id, link, &target_id, registered_edge_weight(link)),
-            )?;
+            let mut birth = self
+                .vault
+                .batch_in()
+                .mask(envelope.mask)
+                .put_authored_note(&note_id, &self.actor, occurred, at, &body)
+                .edge(
+                    &note_id,
+                    EdgeKind::AuthoredBy,
+                    &self.actor,
+                    registered_edge_weight(EdgeKind::AuthoredBy),
+                )
+                .edge(&note_id, link, &target_id, registered_edge_weight(link));
+            if let Some(world) = &world {
+                birth = birth.edge(
+                    &note_id,
+                    EdgeKind::InWorld,
+                    world,
+                    registered_edge_weight(EdgeKind::InWorld),
+                );
+            }
+            content.apply_batch(birth)?;
             Ok(())
         })?;
         receipt_landed_prose(self, &unlinked_prose);
@@ -224,7 +274,7 @@ impl Memory<'_> {
                 input.source_id.clone(),
                 id,
                 ImportedEvidenceEntityResolution::subject(subject),
-                WriteActor::new(self.actor, self.actor_class),
+                self.write_actor(),
                 occurred,
                 learned_at,
             )
@@ -273,7 +323,8 @@ impl Memory<'_> {
 /// links `About` its owner, and the actor content writer checks the agent's
 /// standing at each effect. Its markdown passes prose admission once, here,
 /// whoever calls (OF-063, FIX 3417): read through a txn-bound check, its
-/// receipt written in this same write once the entry has staged.
+/// receipt written in a child of this same write once the entry has staged,
+/// so a receipt that cannot be written never takes the entry (FIX 3709).
 pub(crate) fn append_agent_diary_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -316,7 +367,28 @@ pub(crate) fn append_agent_diary_in_txn(
             ),
     )?;
     content.finish()?;
-    crate::receipt::record_reference_refusals_in_txn(vault, txn, unlinked.as_slice())?;
+    // The Unlinked receipt records the AI's attempt, not the entry: it is
+    // written in a child of the caller's writer, so a failure there drops
+    // only the receipt (FIX 3709). A written one commits into the caller's
+    // writer and rolls back with the entry.
+    if let Some(facts) = unlinked.as_ref() {
+        let receipted = vault
+            .store
+            .env
+            .nested_write_txn(txn)
+            .map_err(crate::error::Error::from)
+            .and_then(|mut child| {
+                crate::receipt::record_reference_refusals_in_txn(
+                    vault,
+                    &mut child,
+                    std::slice::from_ref(facts),
+                )?;
+                child.commit().map_err(crate::error::Error::from)
+            });
+        if let Err(error) = receipted {
+            tracing::warn!(%error, "diary entry kept; its unlinked receipt was not written");
+        }
+    }
     Ok(note_id)
 }
 

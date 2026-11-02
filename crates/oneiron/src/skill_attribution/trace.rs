@@ -69,7 +69,8 @@ pub fn receipt_attribution_trace(
             wires.push(wire);
         }
     }
-    let Some(skills) = loaded_revisions(vault, &receipt.receipt_id, &actor, wires)? else {
+    let pinned = crate::skill::pinned_skill_revisions(vault, receipt)?;
+    let Some(skills) = loaded_revisions(vault, &receipt.receipt_id, &actor, wires, pinned)? else {
         return Ok(None);
     };
     let Some(attempt) = receipt_attempt(&receipt.receipt_id) else {
@@ -139,21 +140,44 @@ pub fn receipt_attribution_trace_sourced(
         .and_then(|attempt| EntityId::from_bytes(*attempt.as_bytes()).ok())
         .map(|run| vec![run]);
     let skills = trace.skills.iter().map(|skill| skill.skill).collect();
-    let rows = union_source_rows([receipt.pack_source_rows(), run, Some(skills)]);
+    let rows = union_source_rows([
+        receipt.pack_source_rows(),
+        run,
+        Some(skills),
+        Some(vec![trace.actor]),
+    ]);
     Ok(Some((trace, rows)))
 }
 
-/// The SKILL record each wire names, at most one per wire. A fork counts only
-/// as `actor`'s own; where a shared skill and a fork both match, the one this
-/// receipt marked loaded wins.
+/// The SKILL record each wire names, at most one per wire. A wire the load
+/// pinned resolves to the exact revision it read, even after an in-place
+/// update (FIX 10110); only the others are matched against today's records.
+/// A fork counts only as `actor`'s own; where a shared skill and a fork both
+/// match, the one this receipt marked loaded wins.
 fn loaded_revisions(
     vault: &Vault,
     receipt: &str,
     actor: &EntityId,
     wires: Vec<String>,
+    pinned: Vec<(String, EntityId, crate::skill::SkillRecord)>,
 ) -> Result<Option<Vec<LoadedSkillRevision>>> {
     let mut matches: Vec<Vec<(EntityId, bool, String)>> = vec![Vec::new(); wires.len()];
-    if !wires.is_empty() {
+    let mut by_pin = vec![false; wires.len()];
+    for (wire, id, record) in pinned {
+        let Some(at) = wires.iter().position(|held| *held == wire) else {
+            continue;
+        };
+        let loaded = crate::skill::resident::receipt_loaded_skill(vault, receipt, &id)?;
+        let fork_of = crate::skill::resident_of(&record)?;
+        if fork_of.is_some() && (fork_of != Some(*actor) || !loaded) {
+            continue;
+        }
+        by_pin[at] = true;
+        if !matches[at].iter().any(|(held, _, _)| *held == id) {
+            matches[at].push((id, loaded, record.desc));
+        }
+    }
+    if by_pin.iter().any(|done| !done) {
         let mut after = None;
         loop {
             let page =
@@ -165,7 +189,7 @@ fn loaded_revisions(
                 let named: Vec<_> = wires
                     .iter()
                     .enumerate()
-                    .filter(|(_, wire)| manifest_entry_names_skill(wire, &record))
+                    .filter(|(at, wire)| !by_pin[*at] && manifest_entry_names_skill(wire, &record))
                     .map(|(at, _)| at)
                     .collect();
                 if named.is_empty() {

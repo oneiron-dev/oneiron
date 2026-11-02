@@ -15,6 +15,10 @@ use crate::error::RecordError;
 pub enum AccessGrantScope {
     /// Messages in exactly one relationship space.
     Messages { space_ref: EntityId },
+    /// The MESSAGEs of exactly one conversation that name no relationship
+    /// (FIX 10895): the read an agent's witness of a connector conversation
+    /// grants it over that conversation.
+    ConversationMessages { conversation_ref: EntityId },
     /// Summaries in exactly one relationship space.
     Summaries { space_ref: EntityId },
     /// Relationship claims in exactly one relationship space.
@@ -104,6 +108,7 @@ impl AccessGrantScope {
                     })
             }
             Self::Messages { .. }
+            | Self::ConversationMessages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
@@ -122,6 +127,7 @@ impl AccessGrantScope {
                 facet_ref,
             } => Some((*person_ref, *facet_ref)),
             Self::Messages { .. }
+            | Self::ConversationMessages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
@@ -141,7 +147,9 @@ impl AccessGrantScope {
     #[must_use]
     pub const fn required_capability(&self) -> AccessGrantCapability {
         match self {
-            Self::Messages { .. } => AccessGrantCapability::MessagesRead,
+            Self::Messages { .. } | Self::ConversationMessages { .. } => {
+                AccessGrantCapability::MessagesRead
+            }
             Self::Summaries { .. } => AccessGrantCapability::SummariesRead,
             Self::RelationshipClaims { .. } => AccessGrantCapability::RelationshipClaimsRead,
             Self::CompanionProfile { .. } => AccessGrantCapability::CompanionProfileRead,
@@ -161,6 +169,7 @@ impl AccessGrantScope {
                 rung,
             } if grant_calendar_ref.as_bytes() == calendar_ref.as_bytes() => Some(*rung),
             Self::Messages { .. }
+            | Self::ConversationMessages { .. }
             | Self::Summaries { .. }
             | Self::RelationshipClaims { .. }
             | Self::Calendar { .. }
@@ -281,6 +290,10 @@ pub struct AccessGrant {
     pub revoked_at: Option<u64>,
     /// Exclusive wall-clock end, in Unix seconds. None means no expiry.
     pub expires_at: Option<u64>,
+    /// The bounds of the credential that issued a companion grant (FIX
+    /// 8140): the issuing slip and its record ceiling. None for a grant an
+    /// unbounded issuer made, and for every other scope.
+    pub companion_bounds: Option<super::CompanionGrantBounds>,
 }
 
 impl AccessGrant {
@@ -301,6 +314,7 @@ impl AccessGrant {
             created_at,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         }
     }
 
@@ -324,6 +338,7 @@ impl AccessGrant {
             created_at,
             revoked_at: None,
             expires_at: None,
+            companion_bounds: None,
         }
     }
 
@@ -365,6 +380,30 @@ impl AccessGrant {
             && scoped
     }
 
+    /// Authorizes only this principal to read a MESSAGE of exactly this
+    /// conversation that names no relationship (FIX 10895).
+    pub fn allows_conversation_message_read(
+        &self,
+        principal: EntityId,
+        conversation: EntityId,
+        record: &crate::federation::Scope,
+        now: u64,
+    ) -> bool {
+        let scoped = matches!(
+            self.scope,
+            AccessGrantScope::ConversationMessages { conversation_ref }
+                if conversation_ref == conversation
+        );
+        scoped
+            && self
+                .authority_scope
+                .admits("read", record, &crate::federation::Scope::top())
+            && self.validate().is_ok()
+            && self.effective_status_at(now) == AccessGrantStatus::Active
+            && self.principal_ref == principal
+            && self.capability == AccessGrantCapability::MessagesRead
+    }
+
     /// Returns a revoked version of this grant.
     pub fn revoked(&self, revoked_at: u64) -> Result<Self> {
         let grant = Self {
@@ -399,7 +438,9 @@ impl AccessGrant {
                 "scope and capability are not a matched pair",
             )));
         }
-        if self.expires_at.is_some_and(|end| end < self.created_at) {
+        if self.expires_at.is_some_and(|end| end < self.created_at)
+            || (self.companion_bounds.is_some() && self.scope.companion_profile_refs().is_none())
+        {
             return Err(invalid_grant());
         }
         match (self.status, self.revoked_at) {

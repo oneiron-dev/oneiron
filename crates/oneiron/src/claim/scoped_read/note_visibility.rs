@@ -1,6 +1,7 @@
 //! Actor and class checks for private NOTE bodies in scoped reads.
 
 use super::*;
+use crate::federation::record_scope::note_world;
 
 impl ScopedRead<'_> {
     /// Scoped actor keys are asserted by a trusted host, not bearer secrets.
@@ -41,6 +42,33 @@ impl ScopedRead<'_> {
         let Ok(body) = crate::note::decode_note_body_in_txn(&self.vault.store, txn, bytes) else {
             return Ok(false);
         };
+        // A NOTE placed in worlds reads, on every path below, only where the
+        // asked worlds, the credential's and the Grant's hold one of them
+        // (FIX-LIST 9433). The vault's owner is not held to it.
+        let ceiling = self.actor_key.world_ceiling();
+        let held = [&ceiling.worlds, &grant.unwrap_or(&ceiling).worlds];
+        let worlds = note_world::note_worlds_in(&self.store_read(), txn, *id);
+        if self.actor_key.vault_owner_ref().is_none() && !worlds.readable_at(&held) {
+            return Ok(false);
+        }
+        // A NOTE only in worlds other than base reality reads, for a reader
+        // whose own policy read Grants apply, only where one of them alone
+        // reaches one of its worlds (FIX-LIST 10726). An Owner, co-Owners
+        // and the owner's own narrower credentials, a Grant already
+        // witnessed, a base NOTE and a world lookup fault keep today's path,
+        // as does a reader no policy read Grant names.
+        if grant.is_none()
+            && matches!(&worlds, note_world::NoteWorlds::In(set)
+                if !set.contains(&crate::federation::ScopeId(crate::claim::base_world_id())))
+            && !self
+                .actor_key
+                .facets_owner_exempt_in(self.vault, txn)
+                .unwrap_or(false)
+            && crate::gate::scoped_read_note_world_witness(policy, &self.actor_key, &worlds, &held)
+                == Some(false)
+        {
+            return Ok(false);
+        }
         // A take reads as its kind's relationship scope unless it overrides
         // that, so it has no shortcut past an owner-only override.
         if crate::note::note_explicit_only_in_txn(&self.vault.store, txn, id, &body)? {
@@ -90,15 +118,15 @@ impl ScopedRead<'_> {
         else {
             return Ok(false);
         };
-        Ok(match grant {
-            None => crate::gate::scoped_read_record_allowed(policy, &self.actor_key, &scope),
-            Some(grant) => crate::gate::scoped_read_record_allowed_with_scope(
-                policy,
-                &self.actor_key,
-                &scope,
-                Some(grant),
-            ),
-        })
+        // Judged under the proof, and under each Grant alone, at one world
+        // it is in that every ceiling there holds (FIX-LIST 9433).
+        Ok(crate::gate::scoped_read_note_allowed(
+            policy,
+            &self.actor_key,
+            &scope,
+            grant.or(self.actor_key.authority_scope()),
+            (&worlds, &held[..]),
+        ))
     }
 }
 
@@ -113,6 +141,9 @@ impl ScopedRead<'_> {
     ) -> Result<super::ScopedDiaryCandidates> {
         let (_, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let mut admitted = HashSet::new();
+        // One relationship authority for every diary this snapshot checks,
+        // not one per note (FIX 11648).
+        let held = super::access_gate::HeldAuthority::default();
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.vault.store,
             txn,
@@ -133,7 +164,7 @@ impl ScopedRead<'_> {
             let body = std::borrow::Cow::Borrowed(raw.body.as_slice());
             if crate::note::decode_note_body_in_txn(&self.vault.store, txn, &body)
                 .is_ok_and(|note| note.kind == crate::note::NoteKind::Diary)
-                && self.is_entity_retrievable_with_policy_in(txn, &policy, requested, &id)?
+                && self.is_entity_retrievable_held_in(txn, &policy, requested, &id, &held)?
             {
                 admitted.insert(id);
             }

@@ -24,7 +24,7 @@ use super::provisional;
 use crate::affect::Vad;
 use crate::edge::EdgeKind;
 use crate::error::Result;
-use crate::memory::extraction::{ExtractionWork, SpeakerTarget};
+use crate::memory::extraction::{ExtractionWork, MoodPart, SpeakerTarget};
 use crate::ports::{EdgeDirection, EdgeStoreRead, TombstoneStoreRead};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
@@ -52,6 +52,11 @@ pub struct DerivationEnvelope {
     /// names one: a head swap at a fixed checkpoint is another derivation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
+    /// Digest of the turn's own text, when `content_hash` is a conversation
+    /// register's, whose later turns move with the conversation (FIX 10167):
+    /// what tells whether the set still indexes the turn's words.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text_hash: Option<String>,
     /// The save path's version.
     pub version: String,
     /// Digest of the decode parameters: the label table and the live window.
@@ -203,6 +208,15 @@ pub struct TurnTags {
     pub merge_evidence: Vec<MergeEvidence>,
     /// The turn's mood, when the tagger returned one.
     pub mood: Option<Vad>,
+    /// Whether `mood` is an earlier set's, kept because this set's answer
+    /// measured the turn only in windows and gave no mood of the whole of
+    /// it: stale until a whole-turn mood is measured (FIX 9518).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mood_carried: bool,
+    /// The mood of each window of a turn read in several, as the model
+    /// measured them; never averaged into a mood of the whole turn.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mood_parts: Vec<MoodPart>,
     /// Store-clock seconds of the save.
     pub saved_at: u64,
     /// How surprising this set is beside the one it replaced, by the model
@@ -479,10 +493,10 @@ pub(crate) fn current_tags_in_txn(
         2 * text + window
     };
     let read = &tags.envelope.content_hash;
-    Ok((
-        (*read == hash || *read == text_hash).then_some(tags),
-        hashed,
-    ))
+    let current = *read == hash
+        || *read == text_hash
+        || tags.envelope.text_hash.as_deref() == Some(text_hash.as_str());
+    Ok((current.then_some(tags), hashed))
 }
 
 /// Whether the provisional entity `entity` reads: its origin turn's tag set
@@ -496,15 +510,27 @@ pub(super) fn origin_reads_in_txn(
     Ok(names_in_txn(store, txn, entity, origin)? && readable_in_txn(store, txn, origin)?.is_some())
 }
 
-/// The mood saved on a turn and when it was saved: what the turn-VAD read
-/// door reads when no annotation was written on the turn.
+/// The mood saved on a turn, when it was saved and how current it is: what
+/// the turn-VAD read door reads when no annotation was written on the turn.
+/// A mood read from text the turn no longer shows stays readable, said to be
+/// stale (FIX 10169).
 pub(crate) fn saved_turn_mood_in_txn(
-    store: &Store,
+    vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
-) -> Result<Option<(Vad, u64)>> {
-    Ok(readable_in_txn(store, txn, turn)?
-        .and_then(|tags| tags.mood.map(|mood| (mood, tags.saved_at))))
+) -> Result<Option<(Vad, u64, super::TaggingFreshness)>> {
+    let Some(tags) = readable_in_txn(&vault.store, txn, turn)? else {
+        return Ok(None);
+    };
+    let Some(mood) = tags.mood else {
+        return Ok(None);
+    };
+    let freshness = super::freshness::tagging_freshness_in_txn(vault, txn, turn, &tags)?;
+    Ok(Some((
+        mood,
+        tags.saved_at,
+        super::freshness::mood_freshness(freshness, &tags),
+    )))
 }
 
 /// Whether the tag set of `turn` names `entity`: one index read.
@@ -576,6 +602,8 @@ pub(super) fn replace_in_txn(
             store, txn, turn,
         )?;
     }
+    // What a set put back as it was saved (a link settled) keeps: no re-tag.
+    let replaced = old.as_ref().map(|old| (old.saved_at, old.surprise));
     let before = old.map(|old| old.entities()).unwrap_or_default();
     let after = tags.map(TurnTags::entities).unwrap_or_default();
     for gone in before.difference(&after) {
@@ -594,7 +622,22 @@ pub(super) fn replace_in_txn(
         provisional::settle_in_txn(vault, txn, entity)?;
     }
     // The sieve reads a turn's names from its tag set: a new set is a new read.
-    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)
+    crate::dreamer_wake::owe_sieve_read_in_txn(&vault.store, txn, turn)?;
+    // A re-tag whose surprise reaches the wake policy's floor puts its turn
+    // back on the re-dirty carrier, behind the Micro watermark too, so the
+    // next turn wake's window holds it and reads its surprise (OF-138, FIX
+    // 901).
+    if let Some(tags) = tags
+        && let Some(surprise) = tags.surprise
+        && replaced != Some((tags.saved_at, tags.surprise))
+        && crate::dreamer_wake::surprises(
+            surprise,
+            crate::dreamer_wake::surprise_floor_in_txn(vault, txn)?,
+        )
+    {
+        crate::dreamer_consolidation::redirty::requeue_turn_in_txn(&vault.store, txn, turn)?;
+    }
+    Ok(())
 }
 
 /// Removes `entity` from every tag set that names it: a link left naming
@@ -793,7 +836,8 @@ pub(crate) fn erase_in_txn(
 /// `id`, or of a turn `id` is a source of ([`source_turns_in_txn`]), is the
 /// erase doors' to settle (they run [`erase_in_txn`] first); one still here
 /// is dropped without reading any text, so each provisional entity it was
-/// the origin of is retired rather than moved.
+/// the origin of is retired rather than moved, and a source turn whose set
+/// goes is owed its tag pass over the text it keeps (FIX 11314).
 pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     crate::dreamer_runner::maintenance::identity::erase_mention_resolutions_in_txn(store, txn, id)?;
     let mut turns = source_turns_in_txn(store, txn, id)?;
@@ -805,6 +849,9 @@ pub(crate) fn tear_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityI
             continue;
         };
         TAG_SET.delete(store, txn, &turn)?;
+        if turn != *id {
+            super::owe_tag_pass_in_txn(store, txn, &turn)?;
+        }
         crate::dreamer_runner::maintenance::identity::clear_mention_resolutions_in_txn(
             store, txn, &turn,
         )?;

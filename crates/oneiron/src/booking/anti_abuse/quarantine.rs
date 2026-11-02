@@ -1,6 +1,11 @@
+//! Booking quarantine claims and the admission of quarantined submissions.
+//! Entry: `BookingQuarantineReceipt`.
+//! Defines its own items.
+
 use std::num::NonZeroU32;
 
 use super::evaluation::{BookingRequestFacts, quarantine_claim_id};
+use super::quarantine_restore::{BookingQuarantineRestoreInput, keep_restorable_submission_in_txn};
 use super::rate::{BookingRateDecision, consume_rate_token_in_txn};
 use super::storage::{
     QUARANTINE_CLAIM_PREDICATE, QUARANTINE_RATE_DOMAIN, QUARANTINE_REASON_CODE,
@@ -178,6 +183,7 @@ fn quarantine_borderline_submission_in_txn(
         grant_ref: None,
         diff_handle: diff_handle.clone(),
         read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     let pending = PendingGateConsentRecord {
@@ -189,6 +195,7 @@ fn quarantine_borderline_submission_in_txn(
         read_frontier_hash,
         reason_codes,
         dreamer_run_id: Some(run_id),
+        predicate: Some(body.predicate.clone()),
     };
     vault
         .store
@@ -221,6 +228,36 @@ pub fn admit_quarantine_submission(
     per_minute: NonZeroU32,
     created_at: u64,
 ) -> Result<BookingQuarantineAdmission, BookingError> {
+    admit_quarantine(vault, facts, reason, per_minute, created_at, None)
+}
+
+/// [`admit_quarantine_submission`], keeping the confirm restorable (FIX
+/// 7851): the first admission also stores the held slot, the contact and
+/// the intake ([`super::BookingQuarantinedSubmission`]), so the owner's restore
+/// books it through the ordinary booking writer.
+///
+/// # Errors
+///
+/// As [`admit_quarantine_submission`].
+pub fn admit_restorable_quarantine_submission(
+    vault: &Vault,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    per_minute: NonZeroU32,
+    created_at: u64,
+    restore: &BookingQuarantineRestoreInput<'_>,
+) -> Result<BookingQuarantineAdmission, BookingError> {
+    admit_quarantine(vault, facts, reason, per_minute, created_at, Some(restore))
+}
+
+fn admit_quarantine(
+    vault: &Vault,
+    facts: &BookingRequestFacts,
+    reason: &str,
+    per_minute: NonZeroU32,
+    created_at: u64,
+    restore: Option<&BookingQuarantineRestoreInput<'_>>,
+) -> Result<BookingQuarantineAdmission, BookingError> {
     booking_writer(vault, |wtxn| {
         let claim_id = quarantine_claim_id(facts, reason);
         let claim_ref = EntityId::from_bytes(claim_id)
@@ -248,9 +285,21 @@ pub fn admit_quarantine_submission(
             per_minute,
             created_at,
         )? {
-            BookingRateDecision::Allowed => Ok(BookingQuarantineAdmission::Accepted(
-                quarantine_borderline_submission_in_txn(vault, wtxn, facts, reason, created_at)?,
-            )),
+            BookingRateDecision::Allowed => {
+                let receipt = quarantine_borderline_submission_in_txn(
+                    vault, wtxn, facts, reason, created_at,
+                )?;
+                if let Some(restore) = restore {
+                    keep_restorable_submission_in_txn(
+                        vault,
+                        wtxn,
+                        receipt.claim_id,
+                        restore,
+                        created_at,
+                    )?;
+                }
+                Ok(BookingQuarantineAdmission::Accepted(receipt))
+            }
             BookingRateDecision::Exceeded { retry_after_secs } => {
                 Ok(BookingQuarantineAdmission::RateLimited { retry_after_secs })
             }

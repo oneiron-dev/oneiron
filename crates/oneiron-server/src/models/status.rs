@@ -1,7 +1,11 @@
 //! What the model runtime built, for the owner-facing status route.
+use std::collections::BTreeMap;
+use std::time::UNIX_EPOCH;
+
 use oneiron::ModelId;
 use oneiron::llm::manifest::ModelRole;
-use oneiron::llm::{BrokerIsolation, SpentKind, WorkerStatus};
+use oneiron::llm::{BrokerIsolation, ResourceClass, SpentKind, WorkClass, WorkerStatus};
+use oneiron_driver::{AdmissionSnapshot, PressureState, ResidentSource};
 use serde::Serialize;
 
 use crate::config::models::{ModelRef, ProviderConfig, ProviderKind, role_key};
@@ -23,6 +27,242 @@ pub struct ModelsStatus {
     /// seats' availability; none when no worker is configured.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub workers: Vec<WorkerStatus>,
+    /// One row per host/device admission queue, copied from live state.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub devices: Vec<DeviceStatus>,
+    /// Sealed inference snapshot parking (V2-R3), over the vaults this
+    /// process serves, in the live status only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshots: Option<SnapshotStatus>,
+}
+
+/// One device queue and its memory ledger, copied without a probe.
+#[derive(Clone, Debug, Serialize)]
+pub struct DeviceStatus {
+    pub device: String,
+    pub capacity_mib: Option<u64>,
+    pub queued_foreground: u64,
+    pub queued_background: u64,
+    pub active_grants: u64,
+    pub paused: u64,
+    pub holds_mib: u64,
+    pub declared_mib: Option<u64>,
+    pub resident_mib: Option<u64>,
+    pub class_used_mib: Option<BTreeMap<String, u64>>,
+    pub rows: Vec<DeviceRowStatus>,
+    pub pressure: DevicePressureStatus,
+    pub executors: Vec<DeviceExecutorStatus>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeviceRowStatus {
+    pub worker_id: String,
+    pub declared: DeviceDeclarationStatus,
+    pub resident_mib: Option<u64>,
+    pub resident_source: Option<&'static str>,
+    pub observed_at_unix_ms: Option<u64>,
+    pub class: Option<ResourceClass>,
+    pub mediated: bool,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct DeviceDeclarationStatus {
+    pub weights_mib: Option<u64>,
+    pub kv_mib: Option<u64>,
+    pub workspace_mib: Option<u64>,
+    pub load_transient_mib: Option<u64>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DevicePressureStatus {
+    pub state: &'static str,
+    pub idle_worker: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DeviceExecutorStatus {
+    pub worker_id: String,
+    pub external: bool,
+    pub idle: bool,
+    pub load_class: Option<WorkClass>,
+}
+
+impl DeviceStatus {
+    #[must_use]
+    pub fn from_snapshot(snapshot: AdmissionSnapshot) -> Self {
+        let pressure = match &snapshot.pressure {
+            PressureState::None => DevicePressureStatus {
+                state: "none",
+                idle_worker: None,
+            },
+            PressureState::UnloadedIdle(worker) => DevicePressureStatus {
+                state: "unloaded_idle",
+                idle_worker: Some(worker.clone()),
+            },
+            PressureState::WaitingGrant => DevicePressureStatus {
+                state: "waiting_grant",
+                idle_worker: None,
+            },
+            PressureState::UnknownCapacityAdmitted => DevicePressureStatus {
+                state: "unknown_capacity_admitted",
+                idle_worker: None,
+            },
+        };
+        let rows = snapshot
+            .ledger
+            .rows
+            .into_iter()
+            .map(|row| {
+                let resident = row.resident;
+                DeviceRowStatus {
+                    worker_id: row.worker_id,
+                    declared: DeviceDeclarationStatus {
+                        weights_mib: row.declared.weights_mib,
+                        kv_mib: row.declared.kv_mib,
+                        workspace_mib: row.declared.workspace_mib,
+                        load_transient_mib: row.declared.load_transient_mib,
+                    },
+                    resident_mib: resident.map(|report| report.resident_mib),
+                    resident_source: resident.map(|report| match report.source {
+                        ResidentSource::WorkerReport => "worker_report",
+                        ResidentSource::DeviceQuery => "device_query",
+                    }),
+                    observed_at_unix_ms: resident.and_then(|report| {
+                        report
+                            .observed_at
+                            .duration_since(UNIX_EPOCH)
+                            .ok()
+                            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+                    }),
+                    class: row.class,
+                    mediated: row.mediated,
+                }
+            })
+            .collect();
+        let loads = snapshot.loads;
+        Self {
+            device: snapshot.device,
+            capacity_mib: snapshot.capacity_mib,
+            queued_foreground: snapshot.queued_foreground,
+            queued_background: snapshot.queued_background,
+            active_grants: snapshot.active_grants,
+            paused: snapshot.paused,
+            holds_mib: snapshot.ledger.holds_mib,
+            declared_mib: snapshot.ledger.declared_mib,
+            resident_mib: snapshot.ledger.resident_mib,
+            class_used_mib: snapshot.ledger.class_used_mib.map(|used| {
+                used.into_iter()
+                    .map(|(class, mib)| (resource_class_name(class).to_owned(), mib))
+                    .collect()
+            }),
+            rows,
+            pressure,
+            executors: snapshot
+                .executors
+                .into_iter()
+                .map(|executor| DeviceExecutorStatus {
+                    load_class: loads.get(&executor.worker_id).copied(),
+                    worker_id: executor.worker_id,
+                    external: executor.external,
+                    idle: executor.idle,
+                })
+                .collect(),
+        }
+    }
+}
+
+fn resource_class_name(class: ResourceClass) -> &'static str {
+    match class {
+        ResourceClass::Chat => "chat",
+        ResourceClass::Encoder => "encoder",
+        ResourceClass::Embedder => "embedder",
+        ResourceClass::Asr => "asr",
+        ResourceClass::Tts => "tts",
+    }
+}
+
+/// Sealed inference snapshot parking as this process stands, summed over
+/// the vaults it serves: counts, bytes and outcomes only, never a manifest,
+/// a digest or a vault id. A figure no source gave is `None`, never zero.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SnapshotStatus {
+    /// Whether the host's policy parks sealed snapshots.
+    pub enabled: bool,
+    /// The host's per-vault disk budget.
+    pub disk_budget_bytes: u64,
+    /// The snapshots kept and the sealed bytes they hold; `None` when a
+    /// vault's catalog could not be read.
+    pub snapshots: Option<u64>,
+    pub sealed_bytes: Option<u64>,
+    /// Bytes reserved or staged for bodies being written.
+    pub in_flight_bytes: Option<u64>,
+    /// Snapshots evicted to stay inside a budget, and parks skipped for
+    /// want of room, since this process started.
+    pub evicted: Option<u64>,
+    pub skipped: Option<u64>,
+    /// Session releases sent whose acknowledgement is still owed: their
+    /// bytes stay charged.
+    pub release_owed: u64,
+    /// Erase-driven releases not yet acknowledged.
+    pub erase_copies_pending: u64,
+    /// Worker incarnations a lock aborted and restarted since start.
+    pub lock_restarts: u64,
+    /// The last vault lock's release, when one ran.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_lock: Option<SnapshotReceipt>,
+    /// Since this process started: published checkpoints exported to be
+    /// parked, and those sealed and kept.
+    pub parks: u64,
+    pub seals: u64,
+    /// Kept snapshots opened for a restore, and restores imported and made
+    /// ready.
+    pub opens: u64,
+    pub imports: u64,
+    /// Restored sessions whose first attach replayed the suffix past the
+    /// state their snapshot carried (a sliding-window frontier between two
+    /// page boundaries).
+    pub replays: u64,
+    /// Restores that matched a kept snapshot and ran cold.
+    pub restores_cold: u64,
+    /// Parks skipped, by reason.
+    pub skips: SnapshotSkips,
+}
+
+/// Why parks were skipped since this process started, one count each.
+#[derive(Clone, Debug, Default, Serialize)]
+pub struct SnapshotSkips {
+    /// The vault's budget was off, zero, or held by pinned snapshots alone.
+    pub budget: u64,
+    /// The size the copy would take, or its device's room, was not known.
+    pub unknown_room: u64,
+    /// Its device had no room for the copy past the headroom.
+    pub no_room: u64,
+    /// It depended on a world whose sealed copies the owner keeps local.
+    pub kept_local: u64,
+    /// It was larger than the vault's whole budget.
+    pub oversize: u64,
+    /// What it was computed with was not named whole.
+    pub unsupported: u64,
+    /// It was too short to pay back its transfer.
+    pub short: u64,
+}
+
+/// One vault lock's release, as the host ran it: ids and outcomes only.
+#[derive(Clone, Debug, Serialize)]
+pub struct SnapshotReceipt {
+    /// The one total bound the release ran under, in milliseconds.
+    pub bound_ms: u64,
+    /// Sessions released with their worker's acknowledgement.
+    pub released: u64,
+    /// The incarnations aborted, killed and restarted for an unanswered
+    /// release, by worker id and epoch.
+    pub aborted: Vec<oneiron::inference_snapshot::SnapshotWorkerAbort>,
+    pub timed_out: bool,
+    pub elapsed_ms: u64,
+    /// The host's plaintext copies of the vault's snapshots when the lock
+    /// began, and those still held when its release answered.
+    pub host_copies: u64,
+    pub host_copies_left: u64,
 }
 
 /// One model the mesh discovered: the node that offers it and its offer's

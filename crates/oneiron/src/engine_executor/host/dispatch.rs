@@ -71,6 +71,14 @@ impl RecordingJsHost<'_, '_> {
                 |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
             );
         }
+        // The spool-to-body copy holds its bytes on the run's own share
+        // (FIX 10674), as the answer check does; past the share the watch
+        // has fired and the copy still goes out whole, as before. A host
+        // lent none copies unheld, as before.
+        let _copy_hold = self
+            .result_share
+            .zip(self.storage)
+            .and_then(|(share, storage)| share.hold(answer.byte_len(), storage.limit_watch()));
         self.store_answer(seq, |sink| {
             let reader = answer.reader()?;
             let mut frame = vec![0; 64 * 1024];
@@ -161,6 +169,14 @@ impl RecordingJsHost<'_, '_> {
         let cause = crate::code_run::ReadWorldUnknown::CallableSkill;
         self.gated_write.read_worlds_unknown(run_id, cause);
         let mut loaded = Vec::new();
+        // The answer check holds its buffers on the run's own share (FIX
+        // 10149); a host lent none checks unheld, as before.
+        let memory = self.result_share.zip(self.storage).map(|(share, storage)| {
+            crate::skill::AnswerMemory {
+                share,
+                watch: storage.limit_watch(),
+            }
+        });
         let ran = crate::skill::execute_callable_skill_cancellable(
             &lease.vault,
             &lease.leased,
@@ -175,9 +191,13 @@ impl RecordingJsHost<'_, '_> {
             started_at_ms / 1000,
             parent,
             &mut loaded,
+            memory,
         );
         self.callable_rows.0.extend(loaded);
         self.callable_depth -= 1;
+        // The callable's type feedback stays beside the run, however the
+        // call ended (FIX 10389).
+        self.keep_callable_check(seq, ran.is_ok());
         if self.hard_failure.is_some() || self.left_a_gap {
             return Ok(failed("host_bridge_halted".to_owned()));
         }
@@ -221,6 +241,18 @@ impl RecordingJsHost<'_, '_> {
             match injection.answer(&call) {
                 InjectedAnswer::Live => {}
                 InjectedAnswer::Settled { outcome, view } => {
+                    // A granted `reveal.wait` reads its value again under its
+                    // own lease, for the guest's view only; the row keeps its
+                    // value-free answer (FIX 2360). A failed replay leaves
+                    // the kept answer, as before.
+                    let view = match view {
+                        Some(view) => Some(view),
+                        None => self
+                            .gated_write
+                            .replay_reveal_view(&call, &outcome)
+                            .ok()
+                            .flatten(),
+                    };
                     return Ok(self.respond(*outcome, view));
                 }
                 InjectedAnswer::Hold => {
@@ -260,8 +292,9 @@ impl RecordingJsHost<'_, '_> {
         }
         if let Some(wait) = &self.durable_wait {
             let outcome = SelfDispatchOutcome::DurableWait(wait.clone());
-            let row =
+            let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
@@ -281,8 +314,9 @@ impl RecordingJsHost<'_, '_> {
                 effect: call.effect(),
                 error: error.to_owned(),
             });
-            let row =
+            let mut row =
                 CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, started_at_ms)?;
+            crate::code_run::barrier_spawn_call(&mut row)?;
             self.bridge_calls.push(row);
             return Ok(self.respond(outcome, None));
         }
@@ -336,8 +370,12 @@ impl RecordingJsHost<'_, '_> {
             }
         };
         // A verb hook's view of this call's result, taken whatever came of
-        // the call: the guest reads it, the row keeps the outcome.
+        // the call: the guest reads it, the row keeps the outcome and whether
+        // a view was served (the view's own read rows stay unwitnessed).
         let view = self.gated_write.take_hook_view();
+        // The seats this call's spawn resolved, taken whatever came of it:
+        // its row keeps them, a failure's included (FIX 9180).
+        let seats = self.gated_write.take_spawn_seats();
         let outcome = match dispatched.and_then(|outcome| self.store_large_answer(seq, outcome)) {
             Ok(outcome) => outcome,
             Err(err) => {
@@ -354,15 +392,19 @@ impl RecordingJsHost<'_, '_> {
                     started_at_ms,
                     started_at_ms,
                 )?
-                .with_inputs(inputs.as_ref());
+                .with_inputs(inputs.as_ref())
+                .with_spawn_seats(seats);
                 self.bridge_calls.insert(place, row);
                 self.hard_failure = Some(err);
                 return Ok(self.respond(error_outcome, None));
             }
         };
         let finished_at_ms = started_at_ms;
-        let row = CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?
-            .with_inputs(inputs.as_ref());
+        let mut row =
+            CodeRunBridgeCall::record(seq, &call, &outcome, started_at_ms, finished_at_ms)?
+                .with_inputs(inputs.as_ref())
+                .with_spawn_seats(seats);
+        row.hook_view_served = view.is_some();
         if self.durable_wait.is_none()
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome
         {

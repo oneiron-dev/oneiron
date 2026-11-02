@@ -6,6 +6,7 @@ mod routing;
 mod store;
 
 pub use crate::edit_distance::publisher::IssueCategory;
+pub(crate) use delivery::received_issue_signature;
 pub use delivery::{
     COACH_FEEDBACK_DELIVERY_FACET, REPORT_SIGNATURE_LANE, REPORT_SIGNATURE_SCHEMA,
     REPORT_SIGNATURE_VERB, ReportDeliveryHold, ReportDeliveryKey, ReportDeliveryOutcome,
@@ -166,6 +167,9 @@ pub struct ReportIssue {
     /// Why the text may reach its publisher, when it may: the owner's
     /// issue-once approval, or a standing grant live now.
     pub disclosure_basis: Option<ReportDisclosureBasis>,
+    /// Number of Deny choices on the issue / disclosure consent round (FIX 9368).
+    #[serde(default)]
+    pub disclosure_round: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

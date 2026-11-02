@@ -121,6 +121,9 @@ pub(crate) struct OwnerHost {
     managed_unrecorded_ms: AtomicU64,
     /// Where the scheduled pass is ([`PassStage`]).
     pass_stage: AtomicU8,
+    /// The scheduled pass's one permit, held on its blocking thread until
+    /// the pass ends; a stop takes it back and closes it (FIX 6732).
+    resident: Arc<tokio::sync::Semaphore>,
 }
 
 impl OwnerHost {
@@ -149,7 +152,15 @@ impl OwnerHost {
             managed_said: AtomicU8::new(0),
             managed_unrecorded_ms: AtomicU64::new(0),
             pass_stage: AtomicU8::new(PassStage::Queued as u8),
+            resident: Arc::new(tokio::sync::Semaphore::new(1)),
         }
+    }
+
+    /// Waits for the scheduled pass in flight to end, on stop: it is not
+    /// cancelled, and none starts after (FIX 6732).
+    pub(crate) async fn resident_stopped(&self) {
+        let _held = self.resident.acquire().await;
+        self.resident.close();
     }
 
     /// Makes rehearsals' scratch copies under `dir`, a private directory on
@@ -351,6 +362,18 @@ impl OwnerHost {
         let _one_at_a_time = self.one_at_a_time();
         self.enter(PassStage::Policy);
         let (plan, policy) = self.effective_plan(vault)?;
+        // A vault its Owners deleted keeps its backups until the marker's
+        // deadline; from then on its backups go, a legal hold deferring it,
+        // and the schedule takes none (FIX 1931).
+        if let Some(dropped) = backup::prune_deleted_vault_backups(vault, &plan)? {
+            if !dropped.is_empty() {
+                tracing::info!(
+                    dropped = dropped.len(),
+                    "a deleted vault's backups were let go at their retention deadline"
+                );
+            }
+            return Ok(None);
+        }
         if policy.enabled {
             let every_ms = policy
                 .every_hours
@@ -383,7 +406,8 @@ impl SyncServer {
     /// admitted through `admit` and holds that admission on its blocking
     /// thread through the due check, the backup and its pruning, counted as
     /// a backup job meanwhile. A refused tick takes nothing and waits for the
-    /// next.
+    /// next. Aborting the task leaves a pass in flight running:
+    /// [`OwnerHost::resident_stopped`] waits for it.
     pub(crate) fn spawn_backup_schedule_admitted(
         self: &Arc<Self>,
         tick: Duration,
@@ -416,11 +440,16 @@ impl SyncServer {
                     continue;
                 };
                 refused = false;
+                // A stop that took the permit back starts no pass.
+                let Ok(resident) = Arc::clone(&host.resident).try_acquire_owned() else {
+                    return;
+                };
                 host.enter(PassStage::Queued);
                 let job = (Arc::clone(&host), Arc::clone(&server));
                 let mut pass = tokio::task::spawn_blocking(move || {
                     let (host, server) = job;
                     let _admission = admission;
+                    let _resident = resident;
                     let _job = host.backup_job();
                     host.take_if_due(server.vault())
                 });

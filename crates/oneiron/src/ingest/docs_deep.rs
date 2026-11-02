@@ -139,15 +139,30 @@ pub(crate) fn docs_source_put_changes(
     Ok(Some(previous) != imported_docs_source_body(next, kind))
 }
 
+/// The whole ASSET body `facts` names, read from its file and checked: the
+/// store-only half of the materializing row read, for a door with only
+/// `&Store`. The put's own write transaction replaces the row, so no release
+/// can run while it reads (FIX 5391).
+fn asset_file_body_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    facts: &crate::store::AssetBodyFacts,
+) -> Result<Vec<u8>> {
+    let key = crate::store::body_key_row_in_txn(store, txn, &facts.blake3)?;
+    crate::store::CheckedAssetBody::read_all(&store.body_dir()?, facts, key.as_ref())
+}
+
 /// Only the shared batch entity-put door calls this, before it stages a new
 /// body. Classify under a read borrow, release that borrow, then invalidate
-/// dependents in the same transaction as the replacement.
+/// dependents in the same transaction as the replacement. `asset_file` is the
+/// put's filed body, when `next` is its manifest rather than its bytes.
 pub(crate) fn invalidate_docs_source_before_put(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
     kind: u8,
     next: &[u8],
+    asset_file: Option<crate::store::AssetBodyFacts>,
 ) -> Result<()> {
     if !matches!(
         kind,
@@ -162,7 +177,24 @@ pub(crate) fn invalidate_docs_source_before_put(
         if raw.len() < ENTITY_METADATA_HEADER_LEN {
             return Err(Error::CorruptedIndex("docs source header"));
         }
-        let previous = &raw[ENTITY_METADATA_HEADER_LEN..];
+        // A file-plane ASSET's row holds its manifest, not its body: the
+        // compare below reads the body's bytes (FIX 5391).
+        let file_previous = match crate::store::asset_file_of_raw_in_txn(store, &*txn, id, &raw)? {
+            Some(manifest) => Some(asset_file_body_in_txn(store, &*txn, &manifest.facts)?),
+            None => None,
+        };
+        let previous = file_previous
+            .as_deref()
+            .unwrap_or(&raw[ENTITY_METADATA_HEADER_LEN..]);
+        // A put that filed its body passes its manifest as `next`: the same
+        // read. Only an ASSET files its body; any other kind holds its bytes.
+        let file_next = match asset_file {
+            Some(facts) if kind == ENTITY_TYPE_ASSET => {
+                Some(asset_file_body_in_txn(store, &*txn, &facts)?)
+            }
+            _ => None,
+        };
+        let next = file_next.as_deref().unwrap_or(next);
         previous != next && docs_source_put_changes(store, txn, id, kind, previous, next)?
     };
     if changed {
@@ -282,26 +314,7 @@ impl Vault {
         };
         // Model work never holds the LMDB writer slot. Every quote is checked
         // against the corresponding unmodified source unit before admission.
-        let mut prepared = Vec::new();
-        for segment in docs_semantic_segments(&text) {
-            for claim in extractor.extract(&segment)? {
-                if claim.quote.trim().is_empty() || !segment.text.contains(&claim.quote) {
-                    return Err(invalid("docs deep claim lacks a source quote"));
-                }
-                if claim.predicate == crate::claim::KEY_VALUE_PREDICATE {
-                    return Err(invalid("keyed claim requires its owned write door"));
-                }
-                if prepared.len() == MAX_DEEP_CLAIMS {
-                    return Err(invalid("docs deep claim ceiling exceeded"));
-                }
-                prepared.push((
-                    segment.block.clone(),
-                    segment.text.clone(),
-                    source_hash(&segment.text),
-                    claim,
-                ));
-            }
-        }
+        let prepared = prepare_deep_claims(&text, extractor)?;
         let mut txn = self.store.env.write_txn()?;
         let owner_actor = owner.revalidate_in_txn(self, &txn)?;
         if let Some((reader, _)) = read
@@ -457,21 +470,29 @@ impl Vault {
         if any_admitted {
             admitted.apply(&mut txn)?;
         }
-        for claim in &claims {
-            crate::ports::record_derived_edge_in_txn(
-                &self.store,
-                &mut txn,
-                &claim.id,
-                &claim.chunk,
-            )?;
-            // The dependency index is one hop, not recursive. Bind the root
-            // asset too, so deleting it invalidates the derived claim directly.
-            crate::ports::record_derived_edge_in_txn(&self.store, &mut txn, &claim.id, &asset)?;
-            receipt.claim_refs.push(claim.id.to_hex());
-        }
-        DEEP_RECEIPTS.put(&self.store, &mut txn, &HexId(asset), &receipt)?;
+        self.persist_deep_claim_dependencies(&mut txn, &claims, asset, &mut receipt)?;
         txn.commit()?;
         Ok(receipt)
+    }
+
+    /// Binds each admitted claim to its chunk and its root asset in the
+    /// dependency index, names it on the receipt, and stores the receipt.
+    fn persist_deep_claim_dependencies(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        claims: &[PreparedDeepClaim],
+        asset: EntityId,
+        receipt: &mut DocsDeepReceipt,
+    ) -> Result<()> {
+        for claim in claims {
+            crate::ports::record_derived_edge_in_txn(&self.store, txn, &claim.id, &claim.chunk)?;
+            // The dependency index is one hop, not recursive. Bind the root
+            // asset too, so deleting it invalidates the derived claim directly.
+            crate::ports::record_derived_edge_in_txn(&self.store, txn, &claim.id, &asset)?;
+            receipt.claim_refs.push(claim.id.to_hex());
+        }
+        DEEP_RECEIPTS.put(&self.store, txn, &HexId(asset), receipt)?;
+        Ok(())
     }
 
     fn deep_chunk_in(
@@ -615,4 +636,33 @@ impl Vault {
             project_id,
         ))
     }
+}
+
+/// Every claim the extractor finds in `text`, each checked against its
+/// unmodified source unit, with its block, source text and source hash.
+fn prepare_deep_claims(
+    text: &str,
+    extractor: &dyn DocsDeepExtractor,
+) -> Result<Vec<(String, String, String, DocsDeepClaim)>> {
+    let mut prepared = Vec::new();
+    for segment in docs_semantic_segments(text) {
+        for claim in extractor.extract(&segment)? {
+            if claim.quote.trim().is_empty() || !segment.text.contains(&claim.quote) {
+                return Err(invalid("docs deep claim lacks a source quote"));
+            }
+            if claim.predicate == crate::claim::KEY_VALUE_PREDICATE {
+                return Err(invalid("keyed claim requires its owned write door"));
+            }
+            if prepared.len() == MAX_DEEP_CLAIMS {
+                return Err(invalid("docs deep claim ceiling exceeded"));
+            }
+            prepared.push((
+                segment.block.clone(),
+                segment.text.clone(),
+                source_hash(&segment.text),
+                claim,
+            ));
+        }
+    }
+    Ok(prepared)
 }

@@ -67,6 +67,7 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         )
         .route("/turns/annotate", post(annotate_turn_vad))
         .route("/surface-events", post(submit_core_surface_event))
+        .route("/linear/push", post(linear_push::core_linear_push))
         .route_layer(middleware::from_fn_with_state(
             idempotency.clone(),
             idempotency_middleware,
@@ -267,6 +268,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
             "/v1/core/facade",
             self::facade::recorded_facade_routes(server.clone()),
         )
+        // FIX 3676: a kept whole-vault export, read and let go by its owner.
+        .merge(self::facade::export_transfer::routes())
         // OF-181: the app's one action layer, for its buttons and its agents.
         .merge(self::facade::action_routes::routes())
         // OF-181: a host-rendered lens card's events and close, on its held frame.

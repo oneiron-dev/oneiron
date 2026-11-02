@@ -30,6 +30,7 @@ mod session;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::runtime_hooks::verb::{
@@ -41,7 +42,8 @@ use crate::runtime_hooks::{
 };
 use crate::task_verb::revoke_lands;
 use crate::task_verb::sdk::{
-    AgentVerb, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view, validate_input,
+    AgentVerb, CUSTODY_VALUE_ROWS, NO_RECORD_ROWS, masked_reveal_reply, revealed_hook_view,
+    validate_input,
 };
 use crate::work_line::TaskWorkTurn;
 use crate::{EntityId, Vault};
@@ -252,10 +254,12 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
     vault: &Vault,
     session: Option<&HookSession>,
     call: VerbCall,
-    args: Value,
+    mut args: Value,
     check: VerbArgsCheck<'_>,
     run: impl FnOnce(Value) -> Result<Value, E>,
 ) -> Result<Result<Value, VerbHookStop>, E> {
+    let secret = CustodySecret::lift(&call.verb, &mut args);
+    let run = move |args| run(CustodySecret::restored(secret.as_ref(), args));
     let Some(session) = session else {
         return vault.verb_hooks(call, args, check, run);
     };
@@ -272,6 +276,12 @@ pub fn verb_hooks_in<E: From<crate::Error>>(
         }
     };
     Ok(session_post(vault, pre, result, session)?)
+}
+
+/// The receipt a resumed call's stored `result` carries, when it decodes as
+/// one: a turn that resumes a settled ask reads its sources from it (FIX 7042).
+pub fn resumed_witness_receipt(result: &Value) -> Option<crate::memory::WitnessReceipt> {
+    serde_json::from_value(result.clone()).ok()
 }
 
 /// The pre chain of a session-only call ([`hook_session`]) a server door
@@ -382,7 +392,10 @@ pub fn row_call(memory: &Memory<'_>, verb: &str) -> MemoryResult<VerbCall> {
 ///
 /// A hook's stop, as the refusal the caller reads; storage errors.
 pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let session = hook_session(Some(memory), verb)?;
+    // A call serving a room NOTE keeps its hooks' records for its session
+    // (FIX 4280, 10344), judged on the call's own input.
+    let _restriction = restriction_clock_for_call(memory, verb, &args);
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     row_pre_resumable(
         memory,
         verb,
@@ -399,7 +412,8 @@ pub fn row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<Ver
 /// not the facade's credential-bound live-run wrapper. All other hooks and
 /// rewrite admission stay the same as [`row_pre`].
 pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryResult<VerbHookPre> {
-    let session = hook_session(Some(memory), verb)?;
+    let _restriction = restriction_clock_for_call(memory, verb, &args);
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     row_pre_resumable(
         memory,
         verb,
@@ -410,6 +424,21 @@ pub fn browser_row_pre(memory: &Memory<'_>, verb: &str, args: Value) -> MemoryRe
         session.as_ref(),
     )?
     .map_err(|stop| stop_refusal(stop, session.as_ref()))
+}
+
+/// The restriction-only clock for a call that is wholly an owner's erase or
+/// revoke on the caller's own `args` ([`revoke_lands::restriction_only_call`]),
+/// held over its hooks' pre chain, so over a damaged clock floor they read
+/// what its run reads (FIX 11522). A classification read that fails enters
+/// none, as before.
+fn restriction_clock_for_call(
+    memory: &Memory<'_>,
+    verb: &str,
+    args: &Value,
+) -> Option<crate::authority::RestrictionOnlyClock> {
+    revoke_lands::restriction_only_call(memory.vault(), verb, args)
+        .unwrap_or(false)
+        .then(crate::authority::restriction_only_clock)
 }
 
 /// [`row_pre`] with the stop as it is. `resume` is how settlement runs the
@@ -524,9 +553,10 @@ fn chain_post(
 pub fn row(
     memory: &Memory<'_>,
     verb: &str,
-    args: Value,
+    mut args: Value,
     run: impl FnOnce(Value) -> MemoryResult<Value>,
 ) -> MemoryResult<Value> {
+    let secret = CustodySecret::lift(verb, &mut args);
     // Bound on every call: a retry of a call an ask parked meets its saved
     // reference whether or not a hook takes the verb now. A credential
     // caller's reference comes first; else a handle the drain can rebuild is
@@ -536,7 +566,8 @@ pub fn row(
         .plain_resume()
         .filter(|_| credential.is_none() && verb != AgentVerb::RevealWait.as_str())
         .map(VerbResume::Row);
-    let session = hook_session(Some(memory), verb)?;
+    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     let pre = match row_pre_resumable(
         memory,
         verb,
@@ -549,7 +580,15 @@ pub fn row(
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),
     };
-    let result = match run(pre.args.clone()) {
+    drop(pre_restriction);
+    // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+    let restriction = pre
+        .landing
+        .is_some()
+        .then(crate::authority::restriction_only_clock);
+    let ran = run(CustodySecret::restored(secret.as_ref(), pre.args.clone()));
+    drop(restriction);
+    let result = match ran {
         Ok(result) => result,
         Err(error) => {
             abort(memory.vault(), pre);
@@ -578,31 +617,62 @@ where
     I: Serialize + DeserializeOwned,
     O: Serialize + DeserializeOwned,
 {
-    let args = encode(&input)?;
+    typed_row_validated(memory, verb, input, validate_input, run)
+}
+
+/// [`typed_row`] for a door whose typed input is its own rather than the
+/// row's generated one (a binding's direct call, FIX 8114): the chain sees
+/// that input, and a hook's rewrite must pass `validate`, the door's own
+/// input check, before the admission its door bound on `memory`.
+///
+/// # Errors
+///
+/// As [`typed_row`].
+pub fn typed_row_validated<I, O>(
+    memory: &Memory<'_>,
+    verb: &str,
+    input: I,
+    validate: fn(&str, &Value) -> MemoryResult<()>,
+    run: impl FnOnce(I) -> MemoryResult<O>,
+) -> MemoryResult<O>
+where
+    I: Serialize + DeserializeOwned,
+    O: Serialize + DeserializeOwned,
+{
+    let mut args = encode(&input)?;
+    let secret = CustodySecret::lift(verb, &mut args);
     // A typed door's own call may differ from the generated `invoke`'s, so
     // it saves no resume target: its caller's retry resumes it.
-    let session = hook_session(Some(memory), verb)?;
+    let pre_restriction = restriction_clock_for_call(memory, verb, &args);
+    let session = hook_session_for_call(Some(memory), verb, &args, None)?;
     let mut pre = match row_pre_resumable(
         memory,
         verb,
         args.clone(),
         None,
         None,
-        validate_input,
+        validate,
         session.as_ref(),
     )? {
         Ok(pre) => pre,
         Err(stop) => return completed(verb, stop, session.as_ref()),
     };
+    drop(pre_restriction);
     revoke_lands::settle(&mut pre, &revoke_lands::decodes::<I>);
     let ran = (|| -> MemoryResult<(O, Value)> {
         let input = if pre.args == args {
             input
         } else {
-            serde_json::from_value(pre.args.clone()).map_err(|error| {
-                MemoryError::bad_request(format!("a verb hook rewrote {verb}'s input: {error}"))
-            })?
+            serde_json::from_value(CustodySecret::restored(secret.as_ref(), pre.args.clone()))
+                .map_err(|error| {
+                    MemoryError::bad_request(format!("a verb hook rewrote {verb}'s input: {error}"))
+                })?
         };
+        // A restrictive call (an erase, a revoke) lands over a damaged clock floor (FIX 10106).
+        let _restriction = pre
+            .landing
+            .is_some()
+            .then(crate::authority::restriction_only_clock);
         let output = run(input)?;
         let result = encode(&output)?;
         Ok((output, result))
@@ -635,6 +705,53 @@ where
 /// When the owner's id cannot be derived.
 pub fn host_actor() -> crate::Result<EntityId> {
     crate::vault::embedded_owner_actor_id()
+}
+
+/// A custody row's secret member ([`CUSTODY_VALUE_ROWS`]: a secret's value,
+/// or its sealed input), lifted out of the call's args before its pre chain
+/// as the server's doors lift it (FIX 11665, 11724). Its hooks, their
+/// records and an ask's saved args meet the member empty; only the args the
+/// verb runs with carry it back. A retry that resumes a pause runs with the
+/// value the retry itself carries.
+struct CustodySecret {
+    member: &'static str,
+    value: Zeroizing<String>,
+}
+
+impl CustodySecret {
+    /// Takes `verb`'s secret member out of `args`, leaving it empty; `None`
+    /// for any other row, and for a member absent or empty already.
+    fn lift(verb: &str, args: &mut Value) -> Option<Self> {
+        if !CUSTODY_VALUE_ROWS.contains(&verb) {
+            return None;
+        }
+        let member = if verb == "vault.secrets.custody.submit" {
+            "input_base64"
+        } else {
+            "value_base64"
+        };
+        let Some(Value::String(held)) = args.get_mut(member) else {
+            return None;
+        };
+        if held.is_empty() {
+            return None;
+        }
+        Some(Self {
+            member,
+            value: Zeroizing::new(std::mem::take(held)),
+        })
+    }
+
+    /// `args` the verb runs with, `secret`'s member put back.
+    fn restored(secret: Option<&Self>, mut args: Value) -> Value {
+        if let (Some(secret), Some(fields)) = (secret, args.as_object_mut()) {
+            fields.insert(
+                secret.member.to_owned(),
+                Value::String((*secret.value).clone()),
+            );
+        }
+        args
+    }
 }
 
 fn encode(value: &impl Serialize) -> MemoryResult<Value> {

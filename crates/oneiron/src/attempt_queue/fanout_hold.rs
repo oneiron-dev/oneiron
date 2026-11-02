@@ -14,7 +14,7 @@ use super::AttemptQueue;
 use super::AttemptResumePoint;
 use super::encoding::decode_record;
 use super::telemetry::invalid_transition;
-use super::types::{AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState};
+use super::types::{AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState};
 use super::validate::{
     append_attempt_event, validate_lease_owner, validate_resume_point, validate_transition_lease,
 };
@@ -48,31 +48,13 @@ pub struct HoldAttemptForFanout {
 
 impl AttemptRecord {
     /// Whether this row is paused by the fan-out hold of `launch_ref`:
-    /// paused, and its newest pause is the engine's hold for that launch. A
-    /// row a person paused or resumed afterwards reads `false`.
+    /// paused, and held under the engine's hold for that launch. A row a
+    /// person paused or resumed afterwards reads `false`. Read from the row's
+    /// held pause, never from its pruned event history (FIX 9579).
     #[must_use]
     pub fn fanout_hold_for(&self, launch_ref: EntityId) -> bool {
-        if self.state != AttemptState::Paused {
-            return false;
-        }
-        let note = format!("{HOLD_NOTE_PREFIX}{}", launch_ref.to_hex());
-        self.events
-            .iter()
-            .rev()
-            .find(|event| {
-                matches!(
-                    event.kind,
-                    AttemptInterventionKind::Pause | AttemptInterventionKind::Resume
-                )
-            })
-            .is_some_and(|event| {
-                event.kind == AttemptInterventionKind::Pause
-                    && event.actor == FANOUT_HOLD_ACTOR
-                    && event
-                        .note
-                        .as_deref()
-                        .is_some_and(|text| text.starts_with(&note))
-            })
+        self.state == AttemptState::Paused
+            && self.active_pause == Some(AttemptPause::Fanout { launch_ref })
     }
 }
 
@@ -108,11 +90,9 @@ impl AttemptQueue<'_> {
             input.attempt_count,
             "fanout_hold",
         )?;
-        let note = format!(
-            "{HOLD_NOTE_PREFIX}{}; checkpoint {}",
-            input.launch_ref.to_hex(),
-            input.resume_point.marker
-        );
+        // The note names the launch alone: the checkpoint lives in the
+        // resume point, so no note repeats it (FIX 9580).
+        let note = format!("{HOLD_NOTE_PREFIX}{}", input.launch_ref.to_hex());
         // A held row is not claimable; the approval's resume restores it.
         self.delete_ready_entry_for_record(wtxn, &record)?;
         // A hold owes no outstanding stop request an answer.
@@ -127,6 +107,9 @@ impl AttemptQueue<'_> {
             input.now,
         )?;
         record.state = AttemptState::Paused;
+        record.active_pause = Some(AttemptPause::Fanout {
+            launch_ref: input.launch_ref,
+        });
         record.lease_owner = None;
         record.updated_at = input.now;
         let encoded = self.encode_in_txn(wtxn, &mut record)?;

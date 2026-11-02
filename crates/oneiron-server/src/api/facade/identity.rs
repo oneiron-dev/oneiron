@@ -70,6 +70,13 @@ pub(super) fn facade_actor(
     Ok((actor, actor_class))
 }
 
+/// The actor [`facade_actor`] resolves for `auth`, when it resolves one: a
+/// door that only keys by its caller (a search's deadline job, FIX 6164)
+/// reads it, never refusing a caller that binds none.
+pub(in crate::api) fn facade_actor_id(server: &SyncServer, auth: &CoreAuth) -> Option<EntityId> {
+    facade_actor(server, auth).ok().map(|(actor, _)| actor)
+}
+
 /// Names the room whose turn a request runs in (ARCH-0067 §8). It names only
 /// the room: the engine reads the roster and its Scope from the vault.
 pub(crate) const ROOM_TURN_HEADER: &str = "x-oneiron-room-turn";
@@ -128,11 +135,15 @@ pub(in crate::api) fn owner_authorship(
     // transaction proves again. A hosted operator's root gets the refusal.
     if let Some(action) = super::host_action::host_action_of(server.vault(), auth) {
         let action = action.map_err(super::host_action::host_action_refusal)?;
+        // A typed refusal the recheck carries keeps its code (FIX 6032).
         return server
             .vault()
             .authenticate_host_action_owner(&action, oneiron::store::GateDecisionId::now())
             .map(Some)
-            .map_err(|_| ApiError::forbidden_scope("owner"));
+            .map_err(|error| {
+                crate::api::error_map::carried_refusal(&error)
+                    .unwrap_or_else(|| ApiError::forbidden_scope("owner"))
+            });
     }
     let Some((principal, actor)) = auth
         .principal_ref()

@@ -2,8 +2,10 @@
 //! `RunGuests` (its `admits` and `call`) and `start_run_guest` are its call surface.
 //! The code_mode_verbs root defines `RunGuests`, `RunBrowser` and `RunDesktop`.
 
+mod press_grants;
+
+use self::press_grants::{VaultPressGrants, browser_send_policy};
 use super::*;
-use oneiron_browser::PressGrants;
 
 /// Starts one run's guest from a pinned image through the engine's tier
 /// selector, behind the run's egress proxy, on `command`, and receipts its
@@ -91,56 +93,10 @@ pub(super) fn drive_run_guest<S: RunGuestSession>(
     Ok(output)
 }
 
-/// The press policy the vault's standing action grants set for one run's
-/// browser: a grant naming a browser effect class covers it (no press),
-/// and a budgeted grant covers that many sends as one reviewed batch.
-/// No grant leaves the floor: a press per send.
-pub(super) fn browser_send_policy(server: &SyncServer) -> SendPolicy {
-    grants_policy(&server.vault)
-}
-
-/// The press policy `vault`'s standing action grants set now, as
-/// [`browser_send_policy`] reads it; the floor where they cannot be read.
-fn grants_policy(vault: &oneiron::Vault) -> SendPolicy {
-    let mut policy = SendPolicy::default();
-    let Ok(grants) = vault.active_standing_consent_grants() else {
-        return policy;
-    };
-    for grant in &grants {
-        let StandingConsentGrant::Action(_) = grant else {
-            continue;
-        };
-        let bound = grant.bound();
-        let BoundClass::Action(class) = bound.class() else {
-            continue;
-        };
-        let class = class.as_str();
-        if !EFFECT_CLASSES.contains(&class) || SendPolicy::person_only(class) {
-            continue;
-        }
-        let budget = match bound.envelope() {
-            BoundEnvelope::Action(envelope) => envelope.budget(),
-            BoundEnvelope::Disclosure(_) => None,
-        };
-        match budget {
-            Some(count) => {
-                policy.modes.insert(class.to_owned(), PressMode::PerBatch);
-                policy
-                    .batch
-                    .insert(class.to_owned(), u32::try_from(count).unwrap_or(u32::MAX));
-            }
-            None => {
-                policy.modes.insert(class.to_owned(), PressMode::None);
-            }
-        }
-    }
-    policy
-}
-
 /// A batch's or library run's answer with its row hooks' decisions among
 /// its own (FIX 8042): a library run's `model_free` then reads them too, so
 /// a hook that asked a model leaves it false.
-fn count_hook_decisions(verb: &str, output: &mut Value, hooks: Vec<Value>) {
+pub(crate) fn count_hook_decisions(verb: &str, output: &mut Value, hooks: Vec<Value>) {
     if hooks.is_empty() {
         return;
     }
@@ -188,16 +144,6 @@ fn logged_receipt(receipt: &Value) -> Value {
     logged
 }
 
-/// The vault's grants, read again at each classified browser send (FIX
-/// 4613): a grant revoked during the run covers no later send.
-struct VaultPressGrants(Arc<oneiron::Vault>);
-
-impl PressGrants for VaultPressGrants {
-    fn current(&self) -> SendPolicy {
-        grants_policy(&self.0)
-    }
-}
-
 impl FreshGuest for RunFreshGuest {
     fn start(
         &mut self,
@@ -226,6 +172,7 @@ impl FreshGuest for RunFreshGuest {
         session.set_decider(Box::new(self.decider.clone()));
         session.set_receipt_sink(Box::new(writer));
         session.set_secret_custody(Arc::clone(&self.secrets));
+        session.set_site_skill_loader(Arc::clone(&self.site_skills));
         Ok(session)
     }
 
@@ -274,12 +221,14 @@ impl RunBrowser {
     }
 
     /// The fresh guest this run's proposals replay on, for one call of
-    /// `decider`'s caller (`invocation`), holding the run's `secrets`.
+    /// `decider`'s caller (`invocation`), holding the run's `secrets` and
+    /// `site_skills`.
     pub(super) fn fresh_guest(
         &self,
         decider: LadderDecider,
         invocation: Option<InvocationId>,
         secrets: Arc<dyn SecretCustody>,
+        site_skills: Arc<dyn SiteSkillLoader>,
     ) -> RunFreshGuest {
         RunFreshGuest {
             vault: Arc::clone(&self.vault),
@@ -290,6 +239,7 @@ impl RunBrowser {
             decider,
             invocation,
             secrets,
+            site_skills,
         }
     }
 
@@ -326,9 +276,11 @@ impl RunBrowser {
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
-        // Each classified send reads the grants again (FIX 4613); the sends
-        // a budget paid stay on the session every door shares (FIX 4615).
-        driver.set_press_grants(Box::new(VaultPressGrants(Arc::clone(&self.vault))));
+        // Each classified send reads the grants again (FIX 4613), those
+        // whose scope covers this caller's sends (FIX 10422); the sends a
+        // budget paid stay on the session every door shares (FIX 4615).
+        let grants = VaultPressGrants::new(&self.vault, &decider.asker, self.run_id);
+        driver.set_press_grants(Box::new(grants));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (CUA E6): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));
@@ -337,6 +289,8 @@ impl RunBrowser {
         // The run's secret custody, for this call's caller: the fresh guest
         // holds the same one.
         driver.set_secret_custody(Arc::clone(&fresh.secrets));
+        // The run's site skills (CUA E10), the fresh guest's too.
+        driver.set_site_skill_loader(Arc::clone(&fresh.site_skills));
         driver.set_fresh_guest(Box::new(fresh));
         // While a person is asked or holds the browser, the session refuses
         // the verb `browser_taken_over`; the first answer after they hand it
@@ -348,8 +302,9 @@ impl RunBrowser {
         let mut output = drive_run_guest(&self.vault, self.run_id, driver, verb, input)?;
         // CUA E8a: what the call solved is kept while its seat is held,
         // before the run's planner hears how it ended.
+        let mut solved_capture = None;
         if let Some((capture, mark, input)) = asked {
-            capture.after_call(driver, verb, &input, &output, mark);
+            solved_capture = capture.after_call(driver, verb, &input, &output, mark);
         }
         self.seats.asked(self.run_id, driver.takeover());
         if let Some(object) = output.as_object_mut() {
@@ -376,6 +331,11 @@ impl RunBrowser {
                     serde_json::to_value(ended)
                         .map_err(|e| BrowserError::Unavailable(e.to_string()))?,
                 );
+            }
+            // Its solved-run capture's failure, when it failed (FIX
+            // 10509): a note, never the call's answer refused.
+            if let Some(note) = solved_capture {
+                object.insert("solved_capture".into(), Value::from(note));
             }
         }
         Ok(output)
@@ -428,12 +388,22 @@ impl RunDesktop {
                 RunGuestFixture::default(),
                 &["/usr/local/bin/oneiron-desktop-guest".into()],
             )?;
-            *session = Some(DesktopSession::attach(&self.guest, transport)?);
+            *session = Some(DesktopSession::attach(
+                &self.guest,
+                transport,
+                crate::server::HandleLine::of(&decider.server).charge(),
+            )?);
         }
         let driver = session.as_mut().ok_or(BrowserError::GuestLost)?;
         if !self.policy_set.swap(true, Ordering::AcqRel) {
             driver.set_policy(self.guest.policy.clone());
         }
+        // Each classified send reads the grants again (FIX 4613, 12133),
+        // those whose scope covers this caller's sends (FIX 10422, 11905);
+        // the sends a budget paid stay on the session every door shares
+        // (FIX 4615).
+        let grants = VaultPressGrants::new(&self.vault, &decider.asker, self.run_id);
+        driver.set_press_grants(Box::new(grants));
         driver.set_decider(Box::new(decider));
         // A Fill's writer (FIX 8899): role-bound calls on the caller's run.
         driver.set_field_writer(Box::new(fields));
@@ -471,6 +441,8 @@ impl RunGuests {
             desktop: RunDesktop::new(server, run_id),
             refused: browser_guest::KeptRefusal::default(),
             payer: None,
+            admission: None,
+            admission_lease: None,
         }
     }
 
@@ -483,6 +455,8 @@ impl RunGuests {
             desktop: None,
             refused: browser_guest::KeptRefusal::default(),
             payer: None,
+            admission: None,
+            admission_lease: None,
         }
     }
 
@@ -497,8 +471,10 @@ impl RunGuests {
         self
     }
 
-    /// The words the run's newest browser call was refused with, for
-    /// `browser_unsupported` alone (FIX 6887).
+    /// The words the run's newest browser call was refused with, kept where
+    /// they say more than their code (FIX 6887): `browser_unsupported`
+    /// naming the verb that serves it, a destination refusal in the host's
+    /// own words (FIX 7122), and a press's control or a stale ref (FIX 249).
     pub(crate) fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
         self.refused.words()
     }
@@ -539,14 +515,20 @@ impl RunGuests {
             verb: call.verb,
             input: hooks.args.clone(),
         };
+        self.begin_press_call();
         let answer =
             match self.call_admitted(server, runtime, &admitted, origin, memory, asker, by)? {
                 Ok(answer) => answer,
                 Err(refused) => {
+                    let refused = self.bound_refusal(call.verb, origin, memory, &hooks, refused);
                     self.refused.keep(Some(&refused));
                     return Ok(Err(AgentVerbRefusal { code: refused.code }));
                 }
             };
+        let held = self.take_held_press();
+        let hook_pre = held
+            .as_ref()
+            .and_then(|_| oneiron::runtime_hooks::VerbHookPreSnapshot::from_pre(&hooks));
         let (post, mut after) = crate::hook_verdict::collect_hook_decisions(|| {
             oneiron::task_verb::verb_hook_boundary::row_post(&server.vault, hooks, answer.output)
         });
@@ -554,10 +536,8 @@ impl RunGuests {
         match post {
             Ok(mut output) => {
                 count_hook_decisions(call.verb.as_str(), &mut output, decided);
-                Ok(Ok(AgentVerbAnswer {
-                    output,
-                    rows: answer.rows,
-                }))
+                self.hold_stopped_batch(call.verb, origin, memory, held, hook_pre, &output);
+                Ok(Ok(AgentVerbAnswer::new(output, answer.rows)))
             }
             Err(error) => refused(super::mcp_facade_error(error)),
         }
@@ -628,12 +608,24 @@ impl RunGuests {
                         tracing::warn!(%error, "browser caller's solved-run scope did not encode");
                     })
                     .ok();
+                let filing = memory
+                    .browser_filing_envelope(origin.clone())
+                    .inspect_err(|error| {
+                        tracing::warn!(%error, "browser caller's filing envelope did not bind");
+                    })
+                    .ok()
+                    .flatten();
                 let library = VaultLibrary {
                     server: Arc::clone(server),
                     by,
                     scope,
+                    admission: self.admission,
+                    filing,
                 };
-                let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets);
+                // Its site skills load under the run's skill-load lease (CUA E10).
+                let lease = self.admission_lease.as_ref();
+                let sites = Arc::new(RunSiteSkills::new(server, run_id, lease));
+                let fresh = run.fresh_guest(decider.clone(), memory.invocation(), secrets, sites);
                 let fields =
                     RunFieldWriter::new(server, runtime, &decider.asker, self.payer.clone());
                 let input = call.input.clone();
@@ -643,7 +635,8 @@ impl RunGuests {
                     origin,
                     run_id,
                 };
-                let capture = Some(&capture);
+                // An admission job's replay is no source run (CUA E8b).
+                let capture = self.admission.is_none().then_some(&capture);
                 run.call(
                     call.verb, input, decider, library, writer, fresh, fields, capture,
                 )
@@ -672,16 +665,15 @@ impl RunGuests {
                 server: Arc::clone(server),
                 by,
                 scope: None,
+                admission: None,
+                filing: None,
             };
             planner.observe(call.verb, &call.input, &output, |workflow| {
                 let filed = library.program(workflow).ok().flatten()?;
                 Some(filed.program.subgoal)
             });
         }
-        Ok(Ok(AgentVerbAnswer {
-            output,
-            rows: Some(Vec::new()),
-        }))
+        Ok(Ok(AgentVerbAnswer::new(output, Some(Vec::new()))))
     }
 
     pub(super) fn admits(
@@ -689,29 +681,9 @@ impl RunGuests {
         verb: AgentVerb,
         server: &SyncServer,
     ) -> Result<(), AgentVerbRefusal> {
-        // The browser runs as its connector pack: no installed pack, no browser.
-        if server
-            .vault
-            .require_builtin_channel_pack("browser")
-            .is_err()
-        {
-            return Err(AgentVerbRefusal {
-                code: "browser_pack_not_installed".to_owned(),
-            });
-        }
         // A desktop row drives the run's desktop; every other row its browser.
         let desktop = verb.as_str().starts_with("self.desktop.");
-        // The browser guest runs only once its setup connection is checked.
-        if !desktop
-            && server
-                .vault
-                .require_pack_connection_verified("oneiron.browser", "browser-guest")
-                .is_err()
-        {
-            return Err(AgentVerbRefusal {
-                code: "browser_connection_unchecked".to_owned(),
-            });
-        }
+        Self::guest_admits(&server.vault, desktop)?;
         let run_id = if desktop {
             self.desktop.as_ref().map(|desktop| desktop.run_id)
         } else {

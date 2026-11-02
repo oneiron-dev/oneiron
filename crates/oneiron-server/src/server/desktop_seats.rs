@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 
 use oneiron::secret_custody::RunSecretSeat;
 use oneiron::{EntityId, Vault};
-use oneiron_browser::{AbandonedTakeover, BrowserError, DesktopSession, Takeover};
+use oneiron_browser::{
+    AbandonedTakeover, BrowserError, DemonstrationOutput, DesktopSession, Takeover,
+};
 
 use super::SyncServer;
 
@@ -57,8 +59,40 @@ pub(crate) trait SeatGuest: Send + Sized + 'static {
     /// Who has the guest now.
     fn takeover(&self) -> &Takeover;
 
+    /// The code consent wait, by its id, an act the guest held is bound to
+    /// (FIX 10423); none for a guest that holds none.
+    fn press_wait(&self) -> Option<EntityId> {
+        None
+    }
+
     /// Ends a takeover still asked or held as the guest goes away.
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover>;
+
+    /// The person's span that takeover's end cut short, recorded where the
+    /// agent's ask opted in (CUA E9b), once; none for a guest that records
+    /// none.
+    fn abandoned_demonstration(&mut self) -> Option<DemonstrationOutput> {
+        None
+    }
+
+    /// The demonstrations the guest's close leaves, each once (FIX 9409):
+    /// a span still recording, ended ones never given. None for a guest
+    /// that records none.
+    fn closed_demonstrations(&mut self) -> Vec<DemonstrationOutput> {
+        Vec::new()
+    }
+
+    /// Lands `record`, a demonstration the seat's end closed, as the run's
+    /// `closed` demonstration receipt. A guest that records none lands
+    /// none.
+    fn land_closed_demonstration(
+        vault: &Vault,
+        run: EntityId,
+        record: &serde_json::Value,
+    ) -> oneiron::Result<String> {
+        let _ = (vault, run, record);
+        Ok(String::new())
+    }
 
     /// Lands `record`, a takeover the seat's end cut short, as the run's
     /// `abandoned` takeover receipt.
@@ -88,6 +122,10 @@ impl SeatGuest for DesktopSession {
         Self::takeover(self)
     }
 
+    fn press_wait(&self) -> Option<EntityId> {
+        EntityId::from_hex(Self::press_wait(self)?).ok()
+    }
+
     fn abandon_takeover(&mut self) -> Option<AbandonedTakeover> {
         Self::abandon_takeover(self)
     }
@@ -110,13 +148,15 @@ const REAP_TICK: Duration = Duration::from_secs(30);
 
 /// How long a parked run guest waits, with no door of its run bound and no
 /// act of the owner on it, before it ends (CALLS, open): 30 minutes while
-/// its agent has it, 24 hours while the agent's ask waits or the owner holds
-/// it. The owner watching its frames is no act. A desktop and a browser
-/// wait alike.
-fn idle_limit(takeover: &Takeover) -> Duration {
+/// its agent has it, 24 hours while the agent's ask waits, the owner holds
+/// it, or the wait an act it held is bound to is still open (FIX 10423). The
+/// owner watching its frames is no act. A desktop and a browser wait alike.
+fn idle_limit(takeover: &Takeover, awaits_owner: bool) -> Duration {
     match takeover {
-        Takeover::Agent => Duration::from_secs(30 * 60),
-        Takeover::Waiting { .. } | Takeover::Held { .. } => Duration::from_secs(24 * 60 * 60),
+        Takeover::Agent if !awaits_owner => Duration::from_secs(30 * 60),
+        Takeover::Agent | Takeover::Waiting { .. } | Takeover::Held { .. } => {
+            Duration::from_secs(24 * 60 * 60)
+        }
     }
 }
 
@@ -358,7 +398,7 @@ fn reap_loop<S: SeatGuest>(seats: &Weak<RunSeats<S>>) {
 /// to keep.
 fn idle_past<S: SeatGuest>(entry: &RunSeat<S>, now: Instant) -> bool {
     match RunSeats::<S>::peek(&entry.seat, |session| {
-        session.map(|s| idle_limit(s.takeover()))
+        session.map(|s| idle_limit(s.takeover(), press_wait_open(&entry.vault, s)))
     }) {
         None => false,
         Some(None) => true,
@@ -366,26 +406,56 @@ fn idle_past<S: SeatGuest>(entry: &RunSeat<S>, now: Instant) -> bool {
     }
 }
 
-/// Ends a seat taken out of the registry: a takeover still asked or held
-/// lands its `abandoned` receipt with what it held so far, the agent's inbox
-/// Ask clears, and the guest goes with its session, the run-bound secrets it
-/// found hard-erased after it (FIX 8028).
+/// Whether the code consent wait an act `session` held is bound to is
+/// still open (FIX 10423): a denied, refused or settled one keeps no seat
+/// up. One whose row does not read keeps it up, as an open one does.
+fn press_wait_open<S: SeatGuest>(vault: &Vault, session: &S) -> bool {
+    session
+        .press_wait()
+        .is_some_and(|wait| vault.code_consent_browser_wait_open(wait).unwrap_or(true))
+}
+
+/// Ends a seat taken out of the registry: each demonstration the close
+/// leaves lands its `closed` receipt (FIX 9409), a takeover still asked
+/// or held lands its `abandoned` receipt with what it held so far (a
+/// person's span it recorded as `demonstration`, CUA E9b), the agent's
+/// inbox Ask clears, and the guest goes with its session, the run-bound
+/// secrets it found hard-erased after it (FIX 8028).
 fn end<S: SeatGuest>(run: EntityId, entry: RunSeat<S>) {
     let session = entry
         .seat
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .take();
-    if let Some(mut session) = session
-        && let Some(cut) = session.abandon_takeover()
-    {
-        let landed = serde_json::to_value(&cut)
-            .map_err(|error| error.to_string())
-            .and_then(|record| {
-                S::land_abandoned(&entry.vault, run, &record).map_err(|error| error.to_string())
-            });
-        if let Err(error) = landed {
-            tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "an abandoned takeover landed no receipt");
+    if let Some(mut session) = session {
+        for demonstration in session.closed_demonstrations() {
+            let landed = serde_json::to_value(&demonstration)
+                .map_err(|error| error.to_string())
+                .and_then(|record| {
+                    S::land_closed_demonstration(&entry.vault, run, &record)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = landed {
+                tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "a closed demonstration landed no receipt");
+            }
+        }
+        if let Some(cut) = session.abandon_takeover() {
+            let landed = serde_json::to_value(&cut)
+                .and_then(|mut record| {
+                    if let (Some(fields), Some(demonstration)) =
+                        (record.as_object_mut(), session.abandoned_demonstration())
+                    {
+                        fields.insert("demonstration".into(), serde_json::to_value(demonstration)?);
+                    }
+                    Ok(record)
+                })
+                .map_err(|error| error.to_string())
+                .and_then(|record| {
+                    S::land_abandoned(&entry.vault, run, &record).map_err(|error| error.to_string())
+                });
+            if let Err(error) = landed {
+                tracing::warn!(%error, guest = S::GUEST, run = %run.to_hex(), "an abandoned takeover landed no receipt");
+            }
         }
     }
     if let Some((_, rows)) = entry.ask {

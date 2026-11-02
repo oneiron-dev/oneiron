@@ -11,9 +11,13 @@ use crate::dreamer_runner::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_TURN;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{
+    GATE_DECISION_LEDGER_VERSION, GateDecisionContext, GateDecisionId, GateDecisionReadContext,
+    GateDecisionRecord, GateLoopLink, GateLoopSource,
+};
 use crate::{EntityId, Vault};
 
+use super::authority::Standing;
 use super::types::{
     ProgramRecipePin, TurnProgramAdmissionOutcome, TurnProgramAdmissionReceipt,
     TurnProgramAdmissionRecord, TurnProgramWake, run_id,
@@ -32,7 +36,8 @@ impl Vault {
     /// first receipt (one that differs is a conflict); otherwise the program
     /// must still be armed at the woken revision, the turn must be the live
     /// TURN of the trigger's conversation, landed at or after arming by the
-    /// armed actor, the waking actor's authority must still stand, and the
+    /// armed actor, the waking actor's authority must still stand (an
+    /// attested owner's as the vault's live owner, FIX 11090), and the
     /// pinned SKILL must still be the program pinned. The decision, allowed
     /// or refused, is a Gate receipt; an allowed one queues one Dreamer
     /// program attempt, stamped as the waking actor, the root of its run
@@ -61,6 +66,7 @@ fn admit_in_txn(
     now: u64,
 ) -> Result<TurnProgramAdmissionReceipt> {
     let admission = wake.admission_id();
+    let wake = &erased_actor_form_in_txn(vault, &*txn, wake)?;
     if let Some(existing) = ADMISSION.get(vault, &*txn, &admission)? {
         if existing.wake != *wake {
             return Err(Error::ConcurrentWrite(
@@ -68,6 +74,7 @@ fn admit_in_txn(
             ));
         }
         WAKE.delete(vault, txn, &wake.key())?;
+        super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
         return Ok(existing.receipt(false));
     }
     let judged = judge_in_txn(vault, &*txn, wake)?;
@@ -84,13 +91,34 @@ fn admit_in_txn(
     };
     // The stamp the queue row takes reads this row, so it lands first.
     ADMISSION.put(vault, txn, &admission, &record)?;
+    super::index::index_admission_in_txn(vault, txn, wake, &admission)?;
     if refused.is_none() {
         let attempt = queue_in_txn(vault, txn, &admission, now)?;
         record.attempt = Some(attempt);
         ADMISSION.put(vault, txn, &admission, &record)?;
     }
     WAKE.delete(vault, txn, &wake.key())?;
+    super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), wake.key())?;
     Ok(record.receipt(true))
+}
+
+/// `wake` as an erase of its waking actor leaves it (FIX 10668): without
+/// its slip's instrument once the actor bears the local hard-delete marker.
+/// The drain reads a wake before its admission's writer opens, so an erase
+/// that commits between them, whose sweep found no admission yet, leaves
+/// no instrument in the one written after it, and an admission it already
+/// scrubbed still matches its wake on replay.
+fn erased_actor_form_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    wake: &TurnProgramWake,
+) -> Result<TurnProgramWake> {
+    let mut wake = wake.clone();
+    let actor = wake.authority.actor();
+    if vault.local_hard_delete_marker_exists_in_txn(txn, &actor)? {
+        wake.authority.scrub_instrument_of(&actor);
+    }
+    Ok(wake)
 }
 
 /// The live vault's judgment of `wake`: the pinned definition it admits,
@@ -112,8 +140,15 @@ fn judge_in_txn(
     {
         return Ok(Err(NOT_TRIGGERED));
     }
-    if !wake.authority.stands_in_txn(vault, txn)? {
-        return Ok(Err(AUTHORITY_LAPSED));
+    match wake.authority.standing_in_txn(vault, txn)? {
+        Standing::Stands(_) => {}
+        Standing::Lapsed => return Ok(Err(AUTHORITY_LAPSED)),
+        // His own refusal, recorded on this wake's admission alone (FIX
+        // 11090); a host that cannot judge him keeps the wake instead.
+        Standing::OwnerNotLive => return Ok(Err(crate::authority::OWNER_NOT_LIVE)),
+        // Its own refusal, recorded on this wake's admission alone (FIX
+        // 11593).
+        Standing::Withdrawn { reason } => return Ok(Err(reason)),
     }
     if !super::arm::pin_stands_in_txn(vault, txn, &arming.definition)? {
         return Ok(Err(PIN_MOVED));
@@ -171,6 +206,17 @@ fn gate_decision_in_txn(
         diff_handle: admission.to_vec(),
         read_frontier_hash: crate::gate::resolve_policy_manifest(&vault.store, &*txn)?
             .read_frontier_hash()?,
+        // FIX 7500, 7499: its own admission, about the turn that woke it. A
+        // refused wake runs nothing, so it names no run; neither names an
+        // attempt, which is queued after this decision.
+        context: GateDecisionContext::linked(
+            GateLoopLink::admission(
+                GateLoopSource::TurnProgram,
+                refused.is_none().then(|| run_id(admission)),
+                None,
+            ),
+            GateDecisionReadContext::about(Some(wake.turn.turn), vec![wake.turn.turn]),
+        ),
         redacted_at: None,
     };
     vault.store.append_gate_decision_in_txn(txn, &decision)?;

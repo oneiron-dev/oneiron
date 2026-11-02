@@ -11,8 +11,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
@@ -20,8 +19,9 @@ use oneiron::EntityId;
 use oneiron::llm::decision::{DecisionAnswer, DecisionAsk, HostRule};
 use serde::Deserialize;
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
@@ -30,12 +30,45 @@ use crate::server::SyncServer;
 const PAGE: usize = 50;
 const PAGE_MAX: usize = 500;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/decisions/asks", get(list))
-        .route("/decisions/asks/answer", post(answer))
-        .route("/decisions/rules", get(rules))
-        .route("/decisions/rules/revoke", post(revoke_rule))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/decisions/asks",
+                summary: "The asks after after, oldest first.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/decisions/asks/answer",
+                summary: "The owner's answer to one ask, with the reason typed on the card when there is one.",
+                row: None,
+            },
+            post(answer),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/decisions/rules",
+                summary: "Every host rule row at its latest revision, revoked ones included.",
+                row: None,
+            },
+            get(rules),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/decisions/rules/revoke",
+                summary: "The owner revokes one rule row, so it answers nothing; the next ask of its question goes up the ladder.",
+                row: None,
+            },
+            post(revoke_rule),
+        ),
+    ]
 }
 
 #[derive(Debug, Deserialize)]
@@ -51,7 +84,7 @@ struct AskPage {
     open: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerAsk {
     seq: u64,
@@ -62,11 +95,35 @@ struct AnswerAsk {
     reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RevokeRule {
     /// The rule row's id, 32 hex characters.
     id: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/asks/answer`'s body (FIX 11652):
+/// [`AnswerAsk`].
+pub(crate) fn answer_ask_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerAsk>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/asks/answer`'s answer (FIX 11652):
+/// [`DecisionAsk`].
+pub(crate) fn decision_ask_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DecisionAsk>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/rules/revoke`'s body (FIX 11652):
+/// [`RevokeRule`].
+pub(crate) fn revoke_rule_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevokeRule>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/decisions/rules/revoke`'s answer (FIX 11652):
+/// [`HostRule`].
+pub(crate) fn host_rule_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<HostRule>()
 }
 
 /// `GET /v1/owner/decisions/asks?after=<seq>&limit=<n>&open=<bool>`: the
@@ -96,10 +153,10 @@ async fn list(
 async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerAsk>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerAsk>,
 ) -> OwnerReply<DecisionAsk> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let ask = blocking(move || -> OwnerResult<DecisionAsk> {
         let asks = server.decision_host().asks();
         if asks.get(request.seq)?.is_none() {
@@ -117,6 +174,11 @@ async fn answer(
             request.seq,
             &request.answer,
         )?;
+        // A pack setup's allow ask lands the owner's allow the same way
+        // (FIX 1406).
+        server
+            .vault()
+            .press_pack_setup_allow(&owner, request.seq, &request.answer)?;
         asks.answer_with_reason(
             &owner,
             request.seq,
@@ -144,10 +206,10 @@ async fn rules(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRe
 async fn revoke_rule(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RevokeRule>, JsonRejection>,
+    payload: OwnerJsonBody<RevokeRule>,
 ) -> OwnerReply<HostRule> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let rule = blocking(move || -> OwnerResult<HostRule> {
         let id = EntityId::from_hex(&request.id)
             .map_err(|_| OwnerError::Invalid("rule id is not an entity id".into()))?;

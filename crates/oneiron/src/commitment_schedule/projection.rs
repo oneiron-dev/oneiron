@@ -32,14 +32,22 @@ use super::{
     ScheduleHistoryEntry, ScheduleResult, commitment_instance_id, commitment_projection_envelope,
     iso_week_window, next_due, validate_quota_count,
 };
-use crate::claim::ClaimLifecycleStatus;
+use crate::claim::{ClaimBody, ClaimLifecycleStatus};
 use crate::commitment::{
     CommitmentRecord, CommitmentStatus, commitment_claim_candidate, decode_commitment_claim,
 };
 use crate::entity_id::EntityId;
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
-use crate::write_envelope::WriteEnvelope;
+use crate::write_envelope::{ClaimCandidate, WriteEnvelope};
+
+mod doors;
+mod occurrences;
+
+use occurrences::{
+    next_rrule_due, occurrences_named, point_occurrence, project_row, quota_window_slots,
+    rrule_dtstart, rrule_search_from,
+};
 
 /// What one [`Vault::reconcile_commitment_schedule`] pass did.
 ///
@@ -69,8 +77,9 @@ pub enum CommitmentSeriesWriteOutcome {
         /// The instant that occurrence is owed.
         next_due: u64,
     },
-    /// The series is an rrule: the claim is stored verbatim and NO due row was
-    /// written. Expansion belongs to `route`.
+    /// The series is an rrule whose rule names no start from now on (its
+    /// `COUNT` or `UNTIL` is spent): the claim is stored verbatim and NO due
+    /// row was written. `route` expanded it.
     StoredRrule {
         /// The calendar entry point that owns expansion.
         route: &'static str,
@@ -85,207 +94,24 @@ pub enum CommitmentSeriesWriteOutcome {
 /// every unrejected series, as before.
 const PROJECT_ONLY_CONSENTED_SERIES: bool = true;
 
+/// A live, open CMT-2 series: its stored claim, its record and its schedule.
+struct LiveSeries {
+    body: ClaimBody,
+    record: CommitmentRecord,
+    payload: CommitmentSchedulePayload,
+}
+
 /// The series-side facts one mint needs, bundled so the minting helpers stay
 /// under the argument-count bar and cannot be called with a series record and
 /// somebody else's payload.
 struct SeriesMint<'a> {
     series_ref: EntityId,
-    record: &'a CommitmentRecord,
-    payload: &'a CommitmentSchedulePayload,
+    series: &'a LiveSeries,
     envelope: &'a WriteEnvelope,
     learned_at: u64,
 }
 
 impl Vault {
-    /// Writes a commitment SERIES and indexes it in one transaction.
-    ///
-    /// This is the typed door that creates a `Project` row; the generic claim
-    /// commit reaches the same row writer for a series it lands. CMT-1's
-    /// [`Vault::put_commitment_claim`] still accepts a typed payload and still
-    /// stores it faithfully — it simply does not index it, and every reader in
-    /// this module treats that stored-but-unindexed claim as ordinary data.
-    ///
-    /// An rrule series is committed as a claim and nothing else: no due row, no
-    /// deadline, and the outcome names [`CAL_RRULE_ROUTE`] rather than
-    /// pretending v1 can expand it.
-    ///
-    /// # Errors
-    ///
-    /// [`ScheduleError::Invalid`] for a non-open record or a payload that is
-    /// not a SERIES, [`ScheduleError::InvalidPayload`] for schedule bytes that
-    /// are not a CMT-2 payload, and the evaluator's own refusals for a schedule
-    /// that cannot name an occurrence. Every one of them rolls the claim write
-    /// back with the index write.
-    pub fn put_commitment_series(
-        &self,
-        id: &EntityId,
-        record: &CommitmentRecord,
-        envelope: &WriteEnvelope,
-        valid_time: TimeRange,
-        learned_at: u64,
-    ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
-        self.try_with_write_txn_grouped(|wtxn| {
-            self.put_commitment_series_in_txn(
-                wtxn, id, record, envelope, valid_time, learned_at, None,
-            )
-        })
-    }
-
-    /// Indexed birth inside a credential door's guarded write transaction.
-    pub(crate) fn put_commitment_series_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        id: &EntityId,
-        record: &CommitmentRecord,
-        envelope: &WriteEnvelope,
-        occurred: TimeRange,
-        learned_at: u64,
-        evidence: Option<rmpv::Value>,
-    ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
-        let payload = series_payload(record)?;
-        if self.get_raw_in(wtxn, id)?.is_some() {
-            return Err(ScheduleError::Invalid("commitment claim id already exists"));
-        }
-        let mut candidate = commitment_claim_candidate(record)?
-            .with_validity(Some(occurred.start), Some(occurred.end));
-        if let Some(evidence) = evidence {
-            candidate = candidate.with_evidence(evidence);
-        }
-        self.batch_in()
-            .claim_candidate(id, candidate, envelope, occurred, learned_at)
-            .apply_recording_gate_decisions(wtxn)?;
-        self.index_commitment_series_in_txn(wtxn, id, &payload, learned_at)
-    }
-
-    /// Replaces an indexed series with an edited one.
-    ///
-    /// A series EDIT is not a mutation: it is a replacement claim plus the
-    /// canonical `Supersedes` edge, which is lifecycle machinery that already
-    /// exists. CMT-1's same-row [`Vault::supersede_commitment`] is deliberately
-    /// NOT used — it would rewrite the old series in place and leave the edit
-    /// with no head to point at.
-    ///
-    /// All four steps (replacement claim, supersession, removal of the old
-    /// series' pending `Project` row, indexing of the replacement) share ONE
-    /// write transaction, so a refused supersession never leaves two live heads
-    /// or an orphaned `Project` row behind.
-    ///
-    /// # Errors
-    ///
-    /// Everything [`Vault::put_commitment_series`] can refuse, plus the
-    /// lifecycle layer's own guards (self-supersession, already-closed claims,
-    /// reserved predicates) surfaced through [`ScheduleError::Engine`].
-    pub fn supersede_commitment_series(
-        &self,
-        new_id: &EntityId,
-        old_id: &EntityId,
-        new_record: &CommitmentRecord,
-        envelope: &WriteEnvelope,
-        valid_time: TimeRange,
-        learned_at: u64,
-    ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
-        let payload = series_payload(new_record)?;
-        let candidate = commitment_claim_candidate(new_record)?
-            .with_validity(Some(valid_time.start), Some(valid_time.end));
-        self.try_with_write_txn_grouped(|wtxn| {
-            self.batch_in()
-                .claim_candidate(new_id, candidate, envelope, valid_time, learned_at)
-                .apply(wtxn)?;
-            self.supersede_claim_in_txn(wtxn, new_id, old_id, learned_at)?;
-            // The old series' pending projection dies with the old head. Left
-            // behind it would mint occurrences of a schedule nobody holds.
-            self.store
-                .commitment_due_clear_series_project_in_txn(wtxn, old_id)?;
-            self.index_commitment_series_in_txn(wtxn, new_id, &payload, learned_at)
-        })
-    }
-
-    /// Materializes every occurrence whose `Project` row has come due.
-    ///
-    /// The SOLE production projector. It reads only `Project` rows at or before
-    /// `now`: `Lead`, `Due`, and `LifecycleDue` are consumer phases and this
-    /// pass never touches them.
-    ///
-    /// Idempotent by construction rather than by bookkeeping. Instance ids are
-    /// derived from the series and the occurrence, so a pass that repeats work
-    /// after a crash re-derives the SAME id, finds the claim already there,
-    /// verifies its copied identity, and reports it as already-present. A
-    /// mismatch at that id is [`ScheduleError::InstanceIdentityCollision`],
-    /// never a silent overwrite.
-    ///
-    /// # Errors
-    ///
-    /// Storage and index corruption surface as typed errors. A commitment
-    /// engine that answered "nothing to do" on an unreadable index would drop
-    /// obligations, so this pass fails loudly instead.
-    pub fn reconcile_commitment_schedule(
-        &self,
-        now: u64,
-    ) -> ScheduleResult<CommitmentProjectionReport> {
-        self.try_with_write_txn_grouped(|wtxn| {
-            let due = self.store.commitment_due_entries_through_in_txn(
-                &*wtxn,
-                now,
-                &[CommitmentDuePhase::Project],
-            )?;
-            let mut report = CommitmentProjectionReport::default();
-            for entry in due {
-                self.project_commitment_series_in_txn(wtxn, &entry, now, &mut report)?;
-            }
-            Ok(report)
-        })
-    }
-
-    /// Reacts to an instance that has ALREADY been closed.
-    ///
-    /// The hook does not perform the status write and never second-guesses it;
-    /// it reads the terminal status back and refuses if the caller's `outcome`
-    /// disagrees with what is on disk. That ordering is what makes it
-    /// retry-safe: a crash between the status write and this call is repaired
-    /// by calling it again.
-    ///
-    /// Returns the successor instances this close produced — one for an
-    /// interval, a whole window for a quota that rolled over past its window
-    /// end, none for anything else.
-    ///
-    /// # Errors
-    ///
-    /// [`ScheduleError::Invalid`] when the named claim is a SERIES or is still
-    /// open, or when its terminal status does not match `outcome`.
-    /// [`ScheduleError::RruleNotImplemented`] for an rrule instance.
-    /// [`ScheduleError::ArithmeticOverflow`] when the interval successor would
-    /// leave the `u64` time model.
-    pub fn on_instance_closed(
-        &self,
-        instance_ref: &EntityId,
-        outcome: CommitmentInstanceOutcome,
-        envelope: &WriteEnvelope,
-        closed_at: u64,
-    ) -> ScheduleResult<Vec<EntityId>> {
-        self.try_with_write_txn_grouped(|wtxn| {
-            self.on_instance_closed_in_txn(wtxn, instance_ref, outcome, envelope, closed_at)
-        })
-    }
-
-    /// The same close hook in the transaction that closes the obligation.
-    pub(crate) fn on_instance_closed_in_txn(
-        &self,
-        wtxn: &mut RwTxn<'_>,
-        instance_ref: &EntityId,
-        outcome: CommitmentInstanceOutcome,
-        envelope: &WriteEnvelope,
-        closed_at: u64,
-    ) -> ScheduleResult<Vec<EntityId>> {
-        let Some(closed) = self.closed_instance_in_txn(wtxn, instance_ref, outcome)? else {
-            self.store
-                .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
-            return Ok(Vec::new());
-        };
-        self.store
-            .commitment_due_clear_instance_phases_in_txn(wtxn, instance_ref)?;
-        self.commitment_successors_in_txn(wtxn, &closed, envelope, closed_at)
-    }
-
     /// Indexes a commitment SERIES that a generic claim write has just landed,
     /// inside that write's transaction (OF-187).
     ///
@@ -295,9 +121,10 @@ impl Vault {
     /// index nothing. The generic commit calls this after its own write, so a
     /// promise born there owes its reminders too. Everything that is not a
     /// live, unrejected CMT-2 series passes: a CMT-1 opaque schedule stays
-    /// ordinary data, an rrule stays stored, and a schedule that already owes
-    /// nothing (a `Once` in the past) or that the evaluator refuses indexes
-    /// nothing and leaves the write alone. Only a storage failure fails it.
+    /// ordinary data, an rrule whose rule has ended stays stored, and a
+    /// schedule that already owes nothing (a `Once` in the past) or that the
+    /// evaluator refuses indexes nothing and leaves the write alone. Only a
+    /// storage failure fails it.
     pub(crate) fn index_landed_commitment_series_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -305,7 +132,7 @@ impl Vault {
         now: u64,
     ) -> crate::Result<()> {
         let payload = match self.live_series_in_txn(&*wtxn, series_ref) {
-            Ok(Some((_, payload))) => payload,
+            Ok(Some(series)) => series.payload,
             Ok(None) => return Ok(()),
             Err(ScheduleError::Engine(error)) => return Err(error),
             Err(_) => return Ok(()),
@@ -329,7 +156,7 @@ impl Vault {
     pub(crate) fn index_consented_commitment_series_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
-        claim: &crate::claim::ClaimBody,
+        claim: &ClaimBody,
         series_ref: &EntityId,
         now: u64,
     ) -> crate::Result<()> {
@@ -349,21 +176,35 @@ impl Vault {
         payload: &CommitmentSchedulePayload,
         now: u64,
     ) -> ScheduleResult<CommitmentSeriesWriteOutcome> {
-        if matches!(payload.schedule, Schedule::Rrule { .. }) {
-            return Ok(CommitmentSeriesWriteOutcome::StoredRrule {
-                route: CAL_RRULE_ROUTE,
-            });
-        }
+        let body = self.get_claim_in_txn(&*wtxn, series_ref)?;
         if PROJECT_ONLY_CONSENTED_SERIES
-            && let Some(body) = self.get_claim_in_txn(&*wtxn, series_ref)?
-            && !series_projects(&body)
+            && let Some(body) = &body
+            && !series_projects(body)
         {
             return Ok(CommitmentSeriesWriteOutcome::StoredAwaitingApproval);
         }
         let history = self.commitment_series_history_in_txn(&*wtxn, series_ref)?;
-        let due_at = next_due(&payload.schedule, now, &history)?.ok_or(ScheduleError::Invalid(
-            "commitment series schedule owes no occurrence",
-        ))?;
+        let due_at = match &payload.schedule {
+            // The rule's DTSTART is the series claim's own start, and its next
+            // start comes from the calendar layer's one expander (FIX 7848).
+            Schedule::Rrule { rrule_string, tz } => {
+                let series = body.as_ref().ok_or(ScheduleError::Invalid(
+                    "commitment rrule series is not stored",
+                ))?;
+                let from = rrule_search_from(now, &history)?;
+                match next_rrule_due(rrule_string, tz, rrule_dtstart(series)?, from)? {
+                    Some(due_at) => due_at,
+                    None => {
+                        return Ok(CommitmentSeriesWriteOutcome::StoredRrule {
+                            route: CAL_RRULE_ROUTE,
+                        });
+                    }
+                }
+            }
+            schedule => next_due(schedule, now, &history)?.ok_or(ScheduleError::Invalid(
+                "commitment series schedule owes no occurrence",
+            ))?,
+        };
         let entry = project_row(series_ref, payload, due_at)?;
         self.store.commitment_due_put_in_txn(wtxn, &entry)?;
         Ok(CommitmentSeriesWriteOutcome::Indexed {
@@ -372,7 +213,7 @@ impl Vault {
         })
     }
 
-    /// Consumes one due `Project` row and mints whatever it owes.
+    /// Consumes one due `Project` row and mints the occurrence it names.
     fn project_commitment_series_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -382,23 +223,56 @@ impl Vault {
     ) -> ScheduleResult<()> {
         report.projected_series = report.projected_series.saturating_add(1);
         // The row is spent either way. Its successor, if the schedule has one,
-        // is a row the CLOSE hook writes; leaving this one behind would re-mint
+        // is a row the CLOSE hook writes (or, for a quota window this pass did
+        // not finish, the row below); leaving this one behind would re-mint
         // the same occurrence on every pass forever.
         self.store.commitment_due_delete_in_txn(wtxn, entry)?;
 
-        let Some((record, payload)) = self.live_series_in_txn(&*wtxn, &entry.series_ref)? else {
+        let Some(series) = self.live_series_in_txn(&*wtxn, &entry.series_ref)? else {
             return Ok(());
         };
         let history = self.commitment_series_history_in_txn(&*wtxn, &entry.series_ref)?;
-        let occurrences = occurrences_owed(&payload, now, &history)?;
+        let occurrences = occurrences_named(&series.payload, &entry.occurrence, &history)?;
         let mint = SeriesMint {
             series_ref: entry.series_ref,
-            record: &record,
-            payload: &payload,
+            series: &series,
             envelope: &commitment_projection_envelope()?,
             learned_at: now,
         };
         self.mint_commitment_instances_in_txn(wtxn, &mint, &occurrences, report)?;
+        self.queue_quota_remainder_in_txn(wtxn, &mint, &occurrences, now)
+    }
+
+    /// Writes the `Project` row for the rest of a quota window one pass did
+    /// not finish, naming the first slot still unminted, due at `at`. Nothing
+    /// for any other schedule or a finished window.
+    fn queue_quota_remainder_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        mint: &SeriesMint<'_>,
+        minted: &[CommitmentOccurrence],
+        at: u64,
+    ) -> ScheduleResult<()> {
+        let Schedule::Quota { count, .. } = &mint.series.payload.schedule else {
+            return Ok(());
+        };
+        let Some(last) = minted.last() else {
+            return Ok(());
+        };
+        let next = last.ordinal.saturating_add(1);
+        if next >= *count {
+            return Ok(());
+        }
+        self.store.commitment_due_put_in_txn(
+            wtxn,
+            &CommitmentDueEntry {
+                at,
+                phase: CommitmentDuePhase::Project,
+                series_ref: mint.series_ref,
+                instance_ref: None,
+                occurrence: CommitmentOccurrence::new(last.due_at, last.window, next)?,
+            },
+        )?;
         Ok(())
     }
 
@@ -411,17 +285,16 @@ impl Vault {
         closed_at: u64,
     ) -> ScheduleResult<Vec<EntityId>> {
         // Closing an old instance never revives an edited or dead series.
-        let Some((record, payload)) = self.live_series_in_txn(&*wtxn, &closed.series_ref)? else {
+        let Some(series) = self.live_series_in_txn(&*wtxn, &closed.series_ref)? else {
             return Ok(Vec::new());
         };
         let mint = SeriesMint {
             series_ref: closed.series_ref,
-            record: &record,
-            payload: &payload,
+            series: &series,
             envelope,
             learned_at: closed_at,
         };
-        let occurrences = match &payload.schedule {
+        let occurrences = match &series.payload.schedule {
             // A single promise kept (or not) is finished.
             Schedule::Once { .. } => Vec::new(),
             Schedule::Interval { period, .. } => {
@@ -440,10 +313,19 @@ impl Vault {
                 let history = self.commitment_series_history_in_txn(&*wtxn, &closed.series_ref)?;
                 self.quota_rollover_in_txn(wtxn, &mint, closed, &history, (*count, tz, closed_at))?
             }
-            Schedule::Rrule { .. } => {
-                return Err(ScheduleError::RruleNotImplemented {
-                    route: CAL_RRULE_ROUTE,
-                });
+            Schedule::Rrule { rrule_string, tz } => {
+                // The rule's next start after the occurrence that closed, as
+                // an interval steps from it; none once the rule has ended.
+                let from = closed
+                    .occurrence
+                    .due_at
+                    .checked_add(1)
+                    .ok_or(ScheduleError::ArithmeticOverflow)?;
+                let dtstart = rrule_dtstart(&series.body)?;
+                match next_rrule_due(rrule_string, tz, dtstart, from)? {
+                    Some(due_at) => vec![point_occurrence(due_at)?],
+                    None => Vec::new(),
+                }
             }
         };
         let mut report = CommitmentProjectionReport::default();
@@ -479,9 +361,12 @@ impl Vault {
             // The last slot closed after the local rollover instant: skip
             // forward to the week the close actually happened in, exactly as
             // the evaluator would from `now`. Missed weeks are never
-            // back-filled.
+            // back-filled. A window larger than one pass mints its first
+            // slots here and queues the rest.
             let window = iso_week_window(closed_at, tz)?;
-            return quota_window_occurrences(count, window);
+            let slots = quota_window_slots(count, window, 0)?;
+            self.queue_quota_remainder_in_txn(wtxn, mint, &slots, closed_at)?;
+            return Ok(slots);
         }
         // Closed inside the window: the next week is projected, not minted, so
         // its slots appear when that week opens rather than early.
@@ -523,12 +408,12 @@ impl Vault {
     ) -> ScheduleResult<EntityId> {
         let instance_ref = commitment_instance_id(&mint.series_ref, occurrence)?;
         let payload = CommitmentSchedulePayload::instance(
-            mint.payload.schedule.clone(),
-            mint.payload.lead_seconds,
+            mint.series.payload.schedule.clone(),
+            mint.series.payload.lead_seconds,
             mint.series_ref,
             *occurrence,
         );
-        let mut record = mint.record.clone();
+        let mut record = mint.series.record.clone();
         record.schedule = payload.encode()?;
         record.status = CommitmentStatus::Open;
 
@@ -543,7 +428,7 @@ impl Vault {
             return Ok(instance_ref);
         }
 
-        let candidate = commitment_claim_candidate(&record)?
+        let candidate = series_scoped(commitment_claim_candidate(&record)?, &mint.series.body)
             .with_validity(Some(occurrence.window.start), Some(occurrence.window.end));
         let mut envelope = mint.envelope.clone();
         self.sign_retained_machine_claim_in_txn(&*wtxn, &instance_ref, &candidate, &mut envelope)?;
@@ -574,7 +459,7 @@ impl Vault {
         // Saturating, not checked: a lead longer than the due instant's
         // distance from the epoch means "visible immediately", which is a
         // sensible answer, unlike a refusal.
-        let lead_at = due_at.saturating_sub(mint.payload.lead_seconds());
+        let lead_at = due_at.saturating_sub(mint.series.payload.lead_seconds());
         for (phase, at) in [
             (CommitmentDuePhase::Lead, lead_at),
             (CommitmentDuePhase::Due, due_at),
@@ -628,7 +513,7 @@ impl Vault {
                 status: CommitmentStatus::Open,
             };
             if let Some(record) = self.instance_occupant_in_txn(txn, &instance_ref)? {
-                entry.status = record.status;
+                entry.status = self.instance_status_in_txn(txn, &instance_ref, record.status)?;
                 // The membership key carries no window end; the claim does.
                 if let Ok(payload) = CommitmentSchedulePayload::decode(&record.schedule)
                     && let Some(stored) = payload.occurrence
@@ -652,7 +537,7 @@ impl Vault {
         &self,
         txn: &RoTxn<'_>,
         series_ref: &EntityId,
-    ) -> ScheduleResult<Option<(CommitmentRecord, CommitmentSchedulePayload)>> {
+    ) -> ScheduleResult<Option<LiveSeries>> {
         let Some(body) = self.get_claim_in_txn(txn, series_ref)? else {
             return Ok(None);
         };
@@ -669,7 +554,32 @@ impl Vault {
         let Ok(payload) = CommitmentSchedulePayload::decode(&record.schedule) else {
             return Ok(None);
         };
-        Ok(payload.is_series().then_some((record, payload)))
+        Ok(payload.is_series().then_some(LiveSeries {
+            body,
+            record,
+            payload,
+        }))
+    }
+
+    /// The status an instance holds now: its head's, once a status change
+    /// has minted a successor for it (FIX 9726), else the one it stores.
+    fn instance_status_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        instance_ref: &EntityId,
+        stored: CommitmentStatus,
+    ) -> ScheduleResult<CommitmentStatus> {
+        let head = self.commitment_head_in_txn(txn, instance_ref)?;
+        if head == *instance_ref {
+            return Ok(stored);
+        }
+        Ok(self
+            .get_claim_in_txn(txn, &head)?
+            .as_ref()
+            .map(decode_commitment_claim)
+            .transpose()?
+            .flatten()
+            .map_or(stored, |record| record.status))
     }
 
     /// Whatever commitment claim already sits on a deterministic instance id.
@@ -708,7 +618,9 @@ impl Vault {
         instance_ref: &EntityId,
         outcome: CommitmentInstanceOutcome,
     ) -> ScheduleResult<Option<ClosedInstance>> {
-        let Some(body) = self.get_claim_in_txn(txn, instance_ref)? else {
+        // The terminal status sits at the head of the instance's status chain.
+        let head = self.commitment_head_in_txn(txn, instance_ref)?;
+        let Some(body) = self.get_claim_in_txn(txn, &head)? else {
             return Ok(None);
         };
         let Some(record) = decode_commitment_claim(&body)? else {
@@ -730,9 +642,18 @@ impl Vault {
                 "close hook requires terminal instance status",
             ));
         }
+        // A successor learned its status when the instance closed; the
+        // predecessor's own header still names its birth.
+        let learned_at = if head == *instance_ref {
+            None
+        } else {
+            self.entity_header_in_txn(txn, &head)?
+                .map(|header| header.learned_at)
+        };
         Ok(Some(ClosedInstance {
             series_ref,
             occurrence,
+            learned_at,
         }))
     }
 }
@@ -741,6 +662,8 @@ impl Vault {
 struct ClosedInstance {
     series_ref: EntityId,
     occurrence: CommitmentOccurrence,
+    /// When the status successor that closed it was learned, if one did.
+    learned_at: Option<u64>,
 }
 
 /// Decodes a record's schedule as a SERIES payload, refusing a non-open record.
@@ -759,7 +682,7 @@ fn series_payload(record: &CommitmentRecord) -> ScheduleResult<CommitmentSchedul
 
 /// Whether a series claim may project: active and unrejected, and with
 /// [`PROJECT_ONLY_CONSENTED_SERIES`] also Auto or Approved and not stale.
-fn series_projects(body: &crate::claim::ClaimBody) -> bool {
+fn series_projects(body: &ClaimBody) -> bool {
     use crate::claim::ClaimApprovalStatus::{Approved, Auto, Rejected};
     body.lifecycle == ClaimLifecycleStatus::Active
         && body.approval != Rejected
@@ -767,87 +690,19 @@ fn series_projects(body: &crate::claim::ClaimBody) -> bool {
             || (matches!(body.approval, Auto | Approved) && !body.stale))
 }
 
-/// The `Project` row for one series and one computed due instant.
-///
-/// A quota projects at the START of its window and is owed at the window's
-/// inclusive end; everything else projects one lead ahead of its due instant.
-fn project_row(
-    series_ref: &EntityId,
-    payload: &CommitmentSchedulePayload,
-    due_at: u64,
-) -> ScheduleResult<CommitmentDueEntry> {
-    let (at, occurrence) = match &payload.schedule {
-        Schedule::Quota { window, .. } => {
-            let QuotaWindow::IsoWeek { tz } = window;
-            let window = iso_week_window(due_at, tz)?;
-            (
-                window.start,
-                CommitmentOccurrence::new(window.end, window, 0)?,
-            )
-        }
-        _ => (
-            due_at.saturating_sub(payload.lead_seconds()),
-            point_occurrence(due_at)?,
-        ),
-    };
-    Ok(CommitmentDueEntry {
-        at,
-        phase: CommitmentDuePhase::Project,
-        series_ref: *series_ref,
-        instance_ref: None,
-        occurrence,
-    })
-}
-
-/// The occurrences a due `Project` row owes right now.
-///
-/// A quota owes its whole window at once — one transaction, `count` slots,
-/// ordinals `0..count` — because a promise of "three times this week" is one
-/// commitment with three openings, not three commitments discovered one at a
-/// time. Everything else owes exactly the next grid point.
-fn occurrences_owed(
-    payload: &CommitmentSchedulePayload,
-    now: u64,
-    history: &[ScheduleHistoryEntry],
-) -> ScheduleResult<Vec<CommitmentOccurrence>> {
-    if matches!(payload.schedule, Schedule::Rrule { .. }) {
-        // Unreachable through this module's own doors (an rrule series is never
-        // indexed), and a stray row must not wedge the projector.
-        return Ok(Vec::new());
+/// The series' boundaries on one of its occurrences (FIX 9727): the world,
+/// relationship, opaque scope, facet and project the promise was made in, so
+/// an instance is never readable wider than the series that owes it.
+fn series_scoped(candidate: ClaimCandidate, series: &ClaimBody) -> ClaimCandidate {
+    let mut candidate = candidate.with_scope_stamps(series.scope_facet, series.scope_project);
+    if let Some(world) = series.world {
+        candidate = candidate.with_world(world);
     }
-    let Some(due_at) = next_due(&payload.schedule, now, history)? else {
-        return Ok(Vec::new());
-    };
-    match &payload.schedule {
-        Schedule::Quota { count, window } => {
-            let QuotaWindow::IsoWeek { tz } = window;
-            quota_window_occurrences(*count, iso_week_window(due_at, tz)?)
-        }
-        _ => Ok(vec![point_occurrence(due_at)?]),
+    candidate = candidate.with_relationships(series.rel.clone());
+    if let Some(scope) = &series.scope {
+        candidate = candidate.with_scope(scope.clone());
     }
-}
-
-fn quota_window_occurrences(
-    count: u32,
-    window: TimeRange,
-) -> ScheduleResult<Vec<CommitmentOccurrence>> {
-    validate_quota_count(count)?;
-    (0..count)
-        .map(|ordinal| CommitmentOccurrence::new(window.end, window, ordinal))
-        .collect()
-}
-
-/// A non-quota occurrence covers exactly its due instant: the window is the
-/// point, so the membership key round-trips it without loss.
-fn point_occurrence(due_at: u64) -> ScheduleResult<CommitmentOccurrence> {
-    CommitmentOccurrence::new(
-        due_at,
-        TimeRange {
-            start: due_at,
-            end: due_at,
-        },
-        0,
-    )
+    candidate
 }
 
 /// Whether an existing claim at a deterministic id is the SAME occurrence of
@@ -871,4 +726,27 @@ fn same_copied_identity(
         && existing.content == minted.content
         && existing.strength == minted.strength
         && existing.birth_provenance == minted.birth_provenance
+}
+
+impl Vault {
+    /// Whether a minted instance's series still fires its wakes (FIX 1471):
+    /// the series claim is there and still projects. A series the owner
+    /// rejected, one an edit replaced, or one no longer approved stops
+    /// reminding through the instances it already minted. A record that
+    /// names no series is not this check's to stop.
+    pub(crate) fn commitment_instance_series_fires_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        instance: &CommitmentRecord,
+    ) -> crate::Result<bool> {
+        let Some(series_ref) = CommitmentSchedulePayload::decode(&instance.schedule)
+            .ok()
+            .and_then(|payload| payload.series_ref)
+        else {
+            return Ok(true);
+        };
+        Ok(self
+            .get_claim_in_txn(txn, &series_ref)?
+            .is_some_and(|body| series_projects(&body)))
+    }
 }

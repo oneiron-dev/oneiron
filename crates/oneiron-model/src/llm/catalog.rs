@@ -37,6 +37,11 @@ pub enum LlmCapability {
     /// [`Self::Reasoning`]. On that wire an offer without it gets its
     /// assistant reasoning as ordinary text content.
     ReasoningContentHistory,
+    /// The provider reports each output token's log-probability and its most
+    /// likely alternatives when asked (OpenAI-compatible `logprobs` /
+    /// `top_logprobs`), so a decision rung reads a joint distribution over
+    /// single-token labels (FIX 1557).
+    TokenLogprobs,
 }
 
 impl LlmCapability {
@@ -53,6 +58,7 @@ impl LlmCapability {
             Self::AssistantPrefill => "assistant_prefill",
             Self::AudioInput => "audio_input",
             Self::ReasoningContentHistory => "reasoning_content_history",
+            Self::TokenLogprobs => "token_logprobs",
         }
     }
 }
@@ -272,6 +278,12 @@ pub struct LlmCatalogCost {
     pub cache_read_per_million: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache_write_per_million: Option<String>,
+    /// The currency the provider quotes these rates in, as its three-letter
+    /// code (`USD`); `null` when it named none, which is a fact and never
+    /// read as any currency (FIX 9534). Missing reads as `None` (unknown,
+    /// FIX 11778); writers always emit the key.
+    #[serde(default)]
+    pub currency: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]

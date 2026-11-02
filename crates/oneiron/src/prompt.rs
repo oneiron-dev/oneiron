@@ -1,3 +1,5 @@
+mod layout;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
@@ -9,6 +11,8 @@ use crate::llm::{
     ByteSpan, ContentPart, LlmMessage, LlmMessageRole, LlmRequest, Segment, SegmentClass,
     SegmentClock, SegmentKind,
 };
+
+pub use self::layout::{place_context_for_layout, render_activated_memory};
 
 /// Where a turn's request puts the context read for that turn (FIX 6676).
 /// Every assembler that builds a turn's request reads
@@ -281,12 +285,15 @@ fn assemble_session(
         }],
     });
     messages.extend(parts.history);
-    let context = match layout {
+    // The late context keeps activated memory's heading and every block, as
+    // the system text does (FIX 9442).
+    let late_memory = match layout {
         PromptLayout::EarlySystem => None,
         PromptLayout::StableHistoryThenTurnContext => {
-            place_turn_context(&mut messages, parts.activated_memory.as_slice())
+            render_activated_memory(parts.activated_memory.as_slice())
         }
     };
+    let context = place_context_for_layout(&mut messages, layout, late_memory.as_slice());
 
     Ok((
         SessionPromptAssembly {
@@ -488,7 +495,9 @@ pub fn system_prompt_pieces(
     let mut wrote_header = false;
     for memory in activated_memory {
         if !wrote_header {
-            prompt.push_str("\n# Activated Memory\n\n");
+            prompt.push('\n');
+            prompt.push_str(layout::ACTIVATED_MEMORY_HEADING);
+            prompt.push_str("\n\n");
             wrote_header = true;
         }
         piece(SegmentKind::ActivatedMemory, &mut prompt, memory);

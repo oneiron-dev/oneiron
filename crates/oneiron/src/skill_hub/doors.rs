@@ -1,9 +1,14 @@
+//! Skill hub import, update and dependency doors.
+//! Entry: `Vault::sync_skill_from_hub`.
+//! Defines its own items.
+
 use rmpv::Value;
 
 use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::skill::{
@@ -12,9 +17,7 @@ use crate::skill::{
 use crate::temporal::TimeRange;
 
 use super::adapter::SkillHubAdapter;
-use super::index::{
-    PREDICATE_SKILL_HUB_PROVENANCE, encode_capability_surface_value, same_hub_alias,
-};
+use super::index::{PREDICATE_SKILL_HUB_PROVENANCE, encode_capability_surface_value, same_hub_ref};
 use super::package::{HubIndexEntry, HubPackage};
 use super::record::{HubPin, HubRef, HubSyncPolicy};
 use super::support::{map_text, map_value};
@@ -77,18 +80,23 @@ impl Vault {
         )
     }
 
-    /// Fetches through an adapter and enters the same import door.
+    /// Fetches through an adapter and enters the same import door, as
+    /// `owner`: the owner proof is checked before the fetch and again in the
+    /// writer that commits the skill, its provenance and scan receipts.
     pub fn import_skill_from_adapter<A: SkillHubAdapter>(
         &self,
+        owner: &AuthenticatedOwner,
         adapter: &A,
         hub_ref: &HubRef,
         occurred: TimeRange,
         learned_at: u64,
     ) -> Result<EntityId> {
+        self.check_restore_owner_in_txn(&self.store.env.read_txn()?, owner)?;
         let package = adapter.fetch_package(hub_ref)?;
         let inventory = super::osv::dependency_inventory(&package)?;
         Ok(self
             .install_skill_with_advisories(
+                owner,
                 hub_ref,
                 &package,
                 &inventory,
@@ -129,6 +137,7 @@ impl Vault {
         let inventory = super::osv::dependency_inventory(&package)?;
         Ok(self
             .import_with_advisories(
+                None,
                 &hub_ref,
                 &package,
                 preferred_id,
@@ -161,8 +170,15 @@ impl Vault {
         Ok(entity)
     }
 
+    /// Imports `package` with its scan receipts in one writer. With `owner`,
+    /// the owner proof is checked in that writer before anything lands.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the import binds the owner proof, package identity, scans and import timing"
+    )]
     pub(super) fn import_skill_from_hub_with_scans(
         &self,
+        owner: Option<&AuthenticatedOwner>,
         hub_ref: &HubRef,
         package: &HubPackage,
         preferred_id: EntityId,
@@ -171,6 +187,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<EntityId> {
         let mut wtxn = self.store.env.write_txn()?;
+        if let Some(owner) = owner {
+            self.check_restore_owner_in_txn(&wtxn, owner)?;
+        }
         let entity = self.import_skill_from_hub_in_txn(
             &mut wtxn,
             hub_ref,
@@ -390,7 +409,11 @@ impl Vault {
             .len())
     }
 
-    /// Applies same/narrower updates and proposes capability widening.
+    /// Under an automatic policy, applies same-or-narrower updates and
+    /// proposes capability widening. A changed Active body applies once the
+    /// update's own admission passes (the scan gate over its static and
+    /// advisory receipts, and the owner's hash rule); one that does not pass
+    /// is proposed and the live bytes stay.
     pub fn sync_skill_from_hub(
         &self,
         entity: &EntityId,
@@ -433,39 +456,7 @@ impl Vault {
             self.dependency_advisories(content_hash, &inventory, query, learned_at)?;
         let mut wtxn = self.store.env.write_txn()?;
         let current = self.read_skill_record_in_txn(&wtxn, entity)?;
-        if current.source != ClaimSource::Imported
-            || package.record.source != ClaimSource::Imported
-            || current.skill_id != package.record.skill_id
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "hub sync package must match an imported skill",
-            )));
-        }
-        if package
-            .record
-            .content_hash
-            .is_some_and(|declared| declared != content_hash)
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "package content hash does not match its canonical file tree",
-            )));
-        }
-        // A content-hash pin binds the ref's identity on every sync path, not only under the
-        // frozen policy (mirrors the import door at import_skill_from_hub_with_id).
-        if let HubPin::ContentHash(pinned) = &hub_ref.pin
-            && SkillContentHash::parse_hex(pinned)? != content_hash
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "content-hash-pinned ref drifted",
-            )));
-        }
-        if sync_policy == HubSyncPolicy::ContentHashFrozen
-            && !matches!(&hub_ref.pin, HubPin::ContentHash(_))
-        {
-            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-                "content-hash-frozen policy requires a content_hash pin",
-            )));
-        }
+        validate_sync_package(&current, package, hub_ref, content_hash, sync_policy)?;
         if !sync_policy.allows_automatic_update() {
             return Ok(HubSyncDisposition::RefusedByPolicy);
         }
@@ -481,7 +472,7 @@ impl Vault {
                         "hub provenance claim is missing hubRef",
                     )),
                 )?)?;
-                if same_hub_alias(&stored_ref, hub_ref) {
+                if same_hub_ref(&stored_ref, hub_ref) {
                     matches_provenance_alias = true;
                     break;
                 }
@@ -499,99 +490,117 @@ impl Vault {
         let requires_held_out = current.lifecycle_status == SkillLifecycle::Active
             && crate::skill_optimize::skill_body_binding_digest(&current)?
                 != crate::skill_optimize::skill_body_binding_digest(&proposed_record)?;
-        if requires_held_out || !package.capabilities.is_same_or_narrower_than(&admitted) {
-            let hub_value = hub_ref.to_value()?;
-            let hash_hex = content_hash.to_hex();
-            let encoded_caps = encode_capability_surface_value(&package.capabilities);
-            for (proposal_id, body, _) in self.active_claims_for_predicate_in_txn(
-                &wtxn,
+        let widens = !package.capabilities.is_same_or_narrower_than(&admitted);
+        let hash_held_elsewhere = current.content_hash != Some(content_hash)
+            && self
+                .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
+                .is_some_and(|holder| holder != *entity);
+        if !widens && !hash_held_elsewhere {
+            // A changed Active body lands in a savepoint and stays only when
+            // the update's own admission passes in it; otherwise the live
+            // bytes stay and the update is proposed below.
+            let mut savepoint = self.store.env.nested_write_txn(&mut wtxn)?;
+            let passed = self.apply_hub_sync_in_txn(
+                &mut savepoint,
                 entity,
-                PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
-            )? {
-                if map_value(&body.value, "hubRef") == Some(&hub_value)
-                    && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
-                    && map_text(&body.value, "version") == Some(package.record.version.as_str())
-                    && map_value(&body.value, "capabilities") == Some(&encoded_caps)
-                    && map_value(&body.value, "requiresHeldOut")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false)
-                        == requires_held_out
-                {
-                    return Ok(HubSyncDisposition::Proposed {
-                        proposal_id,
-                        approval: ClaimApprovalStatus::Proposed,
-                    });
-                }
-            }
-
-            let proposal_id = self.store.clock.entity_id()?;
-            let mut proposal = ClaimBody::new(
-                PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
-                ClaimSubject::Entity(*entity),
-                Value::Map(vec![
-                    (Value::from("hubRef"), hub_value),
-                    (
-                        Value::from("version"),
-                        Value::from(package.record.version.as_str()),
-                    ),
-                    (Value::from("contentHash"), Value::from(hash_hex)),
-                    (Value::from("capabilities"), encoded_caps),
-                    (
-                        Value::from("requiresHeldOut"),
-                        Value::Boolean(requires_held_out),
-                    ),
-                ]),
-                1.0,
-                ClaimApprovalStatus::Proposed,
-                ClaimLifecycleStatus::Active,
-            )?;
-            proposal.source = Some(ClaimSource::Imported);
-            self.put_reserved_claim_in_txn(
-                &mut wtxn,
-                &proposal_id,
-                &proposal,
+                &current,
+                hub_ref,
+                package,
+                content_hash,
+                &scans,
                 occurred,
                 learned_at,
             )?;
-            wtxn.commit()?;
-            return Ok(HubSyncDisposition::Proposed {
-                proposal_id,
-                approval: ClaimApprovalStatus::Proposed,
-            });
-        }
-
-        let content_hash_changed = current.content_hash != Some(content_hash);
-        if content_hash_changed
-            && self
-                .skill_entity_for_content_hash_in_txn(&wtxn, content_hash)?
-                .is_some_and(|owner| owner != *entity)
-        {
+            if passed || !requires_held_out {
+                savepoint.commit()?;
+                wtxn.commit()?;
+                return Ok(HubSyncDisposition::Applied);
+            }
+        } else if !widens && !requires_held_out {
             return Ok(HubSyncDisposition::RefusedByPolicy);
         }
+        let hub_value = hub_ref.to_value()?;
+        let hash_hex = content_hash.to_hex();
+        let encoded_caps = encode_capability_surface_value(&package.capabilities);
+        for (proposal_id, body, _) in self.active_claims_for_predicate_in_txn(
+            &wtxn,
+            entity,
+            PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
+        )? {
+            if map_value(&body.value, "hubRef") == Some(&hub_value)
+                && map_text(&body.value, "contentHash") == Some(hash_hex.as_str())
+                && map_text(&body.value, "version") == Some(package.record.version.as_str())
+                && map_value(&body.value, "capabilities") == Some(&encoded_caps)
+                && map_value(&body.value, "requiresHeldOut")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+                    == requires_held_out
+            {
+                return Ok(HubSyncDisposition::Proposed {
+                    proposal_id,
+                    approval: ClaimApprovalStatus::Proposed,
+                });
+            }
+        }
 
-        let mut updated = package.record.clone();
-        // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
-        updated.approval_status = current.approval_status;
-        updated.lifecycle_status = current.lifecycle_status;
-        // ONE-1448: `governance_tier` is the THIRD state axis — `skill.rs`'s
-        // `skill_content_changed` normalizes it away beside the first two, and
-        // it is the OWNER's axis in the same way they are. The mark says what
-        // the local automated edit loop may do WITH these instructions, never
-        // what the instructions ARE, so upstream has nothing to say about it:
-        // taking it from the package would let a revision that merely omits
-        // the key (the wire elides an absent mark) delete an owner's Identity
-        // mark, and an unmarked record carrying a hub-provenance alias then
-        // resolves to `LegacyStandard`
-        // ([`crate::skill_optimize::skill_governance_tier`]) — i.e. straight
-        // back into the loop the mark existed to keep it out of. The owner
-        // moves this axis through the ordinary update door; sync never does.
-        updated.governance_tier = current.governance_tier;
-        updated.content_hash = Some(content_hash);
-        self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
-        self.write_admitted_capability_surface_in_txn(&mut wtxn, entity, &package.capabilities)?;
-        if content_hash_changed {
+        let proposal_id = self.store.clock.entity_id()?;
+        let mut proposal = ClaimBody::new(
+            PREDICATE_SKILL_HUB_UPDATE_PROPOSAL,
+            ClaimSubject::Entity(*entity),
+            Value::Map(vec![
+                (Value::from("hubRef"), hub_value),
+                (
+                    Value::from("version"),
+                    Value::from(package.record.version.as_str()),
+                ),
+                (Value::from("contentHash"), Value::from(hash_hex)),
+                (Value::from("capabilities"), encoded_caps),
+                (
+                    Value::from("requiresHeldOut"),
+                    Value::Boolean(requires_held_out),
+                ),
+            ]),
+            1.0,
+            ClaimApprovalStatus::Proposed,
+            ClaimLifecycleStatus::Active,
+        )?;
+        proposal.source = Some(ClaimSource::Imported);
+        self.put_reserved_claim_in_txn(&mut wtxn, &proposal_id, &proposal, occurred, learned_at)?;
+        wtxn.commit()?;
+        Ok(HubSyncDisposition::Proposed {
+            proposal_id,
+            approval: ClaimApprovalStatus::Proposed,
+        })
+    }
+
+    /// Lands a same-or-narrower hub update on `entity` in `txn`: the record
+    /// with its local axes kept, the capability surface, provenance, the
+    /// static and advisory scan receipts and the package. Answers whether
+    /// the update's own admission passed: the scan gate admits the bytes and
+    /// the owner's hash rule does not block them. A gate that asks for an
+    /// owner tap leaves an Active record's approval Proposed.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the sync's checked record, package identity, scans and write timing"
+    )]
+    fn apply_hub_sync_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        entity: &EntityId,
+        current: &crate::skill::SkillRecord,
+        hub_ref: &HubRef,
+        package: &HubPackage,
+        content_hash: SkillContentHash,
+        scans: &[super::SkillScanReceipt],
+        occurred: TimeRange,
+        learned_at: u64,
+    ) -> Result<bool> {
+        let mut updated = local_sync_record(package, current, content_hash);
+        self.apply_hub_sync_skill_record(txn, entity, &updated, occurred, learned_at)?;
+        self.write_admitted_capability_surface_in_txn(txn, entity, &package.capabilities)?;
+        if current.content_hash != Some(content_hash) {
             self.replace_hub_provenance_in_txn(
-                &mut wtxn,
+                txn,
                 entity,
                 content_hash,
                 hub_ref,
@@ -600,21 +609,21 @@ impl Vault {
             )?;
         }
         // ONE-1892: the update door's half of the producer. Unconditional
-        // rather than gated on `content_hash_changed` because the guard that
+        // rather than gated on a content-hash change because the guard that
         // matters is content-keyed — an unchanged hash that already carries a
         // static receipt is a no-op here, while a hash that never got one
         // (bytes born through a non-hub path) is scanned on this pass.
         self.scan_and_ingest_on_import_in_txn(
-            &mut wtxn,
+            txn,
             entity,
             content_hash,
             package,
             occurred,
             learned_at,
         )?;
-        for receipt in &scans {
+        for receipt in scans {
             self.ingest_skill_scan_verdict_in_txn(
-                &mut wtxn,
+                txn,
                 entity,
                 content_hash,
                 receipt,
@@ -622,20 +631,24 @@ impl Vault {
                 learned_at,
             )?;
         }
-        if matches!(
-            crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, &wtxn, content_hash)?,
+        let gate_passed = !matches!(
+            crate::skill_scan::scan_gate_for_activation_in_txn(&self.store, txn, content_hash)?,
             crate::skill_scan::ActivationPosture::ProposedRequired { .. }
-        ) && updated.lifecycle_status == SkillLifecycle::Active
-        {
+        );
+        if !gate_passed && updated.lifecycle_status == SkillLifecycle::Active {
             // The old bytes' approval cannot authorize a newly unvetted update.
             updated.approval_status = ClaimApprovalStatus::Proposed;
-            self.apply_hub_sync_skill_record(&mut wtxn, entity, &updated, occurred, learned_at)?;
+            self.apply_hub_sync_skill_record(txn, entity, &updated, occurred, learned_at)?;
         }
         let mut saved = package.clone();
-        saved.record = self.read_skill_record_in_txn(&wtxn, entity)?;
-        self.persist_hub_package_in_txn(&mut wtxn, entity, &saved)?;
-        wtxn.commit()?;
-        Ok(HubSyncDisposition::Applied)
+        saved.record = self.read_skill_record_in_txn(txn, entity)?;
+        self.persist_hub_package_in_txn(txn, entity, &saved)?;
+        Ok(gate_passed
+            && !super::import_receipt::marketplace_hash_blocked_in_txn(
+                &self.store,
+                txn,
+                content_hash,
+            )?)
     }
 
     /// Refuses cross-hub dependencies before any package can materialize.
@@ -665,4 +678,77 @@ impl Vault {
         )
         .map(HubDependencyResolution::Materialized)
     }
+}
+
+/// The identity, content-hash and pin checks a hub sync package must pass
+/// before its sync policy is consulted.
+fn validate_sync_package(
+    current: &crate::skill::SkillRecord,
+    package: &HubPackage,
+    hub_ref: &HubRef,
+    content_hash: SkillContentHash,
+    sync_policy: HubSyncPolicy,
+) -> Result<()> {
+    if current.source != ClaimSource::Imported
+        || package.record.source != ClaimSource::Imported
+        || current.skill_id != package.record.skill_id
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "hub sync package must match an imported skill",
+        )));
+    }
+    if package
+        .record
+        .content_hash
+        .is_some_and(|declared| declared != content_hash)
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "package content hash does not match its canonical file tree",
+        )));
+    }
+    // A content-hash pin binds the ref's identity on every sync path, not only under the
+    // frozen policy (mirrors the import door at import_skill_from_hub_with_id).
+    if let HubPin::ContentHash(pinned) = &hub_ref.pin
+        && SkillContentHash::parse_hex(pinned)? != content_hash
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "content-hash-pinned ref drifted",
+        )));
+    }
+    if sync_policy == HubSyncPolicy::ContentHashFrozen
+        && !matches!(&hub_ref.pin, HubPin::ContentHash(_))
+    {
+        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+            "content-hash-frozen policy requires a content_hash pin",
+        )));
+    }
+    Ok(())
+}
+
+/// The package record a hub sync writes, with the local approval, lifecycle
+/// and governance axes kept from `current`.
+fn local_sync_record(
+    package: &HubPackage,
+    current: &crate::skill::SkillRecord,
+    content_hash: SkillContentHash,
+) -> crate::skill::SkillRecord {
+    let mut updated = package.record.clone();
+    // Hub sync mutates content fields; canonical approval/lifecycle state stays local.
+    updated.approval_status = current.approval_status;
+    updated.lifecycle_status = current.lifecycle_status;
+    // ONE-1448: `governance_tier` is the THIRD state axis — `skill.rs`'s
+    // `skill_content_changed` normalizes it away beside the first two, and
+    // it is the OWNER's axis in the same way they are. The mark says what
+    // the local automated edit loop may do WITH these instructions, never
+    // what the instructions ARE, so upstream has nothing to say about it:
+    // taking it from the package would let a revision that merely omits
+    // the key (the wire elides an absent mark) delete an owner's Identity
+    // mark, and an unmarked record carrying a hub-provenance alias then
+    // resolves to `LegacyStandard`
+    // ([`crate::skill_optimize::skill_governance_tier`]) — i.e. straight
+    // back into the loop the mark existed to keep it out of. The owner
+    // moves this axis through the ordinary update door; sync never does.
+    updated.governance_tier = current.governance_tier;
+    updated.content_hash = Some(content_hash);
+    updated
 }

@@ -82,7 +82,7 @@ impl PackInstallRuleRow {
             &self.known_bad_patterns,
             &self.removed_hashes,
         ] {
-            if list.len() > 1024 || list.iter().any(|s| s.trim().is_empty() || s.len() > 256) {
+            if list.iter().any(|s| s.trim().is_empty() || s.len() > 256) {
                 return false;
             }
         }
@@ -94,13 +94,12 @@ impl PackInstallRuleRow {
             return false;
         }
         self.allowed_calls.as_ref().is_none_or(|calls| {
-            calls.len() <= 128
-                && calls.iter().all(|s| {
-                    !s.is_empty()
-                        && s.len() <= 128
-                        && s.bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_'))
-                })
+            calls.iter().all(|s| {
+                !s.is_empty()
+                    && s.len() <= 128
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_'))
+            })
         })
     }
     fn restrict(&mut self, other: Self) {
@@ -154,7 +153,6 @@ impl PackInstallPolicy {
                 .as_ref()
                 .is_some_and(|calls| !calls.is_empty())
             && self.owner.validate()
-            && self.holders.len() <= 128
             && self.holders.iter().all(|row| {
                 !row.holder_ref.trim().is_empty()
                     && row.holder_ref.len() <= 256

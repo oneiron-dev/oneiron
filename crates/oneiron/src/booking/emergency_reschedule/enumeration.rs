@@ -1,3 +1,7 @@
+//! Enumeration of the bookings an emergency reschedule affects.
+//! Entry: `enumerate_affected_bookings`.
+//! Defines its own items.
+
 use super::*;
 
 /// A read-only snapshot, never an executable action. The original constraint,

@@ -55,6 +55,8 @@ pub struct PipelineBuilder<'a> {
     /// A home's paged residence search (FIX 8865): see `residence_page`.
     pub(super) residence_page: bool,
     pub(super) candidate_filter: Option<&'a super::CandidateFilter<'a>>,
+    /// Joins `candidate_filter` with state held per snapshot (FIX 11648).
+    pub(super) candidate_gate: Option<&'a dyn super::CandidateGate>,
     pub(super) type_filter: Option<Vec<u8>>,
     pub(super) criticality: Option<bool>,
     pub(super) authority_filter: Option<crate::gate::ResolvedRetrievalFilter>,
@@ -108,6 +110,8 @@ pub struct PipelineBuilder<'a> {
     pub(super) corpus_snapshot_ref: Option<String>,
     pub(super) replay_query_ref: Option<String>,
     pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
+    /// An already-held task-work turn for PPR, so admission never nests.
+    pub(super) ppr_work: Option<Arc<crate::work_line::TaskWorkTurn>>,
     pub(super) rerank: Option<(&'a dyn Reranker, RerankOptions)>,
     pub(super) hyde: Option<(&'a dyn HydeExpander, GroundingContext, HydeOptions)>,
     pub(super) access_factor_overrides: Option<&'a HashMap<EntityId, f32>>,
@@ -159,6 +163,7 @@ impl<'a> PipelineBuilder<'a> {
             memory_category: false,
             residence_page: false,
             candidate_filter: None,
+            candidate_gate: None,
             type_filter: None,
             criticality: None,
             authority_filter: None,
@@ -194,6 +199,7 @@ impl<'a> PipelineBuilder<'a> {
             corpus_snapshot_ref: None,
             replay_query_ref: None,
             deadline: None,
+            ppr_work: None,
             rerank: None,
             hyde: None,
             access_factor_overrides: None,
@@ -282,6 +288,12 @@ impl<'a> PipelineBuilder<'a> {
     /// same vault's; telemetry routing stays with [`Self::in_session`].
     pub(crate) fn reading(mut self, read: crate::store::StoreRead<'a>) -> Self {
         self.read = read;
+        self
+    }
+
+    /// Carries an already-held task-work turn into PPR admission.
+    pub(crate) fn ppr_work_turn(mut self, turn: Arc<crate::work_line::TaskWorkTurn>) -> Self {
+        self.ppr_work = Some(turn);
         self
     }
 
@@ -683,6 +695,15 @@ impl<'a> PipelineBuilder<'a> {
 
     pub(crate) fn filter_candidates(mut self, filter: &'a super::CandidateFilter<'a>) -> Self {
         self.candidate_filter = Some(filter);
+        self
+    }
+
+    /// Admits each candidate through `gate` as well, after the candidate
+    /// filter, under what `gate` holds for the snapshot it is read in (FIX
+    /// 11648). One gate per run: the run's caller sets it on a fresh query.
+    pub(crate) fn gate_candidates(mut self, gate: &'a dyn super::CandidateGate) -> Self {
+        debug_assert!(self.candidate_gate.is_none(), "one candidate gate per run");
+        self.candidate_gate = Some(gate);
         self
     }
 

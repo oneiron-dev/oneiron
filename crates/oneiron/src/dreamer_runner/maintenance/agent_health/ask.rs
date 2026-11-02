@@ -37,7 +37,7 @@ use crate::{EntityId, Error, Result, Vault};
 pub const COACH_AGENT_HEALTH_ASK_FACET: &str = "coach.agent_health_ask";
 
 /// One ask on a card and, once the Coach has answered, its answer.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCoachAsk {
     /// The recipient or owner who asked.
@@ -58,7 +58,7 @@ pub struct AgentHealthCoachAsk {
 }
 
 /// What the Coach read and what it proposes.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCoachAnswer {
     pub at: u64,
@@ -82,7 +82,7 @@ pub struct AgentHealthCoachAnswer {
 
 /// The Coach's sealed-pad read for one ask. A held or refused read leaves the
 /// Coach the card and the TASK alone.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AgentHealthPadRead {
     /// The pads were read; `read` is the agent's read-log row. `pads` counts
@@ -104,7 +104,7 @@ pub enum AgentHealthPadRead {
 }
 
 /// The fix the Coach proposes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentHealthCoachRoute {
     /// Edit the skill the agent ran.
@@ -117,7 +117,7 @@ pub enum AgentHealthCoachRoute {
 
 /// One proposal in the Coach's words. The reader decides; only the owner's
 /// approval of exact bytes applies a skill edit (`apply.rs`).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AgentHealthCoachDraft {
     pub route: AgentHealthCoachRoute,

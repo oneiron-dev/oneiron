@@ -4,7 +4,7 @@
 //! Semantic links across children are judged after the merge lands, by its
 //! own link continuations (OF-498d, `super::nightly_links`), proposals only.
 
-use super::call_labels::{CallLabel, CallLabelMap, LabelKind};
+use super::call_labels::{CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
 use super::nightly_links::NightlyLinkProposal;
 use super::roles::{DREAMER_NARRATIVE_ROLE, RoleCall};
@@ -32,8 +32,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 mod chunks;
-mod narrative_labels;
+pub(super) mod narrative_labels;
 mod write;
+pub(super) use super::call_labels::subject_label;
 use chunks::retry_chunks_in_txn;
 pub(super) use write::{Draft, NightlyWrite, landed_units_in_txn, recheck_in_txn, scoped_draft};
 
@@ -162,10 +163,13 @@ impl ConsolidationExecutor<'_> {
         let read = merge_read(ctx.vault, self.actor)?;
         let (proposals, chunks) = {
             let txn = ctx.vault.store.env.read_txn()?;
-            if let Some(completed_units) =
+            if let Some((completed_units, step_hashes)) =
                 landed_units_in_txn(ctx.vault, &txn, attempt.status.attempt.id)?
             {
-                return Ok(DreamerAttemptExecution::Completed { completed_units });
+                return Ok(DreamerAttemptExecution::Completed {
+                    completed_units,
+                    step_hashes,
+                });
             }
             // A listed child's retry chunks fan in beside it (FIX 7495).
             let chunks = retry_chunks_in_txn(ctx.vault, &txn, &attempt.status, &input.children);
@@ -174,6 +178,7 @@ impl ConsolidationExecutor<'_> {
                 return Ok(DreamerAttemptExecution::Deferred {
                     completed_units: 0,
                     retry_at: (ctx.now_ms / 1_000).saturating_add(input.retry_secs),
+                    step_hashes: Vec::new(),
                 });
             };
             (proposals, chunks)
@@ -190,10 +195,13 @@ impl ConsolidationExecutor<'_> {
             let first = &members[0].body;
             let mut identity: BTreeMap<Vec<u8>, Vec<&Proposal>> = BTreeMap::new();
             for member in members {
-                identity
-                    .entry(identity_key(&member.body)?)
-                    .or_default()
-                    .push(member);
+                let key = match identity_key(&member.body) {
+                    Ok(key) => key,
+                    Err(error) => {
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
+                };
+                identity.entry(key).or_default().push(member);
             }
             for cohort in identity.values().filter(|cohort| cohort.len() > 1) {
                 let same = cohort
@@ -243,6 +251,7 @@ impl ConsolidationExecutor<'_> {
                 &self.inference.binding,
                 self.inference.extraction_egress,
             );
+            let keyless = call.inference.selected_keyless();
             let locality = match call.inference.selected_locality() {
                 Some(locality) => locality,
                 // A missing locality, a request that did not hash and an
@@ -255,7 +264,7 @@ impl ConsolidationExecutor<'_> {
             };
             let mut scope = Scope::default();
             scope.world = first.world;
-            scope.relationship = first.rel;
+            scope.relationship.clone_from(&first.rel);
             scope.project = Some(first.scope_project);
             // Each proposal and subject by this call's own labels (FIX
             // 7506): the claims `C<n>` in the order they render, then each
@@ -292,6 +301,7 @@ impl ConsolidationExecutor<'_> {
                     ),
                     response_format: ResponseFormat::Text,
                     locality,
+                    host_keyless: keyless,
                 }
                 .with_purpose_defaults(),
                 messages: vec![
@@ -352,23 +362,32 @@ impl ConsolidationExecutor<'_> {
             {
                 Ok(StepOutcome::Finished {
                     response,
+                    memoized,
                     failure_policy,
                     ..
                 }) => {
-                    charges.record_terminal(
+                    if let Err(error) = charges.record_terminal(
                         ctx.vault,
                         attempt.status.attempt.id,
                         hash,
                         &response.usage,
-                    )?;
+                    ) {
+                        if !memoized {
+                            charges.record_usage(&response.usage);
+                        }
+                        return super::residency::spent_or_deferred(error, ctx, &charges);
+                    }
                     if failure_policy.is_some() {
-                        return charges.park_on_fallback(
+                        return match charges.park_on_fallback(
                             ctx.vault,
                             attempt.status.attempt.id,
                             hash,
                             NARRATIVE_FALLBACK,
                             &response,
-                        );
+                        ) {
+                            Ok(parked) => Ok(parked),
+                            Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+                        };
                     }
                     response
                 }
@@ -400,12 +419,15 @@ impl ConsolidationExecutor<'_> {
                 // Only a memo stored before the check can be empty: it goes,
                 // and the Retry asks again (FIX 7431).
                 Err(reason) => {
-                    return charges.park_refused_reply(
+                    return match charges.park_refused_reply(
                         ctx.vault,
                         attempt.status.attempt.id,
                         hash,
                         reason,
-                    );
+                    ) {
+                        Ok(parked) => Ok(parked),
+                        Err(error) => super::residency::spent_or_deferred(error, ctx, &charges),
+                    };
                 }
             };
             // A call's labels mean nothing past it: the stored text names
@@ -452,6 +474,7 @@ impl ConsolidationExecutor<'_> {
         match commit {
             Ok(()) => Ok(DreamerAttemptExecution::Completed {
                 completed_units: charges.units,
+                step_hashes: charges.step_hashes.clone(),
             }),
             // A proposal that moved before the merge commits again on resume;
             // a gate only an owner act opens keeps the private park.
@@ -528,7 +551,7 @@ pub(super) fn exposure_groups(proposals: &[Proposal]) -> Result<Vec<Vec<&Proposa
             .entry((
                 body.world,
                 body.scope_facet,
-                body.rel,
+                body.rel.clone(),
                 body.scope_project,
                 scope_key,
             ))
@@ -614,26 +637,4 @@ fn check_narrative_reply(response: &LlmResponse) -> std::result::Result<(), Stri
         return Ok(());
     }
     narrative_text(response).map(|_| ()).map_err(str::to_owned)
-}
-
-/// A proposal's subject as its narrative call names it: an entity by its
-/// label (a proposal's own `C<n>` when it is one, else `P<n>`), an edge as
-/// `<kind>(<source>,<target>)` over its endpoints' labels.
-pub(super) fn subject_label(labels: &mut CallLabelMap, subject: &ClaimSubject) -> String {
-    let mut label = |id: EntityId| -> CallLabel {
-        labels
-            .label(LabelKind::Claim, id)
-            .unwrap_or_else(|| labels.assign(LabelKind::Entity, id))
-    };
-    match *subject {
-        ClaimSubject::Entity(id) => label(id).to_string(),
-        ClaimSubject::Edge {
-            source,
-            kind,
-            target,
-        } => {
-            let (source, target) = (label(source), label(target));
-            format!("{}({source},{target})", kind.name())
-        }
-    }
 }

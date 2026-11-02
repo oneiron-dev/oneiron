@@ -20,6 +20,7 @@ impl crate::vault::Vault {
             room_peer: false,
             own_owner_authority: false,
             records_cover: Default::default(),
+            judged_at: None,
         }
     }
 
@@ -61,6 +62,7 @@ impl crate::vault::Vault {
             room_peer: false,
             own_owner_authority: false,
             records_cover: Default::default(),
+            judged_at: None,
         }
     }
 }
@@ -158,11 +160,12 @@ impl<'a> ScopedRead<'a> {
     }
 
     pub(super) fn credential_allows_id(&self, id: &EntityId) -> bool {
-        self.actor_key.proof.as_ref().is_none_or(|proof| {
-            let claims = proof.claims();
-            self.credential_channel_allows(claims)
-                && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
-        })
+        self.record_bound_allows(id)
+            && self.actor_key.proof.as_ref().is_none_or(|proof| {
+                let claims = proof.claims();
+                self.credential_channel_allows(claims)
+                    && (claims.records.is_empty() || claims.records.contains(&id.to_hex()))
+            })
     }
 
     /// The credential's channel caveat, apart from its records caveat
@@ -288,7 +291,8 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         for peer in &self.peer_reads {
-            let peer = self.vault.scoped_read(peer.clone());
+            let mut peer = self.vault.scoped_read(peer.clone());
+            peer.judged_at = self.judged_at;
             match peer.owner_live_in(txn) {
                 Ok(()) => {}
                 Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {
@@ -471,10 +475,8 @@ impl ScopedRead<'_> {
             return Ok(false);
         };
         Ok(self
-            .record_world_in(txn, id, row.entity_type, &row.body)?
-            .is_none_or(|world| {
-                !super::actor_key::record_world_scope(world).is_narrowing_of(&ceiling)
-            }))
+            .world_record_in(txn, id, row.entity_type, &row.body, &ceiling)?
+            .is_none_or(|record| !record.is_narrowing_of(&ceiling)))
     }
 
     /// Whether `row` of `id` is a TASK, or one of its authority facts, whose
@@ -505,20 +507,22 @@ impl ScopedRead<'_> {
         Ok(!inside)
     }
 
-    /// The world the stored row `id` sits in, read in `txn` over this read's
-    /// own store (`record_scope::record_world_in`). `None` where the row
-    /// cannot prove one.
-    fn record_world_in(
+    /// The world-only position of the stored row `id`, read in `txn` over
+    /// this read's own store (`record_scope::record_world_in`), as a read
+    /// under the world ceiling `ceiling` holds it: a NOTE at its world
+    /// witness there (FIX-LIST 9433). `None` where the row cannot prove one.
+    fn world_record_in(
         &self,
         txn: &heed::RoTxn<'_>,
         id: &EntityId,
         kind: u8,
         data: &[u8],
-    ) -> Result<Option<Option<EntityId>>> {
-        use crate::federation::record_scope::record_world_in;
+        ceiling: &crate::federation::Scope,
+    ) -> Result<Option<crate::federation::Scope>> {
+        use crate::federation::record_scope::note_world::world_record_held_at;
         match self.session_view {
-            Some(view) => record_world_in(view, txn, *id, kind, data),
-            None => record_world_in(&self.vault.store, txn, *id, kind, data),
+            Some(view) => world_record_held_at(view, txn, *id, kind, data, ceiling),
+            None => world_record_held_at(&self.vault.store, txn, *id, kind, data, ceiling),
         }
     }
 
@@ -547,10 +551,8 @@ impl ScopedRead<'_> {
         if row.entity_type != ENTITY_TYPE_CLAIM {
             let ceiling = super::actor_key::world_only(granted.worlds.clone());
             return Ok(self
-                .record_world_in(txn, id, row.entity_type, &row.body)?
-                .is_none_or(|world| {
-                    !super::actor_key::record_world_scope(world).is_narrowing_of(&ceiling)
-                }));
+                .world_record_in(txn, id, row.entity_type, &row.body, &ceiling)?
+                .is_none_or(|record| !record.is_narrowing_of(&ceiling)));
         }
         // A claim with no decodable world names none, as a read that asked
         // for worlds judges it.
@@ -591,6 +593,16 @@ impl ScopedRead<'_> {
             self.is_entity_retrievable_with_policy_in(txn, policy, filter, id)
                 .map(|allowed| allowed.then_some(()))
         })
+    }
+
+    /// What `id`, a row this lane does not read, adds to a receipt's
+    /// suppressed count: exactly [`ReadAdmission::suppression`] for it, one
+    /// for an ordinary policy denial and none for a row any other rule keeps
+    /// absent (world, credential, room turn, secret custody), so a caller's
+    /// sum of it discloses nothing the lane's own reads would not.
+    pub(crate) fn suppression_of(&self, id: &EntityId) -> Result<usize> {
+        let txn = self.grant_read_txn()?;
+        Ok(self.admit_in(&txn, id, || Ok(None::<()>))?.suppression())
     }
 }
 

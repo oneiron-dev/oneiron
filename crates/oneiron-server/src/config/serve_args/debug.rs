@@ -45,12 +45,14 @@ impl fmt::Debug for ServeArgs {
             .field("settings_file", &self.settings_file)
             .field("voice_socket", &self.voice_socket)
             .field("seal_key_file", &self.seal_key_file)
+            .field("seal_key_handle", &self.seal_key_handle)
             .field("seal_chain_file", &self.seal_chain_file)
             .field("seal_trust_file", &self.seal_trust_file)
             .field("seal_tsa_url", &self.seal_tsa_url)
             .field("seal_signing_url", &self.seal_signing_url)
             .field("seal_organ", &self.seal_organ)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,

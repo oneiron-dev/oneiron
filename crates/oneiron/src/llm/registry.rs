@@ -6,6 +6,9 @@ mod installed_pack;
 pub use description::{DescriptionClass, DescriptionContribution, ModelDescription};
 mod source_erase;
 pub(crate) use source_erase::erase_registry_source_in_txn;
+mod stale_mark;
+mod stored_rows;
+use stored_rows::StoredRows;
 
 use super::{LlmCatalogEntry, ModelId};
 use crate::entity_id::EntityId;
@@ -13,14 +16,24 @@ use crate::side_table::{self, LegacyJson, SideTable};
 use crate::skill_optimize::{live_source_rows_in, union_source_rows};
 use crate::{
     Vault,
-    error::{Error, Result},
+    error::{Error, ErrorKind, Result},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
-/// One priced model registry row. Key: string (model id).
-const REGISTRY_ROW: SideTable<String, ModelRegistryRow, LegacyJson> =
-    SideTable::new(&side_table::LLM_REGISTRY_ROW);
+/// A stored registry row a scan skipped (FIX 10862): its key, the model id
+/// it is stored under, and why it does not read: it did not decode, or did
+/// not validate.
+#[derive(Debug)]
+pub struct SkippedRegistryRow {
+    pub key: String,
+    pub error: Error,
+}
+/// One priced model registry row. Key: string (model id). A legacy
+/// pre-9534 stored copy of the installed pack's row whose cost names no
+/// `currency` key reads under that pack's currency contract (FIX 9534,
+/// narrowed by FIX 11778).
+const REGISTRY_ROW: StoredRows = StoredRows;
 /// Bounded recent benchmark-score change history for one model. Key: string (model id) + NUL.
 const SCORE_DIFFS: SideTable<String, Vec<ModelScoreDiff>, LegacyJson> =
     SideTable::new(&side_table::LLM_SCORE_DIFFS);
@@ -233,6 +246,10 @@ impl Vault {
             row.source_rows =
                 union_source_rows([row.source_rows.as_deref(), old.source_rows.as_deref()]);
         }
+        // The owner's own stale mark holds through a re-put (FIX 4546).
+        if let Some(at) = stale_mark::owner_mark(&self.store, &txn, &key)? {
+            row.stale_since = Some(at);
+        }
         REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
         txn.commit()?;
         Ok(())
@@ -341,16 +358,53 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.model_registry_rows_in_txn(&txn)
     }
+    /// Every stored row that reads and validates, in key order. A row that
+    /// does not is skipped, said in the log by its key and error kind, and
+    /// named by [`Self::model_registry_skipped_rows`]: one bad row never
+    /// hides the vault's others (FIX 10862). A storage failure fails the
+    /// scan.
     pub(super) fn model_registry_rows_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Vec<ModelRegistryRow>> {
-        let mut rows = Vec::new();
-        for (_, row) in REGISTRY_ROW.scan(&self.store, txn)? {
-            row.validate()?;
-            rows.push(row);
+        let (rows, skipped) = self.model_registry_scan_in_txn(txn)?;
+        if !skipped.is_empty() {
+            let rows: Vec<(&str, ErrorKind)> = skipped
+                .iter()
+                .map(|row| (row.key.as_str(), row.error.kind()))
+                .collect();
+            tracing::warn!(
+                reason = "model_registry_row_skipped",
+                ?rows,
+                "stored model registry rows that do not read were skipped; the vault's other \
+                 rows still read"
+            );
         }
         Ok(rows)
+    }
+    /// The stored registry rows every scan skips (FIX 10862), each by its key
+    /// and why it does not read.
+    pub fn model_registry_skipped_rows(&self) -> Result<Vec<SkippedRegistryRow>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(self.model_registry_scan_in_txn(&txn)?.1)
+    }
+    /// The rows that read and validate, and the rows that do not.
+    fn model_registry_scan_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<(Vec<ModelRegistryRow>, Vec<SkippedRegistryRow>)> {
+        let mut rows = Vec::new();
+        let mut skipped = Vec::new();
+        for (key, row) in REGISTRY_ROW.scan_each(&self.store, txn)? {
+            match row.and_then(|row| row.validate().map(|()| row)) {
+                Ok(row) => rows.push(row),
+                Err(error) if matches!(error.kind(), ErrorKind::Storage | ErrorKind::Io) => {
+                    return Err(error);
+                }
+                Err(error) => skipped.push(SkippedRegistryRow { key, error }),
+            }
+        }
+        Ok((rows, skipped))
     }
     pub fn model_catalog_entries(&self, wire: ModelWireFormat) -> Result<Vec<LlmCatalogEntry>> {
         let mut rows = self.model_registry_rows()?;
@@ -386,7 +440,8 @@ impl Vault {
     /// prior pack shipped takes the new catalog and keeps its scores; a row
     /// the host edited stays as it is. With no prior pack this is the seed.
     /// A model the prior pack shipped and this one does not goes stale, its
-    /// row kept; a model this pack ships is not stale.
+    /// row kept; a model this pack ships is not stale, unless the owner
+    /// marked it so (FIX 4546).
     pub(crate) fn refresh_model_catalog_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -417,8 +472,11 @@ impl Vault {
             .iter()
             .map(|row| row.catalog.model.as_str().to_owned())
             .collect();
-        for row in checked.rows {
+        for mut row in checked.rows {
             let key = row.catalog.model.as_str().to_owned();
+            // A pack that ships the model keeps the owner's own mark (FIX 4546).
+            let marked = stale_mark::owner_mark(&self.store, txn, &key)?;
+            row.stale_since = row.stale_since.or(marked);
             match REGISTRY_ROW.get(&self.store, txn, &key)? {
                 None => REGISTRY_ROW.put(&self.store, txn, &key, &row)?,
                 Some(existing)
@@ -444,13 +502,13 @@ impl Vault {
                         wire: row.wire,
                         catalog: row.catalog,
                         tokens_per_o200k,
-                        stale_since: None,
+                        stale_since: marked,
                         source_rows,
                         ..existing
                     };
                     REGISTRY_ROW.put(&self.store, txn, &key, &refreshed)?;
                 }
-                Some(mut existing) if existing.is_stale() => {
+                Some(mut existing) if existing.is_stale() && marked.is_none() => {
                     existing.stale_since = None;
                     existing.source_rows = union_source_rows([
                         existing.source_rows.as_deref(),
@@ -481,28 +539,6 @@ impl Vault {
             }
         }
         Ok(())
-    }
-    /// Marks `model`'s stored row retired by its provider since `at`, for a
-    /// host that learns of a retirement outside a pack refresh; `None`
-    /// clears the mark. The row stays. `Ok(false)` when no row is stored or
-    /// it already reads so.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn mark_model_row_stale(&self, model: &ModelId, at: Option<u64>) -> Result<bool> {
-        let key = model.as_str().to_owned();
-        let mut txn = self.store.env.write_txn()?;
-        let Some(mut row) = REGISTRY_ROW.get(&self.store, &txn, &key)? else {
-            return Ok(false);
-        };
-        if row.stale_since == at {
-            return Ok(false);
-        }
-        row.stale_since = at;
-        REGISTRY_ROW.put(self, &mut txn, &key, &row)?;
-        txn.commit()?;
-        Ok(true)
     }
     pub fn apply_model_scores(&self, snapshot: &ScoreSnapshot) -> Result<Vec<ModelScoreDiff>> {
         self.apply_model_score_snapshots(std::slice::from_ref(snapshot))

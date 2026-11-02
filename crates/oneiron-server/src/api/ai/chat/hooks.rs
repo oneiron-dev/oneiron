@@ -32,6 +32,7 @@ pub(in crate::api::ai::chat) fn turn_generate_call(
         class: HookActorClass::System,
         scope: room.map(|room| format!("room:{}", room.to_hex())),
         board_epoch: None,
+        turn: None,
         domain: VerbDomain::Write,
         reader,
     }
@@ -54,11 +55,7 @@ pub(crate) fn turn_generate_pre(
     resolved: Option<EntityId>,
     session: Option<&verb_hook_boundary::HookSession>,
 ) -> oneiron::Result<Result<VerbHookPre, VerbHookStop>> {
-    let args = json!({
-        "room": room,
-        "scope": Value::Null,
-        "board_epoch": Value::Null,
-    });
+    let args = turn_generate_args(room);
     crate::server::blocking(|| {
         verb_hook_boundary::hooks_pre(
             vault,
@@ -68,6 +65,16 @@ pub(crate) fn turn_generate_pre(
             session,
             None,
         )
+    })
+}
+
+/// The input of a turn's `host.turn.generate` call in `room`: what its
+/// chain reads, and what its hook session is judged on (FIX 10344).
+pub(in crate::api::ai::chat) fn turn_generate_args(room: &str) -> Value {
+    json!({
+        "room": room,
+        "scope": Value::Null,
+        "board_epoch": Value::Null,
     })
 }
 
@@ -98,15 +105,12 @@ pub(in crate::api::ai::chat) fn witness_through_row(
 ) -> Result<Result<Value, VerbHookStop>, MemoryError> {
     let args = serde_json::to_value(turn)
         .map_err(|_| MemoryError::bad_request("witness turn does not encode"))?;
-    verb_hook_boundary::verb_hooks_in(
+    let ended = verb_hook_boundary::verb_hooks_in(
         vault,
         session,
         VerbCall::for_memory(hooked, WITNESS_ROW, VerbDomain::Write)?,
-        args,
-        &|args: &Value| {
-            oneiron::task_verb::sdk::validate_input(WITNESS_ROW, args)
-                .map_err(|error| error.to_string())
-        },
+        args.clone(),
+        &|rewritten: &Value| host_args_kept(&args, rewritten),
         |args| {
             let turn: WitnessTurn = serde_json::from_value(args)
                 .map_err(|_| MemoryError::bad_request("witness turn does not decode"))?;
@@ -115,7 +119,16 @@ pub(in crate::api::ai::chat) fn witness_through_row(
             serde_json::to_value(receipt)
                 .map_err(|_| MemoryError::bad_request("witness receipt does not encode"))
         },
-    )
+    )?;
+    // A turn that resumes a settled ask never runs the witness closure above:
+    // its sources come from the stored receipt instead.
+    if written.is_none()
+        && let Ok(value) = &ended
+        && let Some(receipt) = verb_hook_boundary::resumed_witness_receipt(value)
+    {
+        *written = sources::witnessed(&receipt);
+    }
+    Ok(ended)
 }
 
 /// A turn a verb hook stopped (ARCH-0080 §3): a skip is a conflict, an ask

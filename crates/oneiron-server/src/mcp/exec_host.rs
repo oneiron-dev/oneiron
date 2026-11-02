@@ -1,8 +1,10 @@
 //! MCP code-execution host seam and the engine-native host binding.
 
+use super::LiveLeaseBackend;
 use super::actors::McpResolvedActor;
 use super::run_seats::RunSeats;
 use crate::admission::Admission;
+use crate::ai_host::live_lease::LeaseLine;
 use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::wire_telemetry::{LimitQuestions, LimitRow};
 use oneiron::agent_def::AgentModel;
@@ -18,7 +20,6 @@ use oneiron::llm::run_admission::{PayerPerson, RunAdmission};
 use oneiron::llm::seat::{ModelSeat, SeatDecisions, SeatKind, SeatTask};
 use oneiron::task_type::TaskTypeRef;
 use oneiron::{BudgetGuard, BudgetLease, EntityId, LlmBackend, ModelLocality, Vault, WriteActor};
-use std::collections::HashSet;
 use std::fmt;
 use std::future::Future;
 use std::pin::Pin;
@@ -26,7 +27,10 @@ use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
+mod active_run;
+mod description_route;
 mod off_record_run;
+use self::active_run::ActiveRuns;
 pub(crate) use self::off_record_run::{OffRecordRunSession, off_record_run_id};
 
 /// The ONE place an MCP-derived durable id is minted (ONE-1704 M3).
@@ -135,8 +139,6 @@ impl fmt::Debug for McpCodeExecutionRequest<'_> {
 pub enum McpCodeExecutionError {
     #[error("no execute_code host is bound on this server")]
     HostUnbound,
-    #[error("execute_code run is already active; retry the same run_ref")]
-    RunBusy,
     #[error(
         "execute_code waited past limits.queue_wait_timeout_ms for a run's turn; no run was started; retry"
     )]
@@ -160,7 +162,6 @@ impl McpCodeExecutionError {
     pub const fn error_code(&self) -> &'static str {
         match self {
             Self::HostUnbound => super::MCP_CODE_HOST_UNBOUND_CODE,
-            Self::RunBusy => "code_run_busy",
             Self::RunWaitedOut => "code_run_waited_out",
             Self::RunBinding(_) => "code_run_binding_failed",
             Self::Run(_) => "code_run_failed",
@@ -453,7 +454,9 @@ impl Default for CodeRunLimits {
 /// own durable executor.
 pub struct McpEngineNativeCodeHost {
     provider: Arc<dyn McpCodeModeProvider>,
-    active: Arc<Mutex<HashSet<EntityId>>>,
+    /// Each run's single flight: one entry at a time, the next in arrival
+    /// order (FIX 9505).
+    active: ActiveRuns,
     seats: Arc<Mutex<RunSeats>>,
     /// Keyed by the credential's stream connection, its registered
     /// fingerprint.
@@ -480,7 +483,7 @@ impl McpEngineNativeCodeHost {
     ) -> Self {
         Self {
             provider,
-            active: Arc::new(Mutex::new(HashSet::new())),
+            active: ActiveRuns::new(limits.wait),
             seats: Arc::default(),
             runs: Admission::new(LimitRow::CodeRuns, questions, limits.total, limits.wait),
             reader_seats: None,
@@ -524,7 +527,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     > {
         let vault = Arc::clone(&request.vault);
         let provider = Arc::clone(&self.provider);
-        let active = Arc::clone(&self.active);
+        let active = &self.active;
         let seats = Arc::clone(&self.seats);
         let write_actor = request.actor.write_actor();
         let placement = (request.actor.scope.world_ref, request.actor.scope.facet_ref);
@@ -540,7 +543,9 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
             if request.run_id != mcp_code_run_id(request.run_ref, request.actor) {
                 return Err(changed());
             }
-            let guard = ActiveRun::acquire(active, request.run_id)?;
+            // A second entry of a run still running waits behind it, in
+            // arrival order, holding no permit while it waits (FIX 9505).
+            let guard = active.acquire(request.run_id).await?;
             // The run spends under no scope, so its children spend on the
             // host's meter, as its own calls do, on a clock one window from
             // its first spawn.
@@ -577,6 +582,10 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                 .as_ref()
                 .and_then(|auth| auth.verified_slip())
                 .cloned();
+            // The run's read scope (FIX 11768): its seat is born under it.
+            // A scope the vault cannot read is not born.
+            let worlds = run_read_worlds(&vault, opener.as_ref(), placement.0)
+                .map_err(McpCodeExecutionError::RunBinding)?;
             let mut seat = seats
                 .lock()
                 .map_err(|_| McpCodeExecutionError::RunBinding("run seats poisoned".into()))?
@@ -613,6 +622,7 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
                         &config,
                         verbs,
                         opener.as_ref(),
+                        worlds,
                         reader_seat,
                         seat.as_mut(),
                     );
@@ -640,6 +650,46 @@ impl McpCodeExecutionHost for McpEngineNativeCodeHost {
     }
 }
 
+/// The worlds a run — `execute`'s, or a turn program's seat — may read
+/// (FIX 11768): the opener slip's worlds axis — its named set, every world
+/// the vault holds for `All`, none for `Bottom` or no slip at all — plus
+/// the request's own `world_ref` when it names one absent from the set.
+/// The seat birth pre-filters to the routes their orders name; empty
+/// inherits, as before.
+///
+/// `All` meets the authority fold's worlds: the only world enumeration
+/// this host may read without a vault-shape door. An unlisted world
+/// inherits, so it narrows no meet: meeting the fold's worlds meets every
+/// world that can refuse.
+///
+/// # Errors
+///
+/// The `All` enumeration read the vault and failed: the run is not born.
+/// The binding carries a fixed opaque string, never the vault's text.
+pub(crate) fn run_read_worlds(
+    vault: &Vault,
+    opener: Option<&oneiron::authority::VerifiedSlip>,
+    world_ref: Option<EntityId>,
+) -> Result<Vec<EntityId>, String> {
+    let mut worlds: Vec<EntityId> = match opener.map(|slip| &slip.scope().worlds) {
+        Some(oneiron::federation::ScopeAxis::Some(set)) => set.iter().map(|id| id.0).collect(),
+        Some(oneiron::federation::ScopeAxis::All) => vault
+            .authority_fold()
+            .map_err(|_| "the run's worlds did not read".to_owned())?
+            .worlds
+            .keys()
+            .copied()
+            .collect(),
+        Some(oneiron::federation::ScopeAxis::Bottom) | None => Vec::new(),
+    };
+    if let Some(world) = world_ref
+        && !worlds.contains(&world)
+    {
+        worlds.push(world);
+    }
+    Ok(worlds)
+}
+
 /// Enters the EXISTING sandbox/REPL substrate for one durable run.
 ///
 /// This is the whole of what `execute_code` means now: bind the gated write at
@@ -660,6 +710,7 @@ fn run_engine_native_code_mode(
     config: &EngineExecutorConfig,
     verbs: Arc<dyn oneiron::code_run::AgentVerbDoor>,
     opener: Option<&oneiron::authority::VerifiedSlip>,
+    worlds: Vec<EntityId>,
     reader_seat: Option<SpawnHostSeat>,
     compaction: Option<&mut RunCompaction>,
 ) -> Result<EngineExecutorOutcome, McpCodeExecutionError> {
@@ -683,6 +734,7 @@ fn run_engine_native_code_mode(
         format!("mcp-execute-code:{}", config.run_id.to_hex()),
         None,
         Vec::new(),
+        worlds,
     )
     .map_err(McpCodeExecutionError::RunBinding)?;
     enter_engine_native_run(
@@ -765,6 +817,10 @@ pub(crate) struct ScopeMeter<'a> {
     pub(crate) scope: &'a SpendScopeId,
     pub(crate) guard: BudgetGuard,
     pub(crate) payer: Option<PayerPerson>,
+    /// The entry's one live lease on `guard`, lent to its other calls on
+    /// the same meter so they look before they are admitted and book once
+    /// (FIX 11747).
+    pub(crate) lease: LeaseLine,
 }
 
 impl<'a> ScopeMeter<'a> {
@@ -777,6 +833,7 @@ impl<'a> ScopeMeter<'a> {
             .guard_for_scope(scope)
             .map_err(|error| EngineRunError::Binding(error.to_string()))?;
         Ok(Self {
+            lease: LeaseLine::new(scope.clone(), guard.clone()),
             scope,
             guard,
             payer,
@@ -791,9 +848,10 @@ impl<'a> ScopeMeter<'a> {
 /// model.
 ///
 /// A run that spends under a scope (`spend`: a pumped agent run's, OF-533)
-/// makes its model calls on the meter its host opened for the entry, and
-/// what that meter used is booked on the scope once the entry ends, whatever
-/// it answered. With none, the calls run on the provider's own meter.
+/// makes its model calls on the meter its host opened for the entry, read
+/// live ([`LiveLease`]): each call is admitted against what the scope has
+/// left then, and what no call's look booked is booked once the entry ends,
+/// whatever it answered. With none, the calls run on the provider's own meter.
 ///
 /// A planned child no seat binds (`planned`, FIX 2310) makes its calls
 /// through the provider's planned backend on that same meter and payer,
@@ -812,9 +870,10 @@ pub(crate) fn enter_engine_native_run(
     planned: Option<&PlannedModel>,
 ) -> Result<EngineExecutorOutcome, EngineRunError> {
     let Some(ScopeMeter {
-        scope,
         guard,
         payer,
+        lease,
+        ..
     }) = spend
     else {
         let own = planned
@@ -835,18 +894,19 @@ pub(crate) fn enter_engine_native_run(
     let backend = backend.ok_or_else(|| {
         EngineRunError::Binding("this code-mode provider cannot meter a spend scope".into())
     })?;
+    // The lease the entry's door and planner runner were lent: one ledger.
+    let live = lease.on(vault);
     let entered = enter_on(
         vault,
         provider,
-        backend.as_ref(),
+        &LiveLeaseBackend::new(&live, backend.as_ref()),
         bound,
         config,
         compaction,
         reactor,
         seat,
     );
-    AgentDispatcher::new(vault)
-        .record_guard_spend(scope, guard.read().used_units)
+    live.book_rest()
         .map_err(|error| EngineRunError::Binding(error.to_string()))?;
     entered
 }
@@ -867,12 +927,14 @@ fn planned_seat(plan: Option<&SpawnPlanReceipt>) -> Option<oneiron::ModelId> {
 /// task from the host's capability profile. A run, a reader child and a
 /// summary job are each born on one this way. `parent_at`, the cutoff of the
 /// parent a child is born under, bounds a fresh pick (FIX 8230); `None`, the
-/// seat budget alone.
+/// seat budget alone. `worlds` is the run's read scope (FIX 11768): the
+/// birth pre-filters to the routes their orders name; empty inherits.
 pub(crate) fn run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
     parent_at: Option<Instant>,
+    worlds: Vec<EntityId>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     seat_for(
@@ -881,6 +943,7 @@ pub(crate) fn run_seat(
         run_id,
         SeatPin::Base(None),
         parent_at,
+        worlds,
         task,
     )
 }
@@ -898,24 +961,35 @@ impl dyn McpCodeModeProvider + '_ {
         bound: &GatedActorWrite<'_>,
         run_id: EntityId,
         parent_at: Option<Instant>,
+        worlds: Vec<EntityId>,
         task: impl FnOnce(&str) -> SeatTask,
     ) -> Result<Option<ModelSeat>, String> {
-        seat_for(vault, self, run_id, SeatPin::Routed(bound), parent_at, task)
+        seat_for(
+            vault,
+            self,
+            run_id,
+            SeatPin::Routed(bound),
+            parent_at,
+            worlds,
+            task,
+        )
     }
 }
 
 /// An agent run's seat (DOOR-111 S5), born as `run_seat` births one and
 /// stamped with `type_ref`, the stamp its dispatch carried, so the run's
 /// route reads with its own stamp. A manifest-free vault still bears none.
+/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is.
 pub(crate) fn task_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
     run_id: EntityId,
     type_ref: &TaskTypeRef,
+    worlds: Vec<EntityId>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let pin = SeatPin::Base(Some(type_ref));
-    seat_for(vault, provider, run_id, pin, None, task)
+    seat_for(vault, provider, run_id, pin, None, worlds, task)
 }
 
 /// Where a run's seat pin is read and born: the base vault, generic or
@@ -935,6 +1009,7 @@ fn seat_for(
     run_id: EntityId,
     pin: SeatPin<'_, '_>,
     parent_at: Option<Instant>,
+    worlds: Vec<EntityId>,
     task: impl FnOnce(&str) -> SeatTask,
 ) -> Result<Option<ModelSeat>, String> {
     let has_seat = vault
@@ -956,10 +1031,14 @@ fn seat_for(
     let facet = provider
         .seat_facet()
         .ok_or("manifest-backed run requires a capability profile")?;
-    let task = task(facet);
+    let mut task = task(facet);
+    // The run's read scope (FIX 11768): the birth pre-filters to the routes
+    // these worlds' orders name. Empty inherits, as before.
+    task.worlds = worlds;
     match pin {
+        // A typed run is born on its description route when one applies (FIX 11307).
         SeatPin::Base(Some(type_ref)) => {
-            vault.birth_task_model_seat(run_id, type_ref, &task, decisions, parent_at)
+            description_route::task_seat(vault, run_id, type_ref, &task, decisions, parent_at)
         }
         SeatPin::Base(None) => vault.birth_model_seat(run_id, &task, decisions, parent_at),
         SeatPin::Routed(bound) => {
@@ -977,6 +1056,7 @@ fn seat_for(
 /// froze, OF-541) is born on the seat its plan picked (`planned_seat`).
 /// An agent's run is born on a model its definition lists (`listed`, FIX
 /// 4472); a run with no agent, or an agent that lists none, passes none.
+/// `worlds` is the run's read scope (FIX 11768), as `run_seat`'s is.
 pub(crate) fn engine_run_seat(
     vault: &Vault,
     provider: &dyn McpCodeModeProvider,
@@ -984,9 +1064,10 @@ pub(crate) fn engine_run_seat(
     warm_scope: String,
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
+    worlds: Vec<EntityId>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    run_seat(vault, provider, config.run_id, None, |facet| {
+    run_seat(vault, provider, config.run_id, None, worlds, |facet| {
         engine_seat_task(config, facet, warm_scope, model, listed)
     })
 }
@@ -1001,9 +1082,10 @@ pub(crate) fn task_engine_run_seat(
     type_ref: &TaskTypeRef,
     plan: Option<&SpawnPlanReceipt>,
     listed: Vec<AgentModel>,
+    worlds: Vec<EntityId>,
 ) -> Result<Option<ModelSeat>, String> {
     let model = planned_seat(plan);
-    task_run_seat(vault, provider, config.run_id, type_ref, |facet| {
+    task_run_seat(vault, provider, config.run_id, type_ref, worlds, |facet| {
         engine_seat_task(config, facet, warm_scope, model, listed)
     })
 }
@@ -1031,6 +1113,8 @@ fn engine_seat_task(
         override_model,
         override_effort: None,
         listed,
+        // Stamped by `seat_for` from the run's read scope (FIX 11768).
+        worlds: Vec::new(),
     }
 }
 
@@ -1064,35 +1148,6 @@ fn enter_on(
     reactor
         .block_on(executor.run(&routed_config))
         .map_err(EngineRunError::Run)
-}
-
-/// A disconnected caller cannot release single-flight while its worker writes.
-struct ActiveRun {
-    active: Arc<Mutex<HashSet<EntityId>>>,
-    run_id: EntityId,
-}
-impl ActiveRun {
-    fn acquire(
-        active: Arc<Mutex<HashSet<EntityId>>>,
-        run_id: EntityId,
-    ) -> Result<Self, McpCodeExecutionError> {
-        {
-            let mut runs = active
-                .lock()
-                .map_err(|_| McpCodeExecutionError::RunBinding("run registry poisoned".into()))?;
-            if !runs.insert(run_id) {
-                return Err(McpCodeExecutionError::RunBusy);
-            }
-        }
-        Ok(Self { active, run_id })
-    }
-}
-impl Drop for ActiveRun {
-    fn drop(&mut self) {
-        if let Ok(mut runs) = self.active.lock() {
-            runs.remove(&self.run_id);
-        }
-    }
 }
 
 static MCP_CODE_EXECUTION_HOST: OnceLock<Arc<dyn McpCodeExecutionHost>> = OnceLock::new();

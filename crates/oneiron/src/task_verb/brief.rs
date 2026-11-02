@@ -12,6 +12,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_browser::SecretArg;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -20,6 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::llm::decision::Reversibility;
 use crate::llm::decision::questions::OutcomeBinding;
+use crate::llm::decision::questions::QuestionCriteria;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
 use super::ask_types::{TaskAskDefault, TaskAskTarget};
@@ -39,8 +41,9 @@ const WORKFLOW_HANDLE_PREFIX: &str = "workflow:";
 const BRIEF_RECORD_SLOTS: &[&str] = &[
     "/context/pack/pack_ref",
     "/context/read_first/*/target",
-    "/success/yes_if_all/*/evidence_ref",
-    "/success/no_if_any/*/evidence_ref",
+    "/success/criteria/yes_if_all/*/evidence_ref",
+    "/success/criteria/no_if_any/*/evidence_ref",
+    "/success/criteria/not_a_reason_to_say_no/*/evidence_ref",
     "/constraints/policy_refs/*",
     "/constraints/budget_ref",
     "/settled/*",
@@ -213,9 +216,10 @@ pub struct BriefContext {
 }
 
 /// A TASK's binding of one filed library program (CUA E4; DESIGN-2 §2):
-/// `workflow:<record id>` and the string arguments its slots take. The TASK
-/// refers to the program and never copies its steps; each try pins the
-/// record its first lease resolved the handle to.
+/// `workflow:<record id>` and the string arguments its slots take, with
+/// secret slots' arguments in typed form beside them. The TASK refers to
+/// the program and never copies its steps; each try pins the record its
+/// first lease resolved the handle to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WorkflowBinding {
@@ -223,6 +227,10 @@ pub struct WorkflowBinding {
     pub handle: String,
     #[serde(default)]
     pub args: BTreeMap<String, String>,
+    /// Secret slots' arguments in typed form: a name here takes the place
+    /// of the same name in `args` when the try runs the program.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub secret_args: BTreeMap<String, SecretArg>,
 }
 
 impl WorkflowBinding {
@@ -277,17 +285,17 @@ pub struct Criterion {
     pub evidence_ref: Option<EntityId>,
 }
 
-/// Done means: one typed question, yes if all of these and no if any of
-/// these, plus the outcome binding an ask already carries, so done-means and
-/// asks never drift as prose twins.
+/// Done means: one typed question, judged by the same criteria triple a
+/// typed question carries (OF-506): yes if all of these, no if any of these,
+/// and the lines that are never a reason to say no, each criterion with its
+/// evidence ref; plus the outcome binding an ask already carries, so
+/// done-means and asks never drift as prose twins.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DoneMeans {
     pub question: String,
     #[serde(default)]
-    pub yes_if_all: Vec<Criterion>,
-    #[serde(default)]
-    pub no_if_any: Vec<Criterion>,
+    pub criteria: QuestionCriteria<Criterion>,
     #[serde(default)]
     pub outcome_binding: Option<OutcomeBinding>,
     /// The checks the host reads, at the rule tier with no model, on the page
@@ -296,6 +304,35 @@ pub struct DoneMeans {
     /// beside a criterion the TASK's judge still decides.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub browser_checks: Vec<oneiron_browser::ExpectInput>,
+    /// Reuse a settled done-means ask only when it is bound to this very
+    /// Done: the same TASK, try and attempt count, result and brief revision
+    /// (FIX 10183). Any other ask the TASK blocks on is passed over and the
+    /// TASK's own done-means question is asked instead. Off by default, when
+    /// a blocked-on ask answers as before; its binding is recorded either
+    /// way. The owner or an agent turns it on in the brief.
+    #[serde(default)]
+    pub strict_verified_reuse: bool,
+}
+
+impl DoneMeans {
+    /// The criteria as a typed question's providers read them: each line's
+    /// text, the triple whole. The authored criteria stay the truth; this is
+    /// their projection.
+    #[must_use]
+    pub fn question_criteria(&self) -> QuestionCriteria {
+        self.criteria.map_lines(|criterion| criterion.text.clone())
+    }
+
+    /// Every criterion's evidence ref, in criteria order, each once.
+    #[must_use]
+    pub fn criteria_evidence(&self) -> Vec<EntityId> {
+        let mut seen = std::collections::BTreeSet::new();
+        self.criteria
+            .lines()
+            .filter_map(|criterion| criterion.evidence_ref)
+            .filter(|id| seen.insert(*id))
+            .collect()
+    }
 }
 
 /// What makes the work ask up.
@@ -464,19 +501,15 @@ pub(super) fn pin_digest_in(
     Ok(Some(*hasher.finalize().as_bytes()))
 }
 
-fn check_pin(
+/// Whether the row a pin names still digests as the pin says: `None` when
+/// the row is gone.
+fn pin_holds_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     target: EntityId,
     digest: &[u8; 32],
-) -> MemoryResult<()> {
-    match pin_digest_in(vault, txn, target)? {
-        None => Err(MemoryError::from(Error::EntityNotFound)),
-        Some(held) if held == *digest => Ok(()),
-        Some(_) => Err(MemoryError::bad_request(
-            "a brief pin's digest does not match the row it names",
-        )),
-    }
+) -> MemoryResult<Option<bool>> {
+    Ok(pin_digest_in(vault, txn, target)?.map(|held| held == *digest))
 }
 
 fn require_entity(vault: &Vault, txn: &heed::RoTxn<'_>, id: EntityId) -> MemoryResult<()> {
@@ -522,6 +555,32 @@ impl QueueTaskBrief {
         txn: &heed::RoTxn<'_>,
         assignee: Option<TaskAssignee>,
     ) -> MemoryResult<()> {
+        self.checked_in(vault, txn, assignee, false)?;
+        Ok(())
+    }
+
+    /// [`Self::validate_in`] for a brief copied whole from an earlier TASK
+    /// (FIX 9001): a pin whose row moved since that brief pinned it is
+    /// answered, by its target, and never refused, as the copy keeps what
+    /// its source read; a pin whose row is gone still refuses.
+    pub(super) fn validate_copy_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+    ) -> MemoryResult<Vec<EntityId>> {
+        self.checked_in(vault, txn, assignee, true)
+    }
+
+    /// The checks [`Self::validate_in`] runs; a `copied` brief's moved pins
+    /// are answered rather than refused.
+    fn checked_in(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        assignee: Option<TaskAssignee>,
+        copied: bool,
+    ) -> MemoryResult<Vec<EntityId>> {
         if self.schema != TASK_BRIEF_SCHEMA {
             return Err(MemoryError::bad_request("unknown task brief schema"));
         }
@@ -530,17 +589,13 @@ impl QueueTaskBrief {
         require_text(&self.success.question, "done-means question")?;
         // A bound TASK's browser checks alone are a whole goal (Engine C1).
         let typed_goal = self.context.workflow.is_some() && !self.success.browser_checks.is_empty();
-        if self.success.yes_if_all.is_empty() && self.success.no_if_any.is_empty() && !typed_goal {
+        let criteria = &self.success.criteria;
+        if criteria.yes_if_all.is_empty() && criteria.no_if_any.is_empty() && !typed_goal {
             return Err(MemoryError::bad_request(
                 "task brief done-means needs at least one criterion",
             ));
         }
-        for criterion in self
-            .success
-            .yes_if_all
-            .iter()
-            .chain(&self.success.no_if_any)
-        {
+        for criterion in criteria.lines() {
             require_text(&criterion.text, "criterion")?;
         }
         if let Some(binding) = &self.success.outcome_binding {
@@ -573,16 +628,36 @@ impl QueueTaskBrief {
                 "escalation question ref does not resolve to an entity of its declared kind",
             ));
         }
-        if let Some(pack) = &self.context.pack {
-            check_pin(vault, txn, pack.pack_ref, &pack.digest)?;
-        }
-        for pin in &self.context.read_first {
-            check_pin(vault, txn, pin.target, &pin.digest)?;
+        let pins = self
+            .context
+            .pack
+            .iter()
+            .map(|pack| (pack.pack_ref, &pack.digest))
+            .chain(
+                self.context
+                    .read_first
+                    .iter()
+                    .map(|pin| (pin.target, &pin.digest)),
+            );
+        let mut moved = Vec::new();
+        for (target, digest) in pins {
+            match pin_holds_in(vault, txn, target, digest)? {
+                // FIX 11106: a copy keeps a pin whose row is gone, as stale.
+                None if copied => moved.push(target),
+                None => return Err(MemoryError::from(Error::EntityNotFound)),
+                Some(true) => {}
+                Some(false) if copied => moved.push(target),
+                Some(false) => {
+                    return Err(MemoryError::bad_request(
+                        "a brief pin's digest does not match the row it names",
+                    ));
+                }
+            }
         }
         if let Some(binding) = &self.context.workflow {
             binding.validate_in(vault, txn, assignee)?;
         }
-        Ok(())
+        Ok(moved)
     }
 
     /// The objectives an agent realizing this brief confesses against
@@ -600,10 +675,12 @@ impl QueueTaskBrief {
         };
         let done = &self.success;
         let held = done
+            .criteria
             .yes_if_all
             .iter()
             .map(|criterion| fold(&criterion.text));
         let none = done
+            .criteria
             .no_if_any
             .iter()
             .map(|criterion| fold(&criterion.text))

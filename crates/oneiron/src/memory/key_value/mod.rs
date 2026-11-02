@@ -25,6 +25,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub use types::*;
 
 pub(super) const PREDICATE: &str = crate::claim::KEY_VALUE_PREDICATE;
+/// The verb row a keyed value's prose links are receipted under.
+pub(crate) const KEY_VALUE_PROSE_ROW: &str = "vault.kv.put";
 const MAX_ADDRESS_BYTES: usize = 4096;
 const MAX_SEGMENTS: usize = 32;
 const MAX_OFFSET: usize = 1_000_000;
@@ -37,6 +39,19 @@ struct StoredValue {
     value: serde_json::Value,
     created_at: u64,
     request_id: String,
+}
+
+/// The nested value a keyed-value claim `body` stores, the text a bound raw
+/// put's prose admission reads (FIX 3734); `None` for any other claim or a
+/// value of another shape. It reads the shape only: whose value it is
+/// decides nothing here.
+pub(crate) fn key_value_text_of(body: &ClaimBody) -> Option<serde_json::Value> {
+    if body.predicate != PREDICATE {
+        return None;
+    }
+    serde_json::from_value::<StoredValue>(msgpack_value_to_json(&body.value))
+        .ok()
+        .map(|stored| stored.value)
 }
 
 fn check_namespace(namespace: &[String], empty: bool) -> MemoryResult<()> {
@@ -80,6 +95,28 @@ fn conflict(message: &str) -> MemoryError {
         message,
         &["Read the current key and use a fresh request_id for a new operation."],
     )
+}
+const MULTIPLE_HEADS: &str = "multiple committed heads for one actor-owned key";
+
+/// The bound actor/class's live keyed heads (FIX 9947): each address with
+/// one head, and apart from them each address with competing heads, every
+/// head's value kept. A conflicted address answers its own conflict; every
+/// other address reads and writes as if it were not there.
+#[derive(Default)]
+struct KeyValueRows {
+    heads: BTreeMap<KeyValueAddress, (EntityId, StoredValue)>,
+    conflicted: BTreeMap<KeyValueAddress, Vec<StoredValue>>,
+}
+
+impl KeyValueRows {
+    /// The one head at `address`, or `None` when it has none. Competing
+    /// heads there are a conflict: no winner is ever picked.
+    fn take(&mut self, address: &KeyValueAddress) -> MemoryResult<Option<(EntityId, StoredValue)>> {
+        if self.conflicted.contains_key(address) {
+            return Err(conflict(MULTIPLE_HEADS));
+        }
+        Ok(self.heads.remove(address))
+    }
 }
 
 impl Memory<'_> {
@@ -139,12 +176,72 @@ impl Memory<'_> {
         Some(value)
     }
 
+    /// The keyed heads a handle bound to a read credential reads (OF-172
+    /// D2), judged in one lane read over the heads one snapshot lists. It
+    /// runs before the caller's own snapshot opens, as the lane opens its
+    /// own and LMDB allows one per thread; a head written between the two
+    /// is not in the set, so it reads as withheld. `None` for a handle bound
+    /// to no credential, which reads no extra snapshot.
+    fn key_value_readable(&self) -> MemoryResult<Option<BTreeSet<EntityId>>> {
+        if self.read_proof.is_none() {
+            return Ok(None);
+        }
+        let ids: Vec<EntityId> = {
+            let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+            self.key_value_candidates(&txn)?
+                .into_iter()
+                .map(|(_, id, _)| id)
+                .collect()
+        };
+        self.credential_readable_ids(&ids)
+    }
+
+    /// The bound actor/class's live keyed heads, by address. With
+    /// `readable` (a credential-bound handle's [`Self::key_value_readable`]),
+    /// only the heads in it: a withheld head is skipped as absent before any
+    /// conflict check, so it never errors, and a key whose head is withheld
+    /// reads as absent, with no fall back to an older head.
     fn key_value_rows(
         &self,
         txn: &heed::RoTxn<'_>,
-    ) -> MemoryResult<BTreeMap<KeyValueAddress, (EntityId, StoredValue)>> {
+        readable: Option<&BTreeSet<EntityId>>,
+    ) -> MemoryResult<KeyValueRows> {
+        let mut candidates = self.key_value_candidates(txn)?;
+        // A credential-bound reader sees only the rows its read lane admits,
+        // before any conflict check, count or page: a withheld head takes no
+        // place.
+        if let Some(readable) = readable {
+            candidates.retain(|(_, id, _)| readable.contains(id));
+        }
+        let mut rows = KeyValueRows::default();
+        for (address, id, value) in candidates {
+            // Sync or a generic claim writer may create competing heads. Do
+            // not invent a winner or silently delete one on the next write;
+            // the conflict stays with its own address (FIX 9947).
+            if let Some(competing) = rows.conflicted.get_mut(&address) {
+                competing.push(value);
+                continue;
+            }
+            match rows.heads.entry(address) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert((id, value));
+                }
+                std::collections::btree_map::Entry::Occupied(slot) => {
+                    let (address, (_, first)) = slot.remove_entry();
+                    rows.conflicted.insert(address, vec![first, value]);
+                }
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Every live keyed head of the bound actor/class, in scan order.
+    fn key_value_candidates(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<Vec<(KeyValueAddress, EntityId, StoredValue)>> {
         verify_actor_binding_in_txn(self.vault, txn, self.actor, self.actor_class)?;
-        let mut rows = BTreeMap::new();
+        let mut candidates: Vec<(KeyValueAddress, EntityId, StoredValue)> = Vec::new();
         // Existing indexed scan has a hard work ceiling and fails loudly on
         // overflow. Never truncate it into a false negative or a partial page.
         for id in self.vault.claims_for_subject_in_txn(txn, &self.actor)? {
@@ -182,13 +279,9 @@ impl Memory<'_> {
                 namespace: value.namespace.clone(),
                 key: value.key.clone(),
             };
-            // Sync or a generic claim writer may create competing heads. Do
-            // not invent a winner or silently delete one on the next write.
-            if rows.insert(address, (id, value)).is_some() {
-                return Err(conflict("multiple committed heads for one actor-owned key"));
-            }
+            candidates.push((address, id, value));
         }
-        Ok(rows)
+        Ok(candidates)
     }
 
     fn key_value_item(
@@ -216,9 +309,10 @@ impl Memory<'_> {
     /// Exact get in the bound actor/class's worldless namespace.
     pub fn key_value_get(&self, address: &KeyValueAddress) -> MemoryResult<Option<KeyValueItem>> {
         check_address(address)?;
+        let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.key_value_rows(&txn)?
-            .remove(address)
+        self.key_value_rows(&txn, readable.as_ref())?
+            .take(address)?
             .map(|(id, value)| self.key_value_item(&txn, id, value))
             .transpose()
     }
@@ -245,15 +339,28 @@ impl Memory<'_> {
                 ));
             }
         }
+        let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        self.key_value_rows(&txn)?
+        let selected = |address: &KeyValueAddress, value: &StoredValue| {
+            address.namespace.starts_with(&request.namespace_prefix)
+                && request
+                    .filter
+                    .as_ref()
+                    .is_none_or(|filter| filter.iter().all(|(k, v)| value.value.get(k) == Some(v)))
+        };
+        let rows = self.key_value_rows(&txn, readable.as_ref())?;
+        // A conflicted address answers only a search it could be in: one of
+        // its heads would match, so the page cannot be read without a winner.
+        if rows
+            .conflicted
+            .iter()
+            .any(|(address, values)| values.iter().any(|value| selected(address, value)))
+        {
+            return Err(conflict(MULTIPLE_HEADS));
+        }
+        rows.heads
             .into_iter()
-            .filter(|(address, (_, value))| {
-                address.namespace.starts_with(&request.namespace_prefix)
-                    && request.filter.as_ref().is_none_or(|filter| {
-                        filter.iter().all(|(k, v)| value.value.get(k) == Some(v))
-                    })
-            })
+            .filter(|(address, (_, value))| selected(address, value))
             .skip(request.offset)
             .take(request.limit)
             .map(|(_, (id, value))| self.key_value_item(&txn, id, value))
@@ -276,10 +383,15 @@ impl Memory<'_> {
                 "max_depth must be between 1 and 32",
             ));
         }
+        let readable = self.key_value_readable()?;
         let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
-        let namespaces: BTreeSet<_> = self
-            .key_value_rows(&txn)?
+        // A conflicted address is live whichever head it keeps: its
+        // namespace is listed, as one head's would be.
+        let rows = self.key_value_rows(&txn, readable.as_ref())?;
+        let namespaces: BTreeSet<_> = rows
+            .heads
             .into_keys()
+            .chain(rows.conflicted.into_keys())
             .map(|address| address.namespace)
             .filter(|ns| ns.starts_with(&request.prefix) && ns.ends_with(&request.suffix))
             .map(|mut ns| {

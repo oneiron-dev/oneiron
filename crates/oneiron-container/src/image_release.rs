@@ -10,12 +10,20 @@
 //! it is and decides exactly as before. The wire format and the call shapes
 //! are in `crates/oneiron-container/images/manifest.md`.
 //!
-//! This module reads no file and hashes no artifact. The caller opens the
-//! host-owned release documents and supplies the digests it measured.
+//! [`verify_release`] reads no file and hashes no artifact: the caller
+//! supplies the release documents and the digests it measured. The one
+//! host-side reader is the `host_binding` child: [`observe_bound_release`]
+//! reads the documents the host bound to the selected image at launch, and
+//! [`probe_host`] measures the host read-only.
 
+mod host_binding;
 mod manifest;
 mod signature;
 mod verify;
+
+pub use host_binding::{
+    IMAGE_RELEASE_BINDINGS_ENV, SelectedImage, observe_bound_release, probe_host,
+};
 
 pub use manifest::{
     BinaryHash, Blake3Digest, ContractRevisions, DigestError, DocumentRef, EngineRelease,
@@ -42,6 +50,9 @@ pub const IMAGE_RELEASE_ENVELOPE_FILE: &str = "image-release.sig.json";
 
 /// No release manifest is bound to the image.
 pub const IMAGE_RELEASE_MANIFEST_ABSENT: &str = "image_release_manifest_absent";
+/// The host's binding map, or a document it binds to the selected image,
+/// could not be read or parsed. Evidence, never a refusal.
+pub const IMAGE_RELEASE_DOCUMENTS_UNAVAILABLE: &str = "image_release_documents_unavailable";
 /// The manifest bytes are not the closed schema.
 pub const IMAGE_RELEASE_MANIFEST_MALFORMED: &str = "image_release_manifest_malformed";
 /// An observed variant or architecture differs from the manifest's.
@@ -71,6 +82,8 @@ pub const IMAGE_SIGNATURE_INVALID: &str = "image_signature_invalid";
 pub enum ImageReleaseFact {
     #[serde(rename = "image_release_manifest_absent")]
     ReleaseManifestAbsent,
+    #[serde(rename = "image_release_documents_unavailable")]
+    ReleaseDocumentsUnavailable,
     #[serde(rename = "image_release_manifest_malformed")]
     ReleaseManifestMalformed,
     #[serde(rename = "image_identity_mismatch")]
@@ -100,6 +113,7 @@ impl ImageReleaseFact {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ReleaseManifestAbsent => IMAGE_RELEASE_MANIFEST_ABSENT,
+            Self::ReleaseDocumentsUnavailable => IMAGE_RELEASE_DOCUMENTS_UNAVAILABLE,
             Self::ReleaseManifestMalformed => IMAGE_RELEASE_MANIFEST_MALFORMED,
             Self::IdentityMismatch => IMAGE_IDENTITY_MISMATCH,
             Self::ArtifactMismatch => IMAGE_ARTIFACT_MISMATCH,
@@ -188,6 +202,12 @@ pub struct ReleaseDocuments<'a> {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum ManifestObservation {
     Absent,
+    /// The host bound documents to the image, but they could not be read,
+    /// so no manifest bytes were seen. `reason` names the document and the
+    /// error, never a host path.
+    Unavailable {
+        reason: String,
+    },
     Parsed {
         digest: Blake3Digest,
         variant: ImageVariant,
@@ -213,8 +233,7 @@ pub struct ImageReleaseObservation {
 }
 
 impl ImageReleaseObservation {
-    /// Today's state at every launch door: no release manifest is bound, so
-    /// no signature either.
+    /// No release manifest is bound to the image, so no signature either.
     #[must_use]
     pub fn manifest_absent(policy: ImageSignaturePolicy) -> Self {
         Self {
@@ -222,6 +241,22 @@ impl ImageReleaseObservation {
             signature: SignatureOutcome::Unavailable,
             facts: vec![
                 ImageReleaseFact::ReleaseManifestAbsent,
+                ImageReleaseFact::SignatureUnavailable,
+            ],
+            policy,
+            admitted: policy == ImageSignaturePolicy::ObserveOnly,
+        }
+    }
+
+    /// The host's binding or a document it names could not be read (FIX
+    /// 9135): no manifest bytes were checked, so no signature either.
+    #[must_use]
+    pub fn documents_unavailable(reason: String, policy: ImageSignaturePolicy) -> Self {
+        Self {
+            manifest: ManifestObservation::Unavailable { reason },
+            signature: SignatureOutcome::Unavailable,
+            facts: vec![
+                ImageReleaseFact::ReleaseDocumentsUnavailable,
                 ImageReleaseFact::SignatureUnavailable,
             ],
             policy,
@@ -265,9 +300,10 @@ impl Default for ImageReleaseObservation {
 
 /// The ONE observe path every launch door and installer calls, before it
 /// starts or imports the image. `release` is the host-owned documents bound
-/// to the selected image; no such binding exists yet, so launch doors pass
-/// `None` and record `image_release_manifest_absent` and
-/// `image_signature_unavailable`. Infallible: nothing is refused here.
+/// to the selected image; `None` records `image_release_manifest_absent` and
+/// `image_signature_unavailable`. Launch doors reach it through
+/// [`observe_bound_release`], which reads the host's binding. Infallible:
+/// nothing is refused here.
 #[must_use]
 pub fn observe_release(
     release: Option<ReleaseDocuments<'_>>,

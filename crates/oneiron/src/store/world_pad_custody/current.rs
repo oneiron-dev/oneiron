@@ -17,6 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use heed::{RoTxn, RwTxn};
 use zeroize::Zeroizing;
 
+use super::install::InstalledWorldPads;
 use super::{WorldPadCustody, WorldPadItem, item_world};
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -31,16 +32,6 @@ use crate::store::{
 pub(crate) struct ExportedWorldPads {
     pub(crate) sealed: SealedWorldPads,
     pub(crate) retired: BTreeSet<WorldPadItem>,
-}
-
-/// What an install did, for its read back.
-pub(crate) struct InstalledWorldPads {
-    /// Each pad it published into custody here, or found there already with
-    /// the same bytes.
-    pub(crate) held: Vec<WorldPadItem>,
-    /// Each pad of the capsule it left out: retired at the source or here,
-    /// erased here, or a custody that takes none.
-    pub(crate) skipped: usize,
 }
 
 impl Store {
@@ -152,14 +143,10 @@ impl Store {
     }
 
     /// Publishes each live pad `opened` holds that current custody here
-    /// lacks, in `wtxn`'s writer, each synced and its Mint journaled before
-    /// the commit (`publish_world_pad_in_txn`). Every check comes before the
-    /// first publication: a pad custody holds other bytes for refuses them
-    /// all. A pad retired here, whose row was hard-erased here, or of a world
-    /// whose keys were destroyed here is never published, nor is any in a
-    /// custody that takes none (an archived vault). Retired pads the capsule
-    /// names are evidence only: nothing here is retired for them. The caller
-    /// commits, then reads back ([`Self::read_back_current_world_pads`]).
+    /// lacks, through the install core a head's reopen shares
+    /// ([`Store::install_world_pads_in_txn`]): every check before the first
+    /// publication, nothing retired here for the capsule's retired pads. The
+    /// caller commits, then reads back ([`Self::read_back_current_world_pads`]).
     ///
     /// # Errors
     ///
@@ -169,35 +156,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         opened: &OpenedWorldPads,
     ) -> Result<InstalledWorldPads> {
-        let mut installed = InstalledWorldPads {
-            held: Vec::new(),
-            skipped: opened.retired.len(),
-        };
-        if self.core.gate_custody_archived()
-            || crate::world_keys::world_keys_destroyed_in_txn(self, wtxn, opened.world)?
-        {
-            installed.skipped += opened.live.len();
-            return Ok(installed);
-        }
-        let mut publish = Vec::new();
-        for (item, pad) in &opened.live {
-            if crate::world_keys::pad_row_erased_in_txn(self, wtxn, item)? {
-                installed.skipped += 1;
-                continue;
-            }
-            match self.world_pad_custody_entry(item)? {
-                WorldPadCustody::Live(held) if *held == **pad => installed.held.push(*item),
-                // A pad never changes.
-                WorldPadCustody::Live(_) => return Err(CustodyKind::WorldPad.corrupt()),
-                WorldPadCustody::Retired | WorldPadCustody::Closed => installed.skipped += 1,
-                WorldPadCustody::Missing => publish.push((item, pad)),
-            }
-        }
-        for (item, pad) in publish {
-            self.publish_world_pad_in_txn(wtxn, item, pad)?;
-            installed.held.push(*item);
-        }
-        Ok(installed)
+        self.install_world_pads_in_txn(wtxn, opened.world, &opened.live, opened.retired.len())
     }
 
     /// Whether current custody here holds every pad `installed` names, each
@@ -212,17 +171,6 @@ impl Store {
         opened: &OpenedWorldPads,
         installed: &InstalledWorldPads,
     ) -> Result<bool> {
-        for item in &installed.held {
-            let Some(pad) = opened.live.get(item) else {
-                return Ok(false);
-            };
-            if !self
-                .world_pad_in_custody(item)?
-                .is_some_and(|held| *held == **pad)
-            {
-                return Ok(false);
-            }
-        }
-        Ok(true)
+        self.read_back_world_pads(&opened.live, installed)
     }
 }

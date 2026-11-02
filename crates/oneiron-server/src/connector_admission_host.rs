@@ -27,7 +27,6 @@ use oneiron::connector_key::{
     ConnectorToolSchema, ResolvedConnectorManifest, SlateDataClass, SlateManifest,
     SlateToolManifest,
 };
-use oneiron::outbound_consent::CONNECTOR_REPLY_MAX_BYTES;
 use oneiron::skill_hub::pack_catalog::PackObservedTool;
 use reqwest::blocking::{Client, Request, Response};
 use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -39,8 +38,6 @@ const REQUESTED_REVISION: &str = "2026-07-28";
 /// The streamable HTTP revisions this client speaks. A connector that
 /// answers `initialize` with another is not admitted.
 const SPOKEN_REVISIONS: [&str; 4] = ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"];
-/// The most `tools/list` pages one discovery reads.
-const MAX_LIST_PAGES: usize = 64;
 /// Connecting to a connector's endpoint.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// `initialize`, a notification, one list page, a refusal, the session's end.
@@ -223,6 +220,27 @@ impl ListedTool {
     }
 }
 
+/// TP4, declared against actual (FIX 2607, ruled a warning, never a gate):
+/// a generic catalog has no declared document at register, so the
+/// read-only or non-destructive annotations its tools give themselves are
+/// taken as declared. The warning names them; only the suite's write and
+/// effect probes check them. `None` when no tool claims either.
+pub(crate) fn self_declared_hints_warning(tools: &[ListedTool]) -> Option<String> {
+    let claimed: Vec<&str> = tools
+        .iter()
+        .filter(|tool| tool.read_only || !tool.destructive)
+        .map(|tool| tool.name.as_str())
+        .collect();
+    (!claimed.is_empty()).then(|| {
+        format!(
+            "the connector's own annotations mark {} read-only or non-destructive; \
+             registration compares them with no declared document, and only \
+             qualification's write and effect probes check them",
+            claimed.join(", ")
+        )
+    })
+}
+
 /// What one discovery found.
 pub(crate) struct Discovery {
     /// The revision `initialize` negotiated.
@@ -256,8 +274,8 @@ pub(crate) fn resolve(tools: &[ListedTool]) -> oneiron::Result<ResolvedConnector
         .map(|manifest| manifest.with_elicitation(true))
 }
 
-/// What the owner names for one tool at registration. MCP declares neither.
-#[derive(Debug, Clone, Copy, Deserialize)]
+/// What the owner names for one tool at registration. MCP declares none of it.
+#[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ToolClass {
     #[serde(default = "default_data_class")]
@@ -265,6 +283,9 @@ pub(crate) struct ToolClass {
     /// Whether a call spends.
     #[serde(default)]
     pub(crate) spends: bool,
+    /// What one call costs, for a Spend row that preauthorizes (FIX 8689).
+    #[serde(default)]
+    pub(crate) price: Option<oneiron::connector_key::ConnectorSpendEstimate>,
 }
 
 impl Default for ToolClass {
@@ -272,6 +293,7 @@ impl Default for ToolClass {
         Self {
             data_class: DEFAULT_DATA_CLASS,
             spends: false,
+            price: None,
         }
     }
 }
@@ -293,7 +315,7 @@ pub(crate) fn slate_manifest(
         .iter()
         .filter_map(|row| {
             let listed = tools.iter().find(|tool| tool.name == row.name)?;
-            let class = classes.get(&row.name).copied().unwrap_or_default();
+            let class = classes.get(&row.name).cloned().unwrap_or_default();
             Some(SlateToolManifest {
                 name: row.name.clone(),
                 data_class: class.data_class,
@@ -306,6 +328,7 @@ pub(crate) fn slate_manifest(
                 legacy_ask: false,
                 read_only: listed.read_only,
                 idempotent: listed.idempotent,
+                price: class.price,
             })
         })
         .collect();
@@ -616,11 +639,14 @@ impl<'a> Session<'a> {
         read_reply(response, id, &mut |request: &Value| self.refuse(request))
     }
 
-    /// Every `tools/list` page, in the connector's order.
+    /// Every `tools/list` page, in the connector's order, however many it
+    /// lists (FIX 8196). Each page has its own timeout; only a cursor the
+    /// connector already gave, which would page forever, is refused.
     fn list_tools(&self) -> Result<Vec<ListedTool>, &'static str> {
         let mut tools = Vec::new();
         let mut cursor: Option<String> = None;
-        for page in 0..MAX_LIST_PAGES {
+        let mut seen = std::collections::BTreeSet::new();
+        for page in 0u64.. {
             let params = cursor
                 .take()
                 .map_or_else(|| json!({}), |cursor| json!({ "cursor": cursor }));
@@ -638,11 +664,14 @@ impl<'a> Session<'a> {
                 tools.push(ListedTool::parse(tool)?);
             }
             match result.get("nextCursor").and_then(Value::as_str) {
+                Some(next) if !seen.insert(next.to_owned()) => {
+                    return Err("the connector's tools/list cursor repeats");
+                }
                 Some(next) => cursor = Some(next.to_owned()),
-                None => return Ok(tools),
+                None => break,
             }
         }
-        Err("the connector lists more tool pages than this host reads")
+        Ok(tools)
     }
 
     /// Answers one server request on a reply stream with a refusal: this
@@ -686,8 +715,9 @@ impl Drop for Session<'_> {
 const UNREADABLE: &str = "the connector's reply is unreadable";
 
 /// Reads one reply body, JSON or an event stream, until the response that
-/// answers `id`. Server requests on a stream go to `refuse`; notifications
-/// are dropped. More than [`CONNECTOR_REPLY_MAX_BYTES`] is unreadable.
+/// answers `id`, whatever its size (FIX 9281): only a body that does not
+/// parse is unreadable. Server requests on a stream go to `refuse`;
+/// notifications are dropped.
 fn read_reply(
     response: Response,
     id: &Value,
@@ -698,16 +728,10 @@ fn read_reply(
         .get(CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.trim_start().starts_with("text/event-stream"));
-    let limit = u64::try_from(CONNECTOR_REPLY_MAX_BYTES)
-        .unwrap_or(u64::MAX)
-        .saturating_add(1);
-    let mut body = response.take(limit);
+    let mut body = response;
     if !stream {
         let mut bytes = Vec::new();
         body.read_to_end(&mut bytes).map_err(|_| UNREADABLE)?;
-        if bytes.len() > CONNECTOR_REPLY_MAX_BYTES {
-            return Err(UNREADABLE);
-        }
         let value: Value = serde_json::from_slice(&bytes).map_err(|_| UNREADABLE)?;
         let found = match value {
             Value::Array(batch) => batch.into_iter().find(|message| answers(message, id)),
@@ -716,16 +740,11 @@ fn read_reply(
         return found.ok_or(UNREADABLE);
     }
     let mut reader = BufReader::new(body);
-    let mut read = 0usize;
     let mut data = String::new();
     let mut line = String::new();
     loop {
         line.clear();
         let n = reader.read_line(&mut line).map_err(|_| UNREADABLE)?;
-        read = read.saturating_add(n);
-        if read > CONNECTOR_REPLY_MAX_BYTES {
-            return Err(UNREADABLE);
-        }
         let trimmed = line.trim_end_matches(['\r', '\n']);
         if n == 0 || trimmed.is_empty() {
             if let Some(message) = finished_event(&mut data, id, refuse) {

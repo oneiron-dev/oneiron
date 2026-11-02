@@ -157,6 +157,17 @@ pub(crate) fn merge_replicated_turn_in_txn(
     };
     TURNS.put(&vault.store, txn, &id, &merged)?;
     history::index_turn(&vault.store, txn, &merged)?;
+    // FIX 8942: a body-anchored quote the row brings gets the pin its
+    // MESSAGE's document birth here gives, riding beside the MESSAGE as a
+    // birth's pin does (FIX 853).
+    let quotes = (merged.quotes.iter())
+        .filter_map(|(citer, quote)| Some((EntityId::from_hex(citer).ok()?, quote.anchor)))
+        .collect();
+    let pinned = crate::conversation_dag::pin_arrived_body_quotes_in_txn(&vault.store, txn, quotes);
+    #[cfg(feature = "sync")]
+    crate::batch::queue_committed_rows(vault, txn, pinned);
+    #[cfg(not(feature = "sync"))]
+    drop(pinned);
     Ok(TurnMerge::Written)
 }
 

@@ -1,4 +1,5 @@
 //! Exact, budgeted decoding for PDF content and structural streams.
+use super::admitted::Stage;
 use super::*;
 
 /// A stream's bytes as preparation reads them: an unfiltered stream whole (no
@@ -6,9 +7,20 @@ use super::*;
 /// per-stream bound, the `[limits] esign_stream_decode_bytes` row, or refused
 /// with that row named.
 pub(super) fn decoded(stream: &Stream, bound: StreamBound) -> Result<Vec<u8>> {
+    decoded_admitted(stream, bound, &Stage::UNADMITTED)
+}
+
+/// [`decoded`], each buffer it allocates admitted first by `stage` (FIX
+/// 8065).
+pub(super) fn decoded_admitted(
+    stream: &Stream,
+    bound: StreamBound,
+    stage: &Stage,
+) -> Result<Vec<u8>> {
     if stream.dict.has(b"Filter") {
-        decode_stream(stream, bound.0).map_err(past_stream_bound)
+        decode_admitted(stream, bound.0, stage).map_err(past_stream_bound)
     } else {
+        stage.admit(stream.content.len())?;
         Ok(stream.content.clone())
     }
 }
@@ -18,10 +30,17 @@ pub(super) fn decoded(stream: &Stream, bound: StreamBound) -> Result<Vec<u8>> {
 // Reuse the existing native flate2 decoder and require an actual stream end.
 // The secret scan's PDF reader decodes streams with it too.
 pub(crate) fn decode_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>> {
+    decode_admitted(stream, limit, &Stage::UNADMITTED)
+}
+
+/// [`decode_stream`], its output admitted by `stage` before each growth: the
+/// whole new allocation, doubling within `limit`, while the old one lives.
+fn decode_admitted(stream: &Stream, limit: usize, stage: &Stage) -> Result<Vec<u8>> {
     if !stream.dict.has(b"Filter") {
         if stream.content.len() > limit {
             return Err(PdfPreparationError::Limit);
         }
+        stage.admit(stream.content.len())?;
         return Ok(stream.content.clone());
     }
     if stream.filters()?.as_slice() != [b"FlateDecode".as_slice()] {
@@ -60,12 +79,21 @@ pub(crate) fn decode_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>> {
         if count > limit.saturating_sub(output.len()) {
             return Err(PdfPreparationError::Limit);
         }
+        let needed = output.len() + count;
+        if needed > output.capacity() {
+            let grown = output
+                .capacity()
+                .saturating_mul(2)
+                .clamp(needed, limit.max(needed));
+            stage.admit(grown)?;
+            output.reserve_exact(grown - output.len());
+        }
         output.extend_from_slice(&buffer[..count]);
         if status == flate2::Status::StreamEnd {
             if decoder.total_in() as usize != stream.content.len() {
                 return Err(PdfPreparationError::MalformedPdf);
             }
-            return predictor(stream, output, limit);
+            return predictor(stream, output, limit, stage);
         }
         if decoder.total_in() == before_in && count == 0 {
             return Err(PdfPreparationError::MalformedPdf);
@@ -75,7 +103,7 @@ pub(crate) fn decode_stream(stream: &Stream, limit: usize) -> Result<Vec<u8>> {
 
 // PNG predictors are common in xref streams. Decode rows exactly, without
 // accepting a partial final row or expanding beyond the structural budget.
-fn predictor(stream: &Stream, data: Vec<u8>, limit: usize) -> Result<Vec<u8>> {
+fn predictor(stream: &Stream, data: Vec<u8>, limit: usize, stage: &Stage) -> Result<Vec<u8>> {
     let Some(params) = stream.dict.get(b"DecodeParms").ok() else {
         return Ok(data);
     };
@@ -113,6 +141,8 @@ fn predictor(stream: &Stream, data: Vec<u8>, limit: usize) -> Result<Vec<u8>> {
     if !data.len().is_multiple_of(width + 1) {
         return Err(PdfPreparationError::MalformedPdf);
     }
+    // The output, the previous row and the row being decoded.
+    stage.admit(data.len().saturating_add(width.saturating_mul(2)))?;
     let mut output = Vec::with_capacity(data.len());
     let mut previous = vec![0u8; width];
     for row in data.chunks_exact(width + 1) {

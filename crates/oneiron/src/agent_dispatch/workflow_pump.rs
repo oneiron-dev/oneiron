@@ -8,7 +8,11 @@ use crate::attempt_queue::{
     ClaimOutcome, CompleteAttempt, FailAttempt, InterveneAttempt, SetAttemptResult,
 };
 use crate::dreamer_runner::decode_dreamer_attempt_payload;
-use crate::error::Result;
+use crate::error::{ArtifactError, Error, Result};
+
+/// The failure a wrapper settles with when its next step's agent was
+/// disabled after the run was admitted (FIX 9567).
+const STEP_AGENT_DISABLED: &str = "workflow_step_agent_disabled";
 
 impl AgentDispatcher<'_> {
     /// Advance a saved composition after its active leaf settles. Call after
@@ -86,25 +90,35 @@ impl AgentDispatcher<'_> {
             }
             return Ok(WorkflowProgress::Stopped(active.id));
         }
-        let result = active
-            .result_ref
-            .as_ref()
-            .ok_or_else(|| invalid("completed workflow step has no durable result"))?;
-        let definition = crate::agent_def::workflow::decode_workflow(&record.intent.definition)?;
-        let ordinal = record.results.len();
-        let requested = definition
-            .steps
-            .get(ordinal)
-            .ok_or_else(|| invalid("workflow result exceeds the saved composition"))?;
-        record.results.push(WorkflowStepResult {
-            ordinal,
-            requested_agent: requested.to_hex(),
-            dispatched_agent: dispatched.target.agent_definition_ref()?.to_hex(),
-            attempt_id: active.id,
-            result_ref: result.as_str().to_owned(),
-        });
-        // OF-532: the completed leaf's settlement is its calibration receipt.
-        self.settle_child_in_txn(&mut txn, &active.id, now)?;
+        // FIX 10602: a leaf whose result a refused release already saved is
+        // never reported or settled twice; only its successor's release is
+        // tried again, at the next index.
+        let resumed = record
+            .results
+            .last()
+            .is_some_and(|last| last.attempt_id == active.id);
+        if !resumed {
+            let result = active
+                .result_ref
+                .as_ref()
+                .ok_or_else(|| invalid("completed workflow step has no durable result"))?;
+            let definition =
+                crate::agent_def::workflow::decode_workflow(&record.intent.definition)?;
+            let ordinal = record.results.len();
+            let requested = definition
+                .steps
+                .get(ordinal)
+                .ok_or_else(|| invalid("workflow result exceeds the saved composition"))?;
+            record.results.push(WorkflowStepResult {
+                ordinal,
+                requested_agent: requested.to_hex(),
+                dispatched_agent: dispatched.target.agent_definition_ref()?.to_hex(),
+                attempt_id: active.id,
+                result_ref: result.as_str().to_owned(),
+            });
+            // OF-532: the completed leaf's settlement is its calibration receipt.
+            self.settle_child_in_txn(&mut txn, &active.id, now)?;
+        }
         let progress = if record.results.len() == record.steps.len() {
             let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
             queue.set_result_in_txn(
@@ -133,13 +147,61 @@ impl AgentDispatcher<'_> {
             self.settle_child_in_txn(&mut txn, &root, now)?;
             WorkflowProgress::Completed
         } else {
-            record.active = self.enqueue_workflow_step(&mut txn, &record, ordinal + 1, now)?;
-            WorkflowProgress::Advanced(record.active)
+            // FIX 9567: the successor's admission runs in a savepoint, so a
+            // successor whose agent was disabled since rolls back its own
+            // writes alone. The completed step's result stays, the wrapper
+            // fails durably with that reason, and nothing repeats it.
+            let mut savepoint = self.vault.store.env.nested_write_txn(&mut txn)?;
+            match self.enqueue_workflow_step(&mut savepoint, &record, record.results.len(), now) {
+                Ok(next) => {
+                    savepoint.commit()?;
+                    record.active = next;
+                    record.release_refusal = None;
+                    WorkflowProgress::Advanced(next)
+                }
+                Err(Error::Artifact(ArtifactError::AgentDefinitionDisabled { .. })) => {
+                    drop(savepoint);
+                    let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
+                    crate::ports::JobQueue::port_job_fail(
+                        self.vault,
+                        &mut txn,
+                        FailAttempt {
+                            id: root,
+                            lease_owner: "workflow-pump".to_owned(),
+                            attempt_count: lease.attempt_count,
+                            reason: STEP_AGENT_DISABLED.to_owned(),
+                            now,
+                        },
+                    )?;
+                    self.settle_child_in_txn(&mut txn, &root, now)?;
+                    WorkflowProgress::Stopped(root)
+                }
+                // FIX 10602: a successor whose definition is missing, inactive
+                // or unapproved now may be admitted later. The completed step
+                // stays saved and settled once, the wrapper stays paused with
+                // the refusal on its record, and the next pass tries the
+                // release again. A refusal already saved changes nothing, so
+                // nothing is written and no one is woken.
+                Err(error) if release_refused(&error) => {
+                    drop(savepoint);
+                    let refusal = error.to_string();
+                    if resumed && record.release_refusal.as_deref() == Some(refusal.as_str()) {
+                        return Ok(WorkflowProgress::Waiting(active.id));
+                    }
+                    record.release_refusal = Some(refusal);
+                    WorkflowProgress::Waiting(active.id)
+                }
+                Err(error) => return Err(error),
+            }
         };
         RECORD.put(self.vault, &mut txn, &root, &record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
-        if progress == WorkflowProgress::Completed && record.intent.task.is_some() {
+        if matches!(
+            progress,
+            WorkflowProgress::Completed | WorkflowProgress::Stopped(_)
+        ) && record.intent.task.is_some()
+        {
             self.settle_bound_task_after_commit(root, now);
         }
         Ok(progress)
@@ -189,4 +251,18 @@ impl AgentDispatcher<'_> {
             ClaimOutcome::Empty => Err(invalid("workflow wrapper is not claimable")),
         }
     }
+}
+
+/// Whether `error` is a successor release's refusal that may lift (FIX
+/// 10602): its agent definition is missing, inactive or unapproved now.
+fn release_refused(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Artifact(
+            ArtifactError::AgentDefinitionNotFound { .. }
+                | ArtifactError::AgentNotDispatchable(
+                    "agent definition is not active" | "agent definition is not approved"
+                )
+        )
+    )
 }

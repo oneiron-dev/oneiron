@@ -20,6 +20,10 @@
 //! socket it came on, never the attestation that signed only the upgrade, and
 //! is his own call only while the vault records him as its live owner.
 //!
+//! A managed vault's member with no slip, whose supervisor signed the
+//! upgrade for him (`ManagedPersonAction`), opens his own socket, whose
+//! calls reach the member doors alone (FIX 1302 stage 2, [`person_socket`]).
+//!
 //! On a managed vault each call is admitted under the reap freeze as the
 //! `POST` it becomes, and a receipt the socket writes outside a call (a
 //! ping's, a protocol refusal's) is admitted alone. While the vault is frozen
@@ -44,7 +48,10 @@ use super::protocol_close;
 use super::socket_stop::StoppingTransport;
 use super::transport::{GuardedTransport, WS_MAX_WRITE_BUFFER_SIZE, WS_WRITE_BUFFER_SIZE};
 use crate::auth::{CoreAuth, RevokedTokenJtis};
-use crate::managed::{ManagedCarrierContext, ManagedOwnerSession};
+use crate::managed::{ManagedCarrierContext, ManagedOwnerSession, ManagedPersonSession};
+
+mod person_socket;
+pub(super) use self::person_socket::{person_upgrade, signed_person_holder};
 use crate::protocol::{TAG_RPC, close_codes};
 use crate::server::SyncServer;
 
@@ -130,12 +137,24 @@ impl Call {
 
 /// Whom a socket's calls run as.
 enum Credential {
-    /// The slip its upgrade presented: each call names a fresh holder proof
-    /// for it.
-    Slip(HeaderValue),
+    /// The slip its upgrade presented, and that slip as its upgrade
+    /// verified it: each call names a fresh holder proof for it, and
+    /// carries the verified slip for a deferred clock repair (FIX 11525).
+    Slip {
+        bearer: HeaderValue,
+        verified: Option<oneiron::authority::VerifiedSlip>,
+    },
     /// A managed vault's owner, whose upgrade his supervisor attested (FIX
     /// 5128).
     Owner(ManagedOwnerSession),
+    /// A managed vault's attested holder it no longer recorded as its live
+    /// owner at the upgrade: a stale owner sign-in, whose socket books and
+    /// nothing more (FIX 5935, [`booking_upgrade`]).
+    Booking(ManagedOwnerSession),
+    /// A managed vault's member, whose upgrade his supervisor signed: a
+    /// socket that reaches the member doors and nothing more (FIX 1302
+    /// stage 2, [`person_upgrade`]).
+    Person(ManagedPersonSession),
 }
 
 /// What every call's request carries from the upgrade: its credential, the
@@ -153,8 +172,20 @@ impl Caller {
     /// One `mcp` call's params, read as this socket's caller sends them.
     fn call(&self, params: serde_json::Value) -> Option<Call> {
         match self.credential {
-            Credential::Slip(_) => serde_json::from_value(params).ok().map(Call::Slip),
+            Credential::Slip { .. } => serde_json::from_value(params).ok().map(Call::Slip),
             Credential::Owner(_) => serde_json::from_value(params).ok().map(Call::Owner),
+            // His call as the owner's is spelled, carried only through the
+            // booking socket's serve gate.
+            Credential::Booking(_) => serde_json::from_value::<McpOwnerCall>(params)
+                .ok()
+                .filter(|call| crate::api::booking_socket_admits(&call.surface, &call.body))
+                .map(Call::Owner),
+            // His call is spelled as the owner's is, with no holder proof,
+            // carried only through the member socket's serve gate.
+            Credential::Person(_) => serde_json::from_value::<McpOwnerCall>(params)
+                .ok()
+                .filter(|call| crate::api::person_socket_admits(&call.surface, &call.body))
+                .map(Call::Owner),
         }
     }
 
@@ -166,7 +197,7 @@ impl Caller {
         let mut request = Request::post(surface).body(Body::from(body)).ok()?;
         let headers = request.headers_mut();
         headers.extend(self.headers.clone());
-        if let Credential::Slip(bearer) = &self.credential {
+        if let Credential::Slip { bearer, .. } = &self.credential {
             headers.insert(header::AUTHORIZATION, bearer.clone());
         }
         if let Some(binding) = binding {
@@ -184,7 +215,21 @@ impl Caller {
             extensions.insert(peer);
         }
         // Whose socket it came on, never the attestation of the upgrade.
-        if let Credential::Owner(session) = &self.credential {
+        if let Credential::Owner(session) | Credential::Booking(session) = &self.credential {
+            extensions.insert(*session);
+        }
+        // The slip a slip socket's upgrade verified (FIX 11525): a
+        // deferred clock repair runs as it, judged in the repair's writer.
+        if let Credential::Slip {
+            verified: Some(verified),
+            ..
+        } = &self.credential
+        {
+            extensions.insert(crate::api::clock_ingress::McpSocketSlip::of(
+                verified.clone(),
+            ));
+        }
+        if let Credential::Person(session) = &self.credential {
             extensions.insert(*session);
         }
         if let Some(managed) = &self.managed {
@@ -267,8 +312,12 @@ pub(super) fn upgrade(
                     .ok_or_else(unauthorized)?;
                 let auth = CoreAuth::from_headers(headers, &server.config, server.vault().as_ref())
                     .map_err(|_| unauthorized())?;
+                // The slip as its upgrade verified it (FIX 11525): every
+                // call's request carries it for a deferred clock repair.
+                // The upgrade is admitted as before whether or not it has one.
+                let verified = auth.verified_slip().cloned();
                 (
-                    Credential::Slip(bearer),
+                    Credential::Slip { bearer, verified },
                     auth.jti().map(str::to_owned),
                     None,
                 )
@@ -306,10 +355,12 @@ pub(super) fn upgrade(
     // FIX 811: the socket's unattributed replies name the connection its
     // upgrade arrived on.
     let connection = crate::api::call_receipt::connection_id();
-    // OF-237: over an embedded engine's channel or mesh the whole carrier,
-    // hello and calls included, lives under the engine's stop, which it
-    // answers itself, and the stop waits for it and every call it admitted
-    // from before the upgrade registers.
+    // OF-237: on a request carrying an upgrade lifetime (an embedded
+    // channel or mesh, or plain/managed serve through `upgrade_lifetime`)
+    // the whole carrier, hello and calls included, lives under the
+    // server's stop, which it answers itself, and the stop waits for it
+    // and every call it admitted from before the upgrade registers;
+    // without one it runs as before.
     let hold = crate::embedded::UpgradeHold::take(extensions);
     Ok(ws
         .protocols([MCP_SUBPROTOCOL])
@@ -321,6 +372,99 @@ pub(super) fn upgrade(
                 crate::api::call_receipt::on_connection(
                     connection,
                     serve(socket, stop, server, conn_id, (session_jti, owner), caller),
+                )
+            })
+        })
+        .into_response())
+}
+
+/// The attested holder of an upgrade with no credential of anyone's beside
+/// him, whom the managed vault does not record as its live owner now: a
+/// stale owner sign-in (FIX 5935). `None` for the live owner, a slip's
+/// upgrade and any vault no supervisor manages.
+pub(super) fn stale_booking_holder(
+    headers: &HeaderMap,
+    extensions: &Extensions,
+    server: &SyncServer,
+) -> Option<oneiron::EntityId> {
+    if crate::auth::carries_caller_slip(headers)
+        || headers.contains_key(MCP_CREDENTIAL_HEADER)
+        || headers.contains_key(header::AUTHORIZATION)
+    {
+        return None;
+    }
+    let holder = crate::auth::attested_owner(extensions, server)?;
+    CoreAuth::for_attested_booking_holder(holder, server)
+        .ok()
+        .filter(CoreAuth::is_attested_booking_holder)
+        .map(|_| holder)
+}
+
+/// Opens a stale owner sign-in's held booking socket (FIX 5935): the MCP
+/// carrier, which serves no root snapshot, presence or sync frame, for
+/// `holder`, whom his supervisor attested on this upgrade as on a booking
+/// door's request. Its serve gate carries the MCP handshake and the five
+/// booking verbs alone (`api::booking::booking_socket_admits`); each call
+/// runs through `/mcp` as his own call does there, and its booking
+/// admission judges him again (`api::mcp_gateway::booking_call`). His
+/// socket is not closed for his not being the live owner, which it never
+/// asked; it closes on the vault's deletion as every socket does.
+pub(super) fn booking_upgrade(
+    ws: WebSocketUpgrade,
+    headers: &HeaderMap,
+    extensions: &Extensions,
+    server: Arc<SyncServer>,
+    holder: oneiron::EntityId,
+) -> Result<Response, Response> {
+    let managed = extensions
+        .get::<ManagedCarrierContext>()
+        .cloned()
+        .ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR.into_response())?;
+    let session = CoreAuth::for_attested_booking_holder(holder, &server)
+        .ok()
+        .as_ref()
+        .and_then(ManagedOwnerSession::opened_by)
+        .ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
+    let mut carried = HeaderMap::new();
+    for name in CARRIED_HEADERS {
+        if let Some(value) = headers.get(&name) {
+            carried.insert(name, value.clone());
+        }
+    }
+    for name in CARRIED_FORWARDING_HEADERS
+        .into_iter()
+        .chain(OWNER_PLACING_HEADERS)
+    {
+        if let Some(value) = headers.get(name) {
+            carried.insert(name, value.clone());
+        }
+    }
+    let caller = Caller {
+        credential: Credential::Booking(session),
+        headers: carried,
+        tcp_peer: extensions.get::<ConnectInfo<SocketAddr>>().copied(),
+        local_peer: extensions
+            .get::<ConnectInfo<crate::managed::UnixPeer>>()
+            .cloned(),
+        managed: Some(managed),
+    };
+    let conn_id = server.alloc_conn_id();
+    tracing::info!(conn_id, "new MCP booking socket");
+    // FIX 811: the socket's unattributed replies name the connection its
+    // upgrade arrived on.
+    let connection = crate::api::call_receipt::connection_id();
+    // OF-237: the carrier lives under an embedded engine's stop.
+    let hold = crate::embedded::UpgradeHold::take(extensions);
+    Ok(ws
+        .protocols([MCP_SUBPROTOCOL])
+        .max_frame_size(server.config.max_frame_size)
+        .write_buffer_size(WS_WRITE_BUFFER_SIZE)
+        .max_write_buffer_size(WS_MAX_WRITE_BUFFER_SIZE)
+        .on_upgrade(move |socket| {
+            crate::embedded::UpgradeHold::run(hold, move |stop| {
+                crate::api::call_receipt::on_connection(
+                    connection,
+                    serve(socket, stop, server, conn_id, (None, None), caller),
                 )
             })
         })

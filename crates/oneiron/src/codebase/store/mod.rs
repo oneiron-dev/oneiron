@@ -16,6 +16,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, CodeError, Error, Result};
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::secret_snapshot::SnapshotCustodyReport;
 use crate::side_table::{self, FixedSideKey, Raw, SideKey, SideTable};
 use crate::store::Store;
@@ -364,6 +365,16 @@ impl Vault {
             )));
         }
 
+        // A manifest of any size is kept whole; past its row it asks whether
+        // everything is okay (FIX 8678, 9943).
+        let mut files = ScanCount::start(
+            &self.store,
+            wtxn,
+            EngineScan::CodebaseFileRows,
+            code_artifact_id.as_bytes(),
+        )?;
+        files.rows(filtered_snapshot.files.len());
+        files.defer(&self.store);
         delete_codebase_snapshot_in_txn(&self.store, wtxn, code_artifact_id)?;
         SNAPSHOTS.put(&self.store, wtxn, code_artifact_id, filtered_snapshot)?;
         CUSTODY_REPORTS.put(
@@ -467,9 +478,10 @@ impl Vault {
     }
 }
 
-/// One snapshot row in the caller's transaction (the serve path composes it with other reads).
+/// One snapshot row in the caller's transaction (the serve path composes it with other reads),
+/// read from the CODEBASE_SNAPSHOT side row of `store`: the vault's own, or a room's view.
 pub(super) fn codebase_snapshot_in_txn(
-    store: &Store,
+    store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,
     code_artifact_id: &EntityId,
 ) -> Result<Option<CodebaseSnapshot>> {

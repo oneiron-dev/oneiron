@@ -22,20 +22,28 @@
 //! waking actor or the verified owner, on the caller's own read lane; PR3b
 //! adds the checkpoint its restarter resumes from. A hold no condition
 //! returns is the owner's to stop or, once its checkpoint validates, to
-//! resume (`release`, FIX 5880).
+//! resume (`release`, FIX 5880). A try whose sealed slip no longer stands is
+//! its waking actor's to rebind to a live slip of theirs (`rebind`, FIX
+//! 11429), as a queued turn action is.
 
 mod admit;
 mod arm;
 mod authority;
 mod bodies;
+mod erase;
+mod hold_index;
+mod index;
 mod lease;
 mod read;
+mod rebind;
 mod release;
 mod resume;
 mod run;
+mod stop_recovery;
 mod stop_sends;
 mod types;
 mod wake;
+mod withdrawn;
 
 use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
@@ -47,11 +55,13 @@ pub(crate) use self::arm::{
 };
 pub(crate) use self::authority::{
     TurnProgramAuthority, TurnProgramBinding, TurnProgramBound, apply_program_started_in_txn,
-    program_milestone_envelope, require_program_actor_in_txn, stamp_program_attempt,
+    program_attempt_receipt_in_txn, program_milestone_envelope, require_program_actor_in_txn,
+    stamp_program_attempt,
 };
 pub(crate) use self::bodies::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
+pub(crate) use self::hold_index::{index_program_hold_in_txn, unindex_program_hold_in_txn};
 pub use self::read::{
     ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
     ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,
@@ -62,6 +72,7 @@ pub use self::read::{
     TurnProgramAdmissionRequest, TurnProgramAdmissionView, program_checkpoint, program_run,
     settled_program_step, turn_program_admission,
 };
+pub use self::rebind::{TurnProgramRebindReceipt, TurnProgramRebindRequest, rebind_turn_program};
 pub use self::release::{
     ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
     release_turn_program_hold_as_owner,
@@ -79,6 +90,7 @@ pub use self::types::{
 pub(crate) use self::wake::{
     drain_turn_program_wakes, record_turn_program_wakes_in_txn, turn_programs_armed_in_txn,
 };
+pub(crate) use self::withdrawn::is_withdrawal_refusal;
 
 use self::types::{
     TurnProgramAdmissionRecord, TurnProgramArming, TurnProgramAttemptStamp, TurnProgramWake,

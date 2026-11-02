@@ -14,8 +14,6 @@ side_tables! {
     /// UID-to-EVENT lookup cache. Key: bytes32.
     /// Host-installed iMIP submission endpoint and custody name. Key: ().
     CALENDAR_IMIP_TRANSPORT: VaultMeta b"calendar.imip-transport.v1" Named;
-    /// Owner-configured post-meeting outcome grace. Key: ().
-    CALENDAR_OUTCOME_POLICY: VaultMeta b"calendar.outcome-policy.v1" Named;
     CALENDAR_PASSPORT_UID_INDEX: VaultMeta b"calendar.passport.v1:" Raw;
     /// Marker that a derived EVENT's source was erased. Key: id16.
     CALENDAR_INVALIDATED_EVENT: VaultMeta b"calendar_invalid:v1:" Raw;
@@ -126,6 +124,17 @@ side_tables! {
     /// Reverse index: the projection-index keys written for one claim, so they can be removed
     /// together. Key: id16.
     CLAIM_PROJECTION_REVERSE: VaultMeta b"claim:projection_reverse:v1:" LegacyCompact;
+    /// FIX 9598: an approved Dreamer claim whose VAD consolidation is still owed, written in the
+    /// approval's commit and cleared in the consolidation's own. Key: id16 (claim).
+    CLAIM_VAD_OWED: VaultMeta b"claim:vad_owed:v1:" Named Engine;
+    /// Posting-list row of one claim under its world (base reality under the reserved base id),
+    /// read by the scope-honesty census. Key: id16 (world) + id16 (claim).
+    CLAIM_WORLD_INDEX: VaultMeta b"claim:world:v1:" Raw;
+    /// One cloud registration slot's value-free binding (G7): the owner who linked it, the pinned
+    /// issuer and audience, the verified cloud subject, its phase and fenced generation. Kept after
+    /// a logout or a replacement until the owner's erase, which takes the slot. Key: id16 (slot).
+    CLOUD_REGISTRATION: VaultMeta b"cloud_registration:v1:" Named
+        => crate::secret_custody::erase_cloud_registration_actor_in_txn;
     /// One agent-health card (OF-568): the Coach's merged evidence, routing and outcome for one
     /// actor, signal and task. Key: id16 actor, signal code byte, id16 task (zeros for none).
     COACH_AGENT_HEALTH_CARD: VaultMeta b"coach:agent_health_card:v1:" Named
@@ -147,10 +156,11 @@ side_tables! {
     /// be64 of the lease generation, be32 of the call.
     COACH_BLOCKED_SOURCE: VaultMeta b"coach:blocked_source:v1:" Named Authored
         => crate::self_heal::blocked_reports::erase_blocked_source_actor_in_txn;
-    /// Where the Coach's contribution checks resume: the credit key and skill of the last
-    /// candidate a pass put to its replay host, cleared once a pass reaches the end of the credit
-    /// table. Key: ().
-    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named;
+    /// Where the Coach's contribution checks resume: the credit key and target (a loaded skill or
+    /// a used edge's two ends) of the last candidate a pass put to its replay host, cleared once a
+    /// pass reaches the end of the credit table, or by an erase of an entity it names. Key: ().
+    COACH_CONTRIBUTION_CURSOR: VaultMeta b"coach:contribution_cursor:v1" Named
+        => crate::dreamer_runner::maintenance::erase_contribution_cursor_in_txn;
     /// The Coach's issue for one positive model finding (OF-418 L3): its DIAGNOSTIC, tier,
     /// family, class and recipe revision, its exact ordered runs with their replay hashes, the
     /// decision receipts that raised it, the gate decisions its results link, the producer its
@@ -181,6 +191,16 @@ side_tables! {
     /// A hash of the turns the Coach's room upkeep last declared a room's summary from, so an
     /// unchanged room is not declared again. Key: id16 of the room.
     COACH_ROOM_UPKEEP_DECLARED: VaultMeta b"coach:room_upkeep_declared:v1:" Raw;
+    /// The last site-skill candidate filed for one (site, scope), with its content fingerprint and
+    /// source evidence (FIX 7606). Key: hash32 (site) + hash32 (scope).
+    COACH_SITE_SKILL_SEEN: VaultMeta b"coach:site_skill_seen:v1:" Named;
+    /// A quick pick that later proved wrong: a case where a person changed an answer the
+    /// ladder gave without thinking more, kept until the Coach's think-threshold run reads it
+    /// (FIX 2437). Key: id16 of the source the host bound the answer to.
+    COACH_THINK_MISSED: VaultMeta b"coach:think_missed:v1:" Named;
+    /// When the Coach's think-threshold run read a source's record, so a replay never counts
+    /// twice. Key: id16.
+    COACH_THINK_MISSED_READ: VaultMeta b"coach:think_missed_read:v1:" Raw;
     /// When the Coach last climbed (or first saw) a pending skill tradeoff ask, so it climbs one
     /// rung per reminder window. Key: id16 of the ask's proposal.
     COACH_TRADEOFF_CLIMB: VaultMeta b"coach:tradeoff_climb:v1:" Raw;
@@ -243,9 +263,10 @@ side_tables! {
     /// prompt and its digest, the start body's digest and its capsule's lease generation. Key:
     /// id16(successor attempt).
     CODE_RUN_CONTINUATION: VaultMeta b"code_run:continuation:v1:" Named Authored;
-    /// One contribution check's matched-fork rows (FIX 3028): each fork's receipt (the capsule it
-    /// regenerated, its request hash, model, seed, response body ref, anchor hash and score), or
-    /// why the pair is unavailable for good. Key: hash32(attempt receipt, skill, axis) +
+    /// One contribution check's matched-fork rows (FIX 3028, FIX 2870): each fork's receipt (the
+    /// capsule it regenerated, its request hash, model, seed, response body ref, anchor hash, the
+    /// outcome, goal revision and axis it was scored for, and its score), or why the pair is
+    /// unavailable for good. Key: hash32(attempt receipt, outcome, goal revision, axis, target) +
     /// string(row: `with_skill`, `without_skill` or `unavailable`).
     CODE_RUN_CONTRIBUTION_FORK: VaultMeta b"code_run:contribution_fork:v1:" Named Engine;
     /// Which executor run's fold a fold-words dependent stands for: the dependency walk reaches
@@ -333,8 +354,7 @@ side_tables! {
     CODE_SYMBOL_MANIFEST: VaultMeta b"code_symbol:manifest:v1:" Raw
         => crate::code_symbol::erase_manifest_actor_in_txn;
     /// Index of symbol revisions by repo/path/name/fingerprint, empty marker value. Key:
-    /// string(repo_ref) "\x00" string(path) "\x00" string(name) "\x00" hash32(fingerprint) "\x00"
-    /// id16.
+    /// sha256(domain, repo_ref, path, name, fingerprint) "\x00" id16.
     CODE_SYMBOL_REVISION_INDEX: VaultMeta b"code_symbol:revision:v1:" Raw;
     /// Cache-hit outcome record for one view's build/verify action, keyed by view id and action key.
     /// Key: id16 + bytes32 (view id then build action key).

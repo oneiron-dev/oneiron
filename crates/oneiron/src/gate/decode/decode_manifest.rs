@@ -143,6 +143,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) pptx_comment_limits:
         Option<crate::edit_roundtrip::pptx::PptxOperationalLimits>,
     pub(in crate::gate) booking_conversion_rows: Vec<crate::booking::BookingConversionPolicyRow>,
+    pub(in crate::gate) booking_anti_abuse_rows:
+        Vec<crate::booking::anti_abuse::BookingAntiAbuseRuleRow>,
     pub(in crate::gate) dreamer_failure_rules: Vec<DreamerFailureRule>,
     pub(in crate::gate) dreamer_failure_precedence: Option<DreamerFailurePrecedence>,
     pub(in crate::gate) hosted_tts: HostedTtsPolicy,
@@ -154,7 +156,8 @@ pub(in crate::gate) struct DecodedPolicyManifest {
     pub(in crate::gate) docedit_resource_policy: Option<DoceditResourcePolicy>,
     pub(in crate::gate) docx_archive_limits: Option<crate::gate::docx_budget::DocxArchivePolicy>,
 
-    pub(in crate::gate) diagnostic_bounds: Option<crate::self_heal::tripwires::TripwireBounds>,
+    pub(in crate::gate) diagnostic_bounds:
+        Option<crate::self_heal::tripwires::ManifestTripwireBounds>,
     pub(in crate::gate) failure_signal_policy: Vec<crate::failure_signals::policy::Row>,
     pub(in crate::gate) residence_operation_budgets: Option<ResidenceOperationBudgetRow>,
     pub(in crate::gate) livequery_tracker_limits:

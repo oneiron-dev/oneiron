@@ -43,9 +43,12 @@ fn move_check_refused(refusal: MediaEmbedRefusal) -> MemoryError {
     }
 }
 
-/// The documents a probe names: its source family and every target.
+/// The documents a probe names: its source family, every row its query was written from
+/// (FIX 9829) and every target.
 fn probe_rows(probe: &SpaceProbe) -> impl Iterator<Item = EntityId> + '_ {
-    std::iter::once(probe.family).chain(probe.targets.iter().copied())
+    std::iter::once(probe.family)
+        .chain(probe.query_sources())
+        .chain(probe.targets.iter().copied())
 }
 
 /// `vault.embedding_spaces.list`: every space, slot, move and probe count.

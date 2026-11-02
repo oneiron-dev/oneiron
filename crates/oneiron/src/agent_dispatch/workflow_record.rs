@@ -63,6 +63,11 @@ pub struct WorkflowDispatchStatus {
     /// The whole workflow's launch statement (OF-532): one agent per leaf,
     /// the sum of their expected spend, and the cap, frozen at admission.
     pub launch: Option<super::LaunchStatement>,
+    /// Why the next step's release was refused (FIX 10602): its agent
+    /// definition is missing, inactive or unapproved now. The workflow waits,
+    /// its completed steps kept, and the pump releases it once the
+    /// definition admits it again. `None` while nothing refuses.
+    pub release_refusal: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -167,6 +172,10 @@ pub(super) struct WorkflowRecord {
     /// pass over ended runs settles each once. A TASK-less run never sets it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_settled: Option<String>,
+    /// The successor release's refusal the pump saved (FIX 10602), cleared
+    /// when the release lands.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_refusal: Option<String>,
 }
 
 /// A frozen step's dispatch input, as a release reads it.
@@ -189,6 +198,18 @@ fn step_kept_frozen(root: &AttemptId, error: &Error) {
 pub(super) fn dedupe_key_hash(key: &str) -> [u8; 32] {
     *blake3::hash(key.as_bytes()).as_bytes()
 }
+/// Every workflow wrapper's working-set row, in creation order. A wrapper's
+/// record is kept under its root's id from admission on, after the root
+/// ends too, so the record's keys name every wrapper and the pump reads
+/// those rows alone, never the whole ledger (FIX 11318).
+pub(super) fn wrapper_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Vec<AttemptRecord>> {
+    let roots = RECORD.scan_keys(&vault.store, txn, &[])?;
+    AttemptQueue::new(vault).working_rows_in_txn(txn, roots)
+}
+
 pub(super) fn is_wrapper(row: &AttemptRecord) -> bool {
     if row.kind != crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND {
         return false;
@@ -249,8 +270,9 @@ impl super::AgentDispatcher<'_> {
     /// durable report and the actual completed producer attempts. Arbitrary
     /// result refs are not output handles; a malformed output handle refuses.
     /// This never alters the unrelated memory/ancestor projection.
-    pub(super) fn workflow_output_refs_for_attempt(
+    pub(super) fn workflow_output_refs_for_attempt_in_txn(
         &self,
+        txn: &heed::RoTxn<'_>,
         attempt: AttemptId,
         parent: Option<AttemptId>,
     ) -> Result<Vec<WorkflowOutputContextRef>> {
@@ -259,20 +281,20 @@ impl super::AgentDispatcher<'_> {
         };
         let queue = AttemptQueue::new(self.vault);
         // Context resolution can run while a caller owns the writer (widen
-        // admission does). It must never acquire a nested write transaction.
-        let txn = self.vault.store.env.read_txn()?;
-        let Some(wrapper) = queue.get_in_txn(&txn, root)? else {
+        // admission does): it reads in the caller's transaction, and never
+        // opens a snapshot or a writer of its own.
+        let Some(wrapper) = queue.get_in_txn(txn, root)? else {
             return Err(invalid("workflow context parent is missing"));
         };
         if !is_wrapper(&wrapper) {
             return Ok(Vec::new());
         }
-        let record = self.read_workflow(&txn, &wrapper)?;
+        let record = self.read_workflow(txn, &wrapper)?;
         if record.results.len() >= record.steps.len() {
             return Err(invalid("workflow context is not the active step"));
         }
         let current = queue
-            .get_in_txn(&txn, attempt)?
+            .get_in_txn(txn, attempt)?
             .ok_or_else(|| invalid("workflow context step is missing"))?;
         // The cursor can lag a retry tip until the pump advances it. Prove
         // the attempted leaf descends from that cursor without taking the
@@ -282,13 +304,14 @@ impl super::AgentDispatcher<'_> {
         while cursor.id != record.active {
             let previous = queue
                 .get_in_txn(
-                    &txn,
+                    txn,
                     cursor
                         .retry_of
                         .ok_or_else(|| invalid("workflow context retry lineage"))?,
                 )?
                 .ok_or_else(|| invalid("workflow context retry ancestor is missing"))?;
-            if previous.state != AttemptState::Failed
+            // FIX 9577: the retry tip's own rule for a superseded try.
+            if !previous.continues_retry_lineage()
                 || previous.kind != cursor.kind
                 || previous.payload != cursor.payload
                 || previous.run_id != cursor.run_id
@@ -309,7 +332,7 @@ impl super::AgentDispatcher<'_> {
         if payload.parent_attempt != Some(root) || current.run_id != record.intent.run_id {
             return Err(invalid("workflow context step has foreign lineage"));
         }
-        output_refs_in(&queue, &txn, root, &record)
+        output_refs_in(&queue, txn, root, &record)
     }
 
     /// The output handles of a completed TASK-bound run's own steps, read by
@@ -367,6 +390,7 @@ impl super::AgentDispatcher<'_> {
             results: Vec::new(),
             launch: None,
             task_settled: None,
+            release_refusal: None,
         };
         RECORD.admit(self.vault, txn, &unplaced, &mut record)?;
         Ok(record.intent)
@@ -517,12 +541,44 @@ impl super::AgentDispatcher<'_> {
     /// Saved workflows a host pump may still advance: open (Paused) wrapper
     /// roots in creation order. Completed and stopped roots are not listed.
     pub fn open_workflow_roots(&self) -> Result<Vec<AttemptId>> {
-        Ok(AttemptQueue::new(self.vault)
-            .list()?
+        let txn = self.vault.store.env.read_txn()?;
+        Ok(wrapper_rows_in_txn(self.vault, &txn)?
             .into_iter()
             .filter(|row| row.state == AttemptState::Paused && is_wrapper(row))
             .map(|row| row.id)
             .collect())
+    }
+
+    /// Brings each open workflow's waiting step retry forward to `now` (FIX
+    /// 1112): when a model seat comes back, the step its failure ladder put on
+    /// a backoff runs at once. The ladder's tries and its escalation stay as
+    /// they were. A workflow whose retry lineage does not read is left to its
+    /// own pass. Returns how many steps woke.
+    pub fn wake_workflow_retries(&self, now: u64) -> Result<usize> {
+        let queue = AttemptQueue::new(self.vault);
+        let roots = self.open_workflow_roots()?;
+        let mut txn = self.vault.store.env.write_txn()?;
+        let mut woke = 0;
+        for root in roots {
+            let Some(wrapper) = queue.get_in_write_txn(&txn, root)? else {
+                continue;
+            };
+            if wrapper.state != AttemptState::Paused {
+                continue;
+            }
+            let Ok(record) = self.read_workflow(&txn, &wrapper) else {
+                continue;
+            };
+            let Ok(active) = queue.retry_tip_in_txn(&txn, record.active) else {
+                continue;
+            };
+            woke += usize::from(queue.advance_retry_in_txn(&mut txn, active.id, now)?);
+        }
+        if woke > 0 {
+            txn.commit()?;
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(woke)
     }
 
     /// Reads the durable workflow result report, including after completion.
@@ -556,6 +612,7 @@ impl super::AgentDispatcher<'_> {
             active_step: record.active,
             results: record.results.clone(),
             launch: record.launch.clone(),
+            release_refusal: record.release_refusal.clone(),
         })
     }
 }

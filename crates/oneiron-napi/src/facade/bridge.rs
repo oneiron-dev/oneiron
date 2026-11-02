@@ -5,6 +5,7 @@ use oneiron::{EntityId, Memory, Vault, VaultConfig, parse_actor_key};
 use std::sync::Arc;
 
 use super::boundary::{boundary_error, facade_error};
+use super::input_error::caller_input_error;
 use crate::boundary::host_device_class;
 use crate::host_root::HostRootOpenOptions;
 
@@ -33,7 +34,7 @@ impl VaultBridge {
         crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
         config.machine_device_class =
-            host_device_class(device_class.as_deref()).map_err(boundary_error)?;
+            host_device_class(device_class.as_deref()).map_err(caller_input_error)?;
         if let Some(dimensions) = dimensions {
             config.dimensions = dimensions as usize;
         }
@@ -50,11 +51,13 @@ impl VaultBridge {
     /// `open`, then this install's own machine profile from the vault's host
     /// root secret (FIX 4730), so the owner's acts carry from it. With
     /// `initializeRoot`, a store this open creates is rooted under the
-    /// secret first, as a new local-origin vault. A secret that cannot
-    /// profile the install refuses the open with the engine's reason; a
-    /// secret that is not the vault's settled root, over a profile that
-    /// already stands, opens and says so in `wrongHostRoot`. `deviceClass`
-    /// is `open`'s (FIX 3833).
+    /// secret first, as a new local-origin vault. With
+    /// `holdCheckpointRootSigner` (FIX 5343) the vault holds this
+    /// install's root as its checkpoint signer, unless the secret went
+    /// unused. A secret that cannot profile the install refuses the open
+    /// with the engine's reason; a secret that is not the vault's settled
+    /// root, over a profile that already stands, opens and says so in
+    /// `wrongHostRoot`. `deviceClass` is `open`'s (FIX 3833).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
@@ -62,7 +65,7 @@ impl VaultBridge {
         options: HostRootOpenOptions,
         device_class: Option<String>,
     ) -> napi::Result<Self> {
-        let request = options.before_open(&path).map_err(boundary_error)?;
+        let request = options.before_open(&path).map_err(caller_input_error)?;
         let mut opened = Self::open(path, dimensions, device_class)?;
         opened.wrong_host_root = request
             .profile(&opened.vault)
@@ -91,6 +94,7 @@ impl VaultBridge {
             actor_hex: actor.to_hex(),
             actor_class: actor_class as u8,
             off_record_session: None,
+            read_proof: None,
         })
     }
 }
@@ -104,6 +108,10 @@ pub struct ActorScopedVault {
     /// The off-record session every verb runs inside, when the app host
     /// named one, bound to this handle's actor (OF-063, FIX 1668).
     off_record_session: Option<String>,
+    /// The verified slip this handle's delegated reader presented, which
+    /// every read runs under ([`Self::with_read_credential`], FIX 647);
+    /// `None` reads as the bound actor's own verbs do.
+    read_proof: Option<oneiron::authority::VerifiedSlip>,
 }
 
 #[napi]
@@ -116,7 +124,7 @@ impl ActorScopedVault {
     pub fn in_off_record_session(&self, session_ref: String) -> napi::Result<ActorScopedVault> {
         let session_ref = session_ref.trim();
         if session_ref.is_empty() {
-            return Err(boundary_error(
+            return Err(caller_input_error(
                 "invalid off-record session reference".to_owned(),
             ));
         }
@@ -125,6 +133,26 @@ impl ActorScopedVault {
             actor_hex: self.actor_hex.clone(),
             actor_class: self.actor_class,
             off_record_session: Some(session_ref.to_owned()),
+            read_proof: self.read_proof.clone(),
+        })
+    }
+
+    /// A NEW handle whose every read runs under the credential a delegated
+    /// reader presented to this host (FIX 647): the paired credential its
+    /// `pair` returned, verified against this vault as the server's door
+    /// verifies a served request's. Its reads then run under that slip's
+    /// key, never a broader one; a read refuses when the slip's holder is
+    /// not this handle's actor. A handle without one reads as before.
+    #[napi]
+    pub fn with_read_credential(&self, credential: String) -> napi::Result<ActorScopedVault> {
+        let proof = oneiron_remote::verify_read_credential(&self.vault, &credential)
+            .map_err(facade_error)?;
+        Ok(ActorScopedVault {
+            vault: Arc::clone(&self.vault),
+            actor_hex: self.actor_hex.clone(),
+            actor_class: self.actor_class,
+            off_record_session: self.off_record_session.clone(),
+            read_proof: Some(proof),
         })
     }
 }
@@ -142,6 +170,10 @@ impl ActorScopedVault {
             }
         };
         let memory = self.vault.memory(actor, actor_class);
+        let memory = match &self.read_proof {
+            Some(proof) => memory.with_read_proof(proof),
+            None => memory,
+        };
         Ok(match self.off_record_session.as_deref() {
             Some(session) => memory.in_off_record_session(session),
             None => memory,

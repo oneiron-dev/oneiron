@@ -89,6 +89,8 @@ pub fn child_states_for_actor(
     Ok(out)
 }
 
+/// Each own node's branches, in pre-order. Walked on a heap stack, so a
+/// deep tree never deepens the call stack (FIX 10067).
 fn collect_spawned(
     node: &RunTreeNode,
     own: &BTreeSet<String>,
@@ -96,16 +98,19 @@ fn collect_spawned(
     seen: &mut BTreeSet<String>,
     out: &mut Vec<ChildState>,
 ) {
-    if own.contains(&node.attempt_id) {
-        for child in &node.children {
-            collect_branch(child, own, by_attempt, seen, out);
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        if own.contains(&node.attempt_id) {
+            for child in &node.children {
+                collect_branch(child, own, by_attempt, seen, out);
+            }
         }
-    }
-    for child in &node.children {
-        collect_spawned(child, own, by_attempt, seen, out);
+        pending.extend(node.children.iter().rev());
     }
 }
 
+/// The live child agents under `node`, in pre-order, own nodes skipped.
+/// Walked on a heap stack (FIX 10067).
 fn collect_branch(
     node: &RunTreeNode,
     own: &BTreeSet<String>,
@@ -113,14 +118,15 @@ fn collect_branch(
     seen: &mut BTreeSet<String>,
     out: &mut Vec<ChildState>,
 ) {
-    if !own.contains(&node.attempt_id)
-        && let Some(state) = child_state(node, by_attempt)
-        && seen.insert(state.attempt.clone())
-    {
-        out.push(state);
-    }
-    for child in &node.children {
-        collect_branch(child, own, by_attempt, seen, out);
+    let mut pending = vec![node];
+    while let Some(node) = pending.pop() {
+        if !own.contains(&node.attempt_id)
+            && let Some(state) = child_state(node, by_attempt)
+            && seen.insert(state.attempt.clone())
+        {
+            out.push(state);
+        }
+        pending.extend(node.children.iter().rev());
     }
 }
 

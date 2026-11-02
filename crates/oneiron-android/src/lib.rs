@@ -5,9 +5,10 @@
 //! (`EmbeddedVault.bound`) holds its own caller, its principal and session,
 //! and writes as that caller (OF-063): its puts, deletes, edges and vectors
 //! run the core's raw caller doors (`Memory::raw_*`). Every other vault
-//! writes as the host. Reads are the same on every vault: the context pack,
-//! text search and graph reads (`reads`) lower to the core reads the C ABI
-//! runs.
+//! writes as the host. The context pack, text and vector search and graph
+//! reads (`reads`, `search_vector`) lower to the core reads the C ABI runs:
+//! a vault bound to a session reads its room over base while the room is
+//! live, every other vault reads base (FIX 8119, FIX 10759, FIX 11586).
 use jni::{
     JNIEnv,
     objects::{JByteArray, JFloatArray, JObject, JString, JValue},
@@ -18,10 +19,6 @@ use oneiron::{
     Vault, VaultConfig, authority::MachineDeviceClass, parse_actor_key,
 };
 use std::sync::{Arc, MutexGuard};
-
-/// The most hits one vector search answers, as the C ABI's
-/// (`MAX_FFI_SEARCH_LIMIT`).
-const MAX_SEARCH_LIMIT: usize = 1_000;
 
 // Public so its JNI exports are reachable items, as this file's are.
 #[cfg(feature = "engine")]
@@ -83,6 +80,14 @@ impl NativeVault {
             }
         })
     }
+    /// The bound caller's memory surface when it names a session; `None`
+    /// reads through the bare vault.
+    fn session_memory(&self) -> Option<Memory<'_>> {
+        self.binding
+            .as_ref()
+            .filter(|binding| binding.session.is_some())
+            .and_then(|_| self.bound_memory())
+    }
     /// Opens `path` as the class its Kotlin host declared, set before the
     /// install enrols (FIX 3833; CALLS: HOST_OPEN_DEVICE_CLASS =
     /// ExplicitHostInput): never read off the operating system.
@@ -117,10 +122,13 @@ impl NativeVault {
                 .map_err(display),
         }
     }
+    /// `id`'s body, as `Vault::get` reads it.
     fn get(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
-        self.vault
-            .get(&EntityId::from_hex(id).map_err(display)?)
-            .map_err(display)
+        let id = EntityId::from_hex(id).map_err(display)?;
+        match self.session_memory() {
+            Some(memory) => memory.raw_get_entity(&id).map_err(display),
+            None => self.vault.get(&id).map_err(display),
+        }
     }
     /// Deletes `id`, answering whether a record was there. A bound vault
     /// deletes as its caller through the `vault.delete` door: owner-only,
@@ -152,12 +160,12 @@ impl NativeVault {
     }
     /// The edges out of `id`, or into it when `inbound`.
     fn edges(&self, id: &EntityId, inbound: bool) -> Result<Vec<EdgeInfo>, String> {
-        let edges = if inbound {
-            self.vault.edges_in(id)
-        } else {
-            self.vault.edges_out(id)
-        };
-        edges.map_err(display)
+        match (self.session_memory(), inbound) {
+            (Some(memory), false) => memory.raw_edges_out(id).map_err(display),
+            (Some(memory), true) => memory.raw_edges_in(id).map_err(display),
+            (None, true) => self.vault.edges_in(id).map_err(display),
+            (None, false) => self.vault.edges_out(id).map_err(display),
+        }
     }
     /// Puts `id`'s vector; the vault refuses one of another width.
     fn put_vector(&self, id: &str, vector: &[f32]) -> Result<(), String> {
@@ -167,13 +175,13 @@ impl NativeVault {
             None => self.vault.put_vector(&id, vector).map_err(display),
         }
     }
-    /// The `limit` nearest entities to `query`, at most [`MAX_SEARCH_LIMIT`].
+    /// The `limit` nearest entities to `query`, however many it asks for.
     fn search_vector(&self, query: &[f32], limit: jint) -> Result<Vec<ScoredEntity>, String> {
-        let limit = usize::try_from(limit)
-            .ok()
-            .filter(|limit| *limit <= MAX_SEARCH_LIMIT)
-            .ok_or_else(|| format!("search limit {limit} is not within 0..={MAX_SEARCH_LIMIT}"))?;
-        self.vault.search_vector(query, limit).map_err(display)
+        let limit = reads::search_limit(limit)?;
+        match self.session_memory() {
+            Some(memory) => memory.raw_search_vector(query, limit).map_err(display),
+            None => self.vault.search_vector(query, limit).map_err(display),
+        }
     }
 }
 fn display(error: impl std::fmt::Display) -> String {

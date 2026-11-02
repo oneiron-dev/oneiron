@@ -9,7 +9,7 @@ use crate::claim::{
     ScopedReadActorKey,
 };
 use crate::llm::decision::{
-    DecisionAnswer, DecisionReceipt, PairedReading, ProviderPin, TypedDecision,
+    DecisionAnswer, DecisionReceipt, HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{
@@ -20,10 +20,10 @@ use rmpv::Value;
 
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
 #[derive(Clone, Copy)]
-struct BackfillKey {
-    question: EntityId,
+pub(super) struct BackfillKey {
+    pub(super) question: EntityId,
     version: u32,
-    unit: EntityId,
+    pub(super) unit: EntityId,
     frontier: [u8; 32],
 }
 impl SideKey for BackfillKey {
@@ -45,7 +45,7 @@ impl SideKey for BackfillKey {
         })
     }
 }
-const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
+pub(super) const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
     SideTable::new(&side_table::TYPED_QUESTION);
 
 /// The host obtains `source_frontier` before asking a provider. Admission
@@ -59,6 +59,9 @@ pub struct StandingAnswer {
     pub providers: Vec<ProviderPin>,
     /// Paired readings the providers measured with this answer; none means none was taken.
     pub paired: Vec<PairedReading>,
+    /// The host rule row the answer was read from, as id@revision (FIX 2974): its stored
+    /// receipt names it. None when no rule row answered.
+    pub rule: Option<HostRuleRef>,
     pub source_frontier: [u8; 32],
 }
 
@@ -167,21 +170,22 @@ fn standing_record(
 fn sources_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    principal: EntityId,
+    record: &QuestionRecord,
     actor: WriteActor,
     unit: EntityId,
     evidence: &[EntityId],
     proposals: &[AnswerRecord],
 ) -> Result<([u8; 32], Vec<Source>)> {
-    if evidence.len() > 4096 {
-        return Err(invalid("too many standing answer sources"));
-    }
+    // Every evidence source is read: their count is no refusal (FIX 9914).
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     // Relationship membership and AccessGrants are the question principal's,
     // for both reads: the writer's own grant never widens what the
     // principal's answer may rest on. The vault's live owner reads its
-    // relationships' rows as it does on every lane.
-    let reader = super::graph_ask::asker_reader_in_txn(vault, txn, principal)?;
+    // relationships' rows as it does on every lane, inside the lane the
+    // version was saved under (OF-506).
+    let principal = record.principal;
+    let reader =
+        super::saved_reader::saved_reader_in_txn(vault, txn, principal, &record.read_lane)?;
     let holder = ScopedReadActorKey::with_actor_class(
         actor.entity_ref().to_hex(),
         actor.actor_class().gate_actor_class(),
@@ -216,6 +220,9 @@ fn sources_in_txn(
         }
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
+        // A file-plane ASSET's stored row holds its manifest: judge, hash and
+        // scope the body in its place (FIX 5398).
+        let raw = vault.materialized_row_in_txn(txn, id, raw)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("standing source header"))?;
         // A claim awaiting its owner's answer is a missing required source.
@@ -268,6 +275,20 @@ fn sources_in_txn(
         }
         let scope = crate::federation::record_scope::scope_for_blob(&vault.store, txn, *id, &raw)?
             .ok_or(Error::EntityNotFound)?;
+        // A NOTE source sits at one world it is in that both readers hold,
+        // else at base reality as before (FIX-LIST 9433).
+        let held = [
+            &reader.world_ceiling().worlds,
+            &holder.world_ceiling().worlds,
+        ];
+        let scope = crate::federation::record_scope::note_world::source_position(
+            &vault.store,
+            txn,
+            *id,
+            header.entity_type,
+            scope,
+            &held,
+        );
         // The shared scoped reader checks NOTE authorship, but its NOTE branch
         // returns before the non-claim record-position grant. Conjoin both.
         if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
@@ -300,7 +321,7 @@ pub fn standing_source_frontier(
     if !record.definition.units.contains(&unit) {
         return Err(Error::EntityNotFound);
     }
-    Ok(sources_in_txn(vault, &txn, principal, actor, unit, evidence, &[])?.0)
+    Ok(sources_in_txn(vault, &txn, &record, actor, unit, evidence, &[])?.0)
 }
 
 /// Keep a graph answer and its immutable-version receipt atomically. Repeated
@@ -346,14 +367,14 @@ pub(super) fn prepare_graph_answer(
     let (frontier, _) = sources_in_txn(
         vault,
         &txn,
-        principal,
+        &record,
         actor,
         input.unit,
         &input.evidence,
         proposals,
     )?;
-    let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal)?;
-    let scoped = question_lane(vault, key);
+    let key = super::saved_reader::saved_reader_in_txn(vault, &txn, principal, &record.read_lane)?;
+    let scoped = question_lane(vault, key.clone());
     let mut sources = Vec::with_capacity(input.evidence.len() + 1);
     for id in std::iter::once(&input.unit).chain(input.evidence.iter()) {
         let lane = if proposals
@@ -362,12 +383,13 @@ pub(super) fn prepare_graph_answer(
         {
             scoped.recorded_lane()?
         } else {
-            let key = super::graph_ask::asker_reader_in_txn(vault, &txn, principal)?;
-            question_lane(vault, key)
+            question_lane(vault, key.clone())
         };
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Err(Error::EntityNotFound);
         };
+        // The funnel supplies the live revision's logical bytes (FIX 5396):
+        // bound, hash and keep the supplied body (FIX 5398).
         if !super::graph_ask::kind_is_graph_evidence(kind)
             || body.is_empty()
             || body.len() > 1_048_576
@@ -427,6 +449,7 @@ pub(super) fn backfill_graph_answer(
             .map(|reading| reading.bind(prediction.provider))
             .into_iter()
             .collect(),
+        rule: prediction.rule,
         source_frontier: frontier,
     };
     backfill_answer(
@@ -471,6 +494,7 @@ pub(super) fn backfill_graph_decision(
             .collect(),
         providers: decision.receipt.providers.clone(),
         paired: decision.receipt.paired.clone(),
+        rule: decision.receipt.rule.clone(),
         source_frontier: frontier,
     };
     backfill_answer(
@@ -533,7 +557,7 @@ fn backfill_answer(
         let (frontier, sources) = sources_in_txn(
             vault,
             txn,
-            principal,
+            &record,
             actor,
             input.unit,
             &input.evidence,
@@ -634,7 +658,9 @@ fn backfill_answer(
                     images: Vec::new(),
                     think_row: None,
                     person_row: None,
-                    rule: None,
+                    rule: input.rule,
+                    asked: None,
+                    state_cut: None,
                 },
                 human_ask: None,
             },
@@ -677,12 +703,12 @@ fn backfill_answer(
                 refs.push(*id);
             }
         }
-        candidate = candidate
-            .with_evidence_taint(taint)?
-            .with_private_reader(principal)?
-            .with_evidence(Value::Array(
-                refs.iter().map(|id| Value::from(id.to_hex())).collect(),
-            ));
+        // The version's own landing stamp (FIX 1825).
+        candidate =
+            super::answer_landing::stamp_answer(candidate.with_evidence_taint(taint)?, &record)?
+                .with_evidence(Value::Array(
+                    refs.iter().map(|id| Value::from(id.to_hex())).collect(),
+                ));
         let source = crate::dreamer_consolidation::source_meet(ClaimSource::Generated, taint);
         let envelope = WriteEnvelope::new(
             actor,
@@ -746,7 +772,7 @@ pub(super) struct ScopeFold {
     principal: String,
     taint: ClaimSource,
     position: Option<(EntityId, EntityId, EntityId)>,
-    rel: Option<EntityId>,
+    rel: crate::claim::RelationshipScope,
     scope: Vec<(Value, Value)>,
     sensitivity: u8,
 }
@@ -802,11 +828,19 @@ impl ScopeFold {
         if let Some(inherited) = crate::claim::claim_evidence_taint(body) {
             self.taint = crate::dreamer_consolidation::source_meet(self.taint, inherited);
         }
-        if let Some(id) = body.rel {
-            if self.rel.is_some_and(|existing| existing != id) {
+        if let Some(ids) = &body.rel {
+            // The answer reaches only the relationships every source does
+            // (the meet; `all` is its identity). Sources in disjoint
+            // relationships conflict, as one-relationship sources always
+            // did; an explicitly empty source carries its empty set.
+            let met = crate::claim::meet_relationship_scopes(self.rel.as_ref(), Some(ids));
+            if met.as_ref().is_some_and(|met| met.is_empty())
+                && !ids.is_empty()
+                && self.rel.as_ref().is_some_and(|folded| !folded.is_empty())
+            {
                 return Err(SourceConflict::Relationship);
             }
-            self.rel = Some(id);
+            self.rel = met;
         }
         if let Some(value) = &body.scope {
             let Value::Map(entries) = value else {
@@ -862,8 +896,8 @@ impl ScopeFold {
                 *candidate = candidate.clone().with_world(world);
             }
         }
-        if let Some(id) = self.rel {
-            *candidate = candidate.clone().with_relationship(id);
+        if self.rel.is_some() {
+            *candidate = candidate.clone().with_relationships(self.rel);
         }
         if !scope.is_empty() {
             *candidate = candidate.clone().with_scope(Value::Map(scope));
@@ -873,4 +907,4 @@ impl ScopeFold {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct EntityIdBytes([u8; 16]);
+pub(super) struct EntityIdBytes([u8; 16]);

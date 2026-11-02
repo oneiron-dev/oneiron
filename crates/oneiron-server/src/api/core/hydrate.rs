@@ -3,7 +3,6 @@
 use super::super::core_engine_error;
 use super::super::json_payload;
 use super::super::scoped_read_for_core_auth;
-use super::write_shape::CORE_MAX_BATCH_ENTITIES;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
@@ -22,6 +21,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use utoipa::ToSchema;
 
+mod frames;
 mod use_restricted;
 
 /// Short-id hydrate request.
@@ -356,13 +356,6 @@ pub(crate) async fn core_batch_short_id_hydrate(
     if req.refs.is_empty() {
         return Err(ApiError::bad_request("refs must not be empty", Some("refs")).into());
     }
-    if req.refs.len() > CORE_MAX_BATCH_ENTITIES {
-        return Err(ApiError::bad_request(
-            format!("refs must contain at most {CORE_MAX_BATCH_ENTITIES} entries"),
-            Some("refs"),
-        )
-        .into());
-    }
 
     let view = req.view.unwrap_or(View::Full);
     let reader = hydrate_reader(req.image_input, view);
@@ -384,8 +377,8 @@ pub(crate) async fn core_batch_short_id_hydrate(
         .filter_map(|item| item.as_ref().ok())
         .map(|(id, hash, mode)| oneiron::claim::PointRead::short(id, *hash).at(*mode))
         .collect();
-    let hydrated = scoped_read
-        .read_named(&valid_refs, None)
+    // FIX 11125: a batch past one frame is read frame by frame, never refused.
+    let hydrated = frames::read_named_frames(&scoped_read, &valid_refs)
         .map_err(|error| core_engine_error("batch hydrate failed", error))?;
     let narrowing = hydrated.receipt;
     // Each item starts from the bulk read's receipt; a successor an item's
@@ -751,9 +744,13 @@ pub(crate) fn project_hydrated_short_id(
         && matches!(mode, oneiron::memory::ReadMode::Live)
         && entity_type == oneiron::registry::ENTITY_TYPE_ASSET
     {
+        // With nothing left that fits, the ask names what the batch's
+        // budget still held (FIX 680).
+        let room_left = bodies.as_deref().map(projection::BodyBudget::remaining);
         let mut admits = |len: usize| bodies.as_mut().is_none_or(|bodies| bodies.admits(len));
-        let asset = oneiron::memory::hydrated_asset(scoped_read, id, reader, pick, &mut admits)
-            .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
+        let asset =
+            oneiron::memory::hydrated_asset(scoped_read, id, reader, pick, &mut admits, room_left)
+                .map_err(|_| ApiError::internal_server_error("core asset hydrate failed"))?;
         narrowing.restrict_with(&asset.receipt);
         response.restrict_with(&asset.receipt);
         asset.value

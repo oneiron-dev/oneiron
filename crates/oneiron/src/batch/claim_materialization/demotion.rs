@@ -99,7 +99,8 @@ pub(super) fn successor_body(prior: &ClaimBody, succession: ClaimSuccession) -> 
             {
                 return Err(binding_error());
             }
-            next.confidence = confidence;
+            // A weakened number reads in its own house band (FIX 7761).
+            next.set_confidence(confidence, None);
             stamp_rung(&mut next, "weakened")?;
         }
         ClaimSuccession::Fork { facet, .. } => {

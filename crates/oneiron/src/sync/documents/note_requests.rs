@@ -1,6 +1,6 @@
 //! Durable semantic NOTE requests for an authority-owned document subscription.
 use super::DocumentRegistry;
-use crate::note::{NoteOperation, NoteOperationReceipt};
+use crate::note::{NoteOperation, NoteOperationReceipt, PendingNoteRequest};
 use crate::side_table::{self, LegacyJson, Raw, SideTable};
 use crate::sync::transport::{decode_document, document_sub_tags, encode_document};
 use crate::{EntityId, Result};
@@ -19,12 +19,14 @@ impl DocumentRegistry {
     /// Queue an editor command without speculatively changing the canonical
     /// replica. Reconnect replays it until a durable per-request receipt arrives.
     /// A live socket sends it immediately; there is no save verb.
+    ///
+    /// Its prose is admitted before it is framed, queued or sent, and the
+    /// queue keeps the digest of the command as given beside the frame of the
+    /// command as admitted: a retry of the same request replays that frame
+    /// (FIX 2375; `note::PendingNoteRequest`).
     pub fn submit_note(&self, id: EntityId, operation: &NoteOperation) -> Result<()> {
-        let bytes = operation.encode()?;
-        let frame = encode_document(id, document_sub_tags::NOTE_OPS, &bytes)
-            .into_result()
-            .map_err(|_| denied())?;
-        self.vault.with_write_txn_grouped(|txn| {
+        let input = PendingNoteRequest::input_digest(operation)?;
+        let frame = self.vault.with_write_txn_grouped(|txn| {
             if self.vault.get_entity_type_in_txn(txn, &id)?
                 != Some(crate::registry::ENTITY_TYPE_NOTE)
                 || !super::DS_E.contains(&self.vault.store, txn, &crate::side_table::HexId(id))?
@@ -45,12 +47,29 @@ impl DocumentRegistry {
             // Also refuses soft-erased shells and malformed birth records.
             crate::note::document_birth_in_txn(&self.vault, txn, id)?;
             let key = format!("{}:{}", id.to_hex(), operation.request_id.to_hex()).into_bytes();
-            if let Some(previous) = QN_E.get(&self.vault.store, txn, &key)?
-                && previous != frame
-            {
-                return Err(denied());
-            }
-            QN_E.put(&self.vault.store, txn, &key, &frame)?;
+            let frame = match QN_E.get(&self.vault.store, txn, &key)? {
+                Some(previous) => {
+                    let previous = PendingNoteRequest::decode(&previous).ok_or_else(denied)?;
+                    if previous.input != input {
+                        return Err(denied());
+                    }
+                    previous.frame.to_vec()
+                }
+                None => {
+                    let admitted =
+                        crate::note::admit_note_operation_in_txn(&self.vault, txn, id, operation)?;
+                    let bytes = admitted.encode()?;
+                    let frame = encode_document(id, document_sub_tags::NOTE_OPS, &bytes)
+                        .into_result()
+                        .map_err(|_| denied())?;
+                    let pending = PendingNoteRequest {
+                        input,
+                        frame: &frame,
+                    };
+                    QN_E.put(&self.vault.store, txn, &key, &pending.encode())?;
+                    frame
+                }
+            };
             if let crate::note::NoteChange::Cite { pin } = &operation.change {
                 crate::note::track_citation_request(
                     &self.vault.store,
@@ -60,7 +79,7 @@ impl DocumentRegistry {
                     pin,
                 )?;
             }
-            Ok(())
+            Ok(frame)
         })?;
         let _ = self.notices.send(frame);
         Ok(())
@@ -69,15 +88,16 @@ impl DocumentRegistry {
     pub(crate) fn pending_note_requests(&self, id: EntityId) -> Result<Vec<Vec<u8>>> {
         let txn = self.vault.store.env.read_txn()?;
         crate::note::ensure_citations_ready(&self.vault.store, &txn, id)?;
-        Ok(QN_E
-            .scan_from(
-                &self.vault.store,
-                &txn,
-                format!("{}:", id.to_hex()).as_bytes(),
-            )?
-            .into_iter()
-            .map(|(_, frame)| frame)
-            .collect())
+        let prefix = format!("{}:", id.to_hex());
+        let rows = QN_E.scan_from(&self.vault.store, &txn, prefix.as_bytes())?;
+        // What is sent again is each request's frame as admitted.
+        rows.into_iter()
+            .map(|(_, stored)| {
+                PendingNoteRequest::decode(&stored)
+                    .map(|pending| pending.frame.to_vec())
+                    .ok_or(crate::Error::CorruptedIndex("pending NOTE request"))
+            })
+            .collect()
     }
 
     pub(crate) fn accept_note_receipt(
@@ -87,10 +107,15 @@ impl DocumentRegistry {
     ) -> Result<()> {
         self.vault.with_write_txn_grouped(|txn| {
             let key = format!("{}:{}", id.to_hex(), receipt.request_id.to_hex()).into_bytes();
-            let Some(frame) = QN_E.get(&self.vault.store, txn, &key)? else {
+            let Some(stored) = QN_E.get(&self.vault.store, txn, &key)? else {
                 return Ok(());
             };
-            let request = decode_document(&frame[1..]).map_err(|_| denied())?;
+            // The receipt hashes the command as admitted: the queued frame.
+            let frame = PendingNoteRequest::decode(&stored)
+                .ok_or_else(denied)?
+                .frame;
+            let body = frame.get(1..).ok_or_else(denied)?;
+            let request = decode_document(body).map_err(|_| denied())?;
             let operation = NoteOperation::decode(request.payload)?;
             let digest = blake3::hash(&operation.encode()?);
             if digest.as_bytes() != &receipt.command_hash {

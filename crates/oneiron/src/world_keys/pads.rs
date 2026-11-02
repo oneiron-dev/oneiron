@@ -59,6 +59,7 @@ use crate::ports::{DeletionMarker, EntityStoreRead, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_WORLD, ENTITY_TYPE_WORLD_KEY_PAD};
 use crate::side_table::{self, HexId, Named, Raw, SideTable};
 use crate::store::Store;
+use crate::store::legal_hold::HoldActor;
 use crate::temporal::TimeRange;
 
 const PAD_ROW_DOMAIN: &[u8] = b"oneiron/world-key-pad-row/v1";
@@ -387,26 +388,60 @@ pub(crate) fn world_pad_windows_in_txn(
 
 /// Refuses destroying `world`'s keys while a legal hold stands on the world or
 /// on a claim its key seals: destroying the key destroys every such claim's
-/// sealed bytes, and every path that destroys bytes reads the hold. Of the rows
-/// a key seals, only a claim body names a world (`sync::types::entity_world`).
-fn reject_held_world_in_txn(store: &Store, txn: &heed::RoTxn<'_>, world: EntityId) -> Result<()> {
+/// sealed bytes, and every path that destroys bytes reads the hold. The
+/// refusal records `actor`, the deleting actor and its privacy erase flag
+/// (FIX 3059).
+fn reject_held_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+    actor: &HoldActor,
+) -> Result<()> {
     let mut sealed = vec![world];
+    sealed.extend(sealed_claims_in_txn(store, txn, world)?);
+    store.reject_legal_holds_in_txn(txn, &sealed, actor)
+}
+
+/// The claims `world`'s key seals. Of the rows a key seals, only a claim
+/// names a world: by its body (`sync::types::entity_world`), or, for a shell
+/// or a body that names none readably, by the deletion address this vault
+/// kept for it (FIX 3062).
+fn sealed_claims_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    world: EntityId,
+) -> Result<Vec<EntityId>> {
     let claims = store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
         .collect::<Result<Vec<_>>>()?;
+    let mut sealed = Vec::new();
     for id in claims {
         let Some(raw) = store.port_entity_raw(txn, &id)? else {
             continue;
         };
-        if matches!(crate::sync::types::entity_world(&raw), Ok(Some(of)) if of == world) {
+        let of = match crate::sync::types::entity_world(&raw) {
+            Ok(Some(of)) => Some(of),
+            Ok(None) | Err(_) => retained_world_in_txn(store, txn, &id)?,
+        };
+        if of == Some(world) {
             sealed.push(id);
         }
     }
-    store.reject_legal_holds_in_txn(
-        txn,
-        &sealed,
-        &crate::store::legal_hold::HoldActor::UNATTRIBUTED,
-    )
+    Ok(sealed)
+}
+
+/// The world the deletion address this vault kept for `id` names
+/// (`<month>@<world>`), if it kept one.
+fn retained_world_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<EntityId>> {
+    Ok(store
+        .port_deletion_marker(txn, DeletionMarker::WindowAddress, id)?
+        .and_then(|raw| String::from_utf8(raw).ok())
+        .and_then(crate::sync::types::WindowKey::try_new)
+        .and_then(|key| key.world()))
 }
 
 /// Whether `world`'s keys were destroyed here: the destroyed fact alone, never
@@ -431,6 +466,18 @@ pub(crate) fn reject_held_pad_world_in_txn(
     txn: &heed::RoTxn<'_>,
     ids: &[EntityId],
 ) -> Result<()> {
+    reject_held_pad_world_as_in_txn(store, txn, ids, &HoldActor::UNATTRIBUTED)
+}
+
+/// [`reject_held_pad_world_in_txn`] for a delete whose actor is known: a
+/// refusal records `actor` and its privacy erase flag, as the direct check
+/// on the pad's id does (FIX 3059).
+pub(crate) fn reject_held_pad_world_as_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    ids: &[EntityId],
+    actor: &HoldActor,
+) -> Result<()> {
     let mut worlds = std::collections::BTreeSet::<EntityId>::new();
     for id in ids {
         let world = store
@@ -446,7 +493,7 @@ pub(crate) fn reject_held_pad_world_in_txn(
     }
     for world in worlds {
         if !world_keys_destroyed_fact_in_txn(store, txn, world)? {
-            reject_held_world_in_txn(store, txn, world)?;
+            reject_held_world_in_txn(store, txn, world, actor)?;
         }
     }
     Ok(())
@@ -481,6 +528,35 @@ pub(crate) fn held_pad_world_in_txn(
     if crate::store::legal_hold::held_in_txn(store, txn, world.as_bytes())? {
         return Ok(true);
     }
+    for id in sealed_claims_in_txn(store, txn, world)? {
+        if crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Refuses destroying the pad row `raw` read from a carrier, a window value
+/// or a cached body that no canonical row may back, while a legal hold
+/// stands on its world or on a claim its key seals (OF-470, FIX 3061): the
+/// refusal is queued with `actor`, on that world and those claims, as
+/// [`reject_held_world_in_txn`] queues it. What [`held_pad_world_in_txn`]
+/// reads as unheld passes, an undecodable pad among it. A hold on the pad id
+/// itself stays the caller's check.
+#[cfg(feature = "sync")]
+pub(crate) fn reject_held_pad_carrier_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    raw: &[u8],
+    actor: &crate::store::legal_hold::HoldActor,
+) -> Result<()> {
+    if !held_pad_world_in_txn(store, txn, raw)? {
+        return Ok(());
+    }
+    let Some(Ok(world)) = pad_body_world(raw) else {
+        return Ok(());
+    };
+    let mut sealed = vec![world];
     let claims = store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_CLAIM, None)?
         .collect::<Result<Vec<_>>>()?;
@@ -488,13 +564,11 @@ pub(crate) fn held_pad_world_in_txn(
         let Some(claim) = store.port_entity_raw(txn, &id)? else {
             continue;
         };
-        if matches!(crate::sync::types::entity_world(&claim), Ok(Some(of)) if of == world)
-            && crate::store::legal_hold::held_in_txn(store, txn, id.as_bytes())?
-        {
-            return Ok(true);
+        if matches!(crate::sync::types::entity_world(&claim), Ok(Some(of)) if of == world) {
+            sealed.push(id);
         }
     }
-    Ok(false)
+    store.reject_legal_holds_in_txn(txn, &sealed, actor)
 }
 
 /// Destroys `world`'s keys on this replica, in the caller's write transaction:
@@ -533,7 +607,7 @@ pub(crate) fn destroy_world_keys_in_txn(
     }
     // Destroyed once already, only a late pad is left to purge.
     if existing.is_none() {
-        reject_held_world_in_txn(store, wtxn, target)?;
+        reject_held_world_in_txn(store, wtxn, target, &HoldActor::UNATTRIBUTED)?;
     }
     let tombstone = TombstoneValueV2 {
         reason: TombstoneReason::UserHardDelete,

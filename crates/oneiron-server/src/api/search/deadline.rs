@@ -167,12 +167,18 @@ pub(super) async fn read_by_deadline(
 /// The domain a search caller's deadline-job key is derived under.
 const DEADLINE_CALLER: &[u8] = b"oneiron-server.search.deadline-caller.v1";
 
-/// `auth`'s place among its caller's running deadline jobs (SCAN C030), the
-/// caller keyed as its read-shape questions are: held by the read until it
-/// ends, its door's answer past. Past `limits.deadline_jobs_per_caller` the
-/// search runs on and raises the row's `deadline_jobs_high` check; it is
-/// never refused. A key no id can hold counts nothing.
+/// `auth`'s place among its caller's running deadline jobs (SCAN C030):
+/// held by the read until it ends, its door's answer past. A caller a
+/// facade call acts as is keyed by that actor, as its recalls are, so one
+/// caller's searches and recalls hold one count (FIX 6164); any other is
+/// keyed as its read-shape questions are. Past
+/// `limits.deadline_jobs_per_caller` the search runs on and raises the row's
+/// `deadline_jobs_high` check; it is never refused. A key no id can hold
+/// counts nothing.
 fn deadline_job(server: &SyncServer, auth: &CoreAuth) -> Option<oneiron::store::DeadlineJob> {
+    if let Some(actor) = crate::api::facade::facade_actor_id(server, auth) {
+        return Some(server.vault.admit_deadline_job(actor));
+    }
     let mut hasher = blake3::Hasher::new();
     hasher.update(DEADLINE_CALLER);
     hasher.update(query_caller(auth).as_bytes());

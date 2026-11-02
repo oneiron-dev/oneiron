@@ -197,6 +197,15 @@ asks whether everything is okay: a typed `inspect_limit_crossing` question
 authenticated work for count. A wait ends at `queue_wait_timeout_ms`, a
 request timeout, with a 503 and `retry-after` and nothing started.
 
+The descriptor floor has a live check of its own. `GET /v1/owner/wire-health`
+answers `connection_pool_pressure` beside its `checks`: `{"state": "clear"}`
+while no socket waits for the pool, else `{"state": "active", "check": ...}`, a
+check of kind `inspect_connection_pool_pressure` that names the episode, the
+`limits.max_connections` row and its bound, the credentials holding the most
+open request bodies, the pool's connections and the remedy. The check observes
+only: it pauses, revokes and refuses nothing, and it does not promise that a
+revocation releases a body already open.
+
 ```toml
 [limits]
 max_connections = 32768           # sockets open at once: the descriptor floor (default: half the open-file limit)
@@ -212,6 +221,7 @@ decision_reads = 2048             # owner decision-read probes held at once; pas
 task_work = 2048                  # can, ask, wait and tasks.answer calls the vault runs at once; past it each caller waits a fair turn, then runs
 renderer_work = 2                 # deck and slide renders at once (LibreOffice + pdftoppm); past it each caller waits a fair turn, then render_deadline (default: a quarter of the cores, at least 1)
 media_reply_bytes = 2147483648    # bytes provider media replies (images, clips, speech) hold until decoded; past it a reply waits its turn, never refused for size (default: an eighth of memory)
+chat_reply_bytes = 2147483648     # bytes the JSON replies a chat send reads whole hold until the send ends; past it a crossing is recorded, never a wait or a refusal (default: an eighth of memory)
 lfs_quota_bytes = 68719476736     # LFS bytes stored plus uploads in flight; past it the row asks
 transfer_idle_timeout_ms = 300000 # a git or LFS transfer moving no byte this long ends
 retrieval_query_bytes = 1048576   # one retrieval query, as sent (413 past it)
@@ -327,7 +337,22 @@ organ_memory_bytes = 2147483648   # bytes the organ host's budget holds when a l
 deadline_jobs_per_caller = 2048   # recalls and searches one caller has running at once under a deadline, each counted until its work ends; past it the job runs on and the row asks (the deadline_jobs_high check, naming the caller and the count, once per caller per minute)
 authority_record_items = 4096     # items one signed authority record carries for its owner (custody recipients, checkpoint roots, model routes, mesh addresses or ALPN grants, a machine revision's acknowledged acts); past it the record is signed and kept whole and the row asks
 connector_live_questions = 64     # rounds of foreign MCP questions (elicitation) one server holds live for connector callers; past it the question registers and waits like any other and the row asks; only the memory floor and a round's 120 s deadline end one
+connector_reply_context_bytes = 65536  # UTF-8 bytes one connector reply's model call reads (agent instructions, the conversation's whole witnessed history, the inbound message); past it the call reads the context whole and the row asks
+campaign_judgment_rows = 4096     # membership rows one campaign judgment request joins; past it every row is still joined, 256 at a time, and the row asks
+connector_budget_rows = 16        # active budget rows one connector key holds; past it every row is kept and enforced and the row asks
+connector_suggested_budget_rows = 16  # suggested budget rows one connector key holds for the owner; past it every suggestion is kept and the row asks
+connector_charter_caps = 16       # cap rows one compiled connector charter carries; past it every cap is compiled and enforced and the row asks
+connector_catalog_verbs = 64      # verbs one connector's advertised catalog carries; past it the whole catalog is kept and the row asks
+connector_dispatch_batch = 4096   # dispatches one connector-key batch admission accounts; past it the whole batch is accounted in 4096-dispatch transaction chunks and the row asks
+identity_decision_state_bytes = 65536 # whole encoded identity-decision state; past it the row asks and the whole state is still sent
+identity_excerpt_bytes = 65536       # whole source message for an identity mention; past it the row asks and the whole message is still kept and sent
+community_cache_bytes = 67108864  # bytes one community-cache family holds, read or published whole; past it the snapshot is still served whole and the row asks
+connector_manifest_entries = 4096 # tools one connector manifest declares, or permissions or triggers one of its tools declares; the vault policy's lower admission quota asks first; past it the whole manifest is admitted and the row asks
 ```
+
+Run the engine with `Delegate=yes` so each organ gets a cgroup cell; without
+it organs run on their process group and `OrganStatus.isolation` says so. The
+user unit in `deploy/systemd/oneiron.service` sets it.
 
 The push door scans a push one blob at a time, so `git_scan_blob_bytes` is
 its memory floor per blob, never a cap on the push: a push of any size lands
@@ -568,7 +593,13 @@ the few requests the model works on at once, a request with the key waits its
 turn in order and is never refused for how many wait. Each wait ends at
 `queue_wait_timeout_ms` (503, to retry, nothing started), and crossing a row
 or a budget logs a `limit_crossed` question. A body has 120 s to arrive once
-its budget is reserved (408 after).
+its budget is reserved (408 after). A request of more than 2,048 inputs is
+embedded 2,048 at a time and streams its rows once its first batch has
+succeeded; each later batch waits for its room and its turn with no deadline,
+and stops waiting as soon as its client goes away. A later batch that fails
+ends the stream broken, never as a shorter list. A vault's client asks for a
+readable end instead (`error_member`): the list closes with an `error`
+member that names why the answer is not complete, and the vault reports it.
 
 On a GPU host, build with candle's CUDA kernels (the CUDA toolkit's `nvcc` on
 `PATH`) and ask for the device:

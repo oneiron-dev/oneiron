@@ -89,12 +89,33 @@ pub(crate) fn request_connection() -> String {
 /// L4): the one witness its holds published, or `None` when they published
 /// none or more than one distinct attempt. The witness is the one taken at
 /// the hold, so a call that settles its own lease, or is refused after it,
-/// keeps it. Work `call` spawns sees no collector and publishes nothing; a
-/// door nested inside it collects its own.
+/// keeps it. Work `call` spawns reaches it only when carried there
+/// ([`with_attempt_collector`], FIX 8107); a door nested inside it collects
+/// its own.
 pub(crate) async fn attempt_witnessed<F: Future>(
     call: F,
 ) -> (F::Output, Option<CallAttemptWitness>) {
+    attempt_witnessed_inside(None, call).await
+}
+
+/// The live-run hold an outer call holds around a call it makes in process
+/// (FIX 10938): an action's own hold, which each of its verb rows runs
+/// inside. Only the host puts it on an in-process request; no wire sets it.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct HeldOuterAttempt(pub(crate) CallAttemptWitness);
+
+/// [`attempt_witnessed`] for a call made inside an `outer` call's hold (FIX
+/// 10938): the outer hold counts as one the call published, so a call that
+/// holds nothing more names the outer attempt, and one that holds another
+/// attempt names none.
+pub(crate) async fn attempt_witnessed_inside<F: Future>(
+    outer: Option<CallAttemptWitness>,
+    call: F,
+) -> (F::Output, Option<CallAttemptWitness>) {
     let (publish, published) = std::sync::mpsc::channel();
+    if let Some(outer) = outer {
+        let _ = publish.send(outer);
+    }
     let output = CALL_ATTEMPTS.scope(publish, call).await;
     let mut held = published.try_iter();
     let witness = held
@@ -108,6 +129,25 @@ pub(crate) async fn attempt_witnessed<F: Future>(
 /// capture never refuses a call.
 pub(crate) fn witness_attempt(witness: CallAttemptWitness) {
     let _ = CALL_ATTEMPTS.try_with(|publish| publish.send(witness));
+}
+
+/// The collector of the call in flight, taken where the call runs, for work
+/// it spawns: no task-local crosses a spawn (FIX 8107). `None` outside any.
+pub(crate) fn attempt_collector() -> Option<std::sync::mpsc::Sender<CallAttemptWitness>> {
+    CALL_ATTEMPTS.try_with(Clone::clone).ok()
+}
+
+/// Runs `work`, spawned by a call, under that call's `collector`
+/// ([`attempt_collector`], FIX 8107): a live-run hold inside it reaches the
+/// call's own receipt. With none, `work` runs as it is.
+pub(crate) async fn with_attempt_collector<F: Future>(
+    collector: Option<std::sync::mpsc::Sender<CallAttemptWitness>>,
+    work: F,
+) -> F::Output {
+    match collector {
+        Some(publish) => CALL_ATTEMPTS.scope(publish, work).await,
+        None => work.await,
+    }
 }
 
 /// The receipt input of a reply no credential attributed (FIX 811): the
@@ -126,6 +166,7 @@ pub(crate) fn connection_call(
         actor_ref: request_connection(),
         actor_class: oneiron::receipt::CONNECTION_CALL_ACTOR_CLASS.to_owned(),
         credential_ref: None,
+        carrier_machine: None,
         outcome,
         request_digest,
         result_digest,
@@ -371,6 +412,44 @@ pub(crate) fn credential_ref(auth: &CoreAuth) -> Option<String> {
     auth.jti().map(str::to_owned)
 }
 
+/// Who a call a device forwarded to its home is attributed to (FIX 3550):
+/// the caller whose own holder proof the home verified, named as
+/// [`call_actor`] and [`credential_ref`] name a slip holder, and the linked
+/// machine that carried it.
+#[derive(Debug, Clone)]
+pub(crate) struct ForwardedAttribution {
+    pub(crate) actor_ref: String,
+    pub(crate) actor_class: String,
+    pub(crate) credential_ref: String,
+    pub(crate) carrier_machine: String,
+}
+
+impl ForwardedAttribution {
+    /// The attribution of the verified forwarded `caller`.
+    pub(crate) fn of(caller: &oneiron::authority::VerifiedForwardedCaller) -> Self {
+        let claims = caller.caller().claims();
+        let slip: String = claims
+            .slip_id
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let actor_ref = match claims.holder_ref.as_str() {
+            "host" => format!("slip:{slip}"),
+            holder => oneiron::EntityId::from_hex(holder)
+                .map_or_else(|_| holder.to_owned(), |id| id.to_hex()),
+        };
+        Self {
+            actor_ref,
+            actor_class: claims
+                .actor_class
+                .clone()
+                .unwrap_or_else(|| "unbound".to_owned()),
+            credential_ref: slip,
+            carrier_machine: caller.machine().to_hex(),
+        }
+    }
+}
+
 /// The input versions a call of `verb` on `request` reads, captured before
 /// it runs (OF-568): the vault's state and each entity the request names.
 /// `None` for a call that reads the world, or when the capture failed.
@@ -398,6 +477,12 @@ pub(crate) fn action_inputs(
 /// An off-record session's own rows (`NO_RECORD_ROWS`, DOOR-127) write none
 /// on any transport, as the owner's off-record routes write none: ARCH-0052
 /// keeps no wire receipt that a session ran.
+///
+/// The reply does not wait for the row's commit (Engine ruling 10-30 23:09,
+/// `Vault::record_call_receipt_deferred_commit`): the row is staged in the
+/// vault's group commit, in order, before the reply, and a refusal there is
+/// still logged here; it commits with that group after the reply. A crash can
+/// lose the last receipts of calls already answered.
 pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInput) -> CallStamp {
     if anonymous || oneiron::task_verb::sdk::NO_RECORD_ROWS.contains(&input.verb.as_str()) {
         return CallStamp::NoRecord;
@@ -406,7 +491,7 @@ pub(crate) fn record(server: &SyncServer, anonymous: bool, input: CallReceiptInp
     let verb = input.verb.clone();
     let actor_class = input.actor_class.clone();
     let outcome = input.outcome.clone();
-    match server.vault().record_call_receipt(input) {
+    match server.vault().record_call_receipt_deferred_commit(input) {
         Ok(receipt_ref) => CallStamp::Recorded(receipt_ref),
         Err(error) => {
             tracing::warn!(
@@ -472,6 +557,11 @@ fn receipted_door(path: &str) -> Option<(CallTransport, String)> {
             Some((CallTransport::Mcp, path.trim_start_matches('/').to_owned()))
         }
         "/ws" => Some((CallTransport::Ws, "ws.upgrade".to_owned())),
+        // FIX 3389: the raw OpenAI proxy, under the verb its own door states.
+        "/v1/chat/completions" => Some((
+            CallTransport::OpenAiProxy,
+            super::openai_proxy::PROXY_CALL_VERB.to_owned(),
+        )),
         _ => None,
     }
 }

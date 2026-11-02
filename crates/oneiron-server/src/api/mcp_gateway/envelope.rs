@@ -6,8 +6,8 @@ use super::booking_call::resolve_handshake_caller;
 use super::call_meta::MCP_INVOCATION_META;
 use super::tool_receipt::mcp_call_receipt;
 use super::{
-    admission, booking_call, device_release, ensure_mcp_actor_matches, execute_mcp_tool,
-    mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
+    admission, booking_call, clock_repair_call, device_release, ensure_mcp_actor_matches,
+    execute_mcp_tool, mcp_actor_result, mcp_admit_scoped_call, mcp_error_response, mcp_params,
     mcp_validated_call_args, wakes, wire,
 };
 use crate::api::facade::{self, DoorClaim};
@@ -104,11 +104,20 @@ pub(crate) struct McpGatewayError {
     /// (FIX 3194), surfaced as `error.data.retry_after`; a code-mode door
     /// hands it back to the run as the typed outage.
     pub(super) retry_after: Option<u64>,
+    /// Each time a refused call's limit resets, as Unix seconds in its
+    /// source's order (FIX 8190, 11199), surfaced as `error.data.resets_at`.
+    /// Boxed for size, as `effective_scope` is.
+    pub(super) resets_at: Option<Box<Vec<u64>>>,
     /// A failed code run's kept type feedback, released apart from the
     /// refusal (FIX 10389, 10390), surfaced as `error.data.program_steps`.
     /// Never among the words its release reads. Boxed for size, as
     /// `effective_scope` is.
     pub(super) program_steps: Option<Box<super::type_feedback_release::ErrorProgramSteps>>,
+    /// The refusal's stable reason codes, in its producer's order (FIX
+    /// 7398), surfaced as `error.data.reason_codes` when it named any.
+    pub(super) reason_codes: Vec<String>,
+    /// The typed legal-hold notice, surfaced as `error.data.legal_hold`.
+    pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 impl McpGatewayError {
@@ -127,7 +136,10 @@ impl McpGatewayError {
             row_receipt: None,
             hook: None,
             retry_after: None,
+            resets_at: None,
             program_steps: None,
+            reason_codes: Vec::new(),
+            legal_hold: None,
         }
     }
 
@@ -155,6 +167,14 @@ impl McpGatewayError {
 
     pub(super) fn with_successor_short_id(mut self, successor_short_id: impl Into<String>) -> Self {
         self.successor_short_id = Some(successor_short_id.into());
+        self
+    }
+
+    pub(super) fn with_legal_hold(
+        mut self,
+        legal_hold: Box<oneiron::error::LegalHoldNotice>,
+    ) -> Self {
+        self.legal_hold = Some(legal_hold);
         self
     }
 
@@ -204,6 +224,13 @@ pub(crate) struct McpCallContext {
     /// carried it, for the home an opened device asks (FIX 2905, FIX 2907).
     /// `None` for an owner-grade caller and off that ingress.
     pub(crate) forwarded: Option<oneiron::authority::ForwardedCallerProof>,
+    /// The generated-UI surface profile the request's
+    /// `_meta.clientCapabilities` declares (FIX 7969), read on every call
+    /// because the MCP leg is stateless (ARCH-0048 G3). A lens the call
+    /// renders is lowered for it unless its arguments name their own;
+    /// `None` lowers for the whole atom kit. It selects a rendering and
+    /// grants nothing.
+    pub(crate) client_surface: Option<oneiron::lens::GeneratedUiSurfaceCapabilities>,
 }
 
 impl std::ops::Deref for McpCallContext {
@@ -225,7 +252,11 @@ impl McpCallContext {
             .auth
             .as_ref()
             .is_some_and(crate::auth::CoreAuth::is_owner_grade);
-        oneiron::memory::HomeRecallCaller::admitted(owner_grade, self.forwarded.clone())
+        oneiron::memory::HomeRecallCaller::admitted(
+            owner_grade,
+            self.forwarded.clone(),
+            self.actor.locality(),
+        )
     }
 
     /// The closed metadata envelope for one result on this endpoint.

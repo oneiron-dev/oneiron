@@ -32,6 +32,9 @@ use serde::{Deserialize, Serialize};
 use super::ladder::OfferLadder;
 use super::status::{HealthState, LimitHold, RungHealth};
 
+mod account_park;
+mod quota_queue;
+mod reply_budgets;
 mod world_hold;
 
 /// The engine's `MODEL_OFFER_COOLDOWN` side table: never replicated, and
@@ -209,6 +212,10 @@ pub struct QuotaQuestion {
     /// that a `use_fallback` answer names one of.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fallbacks: Vec<QuotaFallback>,
+    /// The account parked with the offer, when its spent credit parks every
+    /// offer billed to it (FIX 564): a top-up answer puts them all back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<String>,
 }
 
 /// A model on another provider with usage left: what a quota question's
@@ -283,6 +290,9 @@ pub struct OfferCooldowns {
     /// Which prefixes its offers hold warm in their providers' prompt
     /// caches (FIX 6029). In memory: a restart starts every prefix cold.
     pub(super) warmth: super::ladder::cache_warmth::CacheWarmth,
+    /// The vault's model byte budgets its ladders' chat replies are read on
+    /// (FIX 10626), the rows' defaults without a server.
+    budgets: super::ModelHostBudgets,
     /// A test's vault clock, which a call's wait moves to the end it waited
     /// for, as time would.
     #[cfg(test)]
@@ -300,6 +310,7 @@ impl OfferCooldowns {
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
+            budgets: super::ModelHostBudgets::unhosted(),
             #[cfg(test)]
             waits_move: None,
         })
@@ -309,17 +320,7 @@ impl OfferCooldowns {
     /// world settings.
     #[must_use]
     pub fn in_vault(vault: Arc<Vault>) -> Arc<Self> {
-        Arc::new(Self {
-            vault: Some(vault),
-            fallbacks: RwLock::default(),
-            health: Mutex::default(),
-            probes: AtomicU64::new(0),
-            health_changed: tokio::sync::watch::Sender::new(0),
-            recovered: tokio::sync::watch::Sender::new(0),
-            warmth: super::ladder::cache_warmth::CacheWarmth::default(),
-            #[cfg(test)]
-            waits_move: None,
-        })
+        Self::in_vault_with(vault, super::ModelHostBudgets::unhosted())
     }
 
     /// [`Self::in_vault`] for a vault on the test's `clock`: a call that
@@ -337,6 +338,7 @@ impl OfferCooldowns {
             health_changed: tokio::sync::watch::Sender::new(0),
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::ladder::cache_warmth::CacheWarmth::default(),
+            budgets: super::ModelHostBudgets::unhosted(),
             waits_move: Some(clock),
         })
     }
@@ -354,10 +356,14 @@ impl OfferCooldowns {
         may_send: &(dyn Fn() -> bool + Sync),
     ) -> Duration {
         let start = tokio::time::Instant::now();
-        let end = start + wait;
+        // An open call's wait for a probation request has no end of its own
+        // (FIX 8213): only that request's end, or its caller, stops it.
+        let end = start.checked_add(wait);
         let mut changed = self.health_changed.subscribe();
         loop {
-            let left = end.saturating_duration_since(tokio::time::Instant::now());
+            let left = end.map_or(WAIT_SLICE, |end| {
+                end.saturating_duration_since(tokio::time::Instant::now())
+            });
             if left.is_zero() {
                 break;
             }
@@ -392,6 +398,7 @@ impl OfferCooldowns {
         let vault = self.vault.as_ref()?;
         let key = key(offer, wire_model);
         self.limit_rest(vault, &key)
+            .or_else(|| self.limit_rest(vault, &account_park::row(&account_park::id(offer))))
             .or_else(|| self.health_rest(&key, vault.now_recorded_at()))
     }
 
@@ -484,11 +491,15 @@ impl OfferCooldowns {
             return status;
         };
         let key = key(offer, wire_model);
-        status.limit = self.limit_rest(vault, &key).map(|rest| LimitHold {
-            until: rest.until,
-            reset: rest.source.as_str(),
-            spent: rest.spent,
-        });
+        let account = account_park::row(&account_park::id(offer));
+        status.limit = self
+            .limit_rest(vault, &key)
+            .or_else(|| self.limit_rest(vault, &account))
+            .map(|rest| LimitHold {
+                until: rest.until,
+                reset: rest.source.as_str(),
+                spent: rest.spent,
+            });
         let now = vault.now_recorded_at();
         let health = self.health.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(held) = health.get(&key) {
@@ -555,6 +566,10 @@ impl OfferCooldowns {
                 strikes,
                 &key,
             );
+            // Spent credit parks every offer of its account (FIX 564).
+            if account_park::parks_account(&rest) {
+                account_park::park_in_txn(vault, txn, offer, rest)?;
+            }
             if let Some(running) = running.filter(|running| running.until >= rest.until) {
                 return Ok(running);
             }
@@ -674,9 +689,12 @@ impl OfferCooldowns {
     /// and the choices. `use_fallback` is among them while a model on a
     /// provider outside the call's ladder (`own`) has usage left and `fits`
     /// the call: it speaks the seat's wire, keeps a role's work on the device
-    /// when it must stay there, and accepts the request. A question already
-    /// open stays as it was asked. Nothing when the rest spent nothing or no
-    /// vault keeps rests.
+    /// when it must stay there, and accepts the request. A question still
+    /// open stays as it was asked; one whose window has reset answered
+    /// itself, so a later spent window of the same offer asks again (FIX
+    /// 9512), read and replaced in one write. With the call's `principal`
+    /// it is asked as a person-only decision (FIX 562). Nothing when the
+    /// rest spent nothing or no vault keeps rests.
     pub(super) fn ask(
         &self,
         offer: &OfferBinding,
@@ -684,6 +702,7 @@ impl OfferCooldowns {
         asked: Asked<'_>,
         own: &[&str],
         fits: &dyn Fn(&OfferLadder) -> bool,
+        principal: Option<oneiron::EntityId>,
     ) {
         let (Some(vault), Some(spent)) = (self.vault.as_ref(), rest.spent) else {
             return;
@@ -691,7 +710,14 @@ impl OfferCooldowns {
         let id = key(offer, asked.wire_model)
             .trim_start_matches(PREFIX)
             .to_owned();
-        if matches!(vault.sync_state_get(&question_key(&id)), Ok(Some(_))) {
+        let row = question_key(&id);
+        let now = vault.now_recorded_at();
+        let open = |bytes: Option<Vec<u8>>| {
+            bytes
+                .and_then(|bytes| rmp_serde::from_slice::<QuotaQuestion>(&bytes).ok())
+                .is_some_and(|asked| asked.resets_at.is_none_or(|reset| reset > now))
+        };
+        if open(vault.sync_state_get(&row).ok().flatten()) {
             return;
         }
         let fallbacks = self.usage_left(own, fits);
@@ -708,7 +734,7 @@ impl OfferCooldowns {
         }
         let question = QuotaQuestion {
             id,
-            asked_at: vault.now_recorded_at(),
+            asked_at: now,
             provider: asked.provider.to_owned(),
             model: asked.wire_model.to_owned(),
             route: format!("{}@{}", offer.route.adapter(), offer.route.origin()),
@@ -716,11 +742,15 @@ impl OfferCooldowns {
             resets_at: (rest.source != ResetSource::Parked).then_some(rest.until),
             choices,
             fallbacks,
+            account: account_park::parks_account(&rest).then(|| account_park::id(offer)),
         };
-        let kept = rmp_serde::to_vec_named(&question)
-            .ok()
-            .map(|bytes| vault.sync_state_put(&question_key(&question.id), &bytes));
-        if !matches!(kept, Some(Ok(()))) {
+        // With the call's principal known, the question is a person-only
+        // decision whose queue keeps the same row (FIX 562).
+        let kept = match principal {
+            Some(principal) => quota_queue::ask(vault, principal, &question),
+            None => quota_queue::keep(vault, &question),
+        };
+        if kept.is_err() {
             tracing::warn!(
                 reason = "quota_question_unwritable",
                 "a parked offer's quota question could not be kept"
@@ -840,6 +870,9 @@ impl OfferCooldowns {
         }
         if choice.unparks() {
             vault.sync_state_delete(&format!("{PREFIX}{}", question.id))?;
+            if let Some(account) = &question.account {
+                account_park::unpark(vault, account)?;
+            }
         }
         vault.sync_state_delete(&question_key(&question.id))?;
         Ok(true)
@@ -909,10 +942,16 @@ fn rest_end(
         return rest(until, ResetSource::ErrorTime);
     }
     if let Some(seconds) = refusal.retry_after.filter(|seconds| *seconds > 0) {
-        return rest(
-            now.saturating_add(seconds).min(longest),
-            ResetSource::RetryAfter,
-        );
+        // A spent window said as Retry-After rests until it resets, however
+        // far, as one said as a reset time does (FIX 7795); a rate limit's
+        // keeps the vault's longest rest.
+        let until = now.saturating_add(seconds);
+        let until = if refusal.spent == Some(SpentKind::Window) {
+            until
+        } else {
+            until.min(longest)
+        };
+        return rest(until, ResetSource::RetryAfter);
     }
     if strikes == 0 {
         return rest(

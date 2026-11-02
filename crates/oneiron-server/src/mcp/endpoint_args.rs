@@ -100,6 +100,11 @@ pub struct McpSetupToolArgs {
     /// Caller-side board budget. Narrows the harness default, never widens it.
     #[serde(default, deserialize_with = "deserialize_optional_u32")]
     pub board_budget_tok: Option<u32>,
+    /// The caller's explicit board budget (FIX 9506): honoured as given, past
+    /// the harness default or below it, zero a literal zero cap, and recorded
+    /// in the render's override metadata. Absent keeps the adaptive budget.
+    #[serde(default, deserialize_with = "deserialize_optional_u32")]
+    pub board_budget_override_tok: Option<u32>,
     #[serde(default)]
     pub page: Option<McpPageRequest>,
     #[serde(default)]
@@ -122,13 +127,14 @@ impl McpSetupToolArgs {
         Ok(())
     }
 
-    /// The adaptive board budget request this call resolves to.
+    /// The board budget request this call resolves to: adaptive, or the
+    /// caller's explicit override when it names one.
     #[must_use]
     pub fn board_budget_request(&self) -> BoardBudgetRequest {
         BoardBudgetRequest {
             harness_default_tok: MCP_BOARD_BUDGET_TOK,
             caller_limit_tok: self.board_budget_tok.map(|limit| limit as usize),
-            explicit_override_tok: None,
+            explicit_override_tok: self.board_budget_override_tok.map(|tok| tok as usize),
         }
     }
 }

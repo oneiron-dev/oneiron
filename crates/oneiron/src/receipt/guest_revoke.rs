@@ -59,7 +59,7 @@ pub struct GuestRevokeCourtesyTarget {
 
 /// A courtesy target as the response names it, in the courtesy-delete send
 /// request's own field names, with what became of its ask.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GuestRevokeCourtesyTargetView {
     /// The ended pact (hex).
@@ -81,7 +81,7 @@ pub struct GuestRevokeCourtesyTargetView {
 
 /// Whether a deletion request went to the guest. None of these states says
 /// the guest deleted anything: a request is only a request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GuestDeletionRequestStatus {
     /// No deletion request was made.
@@ -94,7 +94,9 @@ pub enum GuestDeletionRequestStatus {
 }
 
 /// What this host knows of the guest's copy: nothing it can attest.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GuestCopyState {
     /// No receipt here proves what the guest kept or dropped.
@@ -124,8 +126,19 @@ impl<'de> Deserialize<'de> for NotRecallable {
     }
 }
 
+/// Its schema is its wire form: always `false`.
+impl schemars::JsonSchema for NotRecallable {
+    fn schema_name() -> String {
+        "NotRecallable".to_owned()
+    }
+
+    fn json_schema(generator: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
+        <bool as schemars::JsonSchema>::json_schema(generator)
+    }
+}
+
 /// The copied-bytes disclosure every guest revoke carries.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GuestRevokeDisclosure {
     /// Always `false`: a synced copy is the guest's copy.
@@ -148,7 +161,7 @@ impl GuestRevokeDisclosure {
 }
 
 /// The grant's pact standing after the revoke.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GuestPactStanding {
     /// The grant was never bound to a pact.
@@ -177,7 +190,7 @@ impl From<FederationGrantActivation> for GuestPactStanding {
 }
 
 /// A guest revoke's response.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GuestRevokeResponse {
     pub grant_ref: EntityId,

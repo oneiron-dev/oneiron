@@ -8,6 +8,8 @@
  * the engine's own vocabulary, including codes newer than this package.
  */
 
+import type { LegalHoldNotice } from "./facade-types.js"
+
 /** The serialized shape the native boundary hands back. */
 type NativeErrorPayload = {
   code: string
@@ -17,6 +19,10 @@ type NativeErrorPayload = {
   replacement?: string
   schemaRef?: string
   hook?: unknown
+  retry_after?: unknown
+  resets_at?: unknown
+  reason_codes?: unknown
+  legal_hold?: unknown
 }
 
 /** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
@@ -39,6 +45,15 @@ export type HookStop =
   | {readonly status: "completed"; readonly invocation: string; readonly result: unknown}
   | {readonly status: "completed_with_error"; readonly invocation: string; readonly code: string; readonly message: string}
 
+/**
+ * When a refused call may be sent again, as its source said (FIX 8190):
+ * seconds to wait, and each time its limit resets, as Unix seconds.
+ */
+export type RetryTiming = {
+  readonly retryAfter?: number
+  readonly resetsAt?: readonly number[]
+}
+
 /** Every constructor and verb failure reaches user code as this. */
 export class OneironError extends Error {
   /** The engine's stable code string, carried verbatim. */
@@ -57,13 +72,58 @@ export class OneironError extends Error {
    */
   readonly hook?: HookStop
 
-  constructor(code: string, message: string, suggestions: readonly string[], wrongRoot?: WrongRoot, hook?: HookStop) {
+  /** Present when the refusal's source said when to call again: seconds to wait. */
+  readonly retryAfter?: number
+
+  /** Present when the refusal's source said when its limit resets: Unix seconds, in its order. */
+  readonly resetsAt?: readonly number[]
+
+  /** Present when the refusal's producer named stable reason codes, in its order (FIX 7398). */
+  readonly reasonCodes?: readonly string[]
+
+  /** The legal-hold notice behind this refusal, when its producer supplied one. */
+  readonly legalHold?: LegalHoldNotice
+
+  constructor(
+    code: string,
+    message: string,
+    suggestions: readonly string[],
+    wrongRoot?: WrongRoot,
+    hook?: HookStop,
+    timing?: RetryTiming,
+    reasonCodes?: readonly string[],
+    legalHold?: LegalHoldNotice,
+  ) {
     super(message)
     this.name = "OneironError"
     this.code = code
     this.suggestions = Object.freeze([...suggestions])
     if (wrongRoot) this.wrongRoot = Object.freeze({...wrongRoot})
     if (hook) this.hook = Object.freeze({...hook})
+    if (timing?.retryAfter !== undefined) this.retryAfter = timing.retryAfter
+    if (timing?.resetsAt !== undefined) this.resetsAt = Object.freeze([...timing.resetsAt])
+    if (reasonCodes !== undefined) this.reasonCodes = Object.freeze([...reasonCodes])
+    if (legalHold) this.legalHold = Object.freeze({...legalHold})
+  }
+}
+
+/** The payload's `reason_codes`, kept only when they are the strings the engine sends. */
+function reasonCodes(payload: NativeErrorPayload): readonly string[] | undefined {
+  const codes = payload.reason_codes
+  return Array.isArray(codes) && codes.every((entry) => typeof entry === "string")
+    ? (codes as string[])
+    : undefined
+}
+
+/** The payload's `retry_after` and `resets_at`, kept only when they are the numbers the engine sends. */
+function retryTiming(payload: NativeErrorPayload): RetryTiming {
+  const {retry_after: retryAfter, resets_at: resetsAt} = payload
+  return {
+    retryAfter: typeof retryAfter === "number" ? retryAfter : undefined,
+    resetsAt:
+      Array.isArray(resetsAt) && resetsAt.every((entry) => typeof entry === "number")
+        ? (resetsAt as number[])
+        : undefined,
   }
 }
 
@@ -74,6 +134,15 @@ export class OneironError extends Error {
 function hookStop(value: unknown): HookStop | undefined {
   if (typeof value !== "object" || value === null) return undefined
   return typeof (value as Record<string, unknown>).status === "string" ? (value as HookStop) : undefined
+}
+
+/** Narrows the optional notice to the engine's two legal-hold states. */
+function legalHoldNotice(value: unknown): LegalHoldNotice | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const state = (value as Record<string, unknown>).state
+  return state === "retained_for_law" || state === "use_restricted"
+    ? (value as LegalHoldNotice)
+    : undefined
 }
 
 /**
@@ -123,7 +192,16 @@ export function translateNativeError(error: unknown): OneironError {
       typeof attempted === "string" && typeof replacement === "string" && typeof schemaRef === "string"
         ? {attempted, replacement, schemaRef}
         : undefined
-    return new OneironError(parsed.code, parsed.message, suggestions, wrongRoot, hookStop(parsed.hook))
+    return new OneironError(
+      parsed.code,
+      parsed.message,
+      suggestions,
+      wrongRoot,
+      hookStop(parsed.hook),
+      retryTiming(parsed),
+      reasonCodes(parsed),
+      legalHoldNotice(parsed.legal_hold),
+    )
   }
 
   return new OneironError("INTERNAL_SERVER_ERROR", raw, [

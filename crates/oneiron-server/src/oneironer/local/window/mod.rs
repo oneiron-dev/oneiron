@@ -21,6 +21,9 @@ use tokenizers::{Encoding, Tokenizer, TruncationDirection, TruncationParams, Tru
 
 mod ner;
 mod platform;
+mod windows;
+
+pub(crate) use windows::InferenceWindows;
 
 pub(in crate::oneironer) use ner::{
     CharacterFeatures, Characters, DecodeLayers, Named, decode_ner,
@@ -82,6 +85,15 @@ pub(super) fn conversation_tokenizer(
 }
 
 impl<'a> Window<'a> {
+    /// The call's window: earlier text, then the current turn, never cut,
+    /// then, for a conversation register, its later turns (FIX 9520). A live
+    /// input's earlier text gets up to `live` tokens of the room the turn
+    /// leaves under `cap`; a conversation register's earlier and later text
+    /// share that room, half each, either side's unused half going to the
+    /// other. Earlier text is cut from the left and later text from the
+    /// right, a token at a time, never a byte of the current turn. A current
+    /// turn longer than `cap` is no window: [`super::InferenceWindows`]
+    /// reads it in parts.
     pub(super) fn new(
         input: &'a EncoderInput,
         tokenizer: &Tokenizer,
@@ -111,13 +123,40 @@ impl<'a> Window<'a> {
             input.speaker,
             true,
         );
-        let current = encode(tokenizer, &text[context_end..], true)?;
+        let current_end = text.len();
+        for (offset, turn) in input.following.iter().enumerate() {
+            append(
+                &mut text,
+                &mut segments,
+                &turn.turn,
+                &turn.messages,
+                input.context.len() + 1 + offset,
+                turn.speaker,
+                false,
+            );
+        }
+        let current = encode(tokenizer, &text[context_end..current_end], true)?;
         anyhow::ensure!(
             current.len() <= cap,
             "current extraction turn exceeds oneironer.max_input_tokens"
         );
-        let budget = live.min(cap.saturating_sub(current.len()));
+        let room = cap.saturating_sub(current.len());
         let context = encode(tokenizer, &text[..context_end], false)?;
+        let later = if current_end < text.len() {
+            Some(encode(tokenizer, &text[current_end..], false)?)
+        } else {
+            None
+        };
+        let (budget, after) = match &later {
+            None => (live.min(room), 0),
+            Some(later) => {
+                let half = room / 2;
+                let before = context
+                    .len()
+                    .min(half.max(room.saturating_sub(later.len())));
+                (before, room - before)
+            }
+        };
         let mut cut = if context.len() > budget {
             if budget == 0 {
                 context_end
@@ -127,35 +166,59 @@ impl<'a> Window<'a> {
         } else {
             0
         };
+        let mut end = match &later {
+            Some(later) if later.len() > after => {
+                if after == 0 {
+                    current_end
+                } else {
+                    current_end + later.get_offsets()[after - 1].1
+                }
+            }
+            _ => text.len(),
+        };
         let encoding = loop {
-            let encoding = encode(tokenizer, &text[cut..], true)?;
+            let encoding = encode(tokenizer, &text[cut..end], true)?;
             if encoding.len() <= cap {
                 break encoding;
             }
-            // The join may tokenize differently from its two pieces. Drop
-            // another context token rather than ever truncate current text.
-            let next = encoding.get_offsets().iter().find_map(|&(start, end)| {
-                (end > start && cut + end <= context_end).then_some(cut + end)
-            });
-            cut = next.filter(|next| *next > cut).unwrap_or(context_end);
-            if cut == context_end {
-                break current;
+            // The join may tokenize differently from its pieces. Drop another
+            // earlier token, then another later one, rather than ever
+            // truncate current text.
+            if cut < context_end {
+                let next = encoding.get_offsets().iter().find_map(|&(start, end)| {
+                    (end > start && cut + end <= context_end).then_some(cut + end)
+                });
+                cut = next.filter(|next| *next > cut).unwrap_or(context_end);
+                continue;
             }
+            if end > current_end {
+                let next = encoding
+                    .get_offsets()
+                    .iter()
+                    .rev()
+                    .find_map(|&(start, stop)| {
+                        (stop > start && cut + start >= current_end).then_some(cut + start)
+                    });
+                end = next.filter(|next| *next < end).unwrap_or(current_end);
+                continue;
+            }
+            break current;
         };
         segments.retain_mut(|segment| {
-            if segment.end <= cut {
+            if segment.end <= cut || segment.base >= end {
                 return false;
             }
             if segment.base < cut {
                 segment.source_offset = cut - segment.base;
                 segment.base = cut;
             }
+            segment.end = segment.end.min(end);
             segment.base -= cut;
             segment.end -= cut;
             true
         });
         Ok(Self {
-            text: text[cut..].to_owned(),
+            text: text[cut..end].to_owned(),
             segments,
             encoding,
         })

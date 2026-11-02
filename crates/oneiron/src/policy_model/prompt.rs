@@ -106,6 +106,7 @@ impl PolicyClassifyPrompt {
                     .output_contract
                     .response_format(self.category_vocabulary()),
                 locality: config.safeguard_binding.locality(),
+                host_keyless: false,
             },
             messages: {
                 let mut messages = vec![LlmMessage {

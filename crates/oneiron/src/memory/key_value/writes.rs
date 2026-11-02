@@ -6,7 +6,7 @@ use crate::batch::{ApplyOpsGateMode, BatchOp};
 use crate::entity_id::derived_domains::KEY_VALUE;
 use crate::gate::record_references::{receipt_landed_prose, unlinked_prose_links};
 use crate::temporal::TimeRange;
-use crate::write_envelope::{ClaimCandidate, WriteActor};
+use crate::write_envelope::ClaimCandidate;
 use std::sync::atomic::Ordering;
 
 impl Memory<'_> {
@@ -55,8 +55,7 @@ impl Memory<'_> {
             if self.vault.local_hard_delete_marker_exists_in_txn(content.read(), &id)? {
                 return Err(super::super::support::hard_deleted_refusal(&id));
             }
-            let mut rows = self.key_value_rows(content.read())?;
-            let prior = rows.remove(&address);
+            let prior = self.key_value_rows(content.read(), None)?.take(&address)?;
             if let Some((prior_id, _)) = &prior {
                 content.require_claim(*prior_id)?;
             }
@@ -110,7 +109,7 @@ impl Memory<'_> {
                     ))?;
                 content.update_claim(prior_id, |txn| {
                     self.vault.supersede_claim_in_txn_as(txn, &id, &prior_id, now,
-                        Some(WriteActor::new(self.actor, self.actor_class)))
+                        Some(self.write_actor()))
                 })?;
             }
             Ok((self.key_value_item(content.read(), id, stored)?, false))
@@ -133,7 +132,7 @@ impl Memory<'_> {
     ) -> MemoryResult<KeyValueDeleteReceipt> {
         check_address(address)?;
         self.with_actor_content_write_txn(|content| {
-            let Some((id, _)) = self.key_value_rows(content.read())?.remove(address) else {
+            let Some((id, _)) = self.key_value_rows(content.read(), None)?.take(address)? else {
                 return Ok(KeyValueDeleteReceipt {
                     existed: false,
                     receipt_refs: Vec::new(),
@@ -144,7 +143,7 @@ impl Memory<'_> {
                     txn,
                     &id,
                     crate::unix_seconds_now(),
-                    Some(WriteActor::new(self.actor, self.actor_class)),
+                    Some(self.write_actor()),
                 )?;
                 Ok(KeyValueDeleteReceipt {
                     existed: true,

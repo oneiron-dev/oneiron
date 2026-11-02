@@ -9,7 +9,7 @@ use oneiron::SyncEngineContext;
 use oneiron::sync::bridge::{LiveQueryTee, Materializer};
 use oneiron::sync::lease::ROOT_LEASES_MAP;
 use oneiron::sync::schema::{
-    add_window_to_root, init_window_list, read_window_list, schema_version_bytes,
+    add_window_to_root, init_window_list, insert_root_schema_version, read_window_list,
 };
 use oneiron::sync::server_state;
 use oneiron::sync::{EphemeralStore, WindowManager};
@@ -20,7 +20,7 @@ use crate::config::SyncServerConfig;
 use crate::embedder::EmbedderSlot;
 use crate::mcp::{McpConnectorActorRegistry, McpCredentialHashKey};
 use crate::oneironer::TaggerSlot;
-use crate::usage::UsageLedger;
+use crate::usage::{RetrievalMeterBuffer, UsageLedger};
 
 use super::lifecycle::{LifecycleJobKey, NEXT_LIFECYCLE_SESSION_ID};
 use super::windows::{SERVER_USER_ID, spawn_local_change_producer};
@@ -59,10 +59,14 @@ pub use oneiron::work_line::TaskWorkTurn;
 /// Core sync server state shared across all connections.
 pub struct SyncServer {
     pub(crate) vault: Arc<oneiron::Vault>,
+    /// Durable client-named invocation intents, outcomes and admission locks.
+    pub(crate) invocation_claims: crate::invocation_claims::InvocationClaimStore,
     /// Root LoroDoc (server-authoritative, contains meta.windows).
     pub(crate) root_doc: LoroDoc,
     /// Hub-held Loro ephemeral state for late join/reconnect snapshots.
     pub(crate) ephemeral_store: Arc<EphemeralStore>,
+    /// Each message partial's trusted scope in the hub (FIX 9537).
+    pub(crate) message_scopes: Arc<super::message_stream::MessageScopes>,
     /// Producer state for Dreamer live attempt-progress rows on the ephemeral lane.
     pub(crate) dreamer_progress: Mutex<DreamerAttemptProgressProducer>,
     /// Node-local compiled standing blocks; rebuilt from claims, never synced.
@@ -82,7 +86,9 @@ pub struct SyncServer {
     /// Process-local session component for lifecycle job debounce keys.
     pub(super) lifecycle_session_id: u64,
     /// In-flight lifecycle jobs keyed by `(kind, vault_id, session_id)`.
-    pub(super) lifecycle_in_flight: Mutex<HashSet<LifecycleJobKey>>,
+    /// Held only to insert or remove a key, never across an await, so a
+    /// job's guard ends it when dropped ([`super::lifecycle::LifecycleJob`]).
+    pub(super) lifecycle_in_flight: std::sync::Mutex<HashSet<LifecycleJobKey>>,
     /// Housekeeping passes in flight, scheduled or asked for by the owner.
     pub(crate) housekeeping_passes: super::housekeeping::HousekeepingPasses,
     /// Server configuration.
@@ -100,7 +106,14 @@ pub struct SyncServer {
     pub(crate) query_checks: super::read_shape::QueryChecks,
     /// Set only by managed boot after inherited-credential and DEK checks.
     /// The supervisor authenticates callers before routing its private socket.
-    pub(crate) managed_issuer: Option<oneiron::authority::HostSlipIssuer>,
+    /// Its presence says the vault is managed; the issuer inside is `None`
+    /// where this install holds no issuer seed for it (FIX-LIST 3018).
+    pub(crate) managed_issuer: Option<ManagedIssuer>,
+    /// The self-host root's issuer, loaded at construction from this
+    /// install's own issuer seed for the vault when a host secret is
+    /// configured (FIX-LIST 3018); `None` with no secret, on a relay, or
+    /// where this install holds no seed. Never the managed issuer.
+    pub(crate) host_root_issuer: Option<Arc<oneiron::authority::HostSlipIssuer>>,
     pub(crate) policy_doors: super::policy_doors::PolicyDoors,
     /// Node-side account API key verifier (OF-448), installed by a host
     /// that supplies the control-plane checker. `None`: account keys are
@@ -108,14 +121,24 @@ pub struct SyncServer {
     pub(crate) account_keys: Option<Arc<crate::auth::account_key::AccountKeys>>,
     /// Per-vault usage ledger over the server vault.
     pub(crate) usage_ledger: UsageLedger,
+    /// The recall doors' buffered retrieval rows, flushed in one grouped write
+    /// per tick (FIX 11011).
+    pub(crate) retrieval_buffer: RetrievalMeterBuffer,
     /// Stable across served runs and policy refreshes; empty until the host grants.
     host_account: Arc<oneiron::llm::run_admission::HostAccount>,
     pub(crate) wire_telemetry: crate::wire_telemetry::WireTelemetry,
+    /// The mesh listener's sync streams in their own pressure check (FIX 7737).
+    pub(crate) mesh_pressure: Arc<crate::wire_telemetry::PoolPressure>,
     /// The line app-tier state kept between frames is charged to, sized by
     /// `limits.retained_memory_bytes` (rule 5: charged, never capped).
     pub(crate) retained: Arc<crate::byte_line::ByteLine>,
     /// The presence hub's charge on `retained`.
     pub(crate) presence: Arc<super::presence::PresenceCharge>,
+    /// The wakes of removed holders' archive delivery sessions (FIX 3396).
+    pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
+    /// The live sockets of proven machines and the custody carrier leaf-key
+    /// requests relayed between them, in memory only (FIX 11785).
+    pub(crate) leaf_keys: crate::handler::LeafKeyRelay,
     /// The lens frames held for the cards this server rendered (OF-181), charged to `retained`.
     pub(crate) lens_frames: Arc<crate::lens_frames::LensFrameStore>,
     /// Live NOTE editors explicitly bound by their own principals.
@@ -125,6 +148,8 @@ pub struct SyncServer {
     pub(crate) live_voice: crate::voice_host::LiveVoiceSessions,
     pub(crate) asr_sessions: crate::api::AsrSessions,
     pub(crate) model_streams: crate::api::ModelStreams,
+    /// Whole-vault exports kept for their callers to read (FIX 3676).
+    pub(crate) export_transfers: crate::api::ExportTransfers,
     /// Process-local connector actor registry for the MCP gateway.
     pub(crate) mcp_registry: Mutex<McpConnectorActorRegistry>,
     /// Vault-owned production code host. No request can replace it.
@@ -138,6 +163,13 @@ pub struct SyncServer {
     /// The T1 secret destinations each run host registered for its runs
     /// (DOOR-124): the `self.secrets.*` doors deliver into them.
     pub(crate) secret_destinations: crate::runtime::SecretDestinations,
+    /// This vault's model byte budgets (FIX 9321, FIX 9323): its media-reply
+    /// line and its mesh staging budget, one set its runtime's adapters and
+    /// every mesh site share.
+    pub(crate) model_budgets: crate::models::ModelHostBudgets,
+    /// This vault's one cloud registration client (G7), under the pins
+    /// `config.cloud_registration_pins` names, read at construction.
+    pub(crate) cloud_registration: crate::cloud_registration::CloudRegistration,
     /// The questions connectors asked mid-call, live for their callers
     /// (ONE-2510): every connector host this server builds keeps them here,
     /// and `connector.answer` reads them.
@@ -501,13 +533,26 @@ impl SyncServer {
     }
 
     /// Whether boot rooted this vault and provisioned the engine's machine
-    /// writers (the Dreamer among them): from the configured secret, or on
-    /// a managed vault from its DEK-derived issuer, which managed boot sets
-    /// once it has provisioned them (FIX 7261). Never on a blind relay.
+    /// writers (the Dreamer among them): with this install's own issuer
+    /// seed where a host secret is configured, or on a managed vault with
+    /// the issuer managed boot sets once it has provisioned them (FIX 7261,
+    /// FIX-LIST 3018). Never on a blind relay.
     pub(crate) fn host_root_provisioned(&self) -> bool {
-        host_root_secret(&self.vault, &self.config).is_some()
-            || (self.managed_issuer.is_some()
+        self.host_root_issuer.is_some()
+            || (self
+                .managed_issuer
+                .as_ref()
+                .is_some_and(|managed| managed.issuer().is_some())
                 && self.vault.privacy_posture() != oneiron::HostingPrivacyPosture::Relay)
+    }
+
+    /// The issuer this host signs with as the vault's root: the managed
+    /// issuer, else the self-host root's loaded at construction.
+    pub(crate) fn host_issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
+        match self.managed_issuer.as_ref() {
+            Some(managed) => managed.issuer(),
+            None => self.host_root_issuer.as_deref(),
+        }
     }
 
     /// Install the host's extraction egress predicate. An absent predicate
@@ -601,9 +646,10 @@ impl SyncServer {
     /// ([`oneiron::Vault::admit_task_work`]): at once while fewer than
     /// `limits.task_work` run, else in a fair line, one caller's work after
     /// another's, each caller's oldest first. Crossing the bound asks its
-    /// OF-520 question. Work is never refused: past `queue_wait_timeout_ms`
-    /// it runs without a turn. Hold the turn until the work ends; take it
-    /// before the engine opens a transaction.
+    /// OF-520 question. Work is never refused: it keeps its place until its
+    /// turn comes, however long, and never runs without one (FIX 10015).
+    /// Hold the turn until the work ends; take it before the engine opens a
+    /// transaction.
     pub async fn admit_task_work(&self, caller: oneiron::EntityId) -> TaskWorkTurn {
         self.vault
             .admit_task_work_observed(caller, crate::api::admission_observer())
@@ -628,6 +674,22 @@ impl SyncServer {
 /// Genuine host authority exists only off the relay posture and with a
 /// non-empty configured secret. Dev/no-secret and blind-relay modes mint
 /// nothing.
+/// A managed vault's host root issuer as managed boot set it: `None` inside
+/// where this install holds no issuer seed for the vault (FIX-LIST 3018), so
+/// the vault serves rootless and each host-signed act answers as a host with
+/// no issuer does.
+pub(crate) struct ManagedIssuer(Option<oneiron::authority::HostSlipIssuer>);
+
+impl ManagedIssuer {
+    pub(crate) fn new(issuer: Option<oneiron::authority::HostSlipIssuer>) -> Self {
+        Self(issuer)
+    }
+
+    pub(crate) fn issuer(&self) -> Option<&oneiron::authority::HostSlipIssuer> {
+        self.0.as_ref()
+    }
+}
+
 fn host_root_secret<'c>(vault: &oneiron::Vault, config: &'c SyncServerConfig) -> Option<&'c str> {
     if vault.privacy_posture() == oneiron::HostingPrivacyPosture::Relay {
         return None;

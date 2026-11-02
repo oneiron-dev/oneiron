@@ -2,12 +2,14 @@
 
 use super::super::types::invalid;
 use super::super::{
-    AnswerContract, DecisionAnswer, DecisionCall, DecisionDial, DecisionQuestion,
-    DecisionQuestionInput, DecisionRung, PairedReading, ProviderPin, TypedDecision,
+    DecisionAnswer, DecisionDial, DecisionQuestion, DecisionQuestionInput, DecisionRung,
+    HostRuleRef, PairedReading, ProviderPin, TypedDecision,
 };
 use crate::learning_setting::SettingSpec;
 use crate::{EntityId, Result, Vault};
 use serde::{Deserialize, Serialize};
+
+pub use super::criteria::{MAX_CRITERION_BYTES, QuestionCriteria};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -30,10 +32,11 @@ pub struct OutcomeBinding {
     pub linked_by: Option<String>,
 }
 impl OutcomeBinding {
+    /// A binding with every mapping entry its author wrote: their count is
+    /// no refusal (FIX 9915).
     pub fn validate(&self) -> Result<()> {
         if self.horizon == 0
             || self.mapping.is_empty()
-            || self.mapping.len() > 64
             || !self.noise_weight.is_finite()
             || !(0.0..=1.0).contains(&self.noise_weight)
         {
@@ -106,7 +109,7 @@ pub struct QuestionDefinition<Q = DecisionQuestion> {
     /// The lines each unit is judged by. They ride every call's state; the
     /// question's version versions them.
     #[serde(default)]
-    pub criteria: QuestionCriteria,
+    pub criteria: QuestionCriteria<String>,
     /// Who sees the answers.
     #[serde(default)]
     pub audience: QuestionAudience,
@@ -159,11 +162,12 @@ impl QuestionDefinition<DecisionQuestionInput> {
 }
 
 impl QuestionDefinition {
+    /// A larger authored definition is not a malformed one: its unit count,
+    /// criteria lines and mapping entries are no refusal (FIX 9915).
     pub fn validate(&self) -> Result<()> {
         self.question.validate()?;
         self.dial.band.validate()?;
         if self.dial.first > self.dial.ceiling
-            || self.units.len() > 4096
             || [&self.adapter, &self.recipe, &self.profile, &self.delivery]
                 .iter()
                 .any(|s| s.is_empty() || s.len() > 256)
@@ -239,133 +243,6 @@ pub fn question_call_budget(vault: &Vault, explicit: Option<u64>) -> Result<std:
     Ok(std::time::Duration::from_millis(ms))
 }
 
-/// The most lines one criteria list holds.
-pub const MAX_CRITERIA_LINES: usize = 16;
-/// The most bytes one criteria line holds.
-pub const MAX_CRITERION_BYTES: usize = 512;
-
-/// A question's criteria (ARCH-0076 §3): every line a yes needs, any line
-/// that makes a no, and the lines that are never a reason to say no. A
-/// changed line is a new definition, so the question's version versions the
-/// triple. Each provider maps it for its rung; it reads as `criteria` in the
-/// call's state.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct QuestionCriteria {
-    pub yes_if_all: Vec<String>,
-    pub no_if_any: Vec<String>,
-    pub not_a_reason_to_say_no: Vec<String>,
-}
-impl QuestionCriteria {
-    /// No line in any of the three lists.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.yes_if_all.is_empty()
-            && self.no_if_any.is_empty()
-            && self.not_a_reason_to_say_no.is_empty()
-    }
-
-    /// The triple a call's state carries as `criteria`. A `criteria` that is
-    /// not a valid nonempty triple is the caller's own state, no rubric.
-    #[must_use]
-    pub fn from_state(state: &serde_json::Value) -> Option<Self> {
-        let criteria = Self::deserialize(state.get("criteria")?).ok()?;
-        (criteria.validate().is_ok() && !criteria.is_empty()).then_some(criteria)
-    }
-
-    /// The criteria of `call`'s question when it is a yes/no: the triple
-    /// says what a yes and a no mean, so another contract reads it as state.
-    #[must_use]
-    pub fn for_call(call: &DecisionCall<'_>) -> Option<Self> {
-        matches!(call.question.contract, AnswerContract::Noul)
-            .then(|| Self::from_state(call.state))
-            .flatten()
-    }
-
-    /// What a yes means, for a rung that describes each answer: every line a
-    /// yes needs holds and no line that makes a no does.
-    #[must_use]
-    pub fn yes_means(&self) -> String {
-        self.describe(
-            "Every one of these holds: ",
-            &self.yes_if_all,
-            "None of these holds: ",
-        )
-    }
-
-    /// What a no means: a line a yes needs fails, or a line that makes a no
-    /// holds.
-    #[must_use]
-    pub fn no_means(&self) -> String {
-        self.describe(
-            "One of these fails: ",
-            &self.yes_if_all,
-            "One of these holds: ",
-        )
-    }
-
-    fn describe(&self, needs: &str, yes: &[String], vetoes: &str) -> String {
-        let mut parts = Vec::with_capacity(3);
-        if !yes.is_empty() {
-            parts.push(format!("{needs}{}.", yes.join("; ")));
-        }
-        if !self.no_if_any.is_empty() {
-            parts.push(format!("{vetoes}{}.", self.no_if_any.join("; ")));
-        }
-        if !self.not_a_reason_to_say_no.is_empty() {
-            parts.push(format!(
-                "Never a no on its own: {}.",
-                self.not_a_reason_to_say_no.join("; ")
-            ));
-        }
-        parts.join(" ")
-    }
-
-    /// The triple as a rubric for a rung that reads prose, every line in
-    /// order.
-    #[must_use]
-    pub fn rubric(&self) -> String {
-        let mut rubric = String::from("Criteria:");
-        for (head, lines) in [
-            ("Yes only if all of these hold:", &self.yes_if_all),
-            ("No if any of these holds:", &self.no_if_any),
-            ("Not a reason to say no:", &self.not_a_reason_to_say_no),
-        ] {
-            if lines.is_empty() {
-                continue;
-            }
-            rubric.push('\n');
-            rubric.push_str(head);
-            for line in lines {
-                rubric.push_str("\n- ");
-                rubric.push_str(line);
-            }
-        }
-        rubric
-    }
-
-    /// At most [`MAX_CRITERIA_LINES`] lines a list, each a nonempty line of
-    /// at most [`MAX_CRITERION_BYTES`].
-    pub fn validate(&self) -> Result<()> {
-        for lines in [
-            &self.yes_if_all,
-            &self.no_if_any,
-            &self.not_a_reason_to_say_no,
-        ] {
-            if lines.len() > MAX_CRITERIA_LINES
-                || lines.iter().any(|line| {
-                    line.trim().is_empty()
-                        || line.len() > MAX_CRITERION_BYTES
-                        || line.contains('\0')
-                })
-            {
-                return Err(invalid("invalid question criteria"));
-            }
-        }
-        Ok(())
-    }
-}
-
 /// Who sees a question's answers. Only the asker is built: every answer
 /// lands private to the question's principal.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -423,6 +300,13 @@ pub struct QuestionRecord {
     /// from the principal's entity type. None on an internal one-off record,
     /// which keeps no authenticated asker.
     pub asker_class: Option<QuestionAskerClass>,
+    /// The read lane the asker saved this version under, frozen (OF-506, FIX
+    /// 1857): the engine mints it at each create and edit from the asker's
+    /// own live lane, never from the definition, and every later read of the
+    /// question rebuilds inside it ([`crate::claim::FrozenReadLane`]). An
+    /// internal one-off record, and a question no caller's lane saved, keeps
+    /// the principal's own.
+    pub read_lane: crate::claim::FrozenReadLane,
 }
 
 /// An asker's authenticated actor class, as a question version keeps it.
@@ -472,6 +356,9 @@ pub struct AnswerProposal {
     pub providers: Vec<ProviderPin>,
     /// Paired readings the providers measured with this answer; none means none was taken.
     pub paired: Vec<PairedReading>,
+    /// The host rule row the answer was read from, as id@revision (FIX 2974); none when no
+    /// rule row answered.
+    pub rule: Option<HostRuleRef>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -552,7 +439,7 @@ pub struct OutcomeLabel {
 }
 
 /// How a bound answer's outcome window closed (OF-516).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowOutcome {
     /// An admissible fact had labelled the answer by the close.
@@ -567,10 +454,11 @@ pub enum WindowOutcome {
 /// One answer's closed outcome window, written once by the question pump
 /// the first second after `ends_at`. A fact in the window that lands later
 /// still labels the answer and outranks a silence label.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OutcomeWindowClose {
     #[serde(with = "super::super::codec::entity")]
+    #[schemars(with = "String")]
     pub answer: EntityId,
     pub question_version: u32,
     /// The window's last second: the answer's `answered_at` plus the horizon.
@@ -580,14 +468,20 @@ pub struct OutcomeWindowClose {
 }
 
 /// A standing question's scheduled backfill: from `due_at`, the question
-/// pump answers each covered unit with no answer at `version`, once.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// pump answers each covered unit with no answer at `version`, once. With
+/// `joins`, it answers each join whose unit has no answer at `version`,
+/// shown the join's own evidence instead of the unit's neighbours (FIX 2383).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduledBackfill {
     #[serde(with = "super::super::codec::entity")]
     pub question: EntityId,
     pub version: u32,
     pub due_at: u64,
+    /// The explicit recipe: each unit and the exact sources its answer is
+    /// shown. Empty: the default neighbourhood recipe.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub joins: Vec<super::recipe::GraphQuestionInput>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

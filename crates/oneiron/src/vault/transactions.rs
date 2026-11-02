@@ -12,22 +12,12 @@ use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ports::{IndexMetaKey, RetrievalIndexInventory};
 use crate::store::{
-    BackupWriteClass, Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, Rows,
-    validate_embedding_model_id,
+    BackupWriteClass, Callback, EMBEDDING_TRANSFORM_KEY, MODEL_ID_KEY, validate_embedding_model_id,
 };
-#[cfg(feature = "sync")]
-use crate::sync::federation_burst::check_active_in_txn as check_federation_imports_in_txn;
 
-/// A build without sync runs no federation import, so a write has no
-/// import authority to recheck (FIX 4248).
-#[cfg(not(feature = "sync"))]
-fn check_federation_imports_in_txn(_vault: &Vault, _txn: &heed::RoTxn<'_>) -> Result<()> {
-    Ok(())
-}
-
-/// Cap for `sync_state_keys_with_prefix` to prevent unbounded allocation when
-/// a pathological prefix scans a very large sync_state database. Deletion's
-/// window update-key read through the window-row port keeps the same cap.
+/// Advisory threshold row for the sync-state and sync-queue prefix scans and
+/// deletion's window update-key read: past it the scan raises one check and
+/// reads on (rule 5). It bounds no result.
 #[cfg(feature = "sync")]
 pub(crate) const MAX_SYNC_STATE_KEYS: usize = 10_000;
 
@@ -63,6 +53,7 @@ fn check_generic_sync_state_key(key: &str) -> Result<()> {
         crate::side_table::DELETION_ROW_FENCE.prefix,
         crate::side_table::DELETION_HARD_DELETE_MARKER.prefix,
         crate::side_table::DELETION_TOPOLOGY_DELETE_INTENT.prefix,
+        crate::side_table::FEDERATION_TOMBSTONE_SCOPE.prefix,
     ]
     .iter()
     .any(|prefix| key.as_bytes().starts_with(prefix))
@@ -289,6 +280,19 @@ impl Vault {
         })
     }
 
+    /// The transform the vault pins for its vectors, `None` while none is.
+    /// A host whose model files are named by a moving hub ref reads it to load
+    /// the commit the stored vectors came from (FIX 9489).
+    pub fn embedding_transform(&self) -> Result<Option<String>> {
+        let rtxn = self.store.env.read_txn()?;
+        self.store
+            .port_index_meta_with_raw(&rtxn, IndexMetaKey::EmbeddingTransform, |raw| {
+                std::str::from_utf8(raw)
+                    .map(str::to_owned)
+                    .map_err(|_| Error::CorruptedIndex("embedding transform"))
+            })
+    }
+
     /// `transform: None` keeps the stored transform under the same model and
     /// drops it under another. `refill` swaps even when nothing differs.
     ///
@@ -454,139 +458,6 @@ impl Vault {
         self.write_txn_door_classed(callback, BackupWriteClass::Content, f)
     }
 
-    /// [`Self::write_txn_door`] for a write of `class` (FIX 6730): one that
-    /// changes no content runs as a group of its own and moves no backup
-    /// watermark (`store::backup_change`).
-    fn write_txn_door_classed<F, T, E>(
-        &self,
-        callback: Callback,
-        class: BackupWriteClass,
-        f: F,
-    ) -> std::result::Result<T, E>
-    where
-        F: FnOnce(&mut heed::RwTxn<'_>) -> std::result::Result<T, E>,
-        E: From<Error>,
-    {
-        // Scan checks raised since the last write are kept first, in a write
-        // of their own (no scan opens one). It takes the writer where this
-        // write is about to, holding nothing more: no answer exists yet to
-        // carry a permit another write waits on.
-        self.keep_waiting_scan_checks();
-        // One logical write in the single writer's group commit: the closure
-        // runs in a transaction of its own, and `Ok` comes back only once the
-        // shared commit is durable.
-        let stale_sweep = crate::federation::StaleSweepWatch::begin(self);
-        let (
-            result,
-            approved_vad_ids,
-            proactivity_changed,
-            (task_ids, rows, room_joins, pad_windows, settled_tasks),
-            retirement_staged,
-        ) = self.store.group_write_classed(callback, class, |wtxn| {
-            let retirements_before = match self.store.gate_retirements_staged_in_txn(wtxn) {
-                Ok(staged) => staged,
-                Err(err) => return Rows::Discard(Err(E::from(err))),
-            };
-            // A credential erase this write stages finishes after it (KS-6 part 2).
-            let credentials_before = crate::store::credential_erases_staged();
-            let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
-            let (result, postcommit) = {
-                let _active_write_txn = crate::store::active_write_txn_guard();
-                let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
-                // A key this write's mask found raises its notice here.
-                match check_federation_imports_in_txn(self, wtxn)
-                    .map_err(E::from)
-                    .and_then(|()| f(wtxn))
-                    .and_then(|result| {
-                        crate::secret_custody::raise_found_key_notices_in_txn(self, wtxn)
-                            .map_err(E::from)?;
-                        Ok(result)
-                    }) {
-                    Ok(result) => (result, vad_scope.finish()),
-                    Err(err) => return Rows::Discard(Err(err)),
-                }
-            };
-            if let Err(err) = rekeys.finish(&self.store, wtxn) {
-                return Rows::Discard(Err(E::from(err)));
-            }
-            if let Err(err) = crate::scope_summary::rederive_changed_in_txn(self, wtxn) {
-                return Rows::Discard(Err(E::from(err)));
-            }
-            let approved =
-                match self.resolved_dreamer_vad_approvals_in_txn(wtxn, postcommit.vad_ids) {
-                    Ok(approved) => approved,
-                    Err(err) => return Rows::Discard(Err(E::from(err))),
-                };
-            // A claim delete applied in this write staged its key's
-            // retirement; destroy the key after the commit, not at the
-            // next retention pass.
-            match self.store.gate_retirements_staged_in_txn(wtxn) {
-                Ok(staged) => Rows::Commit((
-                    result,
-                    approved,
-                    postcommit.proactivity_changed,
-                    (
-                        postcommit.task_ids,
-                        postcommit.rows,
-                        postcommit.room_joins,
-                        postcommit.pad_windows,
-                        postcommit.settled_tasks,
-                    ),
-                    staged != retirements_before
-                        || crate::store::credential_erases_staged() != credentials_before,
-                )),
-                Err(err) => Rows::Discard(Err(E::from(err))),
-            }
-        })?;
-        self.store.notify_attempt_observers();
-        if proactivity_changed {
-            self.store.notify_proactivity_changes();
-        }
-        self.store.notify_task_updates(task_ids);
-        // FIX 1140: a TASK this write settled wakes its peer-result waiters
-        // now that it is durable. A wake that does not go out is left to the
-        // wake pass and never fails this write.
-        if !settled_tasks.is_empty() {
-            crate::task_verb::highway_runner::wake_settled_tasks(
-                self,
-                &settled_tasks,
-                self.store.clock.now_recorded_at(),
-            );
-        }
-        // A row written after its window loaded reaches it only through the
-        // live mirror.
-        #[cfg(feature = "sync")]
-        self.note_committed_rows(rows);
-        #[cfg(not(feature = "sync"))]
-        drop((rows, room_joins));
-        // FIX 3321: a join this write filed reaches the live window of its
-        // room or thread, now that it is durable.
-        #[cfg(feature = "sync")]
-        if !room_joins.is_empty() {
-            let joins: Vec<&str> = room_joins.iter().map(String::as_str).collect();
-            self.refresh_room_rows_in_live_windows(&joins, &[]);
-        }
-        // FIX 3334: a WORLD delete this write applied staged its pads'
-        // tombstones; they publish now, not at each window's next load.
-        self.publish_pad_tombstones_after_commit(&pad_windows);
-        if retirement_staged {
-            self.finish_gate_decision_retirements_after_commit();
-        }
-        // A replicated, replayed or composed authority row stamps the worlds
-        // of a pact it ended, as the authority door does (H213).
-        stale_sweep.finish()?;
-        // Approval is durable now. The canonical consolidator opens its own
-        // writer; its failure is returned without rolling back Approved. The
-        // clock is observed only when there is an approval to consolidate.
-        if !approved_vad_ids.is_empty() {
-            let now = self.store.clock.now_recorded_at();
-            for id in approved_vad_ids {
-                self.consolidate_claim_vad_now(&id, now)?;
-            }
-        }
-        Ok(result)
-    }
-
     /// Reads a value from the sync_state database for sync integration tests
     /// and diagnostics.
     ///
@@ -685,7 +556,8 @@ impl Vault {
     }
 
     /// Lists all keys with the given prefix in sync_state for sync integration
-    /// tests and diagnostics.
+    /// tests and diagnostics, however many: past the advisory threshold row
+    /// the scan raises one check and reads on (rule 5).
     ///
     /// Production bridge code uses direct transactional access so multi-key
     /// sync-state updates stay atomic. `prefix` must overlap a declared
@@ -698,17 +570,20 @@ impl Vault {
     pub fn sync_state_keys_with_prefix(&self, prefix: &str) -> Result<Vec<String>> {
         crate::side_table::host_declared_sync_state_scan(prefix)?;
         let rtxn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::PackQuarantineRows,
+            prefix.as_bytes(),
+            MAX_SYNC_STATE_KEYS as u64,
+        );
         let mut keys = Vec::new();
-        let iter = self.store.sync_state.prefix_iter(&rtxn, prefix)?;
-        for entry in iter {
-            // Cap check BEFORE push — matches scan_edges semantics.
-            if keys.len() >= MAX_SYNC_STATE_KEYS {
-                return Err(Error::IndexOverflow("sync_state_keys_with_prefix"));
-            }
+        for entry in self.store.sync_state.prefix_iter(&rtxn, prefix)? {
+            count.row();
             let (k, _) = entry?;
             crate::side_table::host_declared_sync_state(&k)?;
             keys.push(k.to_string());
         }
+        drop(rtxn);
+        count.finish(self);
         Ok(keys)
     }
 
@@ -738,7 +613,9 @@ impl Vault {
 
     /// Lists `sync_queue` rows with the given key prefix for sync
     /// integration tests and diagnostics (e.g. the `h:{seq:8BE}` hard-erase
-    /// sweep family a replayed remote hard tombstone must enqueue).
+    /// sweep family a replayed remote hard tombstone must enqueue), however
+    /// many: past the advisory threshold row the scan raises one check and
+    /// reads on (rule 5).
     ///
     /// Production code uses direct transactional access so multi-key
     /// updates stay atomic.
@@ -746,15 +623,19 @@ impl Vault {
     #[cfg(feature = "sync")]
     pub fn sync_queue_rows_with_prefix(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let rtxn = self.store.env.read_txn()?;
+        let mut count = crate::scan_check::ScanCount::start_at(
+            crate::scan_check::EngineScan::PackQuarantineRows,
+            prefix,
+            MAX_SYNC_STATE_KEYS as u64,
+        );
         let mut rows = Vec::new();
         for entry in self.store.sync_queue.prefix_iter(&rtxn, prefix)? {
-            // Cap check BEFORE push — matches scan_edges semantics.
-            if rows.len() >= MAX_SYNC_STATE_KEYS {
-                return Err(Error::IndexOverflow("sync_queue_rows_with_prefix"));
-            }
+            count.row();
             let (k, v) = entry?;
             rows.push((k.to_vec(), v.to_vec()));
         }
+        drop(rtxn);
+        count.finish(self);
         Ok(rows)
     }
 
@@ -777,8 +658,12 @@ impl Vault {
 
 #[cfg(feature = "sync")]
 mod sync_state_delete;
+mod sync_state_page;
 #[cfg(feature = "sync")]
 mod sync_state_reclaim;
+#[cfg(feature = "sync")]
+mod telemetry_if_absent;
+mod write_door;
 
 #[cfg(all(test, feature = "sync"))]
 mod sync_scan_tests;

@@ -8,6 +8,7 @@ use crate::error::Result;
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 
+use super::amend_semantics::classify_semantic_delta;
 use super::pack_store::{
     active_compliance_pack_in_txn, encode_pack, invalid_pack, store_active_compliance_pack,
     validate_compliance_pack,
@@ -77,91 +78,12 @@ pub fn classify_compliance_amendment(
     if proposed.pack_version <= current.pack_version {
         return Err(invalid_pack("an amendment must advance the pack version"));
     }
-    let rows = classify_row_delta(current, proposed);
-    let dials = classify_dial_delta(current, proposed);
-    Ok(
-        match (
-            rows.loosened || dials.loosened,
-            rows.tightened || dials.tightened,
-        ) {
-            (true, _) => ComplianceAmendmentClass::LooseningOrAmbiguous,
-            (false, true) => ComplianceAmendmentClass::Tightening,
-            (false, false) => ComplianceAmendmentClass::MetadataRefresh,
-        },
-    )
-}
-
-#[derive(Debug, Default)]
-struct AmendmentDelta {
-    loosened: bool,
-    tightened: bool,
-}
-
-/// A row set is stricter only when every current row survives byte-identically
-/// on its semantic axes and the rows added are provably additive. A deleted
-/// row, a widened exemption, and any requirement-text edit are all unorderable.
-///
-/// Adding a row is additive only under a jurisdiction the pack ALREADY seeds.
-/// Seeding a NEW one is not: [`trusted_jurisdiction`] trusts any token the pack
-/// holds a row for, so the addition takes that token OUT of the unknown
-/// disposition and hands it to exactly the rows the proposal supplied — which
-/// may be thinner than the strict pole it used to route to. Row addition is
-/// therefore not monotone in the selected requirement set, and the case the
-/// comparator cannot order waits for the stamp like every other one.
-fn classify_row_delta(current: &CompliancePack, proposed: &CompliancePack) -> AmendmentDelta {
-    let mut delta = AmendmentDelta::default();
-    for row in &current.rows {
-        match proposed
-            .rows
-            .iter()
-            .find(|candidate| candidate.key() == row.key())
-        {
-            Some(candidate) if candidate.semantics() == row.semantics() => {}
-            _ => delta.loosened = true,
-        }
-    }
-    for added in proposed
-        .rows
-        .iter()
-        .filter(|row| !current.rows.iter().any(|held| held.key() == row.key()))
-    {
-        if current
-            .rows
-            .iter()
-            .any(|held| held.jurisdiction == added.jurisdiction)
-        {
-            delta.tightened = true;
-        } else {
-            delta.loosened = true;
-        }
-    }
-    delta
-}
-
-fn classify_dial_delta(current: &CompliancePack, proposed: &CompliancePack) -> AmendmentDelta {
-    let mut delta = AmendmentDelta::default();
-    // A longer trust window and a lower confidence floor both admit sends the
-    // current pack refuses.
-    delta.loosened |= proposed.verified_at_max_age_secs > current.verified_at_max_age_secs;
-    delta.loosened |= proposed.jurisdiction_confidence_floor_millis
-        < current.jurisdiction_confidence_floor_millis;
-    delta.loosened |= proposed.strict_pole_jurisdiction != current.strict_pole_jurisdiction;
-    delta.loosened |= current
-        .prohibited_list_provenance_classes
-        .iter()
-        .any(|class| !proposed.prohibited_list_provenance_classes.contains(class));
-    delta.loosened |= current
-        .conditional_exemption_evidence
-        .iter()
-        .any(|binding| !proposed.conditional_exemption_evidence.contains(binding));
-    delta.tightened |= proposed.verified_at_max_age_secs < current.verified_at_max_age_secs;
-    delta.tightened |= proposed.jurisdiction_confidence_floor_millis
-        > current.jurisdiction_confidence_floor_millis;
-    delta.tightened |= proposed
-        .prohibited_list_provenance_classes
-        .iter()
-        .any(|class| !current.prohibited_list_provenance_classes.contains(class));
-    delta
+    let delta = classify_semantic_delta(current, proposed);
+    Ok(match (delta.loosened, delta.tightened) {
+        (true, _) => ComplianceAmendmentClass::LooseningOrAmbiguous,
+        (false, true) => ComplianceAmendmentClass::Tightening,
+        (false, false) => ComplianceAmendmentClass::MetadataRefresh,
+    })
 }
 
 /// The only public activation path.
@@ -356,6 +278,10 @@ pub(super) fn compliance_amendment_notices_in_txn(
 
 /// Canonical hash of a proposal: the exact rows, in a canonical order, plus the
 /// pack version and every dial that decides how those rows apply.
+///
+/// Both sorts are stable, so two bindings for one jurisdiction keep their
+/// listed order in the hash: the first one is the one that runs (FIX 9660),
+/// and a stamp binds which one that is.
 ///
 /// # Errors
 ///

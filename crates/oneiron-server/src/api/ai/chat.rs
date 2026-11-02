@@ -28,6 +28,7 @@ use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
 use oneiron::attempt_queue::ManifestEntry;
+use oneiron::authority::ManagedOwnerCheckError;
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::conversation::{OutputMark, TurnActionAttempt};
 use oneiron::dreamer_wake::{AgentWakeSignals, WakeTurnSubject};
@@ -38,7 +39,6 @@ use oneiron::memory::{
     MessageWriteMode, StreamCadence, StreamCancelReason, StreamSyncVisibility, WitnessAuthor,
     WitnessMessage, WitnessTurn, resolve_entity_ref,
 };
-use oneiron::runtime_hooks::verb::InvocationClaim;
 use oneiron::runtime_hooks::{InvocationId, VerbCall, VerbDomain, VerbHookPre, VerbHookStop};
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::skill_hub::pack_catalog::HookActorClass;
@@ -63,7 +63,7 @@ fn refused(status: StatusCode, code: &str, message: impl Into<String>) -> Refuse
 use crate::ai_host::payer_funding::room_launch_funding;
 use crate::ai_host::{AiHandle, TurnGuard};
 use crate::api::credential_memory;
-use crate::api::facade::{self, DoorClaim};
+use crate::api::facade::{self, DoorClaim, DoorInvocationClaim};
 use crate::auth::{CoreAuth, CoreScope};
 use crate::models::{RoleCall, RoleRefusal, Seat};
 use crate::server::SyncServer;
@@ -129,6 +129,10 @@ pub(super) struct ChatTurnRequest {
     history: Vec<HistoryLine>,
     /// The agent definition that answers; the seeded default otherwise.
     agent_ref: Option<String>,
+    /// A TURN of the conversation, by its 32-hex id, that this turn answers
+    /// in its thread: the turn and its reply land there, and a join filed
+    /// for that thread funds the reply (FIX 3572). The trunk otherwise.
+    reply_to: Option<String>,
     /// Answer with NDJSON lines as they come, deltas included; otherwise
     /// with the whole message once it is saved.
     #[serde(default)]
@@ -156,6 +160,10 @@ enum ChatLine {
     Accepted {
         user_turn: String,
         message_id: String,
+        /// Why the call goes without the context board the turn read (FIX
+        /// 8136).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        board_omitted: Option<recall::BoardOmission>,
     },
     Delta {
         text: String,
@@ -184,6 +192,10 @@ struct ChatReply {
     text: String,
     incomplete: bool,
     finish_reason: Option<oneiron::FinishReason>,
+    /// Why the call went without the context board the turn read (FIX
+    /// 8136).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    board_omitted: Option<recall::BoardOmission>,
 }
 
 fn line(value: &ChatLine) -> Vec<u8> {
@@ -220,10 +232,61 @@ impl TurnCredential {
             Self::Action { action, vault } => action.requester_live_in(vault, txn),
         }
     }
+
+    /// Why this credential lapsed: a queued action's attested owner is his
+    /// own refusal, or an owner check that could not judge him (FIX 11090),
+    /// never a revoked slip; any other lapse is a revoked credential.
+    fn lapse(&self) -> Lapse {
+        let Self::Action { action, vault } = self else {
+            return Lapse::Revoked;
+        };
+        match action.owner_lapse(vault) {
+            Some(ManagedOwnerCheckError::OwnerNotLive) => Lapse::OwnerNotLive,
+            Some(ManagedOwnerCheckError::Unavailable) => Lapse::OwnerUnavailable,
+            None => Lapse::Revoked,
+        }
+    }
+}
+
+/// Why a turn's credential stopped holding, as its MESSAGE and the turn's
+/// reason keep it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Lapse {
+    /// The credential was revoked: [`REVOKED`].
+    Revoked,
+    /// A queued action's attested owner is no longer the vault's live owner
+    /// (FIX 11090): [`OWNER_NOT_LIVE`].
+    OwnerNotLive,
+    /// A queued action's owner check could not judge him: the operational
+    /// failure a failed call ends on, no refusal of his.
+    OwnerUnavailable,
+}
+
+impl Lapse {
+    /// What the MESSAGE is cancelled with.
+    fn cancel_reason(self) -> StreamCancelReason {
+        match self {
+            Self::Revoked => StreamCancelReason::Custom(REVOKED.into()),
+            Self::OwnerNotLive => StreamCancelReason::Custom(OWNER_NOT_LIVE.into()),
+            Self::OwnerUnavailable => StreamCancelReason::AgentAborted,
+        }
+    }
+
+    /// The turn's reason, which a queued action records as its error.
+    const fn reason(self) -> &'static str {
+        match self {
+            Self::Revoked => "the turn's credential was revoked",
+            Self::OwnerNotLive => "the attested owner is not this vault's live owner",
+            Self::OwnerUnavailable => "the attested owner's standing could not be checked",
+        }
+    }
 }
 
 /// Recorded on the assistant MESSAGE a revoked credential's turn leaves.
 const REVOKED: &str = "credential_revoked";
+/// Recorded on the assistant MESSAGE a queued action leaves once its
+/// attested owner is no longer the vault's live owner (FIX 11090).
+const OWNER_NOT_LIVE: &str = "owner_not_live";
 /// Recorded on the assistant MESSAGE the newcomer barrier stopped: an
 /// attendee entered its conversation while it was being written.
 const NEWCOMER: &str = "attendee_entered";
@@ -382,9 +445,25 @@ pub(super) async fn chat_turn(
     let claim = match (invocation(&headers), &payload) {
         (Ok(Some(named)), Ok(Json(request))) => {
             let body = turn_invocation_body(&auth, locality, request);
-            match facade::claim_door_invocation(&server, named, body).await {
+            match facade::claim_door_invocation(&server, named, body, auth.principal_entity()).await
+            {
                 DoorClaim::Run(claim) => Some(claim),
-                DoorClaim::Answered(outcome) => return facade::door_replay(outcome),
+                DoorClaim::Answered(outcome) => {
+                    // The waiter's credential is judged again once the wait
+                    // is over, before a reply is its (FIX 8212): a revoked
+                    // or expired one gets the refusal it gets anywhere.
+                    if !auth.credential_is_live(server.vault()) {
+                        return refusal(
+                            StatusCode::UNAUTHORIZED,
+                            "credential_revoked",
+                            "the admission credential is no longer live",
+                        );
+                    }
+                    // The first call's reply, released again for this
+                    // waiter through the same release record as a facade
+                    // waiter's (FIX 10499).
+                    return facade::door_replay_for(server.vault(), &auth, "chat", outcome);
+                }
                 DoorClaim::InFlight => {
                     return refusal(
                         StatusCode::CONFLICT,
@@ -399,17 +478,44 @@ pub(super) async fn chat_turn(
                         "this invocation id names a different call",
                     );
                 }
+                DoorClaim::ReplyNotKept { committed_writes } => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        crate::idempotency::REPLY_NOT_KEPT_STATE,
+                        format!(
+                            "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+                        ),
+                    );
+                }
+                DoorClaim::Erased => {
+                    return refusal(
+                        StatusCode::CONFLICT,
+                        facade::INVOCATION_RESPONSE_ERASED,
+                        "the first response with this invocation was erased",
+                    );
+                }
+                DoorClaim::StoreFailed => {
+                    return refusal(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        facade::INVOCATION_STORE_FAILED,
+                        "the invocation claim could not be stored",
+                    );
+                }
             }
         }
         _ => None,
     };
     // FIX 6794: the turn reads the vault's memory through the context board,
-    // before anything is written.
+    // before anything is written. FIX 8133: the reply's newcomer barrier is
+    // marked before that read, so an attendee who entered once the board was
+    // read stops the reply as one who entered later does.
+    let mark = server.vault().container_output_mark();
     let board = match &payload {
         Ok(Json(request)) => recall::turn_board(&server, &auth, request).await,
-        Err(_) => None,
+        Err(_) => Ok(None),
     };
-    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, board) {
+    let read = recall::TurnRead { mark, board };
+    let response = match start_turn(&auth, &server, peer, locality, &headers, payload, read) {
         Ok(started) if started.stream => return streamed(started, claim),
         Ok(started) => whole(started).await,
         Err(refused) => *refused,
@@ -444,6 +550,9 @@ struct Started {
     turn: EntityId,
     answering: Answering,
     credential: TurnCredential,
+    /// Why the call goes without the context board the turn read (FIX
+    /// 8136).
+    board_omitted: Option<recall::BoardOmission>,
 }
 
 /// Marks the end of message `message` of a self turn's `request` as a
@@ -530,8 +639,13 @@ pub(crate) struct Answer {
 
 /// Where a reply is written.
 pub(crate) enum AnswerOpen {
-    /// A new MESSAGE in the turn this names.
-    Turn(WitnessTurn),
+    /// A new MESSAGE in the turn `turn` names, in `conversation`: the
+    /// container the user's turn was witnessed into, bound before generation
+    /// (FIX 8132), `None` for a turn that lies in none.
+    Turn {
+        turn: WitnessTurn,
+        conversation: Option<EntityId>,
+    },
     /// A Retry's new MESSAGE, answering `action`'s reply again in a new
     /// TURN that its terminal lands with it (FIX 3152), linked to the old
     /// reply by a `regenerates` edge.

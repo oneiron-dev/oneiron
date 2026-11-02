@@ -131,6 +131,8 @@ impl OffRecordSession<'_> {
                 }
             }
         }
+        // FIX 3103: each op keeps the run whose envelope wrote it.
+        let source_run = crate::skill_attribution::current_run_write_token();
         for op in ops {
             apply(
                 wtxn,
@@ -140,6 +142,7 @@ impl OffRecordSession<'_> {
                     learned_at,
                     occurred,
                     op,
+                    source_run: source_run.clone(),
                 },
             )?;
         }

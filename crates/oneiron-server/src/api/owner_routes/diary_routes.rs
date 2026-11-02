@@ -6,9 +6,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
 use axum::routing::post;
 use oneiron::EdgeActorClass;
@@ -16,20 +14,45 @@ use oneiron::consent::{ConsentGrant, ConsentReceipt};
 use oneiron::memory::DiaryReadOutcome;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/diary/review", post(review))
-        .route("/diary/grants", post(grant))
-        .route("/diary/read", post(read))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/diary/review",
+                summary: "Whether an agent reviews each read first.",
+                row: None,
+            },
+            post(review),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/diary/grants",
+                summary: "A diary.read Grant for one reader.",
+                row: None,
+            },
+            post(grant),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/diary/read",
+                summary: "The owner reads a diary under its Grant.",
+                row: None,
+            },
+            post(read),
+        ),
+    ]
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetReview {
     /// The agent, as 32 hex.
@@ -37,13 +60,23 @@ struct SetReview {
     on: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReviewSet {
     agent: String,
     on: bool,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/diary/review`'s body (FIX 11103): [`SetReview`].
+pub(crate) fn diary_review_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetReview>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/review`'s answer (FIX 11103): [`ReviewSet`].
+pub(crate) fn diary_review_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReviewSet>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct GrantDiaryRead {
     /// Who reads, as 32 hex: the owner names itself to read.
@@ -57,19 +90,40 @@ struct GrantDiaryRead {
     entries: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct DiaryReadGranted {
     grant_ref: Option<String>,
     receipt_ref: String,
 }
 
-#[derive(Debug, Deserialize)]
+/// The OpenAPI schema of `POST /v1/owner/diary/grants`'s body (FIX 11103): [`GrantDiaryRead`].
+pub(crate) fn diary_grant_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GrantDiaryRead>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/grants`'s answer (FIX 11103): [`DiaryReadGranted`].
+pub(crate) fn diary_grant_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DiaryReadGranted>()
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ReadDiary {
     /// Whose diary, as 32 hex.
     agent: String,
     /// The reason the read states; the agent sees it.
     reason: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/read`'s body (FIX 11611): [`ReadDiary`].
+pub(crate) fn read_diary_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<ReadDiary>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/diary/read`'s answer (FIX 11611):
+/// [`DiaryReadOutcome`].
+pub(crate) fn diary_read_outcome_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<DiaryReadOutcome>()
 }
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
@@ -80,10 +134,10 @@ fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
 async fn review(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetReview>, JsonRejection>,
+    payload: OwnerJsonBody<SetReview>,
 ) -> OwnerReply<ReviewSet> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let set = blocking(move || -> OwnerResult<ReviewSet> {
         let agent = entity_id("agent", &request.agent)?;
@@ -107,10 +161,10 @@ async fn review(
 async fn grant(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<GrantDiaryRead>, JsonRejection>,
+    payload: OwnerJsonBody<GrantDiaryRead>,
 ) -> OwnerReply<DiaryReadGranted> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let granted = blocking(move || -> OwnerResult<DiaryReadGranted> {
         let reader = entity_id("reader", &request.reader)?;
@@ -162,10 +216,10 @@ async fn grant(
 async fn read(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<ReadDiary>, JsonRejection>,
+    payload: OwnerJsonBody<ReadDiary>,
 ) -> OwnerReply<DiaryReadOutcome> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let locality = auth.locality();
     let outcome = blocking(move || -> OwnerResult<DiaryReadOutcome> {
         let agent = entity_id("agent", &request.agent)?;

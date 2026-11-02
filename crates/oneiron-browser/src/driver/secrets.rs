@@ -205,9 +205,18 @@ impl CdpDriver {
             .collect();
         let title = secret_echo_policy(&title, &pairs).unwrap_or(title);
         let title = self.secrets.mask_known(&title).unwrap_or(title);
-        let url = self.shown_url(&url, &origin);
-        let url = self.secrets.mask_known(&url).unwrap_or(url);
-        (url, title)
+        (self.url_shown(&url), title)
+    }
+
+    /// `url` as an observation shows it (FIX 8340): each code parameter's
+    /// value and each secret the run's reads took show their handles. A
+    /// receipt's page and a recording's pages show the same (FIX 10331);
+    /// the raw URL stays only for the host's own lookups.
+    pub(crate) fn url_shown(&self, url: &str) -> String {
+        let origin = Url::parse(url)
+            .map_or_else(|_| String::new(), |url| url.origin().ascii_serialization());
+        let url = self.shown_url(url, &origin);
+        self.secrets.mask_known(&url).unwrap_or(url)
     }
 
     /// `url` with each code parameter's value, in its query and in a
@@ -299,7 +308,7 @@ impl CdpDriver {
                 continue;
             };
             let element = json!({"objectId": object, "sessionId": session});
-            if let Err(error) = self.call_in(&element, MASK_NODE) {
+            if let Err(error) = self.call_on_element(&element, MASK_NODE) {
                 return (masked, Err(error));
             }
             masked.push(element);
@@ -318,7 +327,7 @@ impl CdpDriver {
     }
 
     /// Calls `function` on `element`, on the session it was resolved on.
-    fn call_in(&self, element: &Value, function: &str) -> Result<(), BrowserError> {
+    fn call_on_element(&self, element: &Value, function: &str) -> Result<(), BrowserError> {
         let session = element["sessionId"].as_str().unwrap_or(&self.session);
         let answer = self.pipe.call(
             Some(session),
@@ -327,13 +336,7 @@ impl CdpDriver {
             Instant::now() + CALL,
         )?;
         match answer.get("exceptionDetails") {
-            Some(error) => Err(BrowserError::Protocol(
-                error
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .unwrap_or("script error")
-                    .to_owned(),
-            )),
+            Some(error) => Err(BrowserError::Protocol(self.thrown_text(error))),
             None => Ok(()),
         }
     }
@@ -350,7 +353,7 @@ impl CdpDriver {
             }
         }
         for element in masked {
-            let undone = self.call_in(element, UNMASK_NODE);
+            let undone = self.call_on_element(element, UNMASK_NODE);
             if restored.is_ok() {
                 restored = undone;
             }

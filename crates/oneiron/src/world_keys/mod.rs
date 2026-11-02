@@ -24,7 +24,9 @@ mod content_landed;
 mod content_window;
 mod doors;
 mod kit;
+mod kit_piece;
 mod machine;
+mod owner_signing;
 mod owner_work;
 mod pad_custody;
 mod pad_erase;
@@ -53,7 +55,7 @@ pub(crate) use self::bundle::PadEraseSubject;
 pub use self::bundle::{
     OpenedBundleSection, OpenedKeyPads, OpenedVaultBundle, SEALED_BUNDLE_KEEP,
     SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS, SealedBundleGeneration,
-    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload,
+    SealedBundleSection, SealedKeyPads, SealedVaultBundle, SealedVaultUpload, WorldCapsuleImport,
     retired_bundle_generations, sealed_bundle_slot,
 };
 #[cfg(feature = "sync")]
@@ -66,8 +68,9 @@ pub use self::kit::{
     ConfirmedWorldKit, IssuedWorldKit, IssuingRequest, StoredCost, StoredKit, WORLD_KIT_ESCROW,
     WorldKitRestore, WorldKitStatus,
 };
+pub use self::machine::{existing_machine_secret, machine_encryption_key, machine_secret};
 pub(crate) use self::machine::{keystore_error, slot_seed};
-pub use self::machine::{machine_encryption_key, machine_secret};
+pub use self::owner_signing::OwnerRootSigner;
 pub use self::owner_work::{
     BundleHomeWarning, CapsuleRead, EnsureDiagnostics, EnsureView, ExecutorObservation, LatestRead,
     OwnerWorkCancelNote, OwnerWorkCancelState, OwnerWorkDiagnostics, OwnerWorkDrain,
@@ -98,23 +101,29 @@ pub(crate) use self::pad_custody::{
 };
 pub(crate) use self::pad_erase::erase_batch_pad_row_in_txn;
 pub(crate) use self::pad_image::{
-    drop_pad_rows_in_txn, image_pad_form_ok, image_pad_projection, image_pad_row_of,
-    live_pad_carrier, plan_archived_pads, rested_pad_row,
+    PadRowRest, drop_pad_rows_in_txn, image_pad_form_ok, image_pad_projection, image_pad_row_of,
+    live_pad_carrier, pad_row_rest_in_txn, pad_row_rests_in_txn, plan_archived_pads,
+    rested_pad_row,
 };
 #[cfg(feature = "sync")]
 pub use self::pads::PromotedWorldPad;
+#[cfg(feature = "sync")]
+pub(crate) use self::pads::reject_held_pad_carrier_in_txn;
 pub use self::pads::{WorldKeyDestroyCause, WorldKeyDestruction};
 pub(crate) use self::pads::{
     destroy_world_keys_in_txn, held_pad_world_in_txn, late_pad_in_txn, note_world_deleted_in_txn,
-    pad_body_world, pad_world_in_body, reject_held_pad_world_in_txn, world_keys_destroyed_in_txn,
-    world_pad_scope_exists_in_txn, world_pad_windows_in_txn,
+    pad_body_world, pad_world_in_body, reject_held_pad_world_as_in_txn,
+    reject_held_pad_world_in_txn, world_keys_destroyed_in_txn, world_pad_scope_exists_in_txn,
+    world_pad_windows_in_txn,
 };
 pub(crate) use self::page_seal::{
-    OpenedDataKey, admit_new_vault, page_seal_open_error, read_sealed, seal_read_only,
+    OpenedDataKey, admit_new_vault, discard_creation_record, page_seal_open_error, read_sealed,
+    seal_read_only,
 };
 pub use self::page_seal::{
     PAGE_SEAL_WARNING, SealedSwap, VaultPageSeal, new_delivered_page_seal, new_page_seal,
-    page_seal_custody_path, page_seal_vault_id, reopen_delivered_page_seal, unlock_page_seal,
+    page_seal_custody_path, page_seal_vault_id, refuse_unfinished_sealed_creation,
+    remove_unfinished_sealed_creation, reopen_delivered_page_seal, unlock_page_seal,
     vault_is_sealed,
 };
 pub use self::repin::{NarrowedWorld, RepinReport, Withheld};

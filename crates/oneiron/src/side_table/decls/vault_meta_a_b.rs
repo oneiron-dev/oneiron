@@ -33,7 +33,8 @@ side_tables! {
     /// Approved board-widened context slice override recorded for one parent attempt. Key: id16.
     AGENT_DISPATCH_WIDEN_SLICE: VaultMeta b"agent.dispatch.slice.v1\0" LegacyJson Authored;
     /// One node of a launch's spend lease tree (root launch or child attempt). Key: string.
-    AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson;
+    AGENT_DISPATCH_SPEND_SCOPE: VaultMeta b"agent.dispatch.spend.v1\0" LegacyJson
+        => crate::agent_dispatch::spend_handoff::erase_spend_scope_actor_in_txn;
     /// Pending context-widen proposal record, keyed by a hash of the dedupe key or full intent. Key:
     /// hash32.
     AGENT_DISPATCH_WIDEN_INTENT: VaultMeta b"agent.dispatch.widen.v1\0" LegacyJson Authored
@@ -95,10 +96,12 @@ side_tables! {
     /// (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Named;
     /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
-    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored
+        => crate::receipt::erase_attempt_attribution_scope_in_txn;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
-    ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named;
+    ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
+        => crate::learning::erase_receipt_scope_in_txn;
     /// One-shot consumption marker and promotion receipt for a specific authoring strategy's sealed
     /// BEAM measurement. Two shapes share this key over its lifetime (a non-JSON consumption
     /// sentinel, then a JSON receipt) and no reader ever decodes it — every access is a raw
@@ -137,6 +140,11 @@ side_tables! {
     /// One checkpoint v2 image's canonical bytes (domain, then named MessagePack), keyed by its
     /// unsigned id (OF-469). Key: hash32.
     AUTHORITY_CHECKPOINT_V2_IMAGE: VaultMeta b"authority.checkpoint.v2." Raw;
+    /// One signed authority row a local append kept as evidence instead of storing it, because
+    /// the fold with it past the adopted checkpoint image needs history this vault does not hold
+    /// (FIX 2989): no held history, admitting nothing; it leaves when a put of it lands. Key:
+    /// hash32. Value: the row's canonical signed bytes.
+    AUTHORITY_HISTORY_PENDING: VaultMeta b"authority.history.pending.v1:" Raw;
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw;
@@ -253,8 +261,8 @@ side_tables! {
     BOOKING_PUBLICATION_WRITE_STAGE: VaultMeta b"booking.public_write.in_txn/" Raw;
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed;
-    /// Booking anti-abuse rules, notices, rate counters and slot-list caches. Key: tag NUL + hash32
-    /// (rule, notice, rate, cache).
+    /// Booking anti-abuse rule proposals, rate counters, slot-list caches and quarantined
+    /// submissions. Key: tag NUL + hash32 or id16 (proposal, rate, cache, submission).
     BOOKING_ANTI_ABUSE: VaultMeta b"booking:anti_abuse:v1:" Raw;
     /// Companion shortlist proposal. Key: bytes32.
     BOOKING_COMPANION_PROPOSAL: VaultMeta b"booking:companion_proposal:v1:" VersionedNamed;
@@ -272,9 +280,12 @@ side_tables! {
     EMERGENCY_REQUEST_PLAN_INDEX: VaultMeta b"booking:emergency_request_plan:v1:" Raw;
     /// Marker (engine version string) that the built-in bootstrap skill set has been seeded. Key: ().
     SKILL_HUB_BOOTSTRAP_SEED: VaultMeta b"bootstrap_skills/seeded/v1" Raw;
+    /// CUA E8b: a browser program admission job's receipt, and the program a filing in its run
+    /// filed, written in that filing's write: references and a typed outcome only. Key: id16.
+    BROWSER_PROGRAM_ADMISSION: VaultMeta b"browser.program.admission.v1\0" Named Engine;
     /// CUA E8a: the source authority a solved browser run was captured under, by its evidence
-    /// claim: scope, group digest, credential reference and witness digest; no credential bytes.
-    /// Key: id16.
+    /// claim: scope, group digest, credential reference and witness digest, and the signed
+    /// binding itself until an admission job that used it ends (CUA E8b). Key: id16.
     BROWSER_PROGRAM_AUTHORITY: VaultMeta b"browser.program.authority.v1\0" Named Engine
         => crate::browser_library::erase_authority_actor_in_txn;
     /// CUA E8a: a replay library program whose library runs failed, live or retired, with its
@@ -293,12 +304,19 @@ side_tables! {
     /// CUA E8a: one solved run's evidence claim in its group: its run and capture time, never its
     /// body. Key: hash32 (group) + id16.
     BROWSER_SOLVED_GROUP: VaultMeta b"browser.solved.group.v1\0" Named Engine;
+    /// FIX 7880: a live replay library program's site hash, by its id alone, for resolving it
+    /// without scanning the site-first program table. Key: id16.
+    BROWSER_WORKFLOW_BY_ID: VaultMeta b"browser.workflow.by_id.v1\0" Named Engine;
     /// A replay library program a retire took out, with whose word, when and why. Key: id16.
     BROWSER_WORKFLOW_RETIRED: VaultMeta b"browser.workflow.retired.v1\0" Named Authored
         => crate::browser_library::erase_retired_actor_in_txn;
     /// Replay library program a solved browser run became, with its two checks' proof. Key: hash32 (site) + id16.
     BROWSER_WORKFLOW: VaultMeta b"browser.workflow.v1\0" Named Authored
         => crate::browser_library::erase_workflow_actor_in_txn;
+    /// FIX 7767: one resident's share of the host-paid allocation as the owner set it, and what
+    /// its settled calls charged the allocation generation they ran on. Key: id16 (resident).
+    BUDGET_RESIDENT_SHARE: VaultMeta b"budget.resident.share.v1\0" Named Engine
+        => crate::llm::erase_resident_share_actor_in_txn;
     /// Durable reserve/settle/refund ledger for the RSI research-loop spend budget. Key: ().
     BUDGET_RSI_LINE: VaultMeta b"budget.rsi.line.v1" LegacyJson;
     /// The tenant/account identity a build-cache vault is bound to. Key: ().
@@ -310,4 +328,6 @@ side_tables! {
     /// In-flight reservation marker preventing duplicate dispatch of the same build/verify action.
     /// Key: bytes32 (action key).
     BUILD_CACHE_RUNNING_RESERVATION: VaultMeta b"build_cache:running:v2:" Raw;
+    /// A staged-job artifact erase owed after its legal hold lifts. Key: hash32 (job digest).
+    BYOA_STAGED_INPUT_ERASE: VaultMeta b"byoa:staged_input_erase:v1:" Named;
 }

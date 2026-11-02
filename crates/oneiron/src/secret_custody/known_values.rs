@@ -4,14 +4,16 @@
 //!
 //! The index keeps no plaintext. Each custody write records, under the
 //! record's id, its value's byte length, a keyed fingerprint of the whole
-//! value and a keyed tag of its first bytes (all of a value shorter than
-//! the tag's window), for each value the record held. Both keys derive from
-//! one random master key; without it a fingerprint cannot be tested against
-//! a guess. A match reads the incoming bytes: each window whose tag is known
-//! is fingerprinted at each length that tag holds, longest first, and the
-//! leftmost match wins. Every non-empty value is indexed, however short (FIX
-//! 5270): a short one masks text that merely contains it, as custody holds
-//! it. An empty body is a revoked record's absent value, never a match.
+//! value, and a keyed tag and a keyed 2-byte rolling value of its first
+//! bytes (all of a value shorter than the tag's window), for each value the
+//! record held. Every key derives from one random master key; without it a
+//! fingerprint cannot be tested against a guess. A match reads the incoming
+//! bytes: the rolling values pick the offsets whose windows are read (FIX
+//! 12209, `rolling`), each window whose tag is known is fingerprinted at
+//! each length that tag holds, longest first, and the leftmost match wins.
+//! Every non-empty value is indexed, however short (FIX 5270): a short one
+//! masks text that merely contains it, as custody holds it. An empty body
+//! is a revoked record's absent value, never a match.
 //!
 //! KS-3 (FIX 5684 = FIX 5503 card A): the master and every entry live in
 //! typed custody (`store::known_history`), LMDB and every image keeping
@@ -25,7 +27,10 @@
 //! A pass holds the matcher for as long as it reads, and wipes it after: in
 //! the writer it runs in ([`KnownValues::load_in_writer`]), or, for a
 //! stream, once per frame through the ids the stream began with
-//! ([`KnownSource`]), under the custody read guard.
+//! ([`KnownSource`]), under the custody read guard. A write the group
+//! commit runs keeps the matcher its first pass loaded for its later
+//! passes, checked against the writer before each, and wipes it when the
+//! write ends (FIX 12210, `writer_index`).
 //!
 //! A value spelled another way (base64, percent or JSON escapes) is found
 //! where its spelling sits, under the same handle (FIX 2725, `forms`); a
@@ -33,6 +38,8 @@
 //! 2722, [`KnownValues::growing`]).
 
 mod forms;
+mod rolling;
+mod writer_index;
 
 use std::cmp::Reverse;
 use std::ops::Range;
@@ -41,6 +48,7 @@ use std::sync::Arc;
 use heed::{RoTxn, RwTxn};
 use zeroize::{Zeroize, Zeroizing};
 
+use self::rolling::{RollingKey, RollingScan, RollingSets};
 use super::types::SecretCustodyRecord;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -49,6 +57,7 @@ use crate::store::{KNOWN_TAG_BYTES, KnownEntry, KnownHistory, KnownHistoryIds, S
 use crate::vault::Vault;
 
 pub(super) use self::forms::decodings;
+pub(crate) use self::writer_index::known_index_scope;
 
 /// The shortest value matched exactly: every non-empty value (FIX 5270). An
 /// empty body is a revoked record's absent value. One constant, so a ruling
@@ -73,10 +82,12 @@ const KNOWN_GROWING_HOLD: usize = TAG_WINDOW - 1;
 const FINGERPRINT_CONTEXT: &str = "oneiron secret_custody known-value fingerprint v1";
 const TAG_CONTEXT: &str = "oneiron secret_custody known-value tag v1";
 
-/// The two keys derived from the index's master.
+/// The three keys derived from the index's master.
 struct Keys {
     fingerprint: Zeroizing<[u8; 32]>,
     tag: Zeroizing<[u8; 32]>,
+    /// The rolling prefilter's, under its own label (FIX 12209).
+    rolling: RollingKey,
 }
 
 impl Keys {
@@ -84,6 +95,7 @@ impl Keys {
         Self {
             fingerprint: crate::world_keys::derive_guarded(FINGERPRINT_CONTEXT, &[&key[..]]),
             tag: crate::world_keys::derive_guarded(TAG_CONTEXT, &[&key[..]]),
+            rolling: RollingKey::derive(key),
         }
     }
 
@@ -104,6 +116,17 @@ fn tag_of(hash: &blake3::Hash) -> [u8; TAG_BYTES] {
     tag
 }
 
+/// Whether the index never keys the value of the record named `name`: a
+/// run-bound record's, its run's alone (FIX 8028), a cloud registration
+/// slot's, whose tokens leave no known-value history for its erase to carry
+/// (G7), and a short or bare dotenv value's, masked in its own file only
+/// (FIX 7608 slice 6, CALL DOTENV-IMPORT).
+pub(super) fn never_keyed(name: &str) -> bool {
+    super::run_bound::is_run_bound_name(name)
+        || super::is_cloud_registration_slot(name)
+        || crate::repo_mutation::is_unindexed_dotenv_name(name)
+}
+
 /// Records `rec`'s value under `id`, in the custody write's transaction: its
 /// entry, under the master key custody holds (minted with the first value),
 /// is published to custody and referenced in `wtxn` (KS-3). Returns whether
@@ -121,14 +144,24 @@ pub(super) fn remember_in_txn(
     }
     let len =
         u32::try_from(value.len()).map_err(|_| Error::ArithmeticOverflow("known value length"))?;
-    store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
-        let keys = Keys::derive(master);
-        KnownEntry {
-            len,
-            tag: keys.tag(&value[..value.len().min(TAG_WINDOW)]),
-            fingerprint: keys.fingerprint(value),
-        }
-    })
+    let window = &value[..value.len().min(TAG_WINDOW)];
+    let changed =
+        store.remember_known_entry_in_txn(wtxn, id, rec.rotation_generation, |master| {
+            let keys = Keys::derive(master);
+            KnownEntry {
+                len,
+                tag: keys.tag(window),
+                // The window the tag keys, as a match rolls it (FIX 12209).
+                rolling: keys.rolling.value(window),
+                fingerprint: keys.fingerprint(value),
+            }
+        })?;
+    // A value the history did not hold drops the index this write keeps
+    // (FIX 12210).
+    if changed {
+        writer_index::forget_kept();
+    }
+    Ok(changed)
 }
 
 /// One value the index knows, as a match reads it. Its fingerprint is
@@ -159,7 +192,8 @@ impl Drop for Bucket {
 }
 
 /// The index, loaded for one pass over incoming bytes. Never kept past the
-/// pass that loaded it: the writer it was read in, or one stream frame.
+/// writer it was read in (a write's later passes share it, FIX 12210), or
+/// one stream frame.
 pub(crate) struct KnownValues {
     keys: Keys,
     /// Candidates by the tag of their first window, in tag order.
@@ -167,6 +201,9 @@ pub(crate) struct KnownValues {
     /// Each tag window length some value has, ascending: [`TAG_WINDOW`], and
     /// the length of each shorter value.
     windows: Vec<usize>,
+    /// The rolling values of the values' first windows, by window length,
+    /// in the order of `windows` (FIX 12209).
+    rolling: RollingSets,
     /// Each value length the index knows, ascending.
     lengths: Vec<usize>,
     longest: usize,
@@ -200,7 +237,7 @@ impl KnownValues {
         handle_of: impl Fn(&EntityId) -> Result<Option<String>>,
     ) -> Result<Option<Self>> {
         let mut buckets: Vec<Bucket> = Vec::new();
-        let mut windows = Vec::new();
+        let mut rolling = RollingSets::default();
         let mut lengths = Vec::new();
         let mut longest = 0;
         for (custody, entries) in &history.holders {
@@ -214,10 +251,7 @@ impl KnownValues {
                 if len == 0 {
                     continue;
                 }
-                let window = len.min(TAG_WINDOW);
-                if !windows.contains(&window) {
-                    windows.push(window);
-                }
+                rolling.insert(len.min(TAG_WINDOW), entry.rolling);
                 let at = match buckets.binary_search_by(|bucket| bucket.tag.cmp(&entry.tag)) {
                     Ok(at) => at,
                     Err(at) => {
@@ -257,13 +291,13 @@ impl KnownValues {
                 .known
                 .sort_by_key(|known| std::cmp::Reverse(known.len));
         }
-        windows.sort_unstable();
         lengths.sort_unstable();
         lengths.dedup();
         Ok(Some(Self {
             keys: Keys::derive(&history.master),
             buckets,
-            windows,
+            windows: rolling.windows().collect(),
+            rolling,
             lengths,
             longest,
         }))
@@ -296,7 +330,9 @@ impl KnownValues {
     /// Each known value in `data`, leftmost first, never overlapping: at
     /// each place the longest value there wins. A value spelled in base64,
     /// in percent escapes or in JSON escapes is found where its spelling
-    /// sits, under its own record's handle (FIX 2725).
+    /// sits, under its own record's handle (FIX 2725); one inside a longer
+    /// base64 run, over folds, or with `+` for a space is found there too
+    /// (FIX 6671).
     pub(crate) fn spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
         let mut spans = self.raw_spans(data);
         let mut spelled = Vec::new();
@@ -310,6 +346,15 @@ impl KnownValues {
                 }
             }
         }
+        // FIX 6671: a form-encoded spelling reads `+` as a space; every hit
+        // maps back, since `+` reads as one byte from one.
+        if let Some(view) = forms::form_view(data) {
+            for hit in self.raw_spans(&view.bytes) {
+                if let Some(span) = view.source_mapped(hit.span) {
+                    spelled.push(KnownSpan { span, ..hit });
+                }
+            }
+        }
         let fits = |len: usize| self.lengths.binary_search(&len).is_ok();
         for (run, decoded) in forms::base64_runs(data, self.reach(), fits) {
             if let Some(known) = self.whole(&decoded) {
@@ -318,6 +363,15 @@ impl KnownValues {
                     custody: known.custody,
                     handle: &known.handle,
                 });
+            }
+        }
+        // FIX 6671: a value spelled inside a longer run, at any offset, over
+        // folds, maps back through the run's own source map.
+        for (_, view) in forms::base64_views(data, self.reach()) {
+            for hit in self.raw_spans(&view.bytes) {
+                if let Some(span) = view.source(hit.span) {
+                    spelled.push(KnownSpan { span, ..hit });
+                }
             }
         }
         if spelled.is_empty() {
@@ -346,13 +400,65 @@ impl KnownValues {
     /// (FIX 2722): the earliest window of its last bytes, short of the
     /// longest value, whose keyed tag opens a value longer than what
     /// follows; and the last bytes no window can test yet
-    /// ([`KNOWN_GROWING_HOLD`]). No value is minted for either; the text
-    /// that goes past them, or the stream's end, reads them whole.
+    /// ([`KNOWN_GROWING_HOLD`]). A value arriving in an encoded form is held
+    /// back from the point its encoded prefix starts (FIX 6672): the tail
+    /// reads through the same views [`spans`](Self::spans) uses, and `held`
+    /// holds back what either answer holds. No value is minted for either;
+    /// the text that goes past them, or the stream's end, reads them whole.
     pub(crate) fn growing(&self, text: &[u8]) -> Growing {
+        let (mut opens, mut held) = self.growing_in(text);
+        // The tail covers any encoded prefix still arriving; back to its
+        // run's start, so a base64 run reads aligned.
+        // A run longer than the reach reads as none, so the walk back stops
+        // within twice the reach.
+        let mut tail = text.len().saturating_sub(self.reach());
+        let floor = text.len().saturating_sub(2 * self.reach());
+        while tail > floor && forms::base64_run_byte(text[tail - 1]) {
+            tail -= 1;
+        }
+        let tail_bytes = &text[tail..];
+        for view in [
+            forms::percent_view(tail_bytes),
+            forms::form_view(tail_bytes),
+            forms::json_view(tail_bytes),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            self.merge_growing(&mut opens, &mut held, &view, tail);
+        }
+        for (run, view) in forms::base64_views(tail_bytes, self.reach()) {
+            // A run that ended is read whole, never grown: only one reaching
+            // the end may still be writing.
+            if run.end != tail_bytes.len() {
+                continue;
+            }
+            self.merge_growing(&mut opens, &mut held, &view, tail);
+        }
+        Growing { opens, held }
+    }
+
+    /// Where `bytes` may still be writing a known value (FIX 2722): the
+    /// earliest window short of the longest value whose keyed tag opens a
+    /// value longer than what follows, and where the last bytes no window
+    /// can test yet start ([`KNOWN_GROWING_HOLD`]). Positions are in
+    /// `bytes`: raw text, or one encoded view's decoded bytes (FIX 6672).
+    fn growing_in(&self, bytes: &[u8]) -> (Option<usize>, usize) {
         let hold = self.longest.saturating_sub(1);
-        let from = text.len().saturating_sub(hold);
-        let opens = (from..text.len()).find(|&at| {
-            let rest = &text[at..];
+        let from = bytes.len().saturating_sub(hold);
+        let held = bytes.len() - hold.min(KNOWN_GROWING_HOLD).min(bytes.len());
+        // FIX 12250: only an offset whose tag window's rolling value the
+        // index holds is read; a value arriving there always is, and each
+        // one read is confirmed by its keyed tag as before.
+        let Some(lane) = self.windows.iter().position(|&window| window == TAG_WINDOW) else {
+            return (None, held);
+        };
+        let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, &bytes[from..]);
+        let opens = (from..bytes.len()).find(|&at| {
+            if scan.hits(at - from) & (1 << lane) == 0 {
+                return false;
+            }
+            let rest = &bytes[at..];
             rest.len() >= TAG_WINDOW
                 && self
                     .bucket(&self.keys.tag(&rest[..TAG_WINDOW]))
@@ -362,9 +468,29 @@ impl KnownValues {
                             .any(|known| known.len >= TAG_WINDOW && known.len > rest.len())
                     })
         });
-        Growing {
-            opens,
-            held: text.len() - hold.min(KNOWN_GROWING_HOLD).min(text.len()),
+        (opens, held)
+    }
+
+    /// Merges one decoded tail's growing answer into `opens` and `held`
+    /// (FIX 6672): positions map back through `view` to the text whose tail
+    /// starts at `tail`. The earliest opening and the most held back win.
+    fn merge_growing(
+        &self,
+        opens: &mut Option<usize>,
+        held: &mut usize,
+        view: &forms::View,
+        tail: usize,
+    ) {
+        let (at, held_at) = self.growing_in(&view.bytes);
+        if let Some(at) = at.and_then(|at| view.source_pos(at)) {
+            let at = tail + at;
+            *opens = Some(match *opens {
+                Some(open) => open.min(at),
+                None => at,
+            });
+        }
+        if let Some(held_at) = view.source_pos(held_at) {
+            *held = (*held).min(tail + held_at);
         }
     }
 
@@ -372,9 +498,19 @@ impl KnownValues {
     /// overlapping: at each place the longest value there wins.
     fn raw_spans(&self, data: &[u8]) -> Vec<KnownSpan<'_>> {
         let mut spans = Vec::new();
+        // FIX 12209: only an offset where some window's rolling value is one
+        // the index holds is read; the offset a known value starts at always
+        // is, and each one read is confirmed by tag and fingerprint.
+        let mut scan = RollingScan::new(&self.keys.rolling, &self.rolling, data);
         let mut at = 0;
         while at < data.len() {
-            match self.longest_at(&data[at..]) {
+            let hits = scan.hits(at);
+            let known = if hits == 0 {
+                None
+            } else {
+                self.longest_in(&data[at..], hits)
+            };
+            match known {
                 Some(known) => {
                     spans.push(KnownSpan {
                         span: at..at + known.len,
@@ -398,15 +534,25 @@ impl KnownValues {
         Some(&self.buckets[at].known)
     }
 
-    /// The longest known value `rest` starts with. Each window's tag is
-    /// hashed once, the shorter ones on the way to the longer.
+    /// The longest known value `rest` starts with.
     fn longest_at(&self, rest: &[u8]) -> Option<&Known> {
+        self.longest_in(rest, u32::MAX)
+    }
+
+    /// The longest known value `rest` starts with whose first window's
+    /// length `hits` names: bit n for the n-th of `self.windows` (FIX
+    /// 12209). Each named window's tag is hashed once, the shorter ones on
+    /// the way to the longer.
+    fn longest_in(&self, rest: &[u8], hits: u32) -> Option<&Known> {
         let mut hasher = blake3::Hasher::new_keyed(&self.keys.tag);
         let mut tags = [None; TAG_WINDOW];
         let mut hashed = 0;
-        for &window in &self.windows {
+        for (lane, &window) in self.windows.iter().enumerate() {
             if window > rest.len() {
                 break;
+            }
+            if hits & (1 << lane) == 0 {
+                continue;
             }
             hasher.update(&rest[hashed..window]);
             hashed = window;
@@ -504,7 +650,7 @@ impl Vault {
 }
 
 /// A handle as a text stands it in for a value: `[secret sc12]`.
-fn handle_text(handle: &str) -> String {
+pub(super) fn handle_text(handle: &str) -> String {
     format!("[secret {handle}]")
 }
 

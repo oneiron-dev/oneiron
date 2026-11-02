@@ -2,6 +2,7 @@
 
 use super::document::invalid;
 use super::{NoteKind, NoteSpanResolution};
+use crate::batch::secret_scan::LiftedKeys;
 use crate::claim::{ClaimLifecycleStatus, ScopedRead, ScopedReadResult, decode_claim_body};
 use crate::lens::{
     InstrumentAtoms, InstrumentView, LensAtom, LensRenderFrame, LensText, LensTextSpan,
@@ -126,10 +127,14 @@ impl Vault {
             })
         };
         listed.push(share_id);
-        let Some(share) = self.get_share(&share_id)? else {
+        // The viewer is resolved before the brief handle is parsed or its
+        // NOTE loaded, so a share this viewer cannot see answers unresolved
+        // whatever its brief holds (FIX 1609).
+        let Some(authorized) = self.resolve_share_for_view(&share_id, &viewer, narrowing, &[])?
+        else {
             return unresolved();
         };
-        let id = EntityId::from_hex(&share.brief_ref)
+        let id = EntityId::from_hex(&authorized.brief_ref)
             .map_err(|_| invalid("brief handle must name a vault NOTE"))?;
         listed.push(id);
         let document = self.note_document(id)?;
@@ -138,6 +143,11 @@ impl Vault {
         else {
             return unresolved();
         };
+        // The pins judged here are this brief's; a resolution naming another
+        // brief does not lend them its visible claims.
+        if resolved.brief_ref != authorized.brief_ref {
+            return unresolved();
+        }
         let mut rendered = self.render_brief_with_claims(
             id,
             frame,
@@ -147,13 +157,15 @@ impl Vault {
             listed,
         )?;
         if let Some(view) = rendered.value.as_mut() {
-            // A prompt only from the sources the viewer reads here (FIX 6054).
-            let (born_with, sources) =
+            // A prompt only from the sources the viewer reads here (FIX 6054),
+            // each listed among the view's producers (FIX 6310).
+            let (born_with, sources, read_sources) =
                 self.shared_brief_born_with(&share_id, &viewer, narrowing, &id, frame, read)?;
             view.born_with = born_with;
             if let Some(sources) = sources {
                 rendered.receipt.restrict_with(&sources);
             }
+            listed.extend(read_sources);
         }
         Ok(rendered)
     }
@@ -187,7 +199,15 @@ impl Vault {
         if self.brief_kind_contract()?.is_none() {
             return Err(invalid("brief kind is not person-stamped"));
         }
-        let document = self.note_document(id)?;
+        // A reader other than the owner reads each key the brief's lift
+        // marked as its handle, in its markdown and each quote shown; each
+        // pin stays the stored original (FIX 2967).
+        let (document, keys) = if read.actor_key().reads_as_vault_owner() {
+            (self.note_document(id)?, LiftedKeys::default())
+        } else {
+            self.note_document_keys(id)?
+        };
+        let shown = |text: &str| keys.masked(text).unwrap_or_else(|| text.to_owned());
         let mut citations = Vec::new();
         for pin in document
             .pins
@@ -247,13 +267,13 @@ impl Vault {
                 redacted: false,
                 confidence: Some(live.confidence),
                 lifecycle: Some(live.lifecycle),
-                quote: Some(pin.quote_text.clone()),
+                quote: Some(shown(&pin.quote_text)),
             });
         }
         // Authored markdown is a text atom, not trusted HTML. Splitting by line
         // respects the atom leaf bound while retaining exactly the authored text.
         let mut atoms = Vec::new();
-        for line in document.markdown.lines() {
+        for line in shown(&document.markdown).lines() {
             atoms.push(LensAtom::TextBlock(TextBlockAtom {
                 spans: vec![LensTextSpan::Literal(LensText::new(if line.is_empty() {
                     " "

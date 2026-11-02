@@ -36,6 +36,7 @@ use super::replay_capsule::{actor_gone_in_txn, capsule_bodies_in_txn, names_no_a
 use super::response_owners::{
     ResponseOwner, mark_response_erased_in_txn, owner_rows_of_in_txn, response_owner_in_txn,
 };
+use super::spawn_erase::fence_spawn_targets_in_txn;
 use super::wait_holders::{erase_actor_wait_holds_in_txn, wait_holder_runs_in_txn};
 use crate::engine_executor::holds_reply_content;
 use crate::provenance::body::{owned_body_in_txn, release_body_in_txn};
@@ -98,6 +99,9 @@ pub(crate) fn fence_replay_in_txn<'r>(
     wtxn: &mut heed::RwTxn<'_>,
     mut record: Cow<'r, CodeRunReplayRecord>,
 ) -> Result<Cow<'r, CodeRunReplayRecord>> {
+    // A spawn whose target an erase took keeps no ask, whether or not its
+    // run's replies are erased (FIX 9180).
+    record = fence_spawn_targets_in_txn(&vault.store, wtxn, record)?;
     let owner = response_owner_in_txn(&vault.store, wtxn, &record.run_id)?;
     let stamped = owner.and_then(ResponseOwner::actor);
     let live = record.live_run.as_ref().map(|live| live.actor);
@@ -264,7 +268,7 @@ fn release_reply_outputs_in_txn(
 /// Releases run `owner`'s occurrence at `path` of the body `handle` names,
 /// with its own taint and secret marks: the digest it held, read before,
 /// when it held one.
-fn release_occurrence_in_txn(
+pub(super) fn release_occurrence_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     owner: EntityId,

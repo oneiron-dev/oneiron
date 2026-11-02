@@ -46,7 +46,7 @@ pub(crate) use self::tree_inventory::MODE_GITLINK;
 pub use self::tree_inventory::{CodeTreeBlob, CodeTreeInventory};
 // The reviewed import and its untouched-byte promotion (FIX 6869, G4 PR1).
 pub(crate) use self::import_anchor::import_snapshot_custody_in_txn;
-pub use self::import_anchor::materialize_code_revision_tree;
+pub use self::import_anchor::{materialize_code_revision_tree, read_code_revision_blobs};
 pub(crate) use self::import_promotion::CodeImportHold;
 pub use self::import_types::{CodeImportAcceptance, CodeImportAnchor, CodePathRetirement};
 pub(crate) use self::import_types::{

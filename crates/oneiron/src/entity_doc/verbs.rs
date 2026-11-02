@@ -1,10 +1,9 @@
 //! Stable-cursor edit verbs and the lossless whole-text timeout path.
 
 use super::document::{BODY, decode_frontier};
+use super::prose_admission::{EDIT_ROW, LandedProse, UPDATE_ROW, admit_landed};
 use super::{DocAuthorization, EntityDoc, ForkRequest, ForkStatus, SettleVerb, invalid, storage};
-use crate::batch::secret_scan::{
-    LiftedKeys, SecretScanMode, scan_content_in_txn, secret_scan_mode_in_txn,
-};
+use crate::batch::secret_scan::{Lifted, LiftedKeys, Part, admit_parts_in_txn};
 use crate::error::Result;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -102,8 +101,9 @@ impl Vault {
         self.read_entity_doc(entity, |doc| make_anchor(doc, *entity, start, end))?
     }
 
-    /// Applies at most 50 operations atomically. Every actor is checked in the
-    /// same write transaction; a rejected later operation rolls back the set.
+    /// Applies every operation atomically, however many (FIX 9848). Every
+    /// actor is checked in the same write transaction; a rejected later
+    /// operation rolls back the set.
     pub fn edit_entity_text(
         &self,
         entity: &EntityId,
@@ -116,33 +116,50 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             let mut h = storage::head(&self.store, txn, entity)?;
             let mut doc = storage::load(&self.store, txn, &h)?;
             let lifted = lifted_keys_for(&self.store, txn, &h, edits)?;
+            let mut plan = Lifted::default();
             let before = doc.doc.oplog_vv();
-            for edit in edits {
+            let mut landed = Vec::with_capacity(edits.len());
+            for (index, edit) in edits.iter().enumerate() {
                 let actor = edit
                     .actor
                     .ok_or(invalid("text operation requires an actor"))?;
                 super::forks::authorize(self, txn, authorization, entity, actor)?;
+                // A shared vault's role and record scope (FIX 9846).
+                self.authorize_shared_content_write_in_txn(txn, *entity, &actor)?;
                 doc.doc
                     .set_peer_id(loro::LoroDoc::new().peer_id())
                     .map_err(|_| invalid("document peer rotation"))?;
                 super::forks::bind_actor(self, txn, &doc, actor, at)?;
-                apply(
+                // The edit's commit names the actor's stamp token (FIX 10930).
+                let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
+                let text = admitted_prose_in_txn(self, txn, *entity, edit, &lifted, &mut plan)?;
+                let place = apply(
                     &mut doc,
                     *entity,
                     edit,
+                    stamp,
+                    &text.stored,
                     at,
-                    secret_scan_mode_in_txn(&self.store, txn)?,
+                    &[],
                     &lifted,
                 )?;
+                if let Some(place) = place {
+                    let slot = format!("/edits/{index}/text");
+                    let said = LandedProse::anchored(actor, slot, &doc, place, &text, &lifted);
+                    landed.push(said);
+                }
             }
             storage::persist(self, txn, entity, &mut h, &doc, Some(&before))?;
-            Ok(doc.frontier())
+            Ok((doc.frontier(), landed))
         })?;
         registry.remove(entity);
+        drop(registry);
+        // Landed prose's links, once the edits have landed (FIX 1227).
+        admit_landed(self, EDIT_ROW, &landed);
         Ok(out)
     }
 
@@ -158,22 +175,44 @@ impl Vault {
             .entity_docs
             .lock()
             .map_err(|_| invalid("document registry poisoned"))?;
-        let out = self.with_write_txn_grouped(|txn| {
+        let (out, landed) = self.with_write_txn_grouped(|txn| {
             let permitted =
                 super::forks::covered(self, txn, authorization, &request.entity, request.actor)?;
+            let lineage = super::proposal_lineage::opening_lineage(self, txn, authorization)?;
+            // A shared vault's role and record scope, whether the update lands
+            // or is retained for review (FIX 9846).
+            self.authorize_shared_content_write_in_txn(txn, request.entity, &request.actor)?;
             let mut h = storage::head(&self.store, txn, &request.entity)?;
             let live = storage::load(&self.store, txn, &h)?;
             let mut fork = live.fork(&request.base)?;
-            scan_content_in_txn(&self.store, txn, request.text.as_bytes())?;
-            // A handle of a key the live text's lift marked writes its value
-            // again (OF-067).
-            let resolved = if LiftedKeys::names_a_handle(&request.text) {
-                super::lift::lifted_keys_in_txn(&self.store, txn, &h)?.resolved(&request.text)
-            } else {
-                None
-            };
-            let text = resolved.as_deref().unwrap_or(&request.text);
+            let base_text = fork.text();
+            // The new text is admitted before any operation holds it, and a
+            // handle of a key the live text's lift marked writes its value
+            // again (OF-067; FIX 2371).
+            let lifted = LiftedKeys::of_in_txn(&self.store, txn, [live.text()])?;
+            let admitted = admitted_text_in_txn(
+                self,
+                txn,
+                request.entity,
+                &request.text,
+                &lifted,
+                &mut Lifted::default(),
+            )?;
+            let text = &admitted.stored;
             super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
+            // The update's commit names the actor's stamp token (FIX 10930).
+            let stamp = crate::provenance::actor_stamp_in_txn(self, txn, request.actor)?;
+            // The complete text is the writer's prose, wherever it lands; text
+            // equal to its base says nothing new (FIX 1227).
+            let landed = if *text == base_text {
+                None
+            } else {
+                Some(LandedProse::whole(
+                    request.actor,
+                    "/text".to_owned(),
+                    &admitted.said,
+                ))
+            };
             let before = live.doc.oplog_vv();
             let timed_out = request.timeout_ms == 0
                 || fork
@@ -192,7 +231,7 @@ impl Vault {
                 // then store the complete output under the author's own stamp.
                 fork = live.fork(&request.base)?;
                 super::forks::bind_actor(self, txn, &fork, request.actor, request.at)?;
-                fork.edit_as(request.actor, request.at, |body| {
+                fork.edit_as(stamp, request.at, |body| {
                     body.delete(0, body.len_unicode())
                         .map_err(|_| invalid("rewrite delete"))?;
                     body.insert(0, text).map_err(|_| invalid("rewrite insert"))
@@ -203,7 +242,7 @@ impl Vault {
                     base: request.base.clone(),
                     actor: request.actor,
                     edits: Vec::new(),
-                    rewrite: Some(request.text.clone()),
+                    rewrite: Some(text.clone()),
                 };
                 super::forks::retain_fork(
                     self,
@@ -215,13 +254,15 @@ impl Vault {
                     &fork,
                     ForkStatus::Pending,
                     request.at,
+                    &lineage,
                 )?;
-                return Ok(TextUpdateOutcome::RewriteFork {
+                let outcome = TextUpdateOutcome::RewriteFork {
                     fork: id,
                     proposal: request.proposal,
-                });
+                };
+                return Ok((outcome, landed));
             }
-            super::document::stamp(&fork.doc, request.actor, request.at, "update")?;
+            super::document::stamp(&fork.doc, stamp, request.at, "update")?;
             if !permitted {
                 let id = EntityId::now();
                 let req = ForkRequest {
@@ -241,11 +282,13 @@ impl Vault {
                     &fork,
                     ForkStatus::Pending,
                     request.at,
+                    &lineage,
                 )?;
-                return Ok(TextUpdateOutcome::ProposedFork {
+                let outcome = TextUpdateOutcome::ProposedFork {
                     fork: id,
                     proposal: request.proposal,
-                });
+                };
+                return Ok((outcome, landed));
             }
             super::forks::merge_into(&live, &fork, &request.base)?;
             storage::persist(self, txn, &request.entity, &mut h, &live, Some(&before))?;
@@ -263,19 +306,56 @@ impl Vault {
                 &request.base,
                 &live.frontier(),
             )?;
-            Ok(TextUpdateOutcome::Merged {
+            let outcome = TextUpdateOutcome::Merged {
                 frontier: live.frontier(),
-            })
+            };
+            Ok((outcome, landed))
         })?;
         registry.remove(&request.entity);
+        drop(registry);
+        admit_landed(self, UPDATE_ROW, landed.as_slice());
         Ok(out)
     }
 }
 
-pub(super) fn validate_edits(edits: &[AnchoredEdit]) -> Result<()> {
-    if edits.len() > 50 {
-        return Err(invalid("at most 50 text operations are allowed"));
+impl Vault {
+    /// [`Self::entity_text_anchor`] for a reader in its sight (FIX 2936;
+    /// C-ANCHOR). `start..end` counts the text that reader reads: with
+    /// `masked`, each key the live text's lift marked reads as its handle.
+    /// The selection is widened so it splits no handle (an end inside one
+    /// moves out to its edge, an empty selection inside one takes it whole).
+    /// The anchor's cursors and frontier name the stored text it stands for;
+    /// its quote and hash are the text the reader reads. Returns the anchor
+    /// and the widened range. The document and its keys are read in one
+    /// snapshot; an unmasked reader's anchor is the stored text's.
+    pub(crate) fn entity_text_anchor_in_sight(
+        &self,
+        entity: &EntityId,
+        start: usize,
+        end: usize,
+        masked: bool,
+    ) -> Result<(TextAnchor, (usize, usize))> {
+        if !masked {
+            return Ok((self.entity_text_anchor(entity, start, end)?, (start, end)));
+        }
+        let txn = self.store.env.read_txn()?;
+        let h = storage::head(&self.store, &txn, entity)?;
+        let doc = storage::load(&self.store, &txn, &h)?;
+        let text = doc.text();
+        let shown = LiftedKeys::of_in_txn(&self.store, &txn, [text.as_str()])?.masked_text(&text);
+        let selection = shown
+            .selection(start, end)
+            .ok_or(invalid("text span is out of bounds"))?;
+        let (from, to) = (selection.shown.start, selection.shown.end);
+        let mut anchor = make_anchor(&doc, *entity, selection.stored.start, selection.stored.end)?;
+        let quote: String = shown.text().chars().skip(from).take(to - from).collect();
+        anchor.hash = *blake3::hash(quote.as_bytes()).as_bytes();
+        anchor.quote = quote;
+        Ok((anchor, (from, to)))
     }
+}
+
+pub(super) fn validate_edits(edits: &[AnchoredEdit]) -> Result<()> {
     if edits.iter().any(|edit| edit.actor.is_none()) {
         return Err(invalid("text operation requires an actor"));
     }
@@ -367,61 +447,140 @@ pub(super) fn resolve_cursors(
     Ok((start, end))
 }
 
-/// `secrets` is the owner's switch as the edit's transaction reads it: the
-/// replacement is text content, scanned only while the switch is on.
+/// The anchor `edit` is placed by, and the text it writes as its writer
+/// gave it.
+fn verb_parts(edit: &AnchoredEdit) -> (&TextAnchor, &str) {
+    match &edit.verb {
+        EditVerb::AppendToSection { section, text } => (section, text.as_str()),
+        EditVerb::ReplaceQuotedSpan { span, text } => (span, text.as_str()),
+        EditVerb::InsertAfterAnchor { anchor, text } => (anchor, text.as_str()),
+    }
+}
+
+/// [`admitted_text_in_txn`] over the text `edit` writes.
+pub(super) fn admitted_prose_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: EntityId,
+    edit: &AnchoredEdit,
+    lifted: &LiftedKeys,
+    plan: &mut Lifted,
+) -> Result<Admitted> {
+    admitted_text_in_txn(vault, txn, entity, verb_parts(edit).1, lifted, plan)
+}
+
+/// `text`, prose a writer authors for `entity`'s document, as the document
+/// takes it (OF-067; FIX 2371): admitted with `plan`, the write's one plan,
+/// so each secret the batch door's text rules place goes to custody and the
+/// text keeps its handle before any operation holds it; then each handle of
+/// a key the live text's lift marked (`lifted`) is the value it stands for
+/// again (Engine ruling G2 = b). A handle this write minted stays a handle.
+/// A hit no span places refuses as before.
+pub(super) fn admitted_text_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    entity: EntityId,
+    text: &str,
+    lifted: &LiftedKeys,
+    plan: &mut Lifted,
+) -> Result<Admitted> {
+    let mut admitted = text.to_owned();
+    admit_parts_in_txn(
+        vault,
+        txn,
+        entity,
+        &mut [("text:body", Part::Text(&mut admitted))],
+        plan,
+    )?;
+    let stored = lifted
+        .resolved(&admitted)
+        .unwrap_or_else(|| admitted.clone());
+    Ok(Admitted {
+        stored,
+        said: admitted,
+    })
+}
+
+/// A writer's new text as admitted ([`admitted_text_in_txn`]).
+pub(super) struct Admitted {
+    /// As the document stores it: each handle of a key the live text's lift
+    /// marked is the value it stands for again.
+    pub(super) stored: String,
+    /// As its writer said it, every handle still a handle: the text its
+    /// prose links are read in (FIX 1227).
+    pub(super) said: String,
+}
+
+/// `replacement` is the text `edit` writes as admitted
+/// ([`admitted_prose_in_txn`]), its commit naming `stamp`, its actor's stamp
+/// token (FIX 10930); `sources` are the rows its writer read for it, which
+/// its commit's receipt names (FIX 7790); `lifted` are the keys the live
+/// text's lift marked, for a quote a masked reader was issued (FIX 2936).
+/// Returns the Unicode position `replacement` landed at, or `None` when it
+/// replaced a span with the same text, which says nothing new (FIX 1227).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one anchored edit binds its document, verb, stamp, text, time, sources and lift"
+)]
 pub(super) fn apply(
     doc: &mut EntityDoc,
     entity: EntityId,
     edit: &AnchoredEdit,
+    stamp: crate::provenance::ActorStamp,
+    replacement: &str,
     at: u64,
-    secrets: SecretScanMode,
+    sources: &[EntityId],
     lifted: &LiftedKeys,
-) -> Result<()> {
-    let actor = edit
-        .actor
-        .ok_or(invalid("text operation requires an actor"))?;
-    let (anchor, replacement) = match &edit.verb {
-        EditVerb::AppendToSection { section, text } => (section, text),
-        EditVerb::ReplaceQuotedSpan { span, text } => (span, text),
-        EditVerb::InsertAfterAnchor { anchor, text } => (anchor, text),
-    };
-    if secrets == SecretScanMode::On {
-        crate::batch::secret_scan::scan_write_payload(replacement.as_bytes())?;
+) -> Result<Option<usize>> {
+    if edit.actor.is_none() {
+        return Err(invalid("text operation requires an actor"));
     }
-    // A handle of a key the document's lifted text holds writes its value
-    // again (OF-067).
-    let resolved = lifted.resolved(replacement);
-    let replacement = resolved.as_deref().unwrap_or(replacement);
+    let anchor = verb_parts(edit).0;
     let (start, end) = resolve(doc, entity, anchor)?;
     let replacing = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
+    let mut same = false;
     if replacing {
         let current: String = doc.text().chars().skip(start).take(end - start).collect();
-        if blake3::hash(current.as_bytes()).as_bytes() != &anchor.hash || current != anchor.quote {
+        if !quotes(anchor, &current, lifted) {
             return Err(invalid("quoted span changed concurrently"));
         }
+        same = current == replacement;
     }
-    doc.edit_as(actor, at, |body| {
+    let place = if replacing { start } else { end };
+    doc.edit_with(stamp, at, sources, |body| {
         if replacing {
             body.delete(start, end - start)
                 .map_err(|_| invalid("anchored delete"))?;
         }
-        body.insert(if replacing { start } else { end }, replacement)
+        body.insert(place, replacement)
             .map_err(|_| invalid("anchored insert"))
-    })
+    })?;
+    Ok((!same).then_some(place))
+}
+
+/// Whether `current`, the span `anchor` resolves to, is still the quote it
+/// was issued with: as stored, or as a reader who reads each lifted key as
+/// its handle read it, in that reader's own text (FIX 2936).
+fn quotes(anchor: &TextAnchor, current: &str, lifted: &LiftedKeys) -> bool {
+    let same = |text: &str| {
+        blake3::hash(text.as_bytes()).as_bytes() == &anchor.hash && text == anchor.quote
+    };
+    same(current) || lifted.masked(current).is_some_and(|shown| same(&shown))
 }
 
 /// The keys the lifted text of the document `h` heads holds, when one of
-/// `edits` names a handle: an edit that carries one back writes its value.
+/// `edits` names a handle: an edit that carries one back writes its value,
+/// and a quote a masked reader was issued is read as that reader read it.
 fn lifted_keys_for(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     h: &storage::Head,
     edits: &[AnchoredEdit],
 ) -> Result<LiftedKeys> {
-    let names = edits.iter().any(|edit| match &edit.verb {
-        EditVerb::AppendToSection { text, .. }
-        | EditVerb::ReplaceQuotedSpan { text, .. }
-        | EditVerb::InsertAfterAnchor { text, .. } => LiftedKeys::names_a_handle(text),
+    let names = edits.iter().any(|edit| {
+        let (anchor, text) = verb_parts(edit);
+        let quoted = matches!(edit.verb, EditVerb::ReplaceQuotedSpan { .. });
+        LiftedKeys::names_a_handle(text) || (quoted && LiftedKeys::names_a_handle(&anchor.quote))
     });
     if !names {
         return Ok(LiftedKeys::default());

@@ -74,6 +74,9 @@ pub(super) const BODY_KEY_SCOPE_OP_KIND: &str = "sc_op";
 pub(super) const BODY_KEY_SCOPE_TARGET_CLASS: &str = "sc_cls";
 pub(super) const BODY_KEY_SCOPE_ACTOR: &str = "sc_actor";
 pub(super) const BODY_KEY_AMENDED: &str = "amended";
+/// The op event an approving resolution applied (FIX 9966): the undo
+/// currency of the approval. Omitted when the ruling applied nothing.
+pub(super) const BODY_KEY_APPLIED_EVENT: &str = "applied";
 /// Minted FACET entity ids of a facet event, in the op's spec order.
 pub(super) const BODY_KEY_FACETS: &str = "facets";
 /// Map rows the apply door actually recorded, and rows it left as ambiguous

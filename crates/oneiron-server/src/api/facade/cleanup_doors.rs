@@ -25,7 +25,7 @@ pub(crate) async fn vault_cleanup_run(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer: MemoryResult<CleanupRunView> = tokio::task::spawn_blocking(move || {
+    let answer: MemoryResult<CleanupRunView> = super::clock_ingress::run_blocking(move || {
         oneiron::vault_cleanup::surface::run_as_owner(server.vault(), &owner, &input)
             .map_err(MemoryError::from)
     })
@@ -60,7 +60,7 @@ pub(crate) async fn vault_cleanup_review(
     };
     let locality = auth.locality();
     let server = Arc::clone(server);
-    let answer: MemoryResult<CleanupReviewView> = tokio::task::spawn_blocking(move || {
+    let answer: MemoryResult<CleanupReviewView> = super::clock_ingress::run_blocking(move || {
         let vault = server.vault();
         let actor = owner.revalidate(vault).map_err(MemoryError::from)?;
         let memory = vault.memory(actor, EdgeActorClass::Human).at(locality);
@@ -96,7 +96,7 @@ pub(crate) async fn vault_cleanup_decide(
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
-    let answer: MemoryResult<CleanupDecideView> = tokio::task::spawn_blocking(move || {
+    let answer: MemoryResult<CleanupDecideView> = super::clock_ingress::run_blocking(move || {
         server.vault().decide_cleanup_proposal_as(&owner, &input)
     })
     .await
@@ -132,7 +132,7 @@ pub(crate) async fn vault_entities_mention(
         .collect();
     let server = Arc::clone(server);
     let answer: MemoryResult<EntityResolutionWaterfallDecision> =
-        tokio::task::spawn_blocking(move || {
+        super::clock_ingress::run_blocking(move || {
             oneiron::ingest::mention_as_owner(server.vault(), &owner, &input)
                 .map_err(MemoryError::from)
         })

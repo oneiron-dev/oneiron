@@ -11,6 +11,17 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+mod adopted;
+mod arriving;
+#[cfg(feature = "sync")]
+mod stored_records;
+
+pub(super) use adopted::adopted_history_request_in_txn;
+use adopted::fold_adopted_in_txn;
+pub(super) use arriving::{ArrivingFold, authority_view_with_rows_for_store_in_txn};
+#[cfg(feature = "sync")]
+pub(crate) use stored_records::folded_vault_id_of_records;
+
 /// The generation belongs to the snapshot, not to the most recent process-wide
 /// write. An abort discards its generation update with its authority row.
 const AUTHORITY_CACHE_GENERATION: crate::side_table::SideTable<(), u64, crate::side_table::Raw> =
@@ -58,6 +69,23 @@ pub(crate) struct AuthorityView {
 impl AuthorityView {
     pub(super) fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// This view with each agent-carried setting or export act held back
+    /// whose Grant `txn` holds refused (contract §4, FIX 4624, FIX 5660;
+    /// [`super::carried_act`]). With none, the view as it was.
+    fn with_agent_grant_standing(self, store: &Store, txn: &heed::RoTxn<'_>) -> Self {
+        let refused =
+            super::carried_act::grant_refused_agent_acts(store, txn, &self.fold.agent_carried_acts);
+        if refused.is_empty() {
+            return self;
+        }
+        let mut fold = (*self.fold).clone();
+        super::carried_act::hold_back_agent_acts(&mut fold, &refused);
+        Self {
+            fold: Arc::new(fold),
+            generation: self.generation,
+        }
     }
 }
 
@@ -127,12 +155,11 @@ fn authority_cache_key(
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityCacheKey> {
-    let floor = AUTHORITY_FIRST_SEEN
-        .get_lenient(store, txn, &authority_first_seen_clock_key())?
-        .unwrap_or(0);
+    // A damaged floor is no reading from zero (FIX 10106).
+    let now_secs = authority_clock_reading_in_txn(store, txn, store.clock.now_recorded_at())?;
     Ok(AuthorityCacheKey {
         generation: authority_cache_generation(store, txn)?,
-        now_secs: authority_observation_secs(store, floor, store.clock.now_recorded_at()),
+        now_secs,
         posture,
         policy: authority_observation_policy_in_txn(store, txn)?,
         pin: super::pinned_root::read_pinned_root_in_txn(store, txn)?,
@@ -348,12 +375,17 @@ fn fold_view_for_key(
         key,
         baseline,
         &BTreeSet::new(),
+        &BTreeMap::new(),
     )? {
         AuthorityTailFold::Complete {
             view,
             next_deadline_secs,
             continuation,
-        } => Ok((view, next_deadline_secs, continuation)),
+        } => Ok((
+            view.with_agent_grant_standing(store, txn),
+            next_deadline_secs,
+            continuation,
+        )),
         AuthorityTailFold::NeedHistory(request) => Err(history_required(&request)),
     }
 }
@@ -395,6 +427,43 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
     }
 }
 
+/// [`fold_stored_tail_in_txn`], every guest slip it holds whose Grant this
+/// vault withdrew tombstoned (FIX-LIST 1978): one merged in after the
+/// withdrawal, from whichever replica minted it, confers nothing. Every
+/// view of this vault's own log takes it, cached or not; the base a later
+/// generation resumes from and a checkpoint image, which folds the log
+/// afresh, never do: a local withdrawal is no row of the log. The signed
+/// `SlipGrantRevoke` the same withdrawal logs is, and carries it to both.
+fn fold_authority_checkpoint_tail_in_txn(
+    store: &Store,
+    posture: HostingPrivacyPosture,
+    txn: &heed::RoTxn<'_>,
+    key: AuthorityCacheKey,
+    baseline: Option<&AuthorityContinuation>,
+    required: &BTreeSet<AuthorityEntryHash>,
+    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+) -> Result<AuthorityTailFold> {
+    let mut folded =
+        fold_stored_tail_in_txn(store, posture, txn, key, baseline, required, arriving)?;
+    if let AuthorityTailFold::Complete { view, .. } = &mut folded {
+        let grant_bound = view
+            .fold
+            .slips
+            .mints
+            .values()
+            .any(|mint| mint.action.claims.grant_ref.is_some());
+        if grant_bound {
+            // The view was built just now, so it is not shared yet.
+            Arc::make_mut(&mut view.fold)
+                .slips
+                .tombstone_withdrawn_grants(|grant| {
+                    super::guest_revoke::guest_grant_known_withdrawn_in_txn(store, txn, grant)
+                });
+        }
+    }
+    Ok(folded)
+}
+
 /// The stored log's fold behind `key` past `baseline` (OF-469). The rows the
 /// baseline folded are not read again: only the stored rows past it are
 /// decoded and verified, and the fold resumes from the baseline where its
@@ -409,16 +478,22 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
 /// ([`fold_adopted_in_txn`]), and never folds the rows it holds in its
 /// place: only once it holds every covered row does the stored log fold
 /// whole again, where the image cannot answer.
-fn fold_authority_checkpoint_tail_in_txn(
+///
+/// Each `arriving` row folds as a stored row first seen now, though it is
+/// not stored (FIX 2535): what a door judges an arriving row against, never
+/// cached.
+fn fold_stored_tail_in_txn(
     store: &Store,
     posture: HostingPrivacyPosture,
     txn: &heed::RoTxn<'_>,
     key: AuthorityCacheKey,
     baseline: Option<&AuthorityContinuation>,
     required: &BTreeSet<AuthorityEntryHash>,
+    arriving: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> Result<AuthorityTailFold> {
     if let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
-        && let Some(fold) = fold_adopted_in_txn(store, posture, txn, key, &adopted, required)?
+        && let Some(fold) =
+            fold_adopted_in_txn(store, posture, txn, key, &adopted, required, arriving)?
     {
         return Ok(fold);
     }
@@ -436,6 +511,21 @@ fn fold_authority_checkpoint_tail_in_txn(
         held.insert(hash);
         tail.push((hash, entry));
     }
+    let mut unstored = Vec::new();
+    for (hash, entry) in arriving {
+        if held.insert(*hash) {
+            tail.push((*hash, entry.clone()));
+            unstored.push(entry.clone());
+        }
+    }
+    // An arriving row is first seen now; no sidecar records it yet.
+    let first_seen_of = |hash: &AuthorityEntryHash, backfilled: bool| {
+        if arriving.contains_key(hash) {
+            Ok(key.now_secs)
+        } else {
+            readonly_first_seen_for(store, txn, hash, backfilled, key.now_secs)
+        }
+    };
     let checkpoint = super::checkpoint::checkpoint_head_coverage_in_txn(store, txn)?;
     let mut named = required.clone();
     if let Some((_, covered)) = &checkpoint {
@@ -483,7 +573,7 @@ fn fold_authority_checkpoint_tail_in_txn(
         let mut first_seen_at_secs = BTreeMap::new();
         for row in &rows {
             if let Some(hash) = row.hash {
-                let first_seen = readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
+                let first_seen = first_seen_of(&hash, backfilled)?;
                 first_seen_at_secs.insert(hash, first_seen);
             }
         }
@@ -516,14 +606,15 @@ fn fold_authority_checkpoint_tail_in_txn(
         }
     }
     tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, "full authority fold fallback");
-    let entries = authority_log_rows_in_txn(store, txn)?
+    let mut entries = authority_log_rows_in_txn(store, txn)?
         .into_iter()
         .map(|(_, body)| decode_authority_log_entry_body(&body))
         .collect::<Result<Vec<_>>>()?;
+    entries.extend(unstored);
     let mut first_seen_at_secs = BTreeMap::new();
     for entry in &entries {
         let hash = authority_entry_hash(entry)?;
-        let first_seen = readonly_first_seen_for(store, txn, &hash, backfilled, now_secs)?;
+        let first_seen = first_seen_of(&hash, backfilled)?;
         first_seen_at_secs.insert(hash, first_seen);
     }
     let observations = authority_local_observations_in_txn(store, txn, &entries)?;
@@ -548,132 +639,6 @@ fn fold_authority_checkpoint_tail_in_txn(
         next_deadline_secs,
         continuation: base.and_then(AuthorityContinuation::of),
     })
-}
-
-/// The fold on a vault that adopted `adopted` (OF-469): its stored rows are
-/// the covered rows it still holds, never tail and never read again, and the
-/// tail past the image, which folds from the image with the tail's own
-/// first-seen times and observations alone; no clock is read for a covered
-/// row. None where the image cannot answer yet every covered row is held:
-/// the stored log then folds whole.
-fn fold_adopted_in_txn(
-    store: &Store,
-    posture: HostingPrivacyPosture,
-    txn: &heed::RoTxn<'_>,
-    key: AuthorityCacheKey,
-    adopted: &VerifiedAuthorityCheckpoint,
-    required: &BTreeSet<AuthorityEntryHash>,
-) -> Result<Option<AuthorityTailFold>> {
-    let image = adopted.image();
-    // The store id is the row's content hash: a held covered row is known
-    // by its id alone.
-    let covered_ids: BTreeMap<_, _> = image
-        .covered
-        .iter()
-        .filter_map(|hash| Some((authority_log_entity_id_from_hash(hash).ok()?, *hash)))
-        .collect();
-    let mut held_covered = BTreeSet::new();
-    let mut tail = Vec::new();
-    for id in authority_log_ids_in_txn(store, txn)? {
-        if let Some(hash) = covered_ids.get(&id) {
-            held_covered.insert(*hash);
-            continue;
-        }
-        let entry = decode_authority_log_entry_body(&authority_log_body_in_txn(store, txn, &id)?)?;
-        let hash = authority_entry_hash(&entry)?;
-        if image.rows.contains_key(&hash) {
-            held_covered.insert(hash);
-        } else {
-            tail.push((hash, entry));
-        }
-    }
-    let backfilled = AUTHORITY_FIRST_SEEN_BACKFILLED.contains(
-        store,
-        txn,
-        &authority_first_seen_backfill_key(),
-    )?;
-    let mut first_seen_at_secs = BTreeMap::new();
-    for (hash, _) in &tail {
-        let first_seen = readonly_first_seen_for(store, txn, hash, backfilled, key.now_secs)?;
-        first_seen_at_secs.insert(*hash, first_seen);
-    }
-    let rows: Vec<_> = tail
-        .iter()
-        .map(|(hash, entry)| super::fold_resume::RowMeta::of(Some(*hash), entry))
-        .collect();
-    let observations = super::sequence_observation::authority_local_observations_of_rows_in_txn(
-        store, txn, &rows,
-    )?;
-    let peer_consent_roots =
-        crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
-    let folded = super::adopted_fold::fold_adopted_checkpoint_tail(
-        adopted,
-        super::adopted_fold::AdoptedTail {
-            tail: &tail,
-            held_covered: &held_covered,
-            required,
-            first_seen_at_secs: &first_seen_at_secs,
-            now_secs: key.now_secs,
-            peer_consent_roots: &peer_consent_roots,
-            observations: &observations,
-            posture,
-            pin: key.pin.as_ref(),
-        },
-    )?;
-    Ok(match folded {
-        super::adopted_fold::AdoptedTailFold::Complete {
-            fold,
-            next_deadline_secs,
-        } => {
-            tracing::trace!(target: "oneiron::authority::cache", generation = key.generation, rows = tail.len(), "authority fold past the adopted checkpoint");
-            Some(AuthorityTailFold::Complete {
-                view: AuthorityView {
-                    fold: Arc::new(fold),
-                    generation: key.generation,
-                },
-                next_deadline_secs,
-                continuation: None,
-            })
-        }
-        super::adopted_fold::AdoptedTailFold::NeedHistory(request)
-            if request.missing.is_empty() =>
-        {
-            None
-        }
-        super::adopted_fold::AdoptedTailFold::NeedHistory(request) => {
-            Some(AuthorityTailFold::NeedHistory(request))
-        }
-    })
-}
-
-/// What the fold on a vault that adopted a checkpoint image needs and this
-/// vault does not hold (OF-469), through the fold's own preflight, so a
-/// delivery fetches exactly what the fold asks for: nothing when the fold
-/// answers. A hash the image covers is never left out for being attested
-/// when the fold needs its row. None on a vault with no adoption, and where
-/// every covered row is held: the stored log's own request stands there.
-pub(super) fn adopted_history_request_in_txn(
-    store: &Store,
-    posture: HostingPrivacyPosture,
-    txn: &heed::RoTxn<'_>,
-    required: &BTreeSet<AuthorityEntryHash>,
-) -> Result<Option<AuthorityHistoryRequest>> {
-    let Some(adopted) = super::checkpoint_adopt::adopted_authority_checkpoint_in_txn(store, txn)?
-    else {
-        return Ok(None);
-    };
-    let key = authority_cache_key(store, posture, txn)?;
-    Ok(
-        match fold_adopted_in_txn(store, posture, txn, key, &adopted, required)? {
-            Some(AuthorityTailFold::NeedHistory(request)) => Some(request),
-            Some(AuthorityTailFold::Complete { .. }) => Some(AuthorityHistoryRequest {
-                vault_id: Some(adopted.image().vault_id),
-                checkpoint: Some(adopted.id()),
-                missing: BTreeSet::new(),
-            }),
-            None => None,
-        },
-    )
 }
 
 /// The next second `fold` changes on its own. The fold's only

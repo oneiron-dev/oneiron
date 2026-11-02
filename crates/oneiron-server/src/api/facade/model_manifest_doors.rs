@@ -6,11 +6,12 @@ use oneiron::embed::EmbedderLocality;
 use oneiron::llm::manifest::doors::{
     ModelManifestReplace, ModelRoleInput, ModelRoleInvocation, ModelRoleInvoke, ModelRoleOutput,
     ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteReplace, ModelRouteView,
-    OneironerBind,
+    OneironerBind, OneironerBundleReceipt,
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{
-    EncoderInput, EncoderMessage, ExtractionEncoder, ExtractionWork, infer_encoder,
+    EncoderInput, EncoderMessage, EncoderRegister, ExtractionCaller, ExtractionEncoder,
+    ExtractionWork, infer_encoder_for,
 };
 use oneiron::memory::{MEMORY_CODE_MODEL_UNAVAILABLE, MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::EmptyRequest;
@@ -70,10 +71,10 @@ pub(crate) async fn vault_models_oneironer_bind(
         auth,
         "vault.models.oneironer.bind",
         move |server, owner| {
-            let (model, tier) = loaded_oneironer(server, &input)?;
+            let (model, tier, receipt) = loaded_oneironer(server, &input)?;
             Ok(server
                 .vault()
-                .bind_oneironer_as_owner(owner, &model, &tier)?)
+                .bind_oneironer_as_owner(owner, &model, &tier, &receipt)?)
         },
         |_| Vec::new(),
     )
@@ -88,15 +89,12 @@ pub(crate) async fn vault_models_oneironer_bind(
 fn loaded_oneironer(
     server: &SyncServer,
     guards: &OneironerBind,
-) -> MemoryResult<(ModelId, ModelTierRef)> {
+) -> MemoryResult<(ModelId, ModelTierRef, OneironerBundleReceipt)> {
     let slot = server
         .tagger
         .as_ref()
         .ok_or_else(|| unavailable("no oneironer slot is loaded"))?;
     let config = slot.config();
-    if !config.is_active() {
-        return Err(unavailable("the oneironer slot is disabled"));
-    }
     if config.provider != OneironerProvider::Local {
         return Err(unavailable("the oneironer slot is not provider local"));
     }
@@ -130,7 +128,14 @@ fn loaded_oneironer(
         ));
     }
     let tier = oneironer_tier(config, Some(&card), model);
-    Ok((model.clone(), tier))
+    let receipt = OneironerBundleReceipt {
+        stack_sha16: card.stack_sha16.clone().unwrap_or_default(),
+        checkpoint_sha16: checkpoint.to_owned(),
+        label_count: card.label_count,
+        // The bind path has no manifest read for per-artifact hashes.
+        artifacts: None,
+    };
+    Ok((model.clone(), tier, receipt))
 }
 
 /// The tier an Oneironer bind or host receipt names, and the one place its
@@ -338,7 +343,7 @@ async fn invoke(
             }
             let expected = receipt.clone();
             let embedding_server = Arc::clone(server);
-            let vector = tokio::task::spawn_blocking(move || {
+            let vector = super::clock_ingress::run_blocking(move || {
                 let slot = embedding_server
                     .embedder
                     .as_ref()
@@ -374,7 +379,7 @@ async fn invoke(
             }
             let expected = receipt.clone();
             let server = Arc::clone(server);
-            let (output, execution, provider) = tokio::task::spawn_blocking(move || {
+            let (output, execution, provider) = super::clock_ingress::run_blocking(move || {
                 let slot = server
                     .tagger
                     .as_ref()
@@ -397,11 +402,15 @@ async fn invoke(
                         text,
                     }],
                     context: Vec::new(),
+                    following: Vec::new(),
+                    register: EncoderRegister::Live,
                     language: None,
                     speaker: None,
                 };
-                // The owner waits on this call: a live one.
-                let attempt = infer_encoder(&input, ExtractionWork::Live, encoder);
+                // The owner waits on this call: a live one, at the owner's
+                // own turn (FIX 9519).
+                let caller = ExtractionCaller::new("owner");
+                let attempt = infer_encoder_for(&input, ExtractionWork::Live, encoder, &caller);
                 let output = attempt.result.map_err(MemoryError::bad_request)?;
                 let provider = slot.config().provider.as_str().to_owned();
                 Ok::<_, MemoryError>((output, attempt.execution, provider))

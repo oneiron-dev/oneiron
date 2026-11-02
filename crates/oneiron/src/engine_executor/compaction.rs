@@ -22,6 +22,7 @@ use crate::compaction::{
     gate_compaction,
 };
 use crate::entity_id::EntityId;
+use crate::runtime_hooks::VerbHookStop;
 use crate::tokenizer::count_context_pack_tokens;
 use crate::{ContentPart, LlmRequest, WriteActor};
 
@@ -58,6 +59,9 @@ struct LiveSeat {
     hooks: CompactHooks,
     /// Set for the rest of one `run` call when its pass ended without a swap.
     held: Option<CompactionSuppression>,
+    /// The backend's recovery count when `held` was set: a turn-scoped hold
+    /// ends once it moves (FIX 1112).
+    held_recoveries: u64,
     last_feed: Option<(Instant, u64)>,
     /// The run writes through a room it is bound to on a recording route:
     /// an off-record room's overlay, or a room on record at entry, under its
@@ -90,6 +94,8 @@ pub(super) struct Flight {
     pub(super) live: Option<
         Result<crate::code_run::LiveCompactionFork, crate::compaction::SelfCompactionUnavailable>,
     >,
+    /// A blocking pre-hook's saved stop: no flight starts (FIX 10085).
+    pub(super) pending: Option<VerbHookStop>,
 }
 
 /// One mark of a batch, sealed: its request, and what its stub lists beside
@@ -207,6 +213,7 @@ impl RunCompaction {
                 flight: None,
                 hooks: CompactHooks::default(),
                 held: None,
+                held_recoveries: 0,
                 last_feed: None,
                 session_bound: false,
                 overlay: false,
@@ -373,8 +380,30 @@ impl RunCompaction {
         if let Seat::Live(seat) = &mut self.seat {
             seat.driver.abandon();
             seat.held = Some(suppression);
+            seat.held_recoveries = seat.driver.backend().recoveries();
         }
         self.report.suppressed = Some(suppression);
+    }
+
+    /// Ends a hold whose cause has passed, so this turn's next breakpoint
+    /// tries the pass again: a turn-scoped hold once a model seat came back
+    /// since it was set (FIX 1112), a payer hold once the owners said yes
+    /// (FIX 3740). An auth, credit or sticky hold stays.
+    pub(super) fn wake_held(&mut self) {
+        let Seat::Live(seat) = &mut self.seat else {
+            return;
+        };
+        let woke = match seat.held {
+            Some(CompactionSuppression::TurnScoped { .. }) => {
+                seat.driver.backend().recoveries() != seat.held_recoveries
+            }
+            Some(CompactionSuppression::PayerNeeded) => seat.driver.backend().funded(),
+            _ => false,
+        };
+        if woke {
+            seat.held = None;
+            self.report.suppressed = None;
+        }
     }
 
     pub(super) fn swapped(&mut self, epoch: u64, first: u64, last: u64) {
@@ -404,10 +433,11 @@ impl RunCompaction {
         asked: bool,
         marks: bool,
         build: impl FnOnce(&mut CompactionDriver, Option<u64>) -> super::EngineExecutorResult<Flight>,
-    ) -> Option<WindowFullReason> {
+    ) -> std::result::Result<Option<WindowFullReason>, VerbHookStop> {
         self.report.used_tokens = used_tokens;
+        self.wake_held();
         let Seat::Live(seat) = &mut self.seat else {
-            return None;
+            return Ok(None);
         };
         let now = Instant::now();
         if let Some((at, tokens)) = seat.last_feed {
@@ -445,7 +475,12 @@ impl RunCompaction {
                         folds,
                         hooks,
                         live,
+                        pending,
                     }) => {
+                        if let Some(stop) = pending {
+                            seat.driver.abandon();
+                            return Err(stop);
+                        }
                         if epoch.is_some() && request.is_none() {
                             seat.driver.abandon();
                         }
@@ -521,21 +556,22 @@ impl RunCompaction {
                         seat.driver.abandon();
                         let held = CompactionSuppression::TurnScoped { check: None };
                         seat.held = Some(held);
+                        seat.held_recoveries = seat.driver.backend().recoveries();
                         self.report.suppressed = Some(held);
                     }
                 }
             }
         }
         if used_tokens < seat.driver.window_token_budget() {
-            return None;
+            return Ok(None);
         }
-        Some(if seat.flight.is_some() {
+        Ok(Some(if seat.flight.is_some() {
             WindowFullReason::InFlight
         } else if let Some(held) = seat.held {
             WindowFullReason::Suppressed(held)
         } else {
             WindowFullReason::NothingToCompact
-        })
+        }))
     }
 }
 

@@ -1,7 +1,9 @@
-//! `set_picture` and `set_notes`: verbs whose write sets reach beyond the
-//! slide part. A picture gets a new media part and relationship (existing
-//! media is never rewritten); notes are written in the notes slide, which is
-//! created over the notes master when the slide has none.
+//! `set_picture`, `set_notes` and `release_media`: verbs whose write sets
+//! reach beyond the slide part. A picture gets a new media part and
+//! relationship (existing media is never rewritten); notes are written in
+//! the notes slide, which is created over the notes master when the slide
+//! has none; media the slide no longer references is released on its own
+//! step.
 use super::check::{Added, Declared};
 use super::text::{self, BREAK};
 use super::xml::{self, A, P, R};
@@ -11,6 +13,7 @@ use crate::design_plan::{AssetBinding, MediaType, Rect};
 use crate::graphic::{GraphicInput, Output, compile_graphic};
 use crate::ooxml::{CONTENT_TYPES, XmlTree};
 use crate::retained_opc::{Package, rels_name};
+use std::collections::BTreeSet;
 
 const TYPES: &str = "[Content_Types].xml";
 /// Office's SVG blip namespace (`asvg:svgBlip`).
@@ -113,6 +116,153 @@ pub(super) fn set_picture(
         effects,
         fit: None,
     })
+}
+
+/// `release_media` (FIX 10387): each relationship of `slide` that
+/// `relationships` names and no element of the slide references (a
+/// picture's previous media, [`Effect::PreviousMedia`], or a deleted
+/// shape's, [`Effect::Unreferenced`]) leaves the slide's relationship part,
+/// and the part it reached leaves the archive with each part only it
+/// reached, once no relationship in the package targets it ([`unreferenced`]:
+/// every relationship part the archive holds is read, and when one cannot
+/// be, every part stays). A relationship the slide still references stays
+/// ([`Effect::MediaKept`]); one the slide no longer holds is not there to
+/// release. The user's own act: `set_picture` itself keeps the old media.
+/// Returns the parts it changed and what it did.
+pub(super) fn release_media(
+    next: &mut Package,
+    slide: &str,
+    relationships: &[String],
+) -> Result<(Vec<String>, Vec<Effect>), EditRefusal> {
+    let (_, tree) = xml::read(next, slide)?;
+    let used: BTreeSet<&str> = tree
+        .nodes
+        .iter()
+        .flat_map(|node| node.attrs_ns.iter())
+        .filter(|((ns, _), _)| ns == R)
+        .map(|(_, value)| value.as_str())
+        .collect();
+    let held = next.relationships(slide)?;
+    let types = next.part(TYPES)?;
+    let names: BTreeSet<String> = next.names().map(str::to_owned).collect();
+    let mut asked: Vec<&String> = Vec::new();
+    for id in relationships {
+        if !asked.contains(&id) {
+            asked.push(id);
+        }
+    }
+    let mut effects = Vec::new();
+    let mut released: Vec<(String, Option<String>)> = Vec::new();
+    for id in asked {
+        let Some(rel) = held.iter().find(|rel| rel.id == *id) else {
+            continue;
+        };
+        if used.contains(id.as_str()) {
+            effects.push(Effect::MediaKept {
+                relationship: id.clone(),
+            });
+            continue;
+        }
+        next.unrelate(slide, id)?;
+        released.push((id.clone(), (!rel.external).then(|| rel.target.clone())));
+    }
+    let targets: Vec<&String> = released
+        .iter()
+        .filter_map(|(_, target)| target.as_ref())
+        .collect();
+    // A relationship part that cannot be read may target any part: then
+    // every part stays (L01 04:33).
+    let gone = unreferenced(next, &names, &targets).unwrap_or_default();
+    for part in &gone {
+        next.remove_part(part)?;
+    }
+    if !gone.is_empty() {
+        next.prune_defaults()?;
+    }
+    let mut changed: Vec<String> = Vec::new();
+    if !released.is_empty() {
+        changed.push(rels_name(slide));
+    }
+    for part in &gone {
+        changed.push(part.clone());
+        let rels = rels_name(part);
+        if names.contains(&rels) {
+            changed.push(rels);
+        }
+    }
+    if next.part(TYPES)? != types {
+        changed.push(TYPES.to_owned());
+    }
+    for (relationship, target) in released {
+        effects.push(Effect::MediaReleased {
+            relationship,
+            part: target.filter(|target| gone.contains(target)),
+        });
+    }
+    Ok((changed, effects))
+}
+
+/// The parts `targets` (the parts released relationships reached) leave
+/// unreferenced, with each part only they reach: each archive part one of
+/// them reaches that the package root does not, less each one a
+/// relationship of any part outside them still targets, read from every
+/// relationship part the archive holds (every slide, layout, master, notes
+/// and chart one). None when a relationship part names no part this reads
+/// it from.
+fn unreferenced(
+    package: &Package,
+    names: &BTreeSet<String>,
+    targets: &[&String],
+) -> Result<BTreeSet<String>, crate::retained_opc::Error> {
+    let root = package.reachable("")?;
+    let mut gone: BTreeSet<String> = BTreeSet::new();
+    for target in targets {
+        for part in package.reachable(target)? {
+            if !root.contains(&part) && names.contains(&part) {
+                gone.insert(part);
+            }
+        }
+    }
+    if gone.is_empty() {
+        return Ok(gone);
+    }
+    // The source of each relationship part: `a/_rels/b.rels` is `a/b`'s.
+    let mut sources: Vec<String> = Vec::new();
+    for name in names {
+        if !name.to_ascii_lowercase().ends_with(".rels") {
+            continue;
+        }
+        let source = name.rsplit_once("_rels/").and_then(|(folder, file)| {
+            let file = file.strip_suffix(".rels")?;
+            Some(match folder.strip_suffix('/') {
+                Some(folder) => format!("{folder}/{file}"),
+                None => file.to_owned(),
+            })
+        });
+        match source {
+            Some(source) if rels_name(&source) == *name => sources.push(source),
+            _ => return Ok(BTreeSet::new()),
+        }
+    }
+    loop {
+        let mut referenced = None;
+        for source in sources.iter().filter(|source| !gone.contains(*source)) {
+            if let Some(rel) = package
+                .relationships(source)?
+                .into_iter()
+                .find(|rel| !rel.external && gone.contains(&rel.target))
+            {
+                referenced = Some(rel.target);
+                break;
+            }
+        }
+        match referenced {
+            Some(part) => {
+                gone.remove(&part);
+            }
+            None => return Ok(gone),
+        }
+    }
 }
 
 /// The blip's Office SVG extension: the element dropping it removes (its

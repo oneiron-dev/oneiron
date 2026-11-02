@@ -1,4 +1,5 @@
 use super::*;
+use crate::error::RegistryError;
 use crate::registry::{ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_OUTBOUND_GRANT, ENTITY_TYPE_SKILL};
 
 type PreflightDecisionIds = HashMap<EntityId, VecDeque<Option<crate::store::GateDecisionId>>>;

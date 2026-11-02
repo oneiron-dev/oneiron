@@ -8,6 +8,11 @@ use crate::claim::{ClaimApprovalStatus, ClaimBody, claim_surfaceable, encode_cla
 use crate::skill_optimize::exploration_trial;
 use crate::{EntityId, Error, Result, Vault};
 
+// A paired eval measurement's skill arm, by its pinned content (FIX 10677).
+mod measured;
+
+pub use self::measured::MeasuredSkillPack;
+
 /// One actual tier-2 load. Native record-only skills have no file tree.
 #[derive(Debug, Clone)]
 pub struct LoadedSkillPack {
@@ -17,6 +22,16 @@ pub struct LoadedSkillPack {
     pub entity: EntityId,
     pub record: SkillRecord,
     pub source_files: Option<Vec<crate::skill_hub::HubFile>>,
+}
+
+/// Whose skill a load may bind.
+#[derive(Clone, Copy)]
+enum LoadResident {
+    /// The named resident's own fork; `None` loads shared skills only.
+    Named(Option<EntityId>),
+    /// The live attempt's own agent, read from its leased row in the load's
+    /// transaction (FIX 10153): its resident-bound fork, else shared skills.
+    Attempt,
 }
 
 /// The one runtime admission invariant used by the load door and hub installs.
@@ -89,7 +104,7 @@ impl Vault {
         self.load_skill_pack_bound(
             attempt,
             skill,
-            None,
+            LoadResident::Named(None),
             lease_owner,
             attempt_count,
             Some(executor_model),
@@ -116,7 +131,7 @@ impl Vault {
         self.load_skill_pack_bound(
             attempt,
             skill,
-            Some(*resident),
+            LoadResident::Named(Some(*resident)),
             lease_owner,
             attempt_count,
             Some(executor_model),
@@ -132,7 +147,7 @@ impl Vault {
         &self,
         attempt: AttemptId,
         skill: &EntityId,
-        resident: Option<EntityId>,
+        resident: LoadResident,
         lease_owner: &str,
         attempt_count: u32,
         executor_model: Option<&str>,
@@ -143,6 +158,10 @@ impl Vault {
                 return Err(Error::EntityNotFound);
             }
             let record = self.read_skill_record_in_txn(txn, skill)?;
+            let resident = match resident {
+                LoadResident::Named(resident) => resident,
+                LoadResident::Attempt => self.attempt_resident_in_txn(txn, attempt, &record)?,
+            };
             if super::resident_of(&record)? != resident {
                 return Err(Error::InvalidClaimBody(
                     "skill belongs to a different resident",
@@ -182,11 +201,11 @@ impl Vault {
                 super::resident::bind_receipt_in_txn(self, txn, &receipt, &resident)?;
                 super::resident::bind_skill_in_txn(self, txn, &receipt, &entity)?;
             }
-            queue.append_manifest_entry_in_txn(
-                txn,
-                attempt,
-                ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at),
-            )?;
+            let entry =
+                ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at);
+            let entry =
+                super::loaded_revision::pin_loaded_in_txn(self, txn, &entity, &record, entry)?;
+            queue.append_manifest_entry_in_txn(txn, attempt, entry)?;
             let read =
                 self.pack_source_rows_in_txn(txn, &entity, &record, source_files.is_some())?;
             self.record_attempt_sources_best_effort_in_txn(
@@ -240,7 +259,7 @@ impl Vault {
         self.load_skill_pack_bound(
             leased.id,
             skill,
-            None,
+            LoadResident::Attempt,
             lease_owner,
             leased.attempt_count,
             (!stamped).then_some(executor),
@@ -271,30 +290,99 @@ impl Vault {
             ))?;
         self.with_write_txn_grouped(|txn| {
             let loaded = self.exact_workflow_pack_in_txn(txn, skill, version)?;
-            let entry = ManifestEntry::new(
-                ManifestKind::Skill,
-                &loaded.record.skill_id,
-                &loaded.record.version,
-                at,
-            );
-            self.record_manifest_once_in_txn(txn, leased, lease_owner, executor, entry)?;
-            let packaged = loaded.source_files.is_some();
-            let read = self.pack_source_rows_in_txn(txn, skill, &loaded.record, packaged)?;
-            self.record_attempt_sources_best_effort_in_txn(
-                txn,
-                leased.id,
-                ReadSetProducer::SKILL_PACK,
-                Some(read),
-            );
+            self.stamp_exact_load_in_txn(txn, leased, lease_owner, executor, &loaded, at)?;
             Ok(loaded)
         })
+    }
+
+    /// Loads the site skills a page matched (CUA E10), each at the revision
+    /// its match read, in the caller's own lease generation and in one
+    /// write: each skill itself, live, shared and active approved at that
+    /// revision, of any role, its instructions the runtime package the hub
+    /// verified. No exploration trial routes them and no other arm stands
+    /// in. A skill that moved off its revision or stopped loading since its
+    /// match is left out; a lease that no longer holds refuses the whole
+    /// load. Each revision's manifest row lands once, as the exact door's
+    /// does.
+    pub(crate) fn load_leased_site_skill_packs(
+        &self,
+        leased: &AttemptRecord,
+        matched: &[(EntityId, String)],
+        executor: &str,
+        at: u64,
+    ) -> Result<Vec<LoadedSkillPack>> {
+        let lease_owner = leased
+            .lease_owner
+            .as_deref()
+            .ok_or(Error::InvalidClaimBody(
+                "a site skill load requires the caller's live attempt lease",
+            ))?;
+        self.with_write_txn_grouped(|txn| {
+            AttemptQueue::new(self).require_skill_load_lease_in_txn(
+                txn,
+                leased.id,
+                lease_owner,
+                leased.attempt_count,
+            )?;
+            let mut loaded = Vec::with_capacity(matched.len());
+            for (skill, version) in matched {
+                let pack = match self.exact_skill_pack_in_txn(txn, skill, version, None) {
+                    Ok(pack) => pack,
+                    Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => continue,
+                    Err(error) => return Err(error),
+                };
+                self.stamp_exact_load_in_txn(txn, leased, lease_owner, executor, &pack, at)?;
+                loaded.push(pack);
+            }
+            Ok(loaded)
+        })
+    }
+
+    /// Stamps an exact load of `loaded` on `leased` in the caller's write,
+    /// under the live lease `lease_owner` holds: its revision pinned, its
+    /// manifest row once, and the rows its instructions came from on the
+    /// attempt's read set.
+    fn stamp_exact_load_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        leased: &AttemptRecord,
+        lease_owner: &str,
+        executor: &str,
+        loaded: &LoadedSkillPack,
+        at: u64,
+    ) -> Result<()> {
+        let entry = ManifestEntry::new(
+            ManifestKind::Skill,
+            &loaded.record.skill_id,
+            &loaded.record.version,
+            at,
+        );
+        let entry = super::loaded_revision::pin_loaded_in_txn(
+            self,
+            txn,
+            &loaded.entity,
+            &loaded.record,
+            entry,
+        )?;
+        self.record_manifest_once_in_txn(txn, leased, lease_owner, executor, entry)?;
+        let packaged = loaded.source_files.is_some();
+        let read = self.pack_source_rows_in_txn(txn, &loaded.entity, &loaded.record, packaged)?;
+        self.record_attempt_sources_best_effort_in_txn(
+            txn,
+            leased.id,
+            ReadSetProducer::SKILL_PACK,
+            Some(read),
+        );
+        Ok(())
     }
 
     /// Loads the exact arm a job pinned (FIX 7549), in the caller's own
     /// lease generation: `entity` at `version`, under the shared `skill` the
     /// owner bound. `entity` is `skill` itself, or the open proposal of it
     /// an exploration trial routed the pinning load to; no trial routes this
-    /// load and no trial charge is reserved. `skill` must still be an active
+    /// load. A pinned proposal's run reserves its trial-slice charge in the
+    /// load's transaction, as a routed run does, and loads the pinned arm
+    /// whatever the slice answers (FIX 10306). `skill` must still be an active
     /// approved shared skill, and a revision that moved or is gone refuses.
     /// The first executor stamps the attempt, and its manifest row lands
     /// once, as the exact door's does.
@@ -319,7 +407,7 @@ impl Vault {
                 "a pinned pack load requires the caller's live attempt lease",
             ))?;
         let (entity, version) = pinned;
-        self.with_write_txn_grouped(|txn| {
+        let (loaded, ask) = self.with_write_txn_grouped(|txn| {
             if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
                 return Err(Error::EntityNotFound);
             }
@@ -359,7 +447,14 @@ impl Vault {
                 .map(|package| package.files);
             let entry =
                 ManifestEntry::new(ManifestKind::Skill, &record.skill_id, &record.version, at);
+            let entry =
+                super::loaded_revision::pin_loaded_in_txn(self, txn, entity, &record, entry)?;
             self.record_manifest_once_in_txn(txn, leased, lease_owner, executor_model, entry)?;
+            let ask = if entity == skill {
+                None
+            } else {
+                exploration_trial::charge_pinned_in_txn(self, txn, leased.id, skill, entity, at)?
+            };
             let read =
                 self.pack_source_rows_in_txn(txn, entity, &record, source_files.is_some())?;
             self.record_attempt_sources_best_effort_in_txn(
@@ -368,12 +463,47 @@ impl Vault {
                 ReadSetProducer::SKILL_PACK,
                 Some(read),
             );
-            Ok(LoadedSkillPack {
-                entity: *entity,
-                record,
-                source_files,
-            })
-        })
+            Ok((
+                LoadedSkillPack {
+                    entity: *entity,
+                    record,
+                    source_files,
+                },
+                ask,
+            ))
+        })?;
+        // As the load door does: the overrun ask is queued outside the
+        // load's transaction, and the load stands either way.
+        if let Some(proposal) = ask
+            && let Err(error) = exploration_trial::queue_trial_ask(self, &proposal)
+        {
+            tracing::warn!(%error, "an exploration trial's overrun ask is not queued yet");
+        }
+        Ok(loaded)
+    }
+
+    /// The skill's resident when the live attempt runs as that very agent,
+    /// its leased row decoded in the load's own transaction (FIX 10153). The
+    /// lease itself is fenced later in that transaction. Any other attempt,
+    /// or a row the dispatch decoder does not read, loads as before: shared
+    /// skills only.
+    fn attempt_resident_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        attempt: AttemptId,
+        record: &SkillRecord,
+    ) -> Result<Option<EntityId>> {
+        let Some(owner) = super::resident_of(record)? else {
+            return Ok(None);
+        };
+        let actor = AttemptQueue::new(self)
+            .get_in_txn(txn, attempt)?
+            .as_ref()
+            .and_then(crate::agent_dispatch::record_dispatch_input)
+            .and_then(|input| crate::agent_dispatch::agent_dispatch_actor(&input).ok());
+        Ok(actor
+            .map(|actor| actor.entity_ref())
+            .filter(|actor| *actor == owner))
     }
 
     /// The rows a pack load read `entity`'s instructions from (FIX 7017):
@@ -443,6 +573,19 @@ impl Vault {
         skill: &EntityId,
         version: &str,
     ) -> Result<LoadedSkillPack> {
+        self.exact_skill_pack_in_txn(txn, skill, version, Some(SkillRole::Workflow))
+    }
+
+    /// One exact skill revision as its admitted package, read as
+    /// [`Self::exact_workflow_pack_in_txn`] reads it, of `role` when one is
+    /// named, else of any role.
+    fn exact_skill_pack_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        skill: &EntityId,
+        version: &str,
+        role: Option<SkillRole>,
+    ) -> Result<LoadedSkillPack> {
         if !crate::vault::live_entity_row_in_txn(&self.store, txn, skill)?.is_live() {
             return Err(Error::EntityNotFound);
         }
@@ -452,10 +595,11 @@ impl Vault {
                 "an exact pack load reads shared skills, not a resident's",
             ));
         }
-        if !skill_loadable(&record) || record.role != SkillRole::Workflow {
-            return Err(Error::InvalidClaimBody(
-                "an exact pack load runs an active approved workflow skill",
-            ));
+        if !skill_loadable(&record) || role.is_some_and(|role| record.role != role) {
+            return Err(Error::InvalidClaimBody(match role {
+                Some(_) => "an exact pack load runs an active approved workflow skill",
+                None => "an exact pack load runs an active approved skill",
+            }));
         }
         if record.version != version {
             return Err(Error::InvalidClaimBody(

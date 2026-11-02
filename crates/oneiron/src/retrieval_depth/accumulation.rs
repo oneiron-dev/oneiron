@@ -10,8 +10,14 @@ pub(super) struct DepthAccumulator {
     pub(super) narrowing: Vec<crate::claim::ScopedReadReceipt>,
     /// Entity ids in first-seen order; the read's ranking before any rerank.
     pub(super) order: Vec<EntityId>,
-    /// Best engine score seen for each id, across channels.
+    /// Each id's engine score: its best in one channel until the read fuses
+    /// its channels, then its fused score.
     scores: HashMap<EntityId, f32>,
+    /// Each id's first-seen position, the tie order every fusion keeps.
+    first_seen: HashMap<EntityId, usize>,
+    /// Each channel's hits after revision admission, in the order the
+    /// channels ran; [`Self::fuse`] combines them.
+    ranked_lists: Vec<Vec<ScoredEntity>>,
     revisions: HashMap<EntityId, crate::vault::RevisionRef>,
     signals: Vec<String>,
     pub(super) queries_run: Vec<String>,
@@ -55,21 +61,33 @@ impl DepthAccumulator {
 
     pub(super) fn merge(&mut self, hits: Vec<ScoredEntity>) {
         self.candidates_scanned = self.candidates_scanned.saturating_add(hits.len() as u64);
-        for hit in hits {
+        for hit in &hits {
             match self.scores.get_mut(&hit.id) {
                 Some(existing) => *existing = existing.max(hit.score),
                 None => {
                     self.scores.insert(hit.id, hit.score);
+                    self.first_seen.insert(hit.id, self.first_seen.len());
                     self.order.push(hit.id);
                 }
             }
         }
+        if !hits.is_empty() {
+            self.ranked_lists.push(hits);
+        }
     }
 
-    /// Fuse channel scores before truncation; stable ties keep first-seen order.
+    /// Fuses the channel lists before truncation by the ruled per-list
+    /// z-score sum, the one the retrieval pipeline uses; ties keep first-seen
+    /// order, however many times the read fuses.
     pub(super) fn fuse(&mut self) {
-        self.order
-            .sort_by(|left, right| self.scores[right].total_cmp(&self.scores[left]));
+        for fused in crate::fusion::fuse_ranked_lists(&self.ranked_lists) {
+            self.scores.insert(fused.id, fused.score);
+        }
+        self.order.sort_by(|left, right| {
+            self.scores[right]
+                .total_cmp(&self.scores[left])
+                .then_with(|| self.first_seen[left].cmp(&self.first_seen[right]))
+        });
     }
 
     pub(super) fn mark(&mut self, signal: &str) {

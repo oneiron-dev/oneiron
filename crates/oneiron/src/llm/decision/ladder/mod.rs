@@ -12,14 +12,18 @@ use crate::retrieval_depth::RetrievalDeadline;
 use crate::{EntityId, Result};
 use serde_json::Value;
 
+mod ask_consent;
 mod providers;
 mod roles;
 mod runner;
+mod slots;
+mod tournament;
 
+pub use ask_consent::{AskConsent, AskEffect, AskUndoFidelity, ConsentAskQueue};
 pub use providers::{
     DecisionCall, DecisionModel, DecisionPack, DecisionProvider, MAX_DECISION_STATE_BYTES,
-    ModelDecisionProvider, PairedAnswer, ProviderCapability, ProviderDecision,
-    RuleDecisionProvider,
+    MAX_SCORE_LEVEL_BYTES, ModelDecisionProvider, PairedAnswer, ProviderCapability,
+    ProviderDecision, RuleDecisionProvider, SCORE_LEVELS_FIELD, level_score, score_levels_in,
 };
 pub use roles::{
     AskAct, AskRole, AskRoleResolver, AskTo, HolderKind, HumanDecisionQueue, HumanDecisionRequest,
@@ -27,14 +31,15 @@ pub use roles::{
 };
 
 /// Whether `provider` can take `question` over `images` and `audio`. A call carrying both
-/// needs a provider that reads both; the ladder never drops one to fit.
+/// needs a provider that reads both; the ladder never drops one to fit. A choice wider
+/// than its option bound it reads as a tournament of chunks (FIX 11235).
 fn takes(
     provider: &dyn DecisionProvider,
     question: &DecisionQuestion,
     images: &[DecisionImage],
     audio: &[DecisionAudio],
 ) -> bool {
-    provider.capability().takes(question)
+    (provider.capability().takes(question) || tournament::chunks(provider, question))
         && (images.is_empty() || provider.reads_images())
         && (audio.is_empty() || provider.reads_audio())
 }
@@ -42,6 +47,7 @@ fn takes(
 /// Slots are fixed. A step up skips a rung with no provider, up to the dial's
 /// ceiling, and the receipt's pins name every rung that ran. The last rung is a
 /// queue, not a model-produced human answer.
+#[derive(Clone)]
 pub struct DecisionLadder<'a> {
     pub rule: Option<&'a dyn DecisionProvider>,
     pub local: Option<&'a dyn DecisionProvider>,
@@ -73,7 +79,8 @@ pub struct DecisionLadder<'a> {
 
 /// What one provider request, `answered`, gave each pack question on the call's clock. A
 /// failure once the work time is spent, or a reply after the answer's time, is the cut; a
-/// failure with time left fails the call.
+/// failure with time left fails the call. A cut read still went out, so its rung stays on
+/// the receipt (FIX 9907).
 pub(super) fn take(
     pin: &ProviderPin,
     pack: &DecisionPack<'_>,
@@ -84,11 +91,13 @@ pub(super) fn take(
     let answers = match answered {
         Ok(answers) => answers,
         Err(_) if !pack.deadline.decision_may_start() => {
+            record_attempted_provider(pin, &[], readings);
             return Ok((0..count).map(|_| Read::Cut).collect());
         }
         Err(error) => return Err(error),
     };
     if pack.deadline.answer_due() {
+        record_attempted_provider(pin, &answers, readings);
         return Ok((0..count).map(|_| Read::Cut).collect());
     }
     let mut reads = Vec::with_capacity(answers.len());
@@ -106,6 +115,32 @@ pub(super) fn take(
         reads.push(Read::Answer(answer));
     }
     Ok(reads)
+}
+
+/// Each answered read's receipt carries `cost`, what the provider that answered it costs
+/// per thousand units as its host knows it; none when it knows none.
+pub(super) fn price_answers(reads: &[Read], readings: &mut [Readings], cost: Option<f64>) {
+    for (read, readings) in reads.iter().zip(readings.iter_mut()) {
+        if matches!(read, Read::Answer(_)) {
+            readings.cost = cost;
+        }
+    }
+}
+
+/// A cut read's rung on each question's receipt: the model a late reply names as served,
+/// when that name is valid, else the pin the read went out to. The late reply's answer and
+/// readings stay off the receipt; an unfinished reply is not an answer.
+fn record_attempted_provider(
+    pin: &ProviderPin,
+    late: &[ProviderDecision],
+    readings: &mut [Readings],
+) {
+    for (index, readings) in readings.iter_mut().enumerate() {
+        let served = late
+            .get(index)
+            .and_then(|answer| answer.answered_pin(pin).ok());
+        readings.pins.push(served.unwrap_or_else(|| pin.clone()));
+    }
 }
 
 /// The person question's read shape, the one seam for it (test 6b: a separate read, not
@@ -275,6 +310,8 @@ pub(super) struct Readings {
     images: Vec<ImagePin>,
     /// The rule row the Rule rung answered from, when it did.
     rule: Option<HostRuleRef>,
+    /// What the last provider that answered costs per thousand units, as it knows it.
+    cost: Option<f64>,
 }
 
 /// A missing person reading never asks; it is not P(yes) = 0, it is no reading.

@@ -25,11 +25,10 @@ use super::{
     SeedOrigin, WorldKey, WorldKeyId, refused,
 };
 use crate::authority::{
-    AuthorityEntryHash, AuthorityFold, EditOrigin, FoldedMachine,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineEnrolmentRequest,
-    OwnerRootRecord, PinnedRoot, RequestCode, anchor_mark_stands, invalid_authority,
-    owner_root_records_in_txn, read_pin_row_in_txn, write_awaited_root_in_txn,
-    write_pinned_root_in_txn,
+    AuthorityEntryHash, AuthorityFold, FoldedMachine, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+    MachineEncryptionKey, MachineEnrolmentRequest, OwnerRootRecord, PinnedRoot, RequestCode,
+    anchor_mark_stands, invalid_authority, owner_root_records_in_txn, read_pin_row_in_txn,
+    write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, KitRecord, Result, SecretError};
@@ -195,6 +194,21 @@ fn carried_marks(
     Ok((root, marks))
 }
 
+/// How the seed gate treats a root this install's kit inventory still lists
+/// as pending.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PendingKitRootRule {
+    /// A valid record for the root's id, stored or carried, that matches
+    /// both its keys outranks the local pending scan; with none, or when
+    /// the records do not read, the pending kit is refused.
+    ValidMatchingStoredOrCarriedRootWinsLocalPending,
+}
+
+/// CALLS `FIX 2202 pending kit root rule` (Engine 10-21): the rule
+/// [`Vault::kit_seed_gate_in_txn`] reads.
+const PENDING_KIT_ROOT_RULE: PendingKitRootRule =
+    PendingKitRootRule::ValidMatchingStoredOrCarriedRootWinsLocalPending;
+
 impl Vault {
     /// Runs a root door's checks in a read snapshot, before this install's
     /// machine identity is minted.
@@ -210,8 +224,8 @@ impl Vault {
     }
 
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
-    /// door publishes it first. A root this vault's kit inventory lists as
-    /// pending is refused: only the kit's confirm makes it live.
+    /// door publishes it first. A locally pending root is refused unless a
+    /// stored or carried record matches it ([`PENDING_KIT_ROOT_RULE`]).
     fn kit_seed_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -223,12 +237,25 @@ impl Vault {
             .vault_id
             .ok_or_else(|| refused("the vault has no authority genesis yet"))?;
         let root = seed.public(&vault_id)?;
-        if self.kit_root_pending_in_txn(txn, root.id)? {
-            return Err(refused(
-                "this vault's kit for this root is still pending: confirm the kit first",
-            ));
-        }
-        let records = owner_root_records_in_txn(&self.store, txn, fold)?;
+        let pending = self.kit_root_pending_in_txn(txn, root.id)?;
+        let records = match owner_root_records_in_txn(&self.store, txn, fold) {
+            Ok(records) if !pending => records,
+            Ok(records)
+                if PENDING_KIT_ROOT_RULE
+                    == PendingKitRootRule::ValidMatchingStoredOrCarriedRootWinsLocalPending
+                    && records
+                        .get(&root.id)
+                        .is_some_and(|(_, record)| root.matches(record)) =>
+            {
+                records
+            }
+            Err(err) if !pending => return Err(err),
+            _ => {
+                return Err(refused(
+                    "this vault's kit for this root is still pending: confirm the kit first",
+                ));
+            }
+        };
         let publish = kit_seed_gate(
             &records,
             &root,
@@ -321,11 +348,10 @@ impl Vault {
     pub fn activate_owner_root(
         &self,
         owner: &AuthenticatedOwner,
-        origin: EditOrigin,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
     ) -> Result<ActivatedRoot> {
-        self.activate_owner_root_with(owner, origin, prepared, carry, |_| Ok(()))
+        self.activate_owner_root_with(owner, prepared, carry, |_| Ok(()))
             .map(|(activated, ())| activated)
     }
 
@@ -335,7 +361,6 @@ impl Vault {
     pub(crate) fn activate_owner_root_with<T>(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         prepared: PreparedRoot,
         carry: &BTreeSet<EntityId>,
         also: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T>,
@@ -427,7 +452,6 @@ impl Vault {
     pub fn anchor_machine(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         seed: &RecoveryRootSeed,
         request: &MachineEnrolmentRequest,
         code: Option<RequestCode>,
@@ -595,14 +619,13 @@ impl Vault {
     /// anchors this install's own request under it unless this machine is
     /// already mine there with its own keys; pins it; and opens each key
     /// wrapped to it whose world is live here. Every root-wrapped key lands in
-    /// exactly one list. `_origin` does not narrow it: the owner's say-so counts
-    /// from any surface the owner is authenticated on (owner, 10-19), so a
-    /// peer's request restores as this machine's does. The revalidated owner
-    /// proof and the kit's seed gate are what stand.
+    /// exactly one list. The caller's origin does not narrow it: the owner's
+    /// say-so counts from any surface the owner is authenticated on (owner,
+    /// 10-19), so a peer's request restores as this machine's does. The
+    /// revalidated owner proof and the kit's seed gate are what stand.
     pub fn restore_world_keys(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         seed: &RecoveryRootSeed,
         confirm: Option<KitConfirmation>,
     ) -> Result<RootRestore> {
@@ -697,7 +720,6 @@ impl Vault {
     pub fn pin_owner_root(
         &self,
         owner: &AuthenticatedOwner,
-        _origin: EditOrigin,
         root: RecoveryRootId,
     ) -> Result<RepinReport> {
         let stored = self.precheck_root_door(owner, |txn, fold| {

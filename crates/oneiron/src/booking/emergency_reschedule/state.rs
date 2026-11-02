@@ -1,3 +1,7 @@
+//! Emergency reschedule state and home-authority reads.
+//! Entry: `verify_owner_home_in`.
+//! Defines its own items.
+
 use super::*;
 use crate::ports::EntityStoreRead;
 
@@ -273,7 +277,7 @@ pub(crate) fn verify_frozen_effect_in(
             let head = invite_head_in(vault, txn, expected)?;
             let sequence = head.as_ref().map(|head| head.last_sequence);
             let prior = if lane == "pick" {
-                item.plan.payload.as_ref().map(|payload| payload.sequence)
+                super::pick::committed_invite_sequence(&item)
             } else {
                 item.plan
                     .invite_before

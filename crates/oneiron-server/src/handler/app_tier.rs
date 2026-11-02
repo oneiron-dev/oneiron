@@ -34,6 +34,14 @@ pub(super) async fn handle_sync_message(
         SyncMessage::LfsChunks(payload) => {
             super::lfs_chunks::handle(server, payload, direct_tx, conn_state, session_gone).await
         }
+        SyncMessage::AssetBody { tag, payload } => {
+            super::asset_bodies::handle(server, conn_state, tag, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
+        SyncMessage::LeafKey { tag, payload } => {
+            super::leaf_keys::handle(server, conn_id, conn_state, tag, &payload, direct_tx)
+                .map(ControlFlow::Continue)
+        }
         SyncMessage::Doc {
             entity,
             kind,
@@ -43,7 +51,13 @@ pub(super) async fn handle_sync_message(
         )
         .map(ControlFlow::Continue),
         SyncMessage::Batch(members) => {
-            for member in members {
+            for (index, member) in members.into_iter().enumerate() {
+                // FIX 10163: a batch past one processing quantum gives the
+                // worker back between quanta, so a large validated batch
+                // shares it; no member is refused for the count.
+                if index > 0 && index % oneiron::sync::transport::MAX_NODE_BATCH_MEMBERS == 0 {
+                    tokio::task::yield_now().await;
+                }
                 // FIX 6313: an earlier member's window load may have waited,
                 // so each member runs only while the session still stands.
                 if session_gone() {
@@ -308,10 +322,31 @@ pub(super) fn handle_app_message_with_connection(
 ) -> Result<Option<VerbCall>, ProtocolError> {
     let answered = answer_app_message(server, state, tag, payload, direct_tx, connection);
     if let Err(error) = &answered {
-        let method = (tag == protocol::TAG_RPC)
+        let call = (tag == protocol::TAG_RPC)
             .then(|| crate::livequery::decode_rpc_call(payload).ok())
-            .flatten()
-            .map(|(request, _)| request.method);
+            .flatten();
+        // FIX 10344: a refused call that serves a room NOTE, or rides an
+        // anonymous session its principal is verified in, keeps no receipt,
+        // as its answered twin keeps none (FIX 4280). An editor's close is
+        // judged by the room hold this host still keeps for the principal.
+        let anonymous = call.as_ref().is_some_and(|(request, context)| {
+            let session = context
+                .as_ref()
+                .and_then(|context| context.session.as_deref());
+            let principal = state
+                .bound_auth
+                .as_ref()
+                .and_then(call_receipt::request_principal);
+            call_receipt::session_is_anonymous_for(server, session, principal)
+                || call_receipt::room_notes::room_note_call(
+                    server,
+                    session,
+                    principal,
+                    &request.method,
+                    Some(&request.params),
+                )
+        });
+        let method = call.map(|(request, _)| request.method);
         let (verb, request_digest) = match method {
             // A bind carries a credential: its receipt digests none of it.
             Some(method) if method == "auth.bind" => (method, call_bytes_digest(&[])),
@@ -319,14 +354,18 @@ pub(super) fn handle_app_message_with_connection(
             None if tag == protocol::TAG_RPC => ("rpc".to_owned(), call_bytes_digest(payload)),
             None => ("subscribe".to_owned(), call_bytes_digest(payload)),
         };
-        call_receipt::record_socket_reply(
+        call_receipt::record(
             server,
-            verb,
-            CallOutcome::Refused {
-                code: error.kind().to_owned(),
-            },
-            request_digest,
-            None,
+            anonymous,
+            call_receipt::connection_call(
+                oneiron::receipt::CallTransport::Ws,
+                verb,
+                CallOutcome::Refused {
+                    code: error.kind().to_owned(),
+                },
+                request_digest,
+                None,
+            ),
         );
     }
     answered
@@ -401,6 +440,37 @@ fn answer_app_message(
             }
             return Ok(None);
         }
+        // FIX 6458: an old home with no actor session hands its home state on
+        // as its machine alone. Only the home handoff's own calls run on a
+        // socket that bound no actor, under its owner-grade upgrade, each
+        // judged for the machine it proved now; any other call needs a bind.
+        if state.bound_auth.is_none()
+            && context.is_none()
+            && crate::livequery::machine_handoff_method(&request.method)
+        {
+            let peer = state.peer_machine(&server.vault);
+            // FIX 11113: counted as the bound path counts, under the machine
+            // the upgrade proved.
+            let actor = match &peer {
+                oneiron::authority::PeerMachine::Proven { machine, .. } => machine.to_hex(),
+                oneiron::authority::PeerMachine::Unknown => "unauthenticated".to_owned(),
+            };
+            let _ = server.wire_telemetry.record(
+                &request.method,
+                &actor,
+                oneiron_vault_contract::now_ts(),
+            );
+            let conn = connection
+                .as_deref()
+                .map_or(0, crate::livequery::connection::Connection::conn_id);
+            for frame in crate::livequery::machine_handoff_rpc(server, peer, request)?.queued(conn)
+            {
+                direct_tx
+                    .send(frame)
+                    .map_err(|_| ProtocolError::InvalidPayload("reply channel closed"))?;
+            }
+            return Ok(None);
+        }
         let auth = require_bound_app_auth(server, state)?;
         let _ = server.wire_telemetry.record(
             &request.method,
@@ -448,6 +518,7 @@ fn answer_app_message(
                 peer,
                 request,
                 &mut state.residence_index,
+                &mut state.authority_append_stage,
             )?
             .queued(conn)
         } else {

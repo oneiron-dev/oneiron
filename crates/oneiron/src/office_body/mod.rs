@@ -37,6 +37,8 @@ mod docx;
 mod doors;
 mod fork;
 mod holder_ask;
+mod live_recalc;
+mod live_units;
 mod pptx;
 mod records;
 mod resources;
@@ -48,14 +50,17 @@ pub(crate) use actor_erase::{
     erase_export_actor_in_txn, erase_fork_actor_in_txn, erase_oracle_actor_in_txn,
     erase_proposal_actor_in_txn,
 };
-pub(crate) use consent::MergeAdmission;
 pub use consent::{
     AnsweringAuthority, BundleVerdict, MemberAnswer, MemberVerdict, OFFICE_BODY_EDIT_CLASS,
     OfficeBodyProposal, ProposalAsk, ProposalAskRefusal, ProposalHeader, ProposalMember,
     ProposalSettleRequest, ProposalSettlement, ReviewedFork, SettleVerdict,
 };
+pub(crate) use consent::{DiscardAdmission, MergeAdmission};
 pub use docx::{BodyBlock, BodyBlockKind, DocxBody, DocxBodyOp};
 pub use fork::{BlockChange, BodyConflict, ChangeKind, ConflictKind, OfficeBodyDiff};
+pub(crate) use holder_ask::resolve_holder_ask_in_txn;
+pub use live_units::LivePin;
+pub(crate) use live_units::{LiveChange, LiveSheet};
 pub use oneiron_docedit::live::LandingReceipt;
 pub use oneiron_docedit::xlsx_body::{
     XlsxArea, XlsxBook, XlsxLock, XlsxSheetVisibility, XlsxStyle, XlsxTable, XlsxValue,
@@ -66,7 +71,7 @@ pub use pptx::{
     DeckGateView, DeckNodeView, DeckOracleRequest, DeckPreview, DeckPreviewRequest,
     DeckPreviewSlide, DeckReviewView, PptxBody, PptxExport, PptxReview,
 };
-pub(crate) use pptx::{deck_log_ops, live_refused};
+pub(crate) use pptx::{deck_json_values, deck_log_ops, live_refused};
 pub use verbs::{
     DocxBlockView, DocxBodyView, DocxCellView, OfficeBodyArtifactRequest, OfficeBodyCommitGap,
     OfficeBodyCommitView, OfficeBodyCommitsRequest, OfficeBodyEditRequest,

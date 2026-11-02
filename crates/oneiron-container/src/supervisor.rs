@@ -73,7 +73,7 @@ impl Supervisor {
     pub(crate) fn bind(config: &FenceConfig, generation: String) -> Result<Self> {
         let directory = tempfile::Builder::new()
             .prefix("oneiron-fence-")
-            .tempdir()
+            .tempdir_in("/tmp")
             .map_err(Error::Fence)?;
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o711))
             .map_err(Error::Fence)?;

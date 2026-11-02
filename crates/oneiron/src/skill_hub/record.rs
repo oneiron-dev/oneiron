@@ -1,3 +1,7 @@
+//! Hub and pinned skill reference vocabulary.
+//! Entry: `HubRef`.
+//! Defines its own items.
+
 use rmpv::Value;
 
 use crate::entity_id::EntityId;

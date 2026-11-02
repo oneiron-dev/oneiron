@@ -2,12 +2,14 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 use oneiron::session_lifecycle::SessionKey;
 use oneiron::{DreamerConsolidationScope, WakeTrigger};
 use tokio::sync::Notify;
 
+use super::queue::SessionHintQueue;
 use super::{
     ArmedLane, HintSignal, NowMillis, SessionHintCarrier, Tick, TickSource, WakeSignal,
     system_now_ms,
@@ -33,23 +35,21 @@ fn scope_lane(scope: DreamerConsolidationScope) -> usize {
     }
 }
 
-/// Bound of the ordered SESSION-hint queue. Arrival order IS lifecycle
-/// causality (end-then-open is a reopen; open-end-open is two sittings), so
-/// session hints are queued in order and NEVER reordered; only ADJACENT
-/// Activity hints inside the idle floor coalesce (a typing burst is one
-/// endpoint-preserving period).
-/// Boundary hints never coalesce, evict or refuse for the count: they wait
-/// in arrival order. This soft row sheds only loss-tolerant Activity periods.
-pub(super) const SESSION_HINT_QUEUE_CAP: usize = 8;
+/// The first re-check of a producer waiting for room, doubling to
+/// [`PRESSURE_RECHECK_MAX`]. Pacing only, never a limit: memory can free up
+/// with nothing drained, so the head of the line looks again, and it stays
+/// in line until its fact is kept, the receiver is gone or its own deadline
+/// passes.
+const PRESSURE_RECHECK_FIRST: Duration = Duration::from_millis(1);
+const PRESSURE_RECHECK_MAX: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Default)]
 struct PushState {
     wake: [Option<WakeSignal>; SCOPE_LANES],
     /// Plain advisory hints: one coalescing slot (unchanged wave-1 shape).
     plain_hint: Option<HintSignal>,
-    /// Session-lifecycle hints in ARRIVAL order (see
-    /// [`SESSION_HINT_QUEUE_CAP`]).
-    session_hints: std::collections::VecDeque<SessionHintCarrier>,
+    /// Session-lifecycle hints in ARRIVAL order, uncapped (FIX 8602).
+    session_hints: SessionHintQueue,
     /// What each timer lane of the receiving stack is armed for.
     armed: ArmedWakes,
 }
@@ -98,6 +98,9 @@ impl ArmedWakes {
 struct PushShared {
     state: Mutex<PushState>,
     notify: Notify,
+    /// Wakes producers waiting for session-hint room: each drain, and the
+    /// receiver going away.
+    drained: Condvar,
     pushers: AtomicUsize,
     receiver_alive: AtomicBool,
     now_ms: NowMillis,
@@ -114,19 +117,41 @@ impl PushShared {
     fn lock_state(&self) -> std::sync::MutexGuard<'_, PushState> {
         self.state.lock().expect("push mailbox lock poisoned")
     }
+
+    /// Pops the oldest session hint; a producer waiting for room is woken.
+    fn pop_session_hint(&self) -> Option<SessionHintCarrier> {
+        let mut state = self.lock_state();
+        let carrier = state.session_hints.pop_front();
+        let waiting = !state.session_hints.line_empty();
+        drop(state);
+        if carrier.is_some() && waiting {
+            self.drained.notify_all();
+        }
+        carrier
+    }
 }
 
-/// Rejected push.
+/// Rejected push. A rejected session hint was not queued: nothing reports
+/// a fact kept that was not.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TickPushError {
     /// The receiving supervisor is gone; the signal can never be consumed.
     Closed,
+    /// The allocator has no room for the session hint, or earlier hints
+    /// wait for room ahead of it. [`HintPusher::push_session_hint_waiting`]
+    /// waits its turn instead.
+    MemoryPressure,
+    /// The caller's own deadline passed while its session hint waited for
+    /// room.
+    DeadlinePassed,
 }
 
 impl fmt::Display for TickPushError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Closed => write!(f, "push tick channel closed"),
+            Self::MemoryPressure => write!(f, "no room for the session hint"),
+            Self::DeadlinePassed => write!(f, "deadline passed while the session hint waited"),
         }
     }
 }
@@ -136,7 +161,7 @@ impl std::error::Error for TickPushError {}
 /// Receiving half of the push channel: ONE bounded coalescing mailbox —
 /// one wake slot per consolidation lane (drained first with a rotating scan
 /// start so a lane that refills every pass cannot starve older buffered
-/// wakes), an ORDERED bounded session-hint queue (arrival order preserved;
+/// wakes), an ORDERED uncapped session-hint queue (arrival order preserved;
 /// only adjacent Activity hints inside the idle floor coalesce — lifecycle
 /// causality is never rewritten), and one coalescing slot for the plain advisory hint. Bursts
 /// therefore collapse while distinct signals keep their order.
@@ -173,6 +198,7 @@ impl PushTick {
         let shared = Arc::new(PushShared {
             state: Mutex::new(PushState::default()),
             notify: Notify::new(),
+            drained: Condvar::new(),
             pushers: AtomicUsize::new(2),
             receiver_alive: AtomicBool::new(true),
             now_ms,
@@ -213,13 +239,23 @@ impl PushTick {
         // Session hints drain in ARRIVAL order: reordering lifecycle facts
         // rewrites causality (an end-then-open burst is a reopen, not an
         // open that ends itself). The plain advisory slot drains last.
-        if let Some(carrier) = state.session_hints.pop_front() {
-            self.delivered_session_hint = Some(carrier);
-            return Some(Tick::Hint(HintSignal {
-                session: Some(carrier.hint),
-            }));
+        let carrier = state.session_hints.pop_front();
+        let waiting = carrier.is_some() && !state.session_hints.line_empty();
+        let tick = match carrier {
+            Some(carrier) => {
+                self.delivered_session_hint = Some(carrier);
+                Some(Tick::Hint(HintSignal {
+                    session: Some(carrier.hint),
+                }))
+            }
+            None => state.plain_hint.take().map(Tick::Hint),
+        };
+        drop(state);
+        // A drain makes room: a producer waiting for it looks now.
+        if waiting {
+            self.shared.drained.notify_all();
         }
-        state.plain_hint.take().map(Tick::Hint)
+        tick
     }
 
     /// Waits for the next pushed signal. The mailbox is level-triggered:
@@ -261,7 +297,16 @@ impl PushTick {
 
 impl Drop for PushTick {
     fn drop(&mut self) {
+        // Under the mailbox lock, so a producer waiting for room cannot miss
+        // the wake between its check and its wait.
+        let state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         self.shared.receiver_alive.store(false, Ordering::Release);
+        drop(state);
+        self.shared.drained.notify_all();
     }
 }
 
@@ -273,22 +318,18 @@ impl TickSource for PushTick {
     fn take_buffered_session_hint(
         &mut self,
     ) -> Option<(SessionKey, SessionHint, Option<u64>, u64)> {
-        self.shared
-            .lock_state()
-            .session_hints
-            .pop_front()
-            .map(|carrier| {
-                (
-                    carrier.key,
-                    carrier.hint,
-                    carrier.first.claimed_ms,
-                    carrier.first.arrival_ms,
-                )
-            })
+        self.shared.pop_session_hint().map(|carrier| {
+            (
+                carrier.key,
+                carrier.hint,
+                carrier.first.claimed_ms,
+                carrier.first.arrival_ms,
+            )
+        })
     }
 
     fn take_buffered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
-        self.shared.lock_state().session_hints.pop_front()
+        self.shared.pop_session_hint()
     }
 
     fn take_delivered_session_hint_carrier(&mut self) -> Option<SessionHintCarrier> {
@@ -396,66 +437,101 @@ impl HintPusher {
         self.shared.lock_state().armed.next.subscribe()
     }
 
-    /// Pushes a session-lifecycle hint (ONE-1685) onto the bounded ORDERED
-    /// queue. Arrival order is preserved end-to-end — lifecycle causality
-    /// (open → end → open is two sittings) is never rewritten by
+    /// Pushes a session-lifecycle hint (ONE-1685) onto the ORDERED queue
+    /// (FIX 8602). Arrival order is preserved end-to-end — lifecycle
+    /// causality (open → end → open is two sittings) is never rewritten by
     /// coalescing; only ADJACENT Activity hints whose arrivals are separated
     /// by less than the channel's idle floor aggregate (with both endpoint
-    /// stamps and a count). On overflow only Activity is loss-tolerant;
-    /// boundaries are never evicted. Carrying a lifecycle fact grants NO pass-shaping
-    /// authority — the driver's session policy decides what, if anything,
-    /// results (H-S4).
+    /// stamps and a count). Nothing is evicted or dropped: when the allocator
+    /// has no room, or earlier hints already wait for room, this refuses with
+    /// [`TickPushError::MemoryPressure`] and keeps nothing, and
+    /// [`Self::push_session_hint_waiting`] waits its turn instead. Carrying a
+    /// lifecycle fact grants NO pass-shaping authority — the driver's session
+    /// policy decides what, if anything, results (H-S4).
     pub fn push_session_hint(
         &self,
         key: SessionKey,
         hint: SessionHint,
         claimed_ms: Option<u64>,
     ) -> Result<(), TickPushError> {
+        let mut state = self.shared.lock_state();
         if !self.shared.receiver_alive.load(Ordering::Acquire) {
             return Err(TickPushError::Closed);
         }
-        let arrival_ms = (self.shared.now_ms)();
+        let carrier = SessionHintCarrier::point(key, hint, claimed_ms, (self.shared.now_ms)());
+        if !state.session_hints.line_empty()
+            || !state
+                .session_hints
+                .keep(carrier, self.shared.coalesce_floor_ms)
         {
-            let mut state = self.shared.lock_state();
-            if hint == SessionHint::Activity
-                && let Some(last) = state.session_hints.back_mut()
-                && last.hint == SessionHint::Activity
-                && last.key == key
-                && arrival_ms.saturating_sub(last.last.arrival_ms) < self.shared.coalesce_floor_ms
-            {
-                last.aggregate_activity(claimed_ms, arrival_ms);
-            } else {
-                if state.session_hints.len() >= SESSION_HINT_QUEUE_CAP {
-                    let oldest_activity = state
-                        .session_hints
-                        .iter()
-                        .position(|queued| queued.hint == SessionHint::Activity);
-                    match (hint, oldest_activity) {
-                        (SessionHint::AppOpen | SessionHint::ExplicitEnd, None) => {}
-                        (SessionHint::Activity, None) => {
-                            tracing::warn!(
-                                ?claimed_ms,
-                                arrival_ms,
-                                "session hint queue overflow; dropped incoming activity"
-                            );
-                            return Ok(());
-                        }
-                        (_, Some(index)) => {
-                            let dropped = state.session_hints.remove(index);
-                            tracing::warn!(
-                                ?dropped,
-                                "session hint queue overflow; dropped oldest activity period"
-                            );
-                        }
-                    }
-                }
-                state
-                    .session_hints
-                    .push_back(SessionHintCarrier::point(key, hint, claimed_ms, arrival_ms));
-            }
+            return Err(TickPushError::MemoryPressure);
         }
+        drop(state);
         self.shared.notify.notify_one();
         Ok(())
+    }
+
+    /// [`Self::push_session_hint`] that waits its turn under real memory
+    /// pressure instead of refusing. Producers that wait are served in
+    /// arrival order, each fact with the arrival stamp it came with, and a
+    /// later fact never passes one still waiting. Each drain wakes the line,
+    /// and its head also looks again on a doubling pace, since memory can
+    /// free up with nothing drained. `deadline` is the caller's own: `None`
+    /// waits until the fact is kept or the receiver is gone. Blocks the
+    /// calling thread; an async caller runs it where blocking is allowed.
+    pub fn push_session_hint_waiting(
+        &self,
+        key: SessionKey,
+        hint: SessionHint,
+        claimed_ms: Option<u64>,
+        deadline: Option<Instant>,
+    ) -> Result<(), TickPushError> {
+        let floor = self.shared.coalesce_floor_ms;
+        let mut state = self.shared.lock_state();
+        if !self.shared.receiver_alive.load(Ordering::Acquire) {
+            return Err(TickPushError::Closed);
+        }
+        let carrier = SessionHintCarrier::point(key, hint, claimed_ms, (self.shared.now_ms)());
+        if state.session_hints.line_empty() && state.session_hints.keep(carrier, floor) {
+            drop(state);
+            self.shared.notify.notify_one();
+            return Ok(());
+        }
+        let ticket = state.session_hints.join_line();
+        tracing::warn!(?hint, "session hint waits for room in arrival order");
+        let mut recheck = PRESSURE_RECHECK_FIRST;
+        let outcome = loop {
+            if !self.shared.receiver_alive.load(Ordering::Acquire) {
+                break Err(TickPushError::Closed);
+            }
+            if state.session_hints.is_turn(ticket) && state.session_hints.keep(carrier, floor) {
+                break Ok(());
+            }
+            let wait = match deadline {
+                Some(at) => match at.checked_duration_since(Instant::now()) {
+                    Some(left) if !left.is_zero() => left.min(recheck),
+                    _ => break Err(TickPushError::DeadlinePassed),
+                },
+                None => recheck,
+            };
+            state = self
+                .shared
+                .drained
+                .wait_timeout(state, wait)
+                .expect("push mailbox lock poisoned")
+                .0;
+            recheck = recheck.saturating_mul(2).min(PRESSURE_RECHECK_MAX);
+        };
+        state.session_hints.leave_line(ticket);
+        drop(state);
+        // The turn moved on: the next producer in line looks now.
+        self.shared.drained.notify_all();
+        if outcome.is_ok() {
+            self.shared.notify.notify_one();
+        } else {
+            tracing::warn!(?hint, ?outcome, "session hint left the line unkept");
+        }
+        outcome
     }
 }
 

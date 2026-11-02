@@ -235,6 +235,11 @@ pub struct WorkflowRunView {
     /// settles it when the run ends. `None` for a TASK-less run (FIX 5295).
     #[serde(default)]
     pub task_ref: Option<EntityId>,
+    /// Why the next step's release was refused (FIX 10602): its agent
+    /// definition is missing, inactive or unapproved now. `None` while
+    /// nothing refuses.
+    #[serde(default)]
+    pub release_refusal: Option<String>,
 }
 
 fn attempt_ref(id: AttemptId) -> MemoryResult<EntityId> {
@@ -281,6 +286,7 @@ fn run_view(status: &WorkflowDispatchStatus) -> MemoryResult<WorkflowRunView> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?,
+        release_refusal: status.release_refusal.clone(),
     })
 }
 
@@ -355,11 +361,14 @@ fn started_run(outcome: AgentDispatchOutcome) -> MemoryResult<WorkflowRunView> {
 /// run's; nothing of either comes from the request. The intent key is
 /// qualified by the agent, its try, the TASK and the workflow, so no other
 /// caller's or try's retry names this run. The binder rechecks the lease in
-/// the admitting writer.
+/// the admitting writer, and reads on `lane`, the read key its door already
+/// admitted, the TASK, the workflow and every step the run captures, a
+/// replay's included (FIX 9700).
 pub(crate) fn dispatch_workflow_bound_as(
     vault: &Vault,
     agent: WriteActor,
     lease: &HostBinding,
+    lane: &crate::claim::ScopedReadActorKey,
     input: WorkflowBoundDispatchRequest,
 ) -> MemoryResult<WorkflowRunView> {
     let parent = lease.parent();
@@ -389,6 +398,7 @@ pub(crate) fn dispatch_workflow_bound_as(
     let binder = WorkflowBinder::Agent {
         actor: agent,
         lease,
+        lane,
     };
     started_run(dispatch_bound(
         vault,

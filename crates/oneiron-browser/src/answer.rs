@@ -75,13 +75,24 @@ pub struct BrowserAnswer<T> {
     pub engine: Option<BrowserEngine>,
     /// A demonstration that ended since the agent's last answer without
     /// its stop (a handover, an engine switch, a lost guest), once, its
-    /// draft naming no subgoal and no checks (CUA E9a).
+    /// draft naming no subgoal and no checks (CUA E9a); a person's span an
+    /// opted-in handover recorded, as their handback drafted it (CUA E9b).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub demonstration: Option<DemonstrationOutput>,
     /// The guest session's manifest, as the run's door adds it to every
     /// answer (FIX 5705).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_manifest: Option<SessionManifest>,
+    /// The press an act of the call waited on and what its owner's answer
+    /// came to, on the answer a code run's parked call resumes with (FIX
+    /// 10423).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub press: Option<crate::PressAnswer>,
+    /// Why the call's solved-run capture kept nothing, when it failed
+    /// (FIX 10509): as the engine log names it. A call that solved no
+    /// span, and one whose capture landed, carry none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub solved_capture: Option<String>,
 }
 
 impl<T> BrowserAnswer<T> {
@@ -96,6 +107,8 @@ impl<T> BrowserAnswer<T> {
             engine: None,
             demonstration: None,
             session_manifest: None,
+            press: None,
+            solved_capture: None,
         }
     }
 }
@@ -136,8 +149,7 @@ impl<T> DesktopAnswer<T> {
 /// What a guest session proved about its fence, as the run's door names it
 /// on every answer (FIX 5705): the container's own session manifest, as it
 /// reads on the wire. The door sends that manifest; this is its shape. Its
-/// guest-image release evidence (FIX 8253) rides beside these fields,
-/// undeclared here.
+/// guest-image release evidence (FIX 8253) rides as `image_release`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct SessionManifest {
     pub backend: String,
@@ -154,6 +166,11 @@ pub struct SessionManifest {
     /// Non-Linux or explicitly unfenced sessions never claim isolation.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub fence_unproven: bool,
+    /// The guest-image release this launch saw (FIX 8253), as
+    /// `oneiron_container::image_release::ImageReleaseObservation` reads on
+    /// the wire; untyped here so the mirror needs no container dependency.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_release: Option<serde_json::Value>,
 }
 
 /// Evidence the session verified before its guest made its first network

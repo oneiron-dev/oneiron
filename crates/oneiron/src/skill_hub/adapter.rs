@@ -1,3 +1,7 @@
+//! The skill hub adapter contract.
+//! Entry: `SkillHubAdapter`.
+//! Defines its own items.
+
 use std::collections::BTreeMap;
 
 use crate::entity_id::EntityId;

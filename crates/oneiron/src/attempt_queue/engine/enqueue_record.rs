@@ -89,6 +89,9 @@ impl AttemptQueue<'_> {
             placement: None,
             result_ref: None,
             history: Vec::new(),
+            active_pause: None,
+            terminal_exhaust: None,
+            signal_intents: Vec::new(),
         };
 
         if self
@@ -108,6 +111,7 @@ impl AttemptQueue<'_> {
             record.run_id.as_deref(),
             record.id.as_bytes(),
         )?;
+        crate::attempt_queue::index::put_created_in_txn(self.store, wtxn, &record)?;
         let ready_key = ready_key(ready_at(&record), record.id);
         self.store
             .attempt_ready

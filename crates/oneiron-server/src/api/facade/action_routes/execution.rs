@@ -1,5 +1,5 @@
 //! How one action runs (OF-181): the principal its call reads as, and the
-//! blocking thread it runs on with its host binding, under the live run it
+//! driver thread it runs on with its host binding, under the live run it
 //! acts for, held.
 use std::sync::Arc;
 
@@ -76,9 +76,10 @@ pub(super) async fn execute_stamped(
     .await
 }
 
-/// Runs `run` on a blocking thread with the app's table, the vault, the
-/// actor `bound` writes as, and its host binding: the verb door over this
-/// request and the credential's read key, and the owner's proof.
+/// Runs `run` on a driver thread of its own (FIX 8160) with the app's
+/// table, the vault, the actor `bound` writes as, and its host binding: the
+/// verb door over this request and the credential's read key, and the
+/// owner's proof.
 pub(super) async fn run_bound<F>(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
@@ -104,9 +105,10 @@ where
 
 /// [`run_bound`], and beside its dispatch what its verb-table row's reply
 /// stated of its call receipt (FIX 2887): recorded, no-record or
-/// unrecorded, on the row's success and its refusal alike. Unrecorded when
-/// no row ran through the door's route: a typed action, a run row, a
-/// refusal before the row, or a row the credential's own facade call ran.
+/// unrecorded, on the row's success and its refusal alike. A row the
+/// credential's own facade call ran states the receipt its door recorded
+/// (FIX 10635). Unrecorded when no row ran: a typed action, a run row, or a
+/// refusal before the row.
 pub(super) async fn run_bound_stamped<F>(
     server: &Arc<SyncServer>,
     headers: HeaderMap,
@@ -136,7 +138,6 @@ where
     let door = Arc::new(FacadeRowDoor::new(
         server, headers, extensions, key, credential,
     ));
-    let verb_door: Arc<dyn AgentVerbDoor> = Arc::clone(&door) as Arc<dyn AgentVerbDoor>;
     let bound = Unbound {
         actor,
         class,
@@ -144,7 +145,7 @@ where
         surface,
         live_run,
     };
-    let ran = run_with_door(server, verb_door, bound, run).await;
+    let ran = run_with_door(server, Arc::clone(&door), bound, run).await;
     (ran, door.stamp())
 }
 
@@ -159,7 +160,7 @@ struct Unbound {
 
 async fn run_with_door<F>(
     server: &Arc<SyncServer>,
-    door: Arc<dyn AgentVerbDoor>,
+    door: Arc<FacadeRowDoor>,
     bound: Unbound,
     run: F,
 ) -> Result<ActionDispatch, FacadeApiError>
@@ -193,9 +194,14 @@ where
         ),
         None => None,
     };
+    // FIX 10938: each verb row's own receipt names this hold too.
+    if let Some(held) = &held {
+        door.held_outer(held.proof().call_attempt_witness());
+    }
+    let door: Arc<dyn AgentVerbDoor> = door;
     let host = Arc::clone(server);
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || {
+    off_the_hook_pool(move || {
         // OF-181: an action for a live run plans its leader rows as the
         // run's own entries do, on the host's ladder.
         let mut planner = match live_run.as_ref().map(ResolvedLiveRun::planner) {
@@ -222,7 +228,29 @@ where
         };
         run(executor, &vault, WriteActor::new(actor, class), binding)
     })
-    .await
-    .map_err(|_| internal())?
+    .await?
     .map_err(engine)
+}
+
+/// Runs an action's synchronous driver on a thread of its own, inside this
+/// runtime's context as a blocking-pool thread is, and waits for it without
+/// holding a thread (FIX 8160). The driver waits on its verb-table rows,
+/// whose verb hooks run on the blocking pool: a driver held on that same
+/// pool could leave none of its threads for the hooks its rows wait on.
+/// One action is still one driver, one row pass and one receipt; nothing
+/// here counts or refuses actions. A driver that panics, or a thread that
+/// cannot start, answers as the pool's lost task did.
+async fn off_the_hook_pool<R: Send + 'static>(
+    driver: impl FnOnce() -> R + Send + 'static,
+) -> Result<R, FacadeApiError> {
+    let runtime = tokio::runtime::Handle::current();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new()
+        .name("oneiron-action".to_owned())
+        .spawn(move || {
+            let _entered = runtime.enter();
+            let _ = sender.send(driver());
+        })
+        .map_err(|_| internal())?;
+    receiver.await.map_err(|_| internal())
 }

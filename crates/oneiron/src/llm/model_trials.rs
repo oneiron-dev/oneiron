@@ -149,6 +149,7 @@ impl Vault {
             execution: ModelTrialExecutionState::NotStarted,
             run: 0,
             arms: Vec::new(),
+            resent_arms: Vec::new(),
             evidence: None,
             receipt: None,
         };

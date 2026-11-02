@@ -10,7 +10,9 @@
 //!
 //! The typed type-feedback door (FIX 8277) reads one program step's type
 //! feedback by its check reference, as the owner: the late result of a
-//! check its run never waited on, without running anything again.
+//! check its run never waited on, without running anything again. A step
+//! of a session-bound run is read on the session the request names, bound
+//! for the owner (FIX 10389).
 
 mod types;
 
@@ -18,7 +20,7 @@ pub use types::*;
 
 use super::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::ModelId;
-use crate::code_run::{ProgramStepFeedbackRelease, parse_check_ref};
+use crate::code_run::{ProgramStepFeedbackRelease, parse_check_ref, session_type_diagnostics_row};
 use crate::consent::AuthenticatedOwner;
 
 impl Memory<'_> {
@@ -69,8 +71,18 @@ impl Memory<'_> {
     /// the feedback released whole; an MCP answer whose own release check
     /// holds it for its destination gives it withheld (FIX 10390).
     ///
-    /// The CALL behind the scope: the canonical rows of this vault alone. An
-    /// off-record session's steps keep their feedback with their run.
+    /// The CALL behind the scope (FIX 10389, CALLS "session feedback lives
+    /// on the session route only"): with no `session_ref`, the canonical
+    /// rows of this vault. With one, the owner's proof first, then the
+    /// session it names, bound for the owner as the owner manages it, and
+    /// the rows its runs keep on its route; a session that is gone or
+    /// closing is refused as such, never read again on the vault's rows.
+    ///
+    /// A foreign program's or a pack script's run keeps no result store, so
+    /// its row holds its whole collection: this read gives every diagnostic
+    /// of it, with no replay record (CALLS "foreign feedback late read scope
+    /// = run owner"). The reader is the owner by this proof, never the
+    /// caller who ran the program for that alone.
     pub fn code_run_type_diagnostics_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -83,7 +95,16 @@ impl Memory<'_> {
                  (type_diagnostics:<run>:<step>:<invocation>)",
             )
         })?;
-        let row = self.vault.type_diagnostics_row(key)?;
+        let row = match input.session_ref.as_deref() {
+            None => self.vault.type_diagnostics_row(key)?,
+            Some(session_ref) => {
+                let session = self
+                    .vault
+                    .off_record_session_vault()
+                    .bind_for(session_ref, self.actor)?;
+                session_type_diagnostics_row(&session, key)?
+            }
+        };
         Ok(row.map(|row| ProgramStepFeedbackRelease::Released(row.feedback(key))))
     }
 }

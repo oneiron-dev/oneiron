@@ -302,13 +302,16 @@ pub(crate) struct CoreMemoryWatchResponse {
     watched: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     query_ref: Option<String>,
+    /// How the evaluator's last wake of the watch went (FIX 11250).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    health: Option<watch::CoreMemoryWatchHealth>,
 }
 
 mod owner_delete;
 mod watch;
 pub(crate) use self::watch::{
     __path_core_memory_watch_disable, __path_core_memory_watch_enable,
-    __path_core_memory_watch_read,
+    __path_core_memory_watch_read, CoreMemoryWatchHealth,
 };
 pub(super) use self::watch::{
     core_memory_watch_disable, core_memory_watch_enable, core_memory_watch_read,
@@ -333,6 +336,7 @@ pub(super) use self::watch::{
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write, or the verb names the owner's erase.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "Referenced entity was not found.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Memory verb failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]

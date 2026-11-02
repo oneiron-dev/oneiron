@@ -40,6 +40,7 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
             | ErrorKind::SecretGrantStale
             | ErrorKind::SecretGrantSpent
             | ErrorKind::AgentDefinitionDisabled
+            | ErrorKind::ModelPinUnavailable
             | ErrorKind::KillSwitchDisabled
             | ErrorKind::IdentityUnsettled
             | ErrorKind::ProjectHistoryOverBudget
@@ -49,7 +50,8 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
 
 /// Whether a failed model call waits on an owner act (FIX 7382): a budget
 /// denial, spent prepaid credit (the owner tops up), a world kept on the
-/// device (world privacy), a failed login, a capability the routed model
+/// device (world privacy), a world order that names none of its routes
+/// (world privacy, FIX 11768), a failed login, a capability the routed model
 /// lacks (the owner routes a capable one), or an answer an erase took
 /// (terminal by its own contract). A rate limit, a spent usage window, a
 /// provider outage and a refused or unreadable reply do not. Exhaustive, so
@@ -62,7 +64,8 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
                 kind: SpentKind::Credit,
                 ..
             }
-            | RetryableLlmError::KeptOnDevice { .. } => true,
+            | RetryableLlmError::KeptOnDevice { .. }
+            | RetryableLlmError::WorldRouteNotAdmitted => true,
             RetryableLlmError::QuotaSpent {
                 kind: SpentKind::Window,
                 ..
@@ -70,13 +73,15 @@ pub(crate) const fn llm_waits_on_owner_act(error: &LlmError) -> bool {
             | RetryableLlmError::RateLimited { .. }
             | RetryableLlmError::ServerError
             | RetryableLlmError::Timeout
-            | RetryableLlmError::StreamCut => false,
+            | RetryableLlmError::StreamCut
+            | RetryableLlmError::TransportFault(_) => false,
         },
         LlmError::Fatal(fatal) => match fatal {
             FatalLlmError::Auth | FatalLlmError::Unsupported(_) | FatalLlmError::ResponseErased => {
                 true
             }
             FatalLlmError::InvalidRequest
+            | FatalLlmError::InvalidRequestDetail { .. }
             | FatalLlmError::ContentFiltered
             | FatalLlmError::EmptyResponse
             | FatalLlmError::LabelRead(_) => false,

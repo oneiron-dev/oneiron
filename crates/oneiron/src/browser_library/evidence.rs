@@ -17,6 +17,7 @@
 use oneiron_browser::{DraftOutput, ExpectInput, SecretParam};
 use serde::{Deserialize, Serialize};
 
+use crate::authority::InvocationSlipBinding;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -26,6 +27,16 @@ use crate::runtime_hooks::verb::VerbAskCredentialRef;
 
 /// The predicate of a solved run's evidence claim (CUA E8a).
 pub const SOLVED_RUN_PREDICATE: &str = "browser.solved_run";
+
+/// The predicate of a filed program's anchor claim (FIX 10513): the
+/// scoped filing evidence through which a reader is granted the
+/// program's coverage of its group.
+pub const WORKFLOW_FILING_PREDICATE: &str = "browser.workflow.filing";
+
+/// The domain a filing anchor's claim id is hashed in (FIX 10513): its
+/// program and the digest of the group it covers, so one program's
+/// anchor for one group is one claim however often it is refiled.
+pub const WORKFLOW_FILING_DOMAIN: &[u8] = b"oneiron:browser-workflow-filing:v1";
 
 /// The domain a solved run's evidence id is hashed in (CUA E8a, CALLS row
 /// "evidence identity"): its scope, run, call, span and the durable body's
@@ -150,6 +161,63 @@ pub(super) fn digest(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// One filed program's anchor (FIX 10513): the body of its
+/// `browser.workflow.filing` claim. It carries only the program, the
+/// group it covers, and that group's origin, task type and subgoal:
+/// the filing association a reader reads through [`ScopedRead`] before
+/// dereferencing the program, never a second program or proof body.
+///
+/// [`ScopedRead`]: crate::claim::ScopedRead
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkflowFiling {
+    /// The filed program the anchor names.
+    pub workflow: EntityId,
+    /// The digest of the solved group the filing covers.
+    pub group: [u8; 32],
+    /// The group's admitted origin.
+    pub origin: String,
+    /// The group's recorded task type.
+    pub type_ref: TypeRef,
+    /// The group's subgoal, exact.
+    pub subgoal: String,
+}
+
+impl WorkflowFiling {
+    /// Program `workflow`'s filing in the group `key` names.
+    #[must_use]
+    pub fn of(key: &ScopedSolvedGroupKey, workflow: EntityId) -> Self {
+        Self {
+            workflow,
+            group: key.digest(),
+            origin: key.group.origin.clone(),
+            type_ref: key.group.type_ref.clone(),
+            subgoal: key.group.subgoal.clone(),
+        }
+    }
+
+    /// The anchor claim's id.
+    ///
+    /// # Errors
+    ///
+    /// A claim body that does not encode (as the evidence ids').
+    pub fn id(&self) -> Result<EntityId> {
+        workflow_filing_id(&self.workflow, &self.group)
+    }
+}
+
+/// The claim id of `workflow`'s anchor for the group `group` digests
+/// (FIX 10513), hashed in [`WORKFLOW_FILING_DOMAIN`].
+///
+/// # Errors
+///
+/// An id that does not encode (as the evidence ids').
+pub fn workflow_filing_id(workflow: &EntityId, group: &[u8; 32]) -> Result<EntityId> {
+    crate::codebase::entity_id_from_hash_material(
+        WORKFLOW_FILING_DOMAIN,
+        &[workflow.as_bytes(), group],
+    )
+}
+
 /// Where a solved run's checks were named (CUA E8a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
@@ -157,6 +225,10 @@ pub enum SolvedSource {
     /// A library run of the filed program `workflow` met its filled
     /// postcondition: its type and subgoal are the program record's.
     LibraryRun { workflow: EntityId },
+    /// An agent's run of the TASK `task` ended with its done-means' browser
+    /// checks met (CUA E8b): its type is the run's recorded stamp, its
+    /// subgoal the done-means' question.
+    TaskRun { task: EntityId },
 }
 
 /// What a source door captured, before its caller's door scopes it.
@@ -275,11 +347,14 @@ impl SolvedRunEvidence {
 }
 
 /// The source authority a solved run was captured under (CUA E8a), kept
-/// beside its evidence and never in it: no credential, token or key bytes.
-/// The credential reference names the exact instrument and door; the
-/// witness digest is BLAKE3 of the signed binding the request was admitted
-/// on. A later use resolves the live credential from them and revalidates
-/// it then; this row is no authority of its own.
+/// beside its evidence and never in it. The credential reference names the
+/// exact instrument and door; the witness is the signed binding the request
+/// was admitted on (CUA E8b), kept as a queued turn action keeps its slip:
+/// never logged, never in a receipt, gone with the row's erase, and dropped
+/// once an admission job that used it ends. The witness digest is its
+/// BLAKE3, kept after the binding is dropped. A later use verifies the
+/// binding again against current authority and revalidates the credential
+/// then; this row is no authority of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SavedBrowserCaller {
     pub scope: SolvedRunScope,
@@ -289,6 +364,9 @@ pub struct SavedBrowserCaller {
     pub call_id: Option<InvocationId>,
     pub credential: Option<VerbAskCredentialRef>,
     pub witness_digest: Option<[u8; 32]>,
+    /// The binding itself, until an admission job that used it ends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub witness: Option<InvocationSlipBinding>,
 }
 
 /// What a capture came to (CUA E8a).

@@ -20,11 +20,12 @@ pub(super) enum Transitioned {
     Replayed(IntentLedgerRecord),
 }
 
-/// Moves row `id` to `next` with `outcome` in `wtxn`: only Pending moves,
-/// to Done or Abandoned, and a row already in `next` replays when its
-/// outcome matches. A Done or an Abandoned row, but one whose dedupe
-/// reservation another attempt replaced, anchors its dedupe floor to this
-/// transition in the same writer.
+/// Moves row `id` to `next` with `outcome` in `wtxn`: Pending moves to Done,
+/// Abandoned or Deferred, and Deferred to Done or Abandoned; a row already in
+/// `next` replays when its outcome matches. A Done, a Deferred or an
+/// Abandoned row, but one whose dedupe reservation another attempt replaced,
+/// anchors its dedupe floor to this transition in the same writer, and the
+/// row's reserved budget settles by its new state (FIX 7964).
 ///
 /// # Errors
 ///
@@ -59,7 +60,7 @@ pub(super) fn transition_record_in_txn(
     record.recorded_outcome = Some(outcome);
     record.updated_ms = now_ms.max(record.created_ms);
     LEDGER.put(&vault.store, wtxn, &id, &record)?;
-    if next == IntentState::Done
+    if matches!(next, IntentState::Done | IntentState::Deferred)
         || (next == IntentState::Abandoned
             && outcome
                 != RecordedOutboundOutcome::Abandoned(
@@ -70,5 +71,6 @@ pub(super) fn transition_record_in_txn(
         // unknown. Keep its conservative floor anchored to this transition.
         crate::outbound_chokepoint::dedupe::delivered_in_txn(vault, wtxn, &id)?;
     }
+    super::super::settlement::settle_reservation_in_txn(vault, wtxn, &record)?;
     Ok(Transitioned::Moved(record))
 }

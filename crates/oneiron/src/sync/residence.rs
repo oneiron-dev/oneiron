@@ -5,6 +5,7 @@
 mod tests;
 
 mod admission;
+mod authority_parts;
 mod authority_tail;
 mod bundle;
 mod bundle_access;
@@ -23,6 +24,11 @@ mod prune;
 mod recall_scope;
 mod search;
 pub use admission::{ResidenceAdmission, rows_may_reach, withheld_from_peer};
+pub use authority_parts::{
+    AUTHORITY_ENTRY_PART_MAX, AUTHORITY_PAGE_INLINE_BYTES, AuthorityAppendPart,
+    AuthorityAppendStage, AuthorityEntryPart, AuthorityEntryRef, AuthorityPartedPage,
+    authority_append_part_for, authority_entry_part_for, split_authority_page,
+};
 pub use authority_tail::{
     AUTHORITY_APPEND_WORK_SLICE, AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
     AuthorityAppendProgress, AuthorityCheckpointPart, AuthorityPageImport, authority_append_for,
@@ -34,18 +40,20 @@ pub use bundle::{
     BundlePartRead, PadObjectRefill, PadObjectUnavailable, SEALED_BUNDLE_PUT_PART_MAX,
     SEALED_BUNDLE_READ_PART_MAX, SealedBundleCommitReceipt, SealedBundleEntry, SealedBundleIndex,
     SealedBundleKitRoot, SealedBundleObject, SealedBundleStage, commit_sealed_bundle,
-    replace_sealed_bundle_pads, sealed_bundle_commit_receipt, sealed_bundle_generations,
-    sealed_bundle_index, sealed_bundle_part, sealed_bundle_refill, sealed_digest_from_hex,
-    sealed_digest_hex, sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
+    grant_local_sealed_pad_access_with_kit, replace_sealed_bundle_pads,
+    sealed_bundle_commit_receipt, sealed_bundle_generations, sealed_bundle_index,
+    sealed_bundle_part, sealed_bundle_refill, sealed_digest_from_hex, sealed_digest_hex,
+    sealed_generation_from_hex, sealed_generation_hex, stage_sealed_bundle_part,
 };
 #[allow(unused_imports, reason = "02A2 wires the object copy (L02)")]
 pub(crate) use bundle::{
-    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMeta, PadObjectRefillSource,
-    capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
-    current_pad_objects_in_txn, install_captured_pad_objects_in_txn, read_back_pad_objects_in_txn,
-    refill_pad_object,
+    CapturedPadObjects, CurrentPadObjects, PadObjectInstall, PadObjectMembership, PadObjectMeta,
+    PadObjectRefillSource, capture_current_pad_objects_in_rows, capture_current_pad_objects_in_txn,
+    current_pad_objects_in_txn, generations_an_install_retires_in_txn, index_in,
+    install_captured_pad_objects_in_txn, pad_objects_identity_in_txn, read_back_captured_in_txn,
+    read_back_pad_objects_in_txn, refill_pad_object,
 };
-pub(crate) use bundle::{held_pad_object, holds_sealed_bundle};
+pub(crate) use bundle::{held_pad_object, holds_sealed_bundle, read_back_generation_in};
 pub use bundle_access::{
     PadAccessRequest, PadAccessState, PendingPadAccess, PendingPadAccessList,
     ensure_sealed_pad_access, offer_sealed_pad_access, pending_sealed_pad_access,
@@ -58,8 +66,8 @@ pub use bundle_stage::{SealedBundleStaged, sealed_bundle_stages};
 pub(crate) use bundle_turn::SEALED_BUNDLE_PUBLISH_LEASE_SECS;
 pub use bundle_turn::ask_sealed_bundle_turn;
 pub use custody::{
-    custody_residence_commit, custody_residence_frames, custody_residence_held,
-    custody_residence_stage,
+    custody_residence_commit, custody_residence_drain, custody_residence_frames,
+    custody_residence_held, custody_residence_stage,
 };
 pub use directives::ResidenceDirectiveState;
 pub(crate) use directives::{
@@ -68,13 +76,16 @@ pub(crate) use directives::{
 pub use discover::discover_local_window_keys;
 pub(crate) use discover::retry_pending_tombstones;
 pub use home_handoff::{
-    FreeTimeArming, HomeHandoffCancel, HomeHandoffStanding, free_time_arming, home_handoff_cancel,
-    home_handoff_commit, home_handoff_part, home_handoff_status, prepare_home_handoff,
+    FreeTimeArming, HomeHandoffCancel, HomeHandoffKey, HomeHandoffSession, HomeHandoffStanding,
+    free_time_arming, home_handoff_cancel, home_handoff_commit, home_handoff_keys,
+    home_handoff_part, home_handoff_retire, home_handoff_retired, home_handoff_session,
+    home_handoff_status, prepare_home_handoff,
 };
 pub use kit_fetch::{
     KIT_BUNDLE_FETCH_MAX_AGE_SECS, KIT_BUNDLE_FETCH_NONCE_BYTES, KIT_BUNDLE_FETCH_PATH,
-    KIT_PAD_INDEX_FETCH_PATH, KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitPadIndexFetch,
-    KitPadIndexPage, kit_bundle_fetch_origin, kit_sealed_bundle_index, kit_sealed_bundle_part,
+    KIT_CUSTODY_FETCH_PATH, KIT_CUSTODY_REPLY_MAX, KIT_PAD_INDEX_FETCH_PATH,
+    KIT_PAD_INDEX_REPLY_MAX, KitBundleFetch, KitCustodyFetch, KitPadIndexFetch, KitPadIndexPage,
+    kit_bundle_fetch_origin, kit_custody_page, kit_sealed_bundle_index, kit_sealed_bundle_part,
 };
 pub use machine_history::{
     MACHINE_HISTORY_PAGE_ROWS, MachineHistoryCursor, MachineHistoryPage, machine_history_page,
@@ -89,6 +100,7 @@ pub use policy::{
     local_is_elected_home, resolve_residence_mode, set_device_sync_preference, synced_as_replica,
 };
 pub(crate) use prune::demote_resident_window;
+pub(crate) use prune::erase_item_caches_in_txn;
 pub(crate) use prune::prune_thin_items_in_txn;
 pub(crate) use prune::record_item_touch_in_txn;
 pub use prune::{WindowDemotion, prune_thin_items, record_item_touch};
@@ -105,7 +117,7 @@ use loro::{ContainerID, ContainerType, LoroDoc, LoroValue};
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
-use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
+use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SyncProtocolValidation};
 use crate::federation::FederationGrantScope;
@@ -124,22 +136,21 @@ use super::window::Withhold;
 /// grant does not exhaust a smaller top-k before intersection. The page is
 /// short when the window holds fewer resident rows.
 ///
+/// `actor` is the read key the search reads under: the connection's own
+/// credential's, or a forwarded caller's at the locality its device signed
+/// (FIX 3550).
+///
 /// A recall's `scope` (FIX 2905) narrows the search before that window is
 /// cut, by the same worlds, projects, facet and kinds the device's own
 /// recall read, and returns the unit recall returns. A scope the home cannot
 /// evaluate is refused, never answered unscoped.
 pub fn home_search_candidates(
     vault: &Vault,
-    proof: &crate::authority::VerifiedSlip,
+    actor: crate::claim::ScopedReadActorKey,
     query: &str,
     limit: usize,
     scope: Option<&ResolvedRecallSelection>,
 ) -> Result<Vec<(EntityId, f32, WindowKey)>> {
-    let actor = vault
-        .credential_read_key(proof)?
-        .ok_or(Error::sync_protocol(
-            SyncProtocolValidation::DocumentAdmissionDenied,
-        ))?;
     let candidates = crate::memory::caps::narrowed_candidate_window(limit);
     let read = vault.scoped_read(actor);
     let found = match scope {
@@ -158,20 +169,23 @@ pub fn home_search_candidates(
 
 /// The forwarded `residence.search` a device signs and its home verifies
 /// (FIX 2907): the query, the limit as a big-endian `u64`, the device
-/// selector's wire bytes and the recall scope's transcript
-/// ([`recall_scope_transcript`], FIX 2905), in that order. Both ends build
-/// it here, from the values the request carries, so the two never sign
-/// different bytes.
+/// selector's wire bytes, the recall scope's transcript
+/// ([`recall_scope_transcript`], FIX 2905) and the caller's locality on the
+/// device, one byte, 0 on it and 1 off it (FIX 3550), in that order. Both
+/// ends build it here, from the values the request carries, so the two never
+/// sign different bytes.
 pub fn with_forwarded_search<R>(
     query: &str,
     limit: usize,
     selector_wire: &[u8],
     scope: Option<&ResolvedRecallSelection>,
+    locality: crate::claim::CallerLocality,
     with: impl FnOnce(&crate::authority::ForwardedRequest<'_>) -> R,
 ) -> R {
     let limit = (limit as u64).to_be_bytes();
     let scope = recall_scope_transcript(scope);
-    let fields: [&[u8]; 4] = [query.as_bytes(), &limit, selector_wire, &scope];
+    let locality = search::caller_locality_field(locality);
+    let fields: [&[u8]; 5] = [query.as_bytes(), &limit, selector_wire, &scope, &locality];
     with(&crate::authority::ForwardedRequest {
         method: "residence.search",
         fields: &fields,
@@ -189,6 +203,30 @@ pub fn residence_window_for_blob(raw: &[u8]) -> Result<WindowKey> {
         Some(world) => WindowKey::for_world(header.learned_at, world),
         None => WindowKey::from_timestamp(header.learned_at),
     })
+}
+
+/// Every window under `prefix` whose thin index this device fetched from its
+/// home (`ri:w:{window}:{item}`): a window a peer holds that this device may
+/// hold no persisted state for (FIX 9388).
+pub(crate) fn indexed_windows_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    prefix: &str,
+) -> Result<std::collections::BTreeSet<String>> {
+    let mut windows = std::collections::BTreeSet::new();
+    for row in store
+        .sync_state
+        .prefix_iter(txn, &format!("ri:w:{prefix}"))?
+    {
+        let (key, _) = row?;
+        if let Some((window, _item)) = key
+            .strip_prefix("ri:w:")
+            .and_then(|rest| rest.rsplit_once(':'))
+        {
+            windows.insert(window.to_owned());
+        }
+    }
+    Ok(windows)
 }
 
 /// The shipped index page work slice. A larger request is served a page
@@ -222,7 +260,12 @@ pub fn index_selection_revision(vault: &Vault) -> Result<([u8; 32], u64, u64)> {
     let txn = vault.store.env.read_txn()?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
     Ok((
-        policy.read_frontier_hash()?,
+        // FIX 7608 slice 4: a re-mask of a marked repo copy is a new selection.
+        super::selector::secret_projection::with_copy_generation_in_txn(
+            vault,
+            &txn,
+            policy.read_frontier_hash()?,
+        )?,
         crate::ppr::read_graph_version(&vault.store, &txn)?,
         crate::federation::record_scope::read_scope_revision(&vault.store, &txn)?,
     ))
@@ -266,6 +309,9 @@ pub fn window_index_projection_with(
     mut readable: impl FnMut(EntityId) -> Result<bool>,
 ) -> Result<Vec<WindowIndexEntry>> {
     let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
+    // FIX 7608 slice 4: a marked repo item is listed by its copy id and
+    // titled by its copy, never by its raw body.
+    let copies = super::selector::secret_projection::IndexCopies::read(vault)?;
     let mut entries = Vec::new();
     let mut result = Ok(());
     map_for_each_value_bytes(&selected.get_map("entities"), |key, blob| {
@@ -283,8 +329,8 @@ pub fn window_index_projection_with(
         };
         match readable(id) {
             Ok(true) => entries.push(WindowIndexEntry {
-                entity_id: key.to_owned(),
-                title: title_from_body(&blob[ENTITY_METADATA_HEADER_LEN..], title_max_chars),
+                entity_id: copies.shown(&id, key),
+                title: copies.title(&id, blob, |body| title_from_body(body, title_max_chars)),
                 learned_at: header.learned_at,
             }),
             Ok(false) => {}
@@ -351,8 +397,16 @@ pub fn selected_item_blob_with(
     withhold: Withhold<'_>,
     item: EntityId,
 ) -> Result<Option<Vec<u8>>> {
-    let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
-    Ok(map_get_bytes(&selected.get_map("entities"), &item.to_hex()))
+    // FIX 7608 slice 4: a copy id reads its source; a marked row is its copy.
+    super::selector::secret_projection::released_item_blob(vault, item, |item| {
+        let selected = filtered_window_doc_for(vault, source, window, scope, selector, withhold)?;
+        match map_get_bytes(&selected.get_map("entities"), &item.to_hex()) {
+            // A carrier its window binds by reference reads as the body it
+            // names (FIX 5532).
+            Some(blob) => super::asset_body::served_row(vault, source, &item, blob),
+            None => Ok(None),
+        }
+    })
 }
 
 /// Refuse a local put at an item held only as a thin read cache. The check
@@ -602,6 +656,8 @@ pub fn promotion_covers_full_window_for(
         }
         copy_embedding_setup_rows(source, &selected)?;
     }
+    // A body reference stands beside each owner the grant kept (FIX 5532).
+    super::asset_body::references::copy_refs_within(source, &selected)?;
     if !same_nonempty_roots(&selected, source) {
         return Ok(false);
     }

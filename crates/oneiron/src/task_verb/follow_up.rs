@@ -117,7 +117,7 @@ pub(super) fn consult_expiry_artifact_value(
     expired_at: u64,
     recovery: &[ConsultRecovery],
 ) -> Value {
-    let TaskLapseCause::ConsultDeadlineElapsed { deadline_at } = cause;
+    let deadline_at = cause.deadline_at();
     Value::Map(vec![
         (Value::from("kind"), Value::from("consult.expiry")),
         (Value::from("cause"), Value::from(cause.as_str())),

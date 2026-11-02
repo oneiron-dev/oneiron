@@ -84,7 +84,7 @@ impl Memory<'_> {
             .vault()
             .memory(owner_actor, EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
                 self.resume_task_fanout_in(
                     txn,
                     launch_ref,
@@ -284,7 +284,7 @@ impl Memory<'_> {
         self.vault()
             .memory(owner_actor, EdgeActorClass::Human)
             .with_verified_actor_write_txn(|txn| {
-                self.reauthenticate_fanout_owner(owner)?;
+                self.reauthenticate_fanout_owner_in_txn(owner, txn)?;
                 let (mut launch, plan) = self.frozen_launch_in(txn, launch_ref, expected_digest)?;
                 let Some(row) = launch
                     .check_row
@@ -401,6 +401,7 @@ impl Memory<'_> {
                     cut: cut.clone(),
                     statement: &launch.statement,
                     now,
+                    requester: launch.requester.clone(),
                 },
             )?
             .iter()
@@ -418,7 +419,12 @@ impl Memory<'_> {
                 effect,
                 ..
             } => {
-                let asker = self.vault().memory(actor, class);
+                // FIX 11691: its dispatches keep the requester the ask was
+                // admitted under, judged again when each is claimed.
+                let asker = self
+                    .vault()
+                    .memory(actor, class)
+                    .with_kept_requester(launch.requester.clone());
                 let task_refs = asker.release_held_ask_in(
                     txn,
                     *group_ref,

@@ -23,7 +23,7 @@
 //! The bodies are the server's wire shapes, camelCase as it spells them.
 
 use oneiron::claim::ScopedReadReceipt;
-use oneiron::lens::{GeneratedUiActionEvent, GeneratedUiStateSnapshot};
+use oneiron::lens::{GeneratedUiActionEvent, GeneratedUiStateSnapshot, GeneratedUiStreamProfile};
 use oneiron::memory::MemoryError;
 use serde::{Deserialize, Serialize};
 
@@ -47,12 +47,18 @@ pub struct LensFrameEventRequest {
     /// action authority; any other action ignores it. Empty by default.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub selected_context: Vec<String>,
+    /// The stream profile this event's answer is framed in (FIX 11399): a
+    /// patch-profile caller takes the card's refinement beside a local
+    /// action's `$state`. Omitted, the answer is today's plain JSON.
+    #[serde(default)]
+    pub stream: GeneratedUiStreamProfile,
 }
 
 /// What an event answers. The wire has no discriminator: a local action
-/// answers the card's new `$state`, a deterministic tool its outcome and the
-/// scoped read of its entity arguments, and a model round trip the callback
-/// queued for the agent that emitted the card.
+/// answers the card's new `$state` (beside the card's refinement for a
+/// patch-profile caller), a deterministic tool its outcome and the scoped
+/// read of its entity arguments, and a model round trip the callback queued
+/// for the agent that emitted the card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LensFrameEventReply {
@@ -61,6 +67,13 @@ pub enum LensFrameEventReply {
         /// The card's `$state` after the patch.
         #[serde(rename = "$state")]
         state: GeneratedUiStateSnapshot,
+        /// The refinement a patch-profile caller applies to the card it
+        /// holds (FIX 11399): the whole card with its moved `$state` on the
+        /// card's first change, a patch from the render its last answer left
+        /// it holding after that, as the server's `GeneratedUiSegment` JSON
+        /// (`segment` and `payload`). Absent for every other caller.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        refinement: Option<serde_json::Value>,
     },
     /// A deterministic tool ran as the credential's action.
     Tool {

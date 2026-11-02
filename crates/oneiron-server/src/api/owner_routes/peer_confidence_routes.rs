@@ -8,27 +8,62 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::share_travel::TravelChoice;
 use serde::{Deserialize, Serialize};
 
-use super::machine_routes::{act_surface, parse_revision, revision_hex};
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::machine_routes::{act_surface_admitted, parse_revision, revision_hex};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::stamp::rfc3339_secs;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/federation/peer-confidence", get(list).post(set))
-        .route("/federation/grant-travel", get(get_travel).post(set_travel))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/peer-confidence",
+                summary: "Every owner-set scale.",
+                row: None,
+            },
+            get(list),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/peer-confidence",
+                summary: "Sets or clears one peer's scale.",
+                row: None,
+            },
+            post(set),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/federation/grant-travel",
+                summary: "One federation grant's bound travel choice (`?grant=<id>`), with when it was set; travel and set are null when none is bound, so its windows send no text. An id naming no federation grant is not found.",
+                row: None,
+            },
+            get(get_travel),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/federation/grant-travel",
+                summary: "Binds or clears one live grant's travel choice.",
+                row: None,
+            },
+            post(set_travel),
+        ),
+    ]
 }
 
 #[derive(Debug, Serialize)]
@@ -38,14 +73,14 @@ struct PeerScales {
     peers: Vec<PeerScale>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PeerScale {
     peer: String,
     scale: f32,
     set: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetPeerScale {
     /// The peer principal, as 32 hex.
@@ -53,6 +88,18 @@ struct SetPeerScale {
     /// Above 0, at most 1; none returns the peer to the default.
     #[serde(default)]
     scale: Option<f32>,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/peer-confidence`'s body (FIX 11611):
+/// [`SetPeerScale`].
+pub(crate) fn set_peer_scale_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetPeerScale>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/peer-confidence`'s answer (FIX 11611):
+/// [`PeerScale`].
+pub(crate) fn peer_scale_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<PeerScale>()
 }
 
 /// `GET /v1/owner/federation/peer-confidence`: every owner-set scale.
@@ -83,10 +130,10 @@ async fn list(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRep
 async fn set(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetPeerScale>, JsonRejection>,
+    payload: OwnerJsonBody<SetPeerScale>,
 ) -> OwnerReply<PeerScale> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let scale = blocking(move || -> OwnerResult<PeerScale> {
         let peer = entity_id("peer", &request.peer)?;
         let now = std::time::SystemTime::now()
@@ -106,7 +153,7 @@ async fn set(
     Ok(Json(scale))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetGrantTravel {
     /// The federation grant, as 32 hex.
@@ -127,13 +174,25 @@ struct GrantTravelQuery {
     grant: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct GrantTravel {
     grant: String,
     travel: Option<TravelChoice>,
     set: Option<String>,
     /// The grant's revision, to present back as `seen`, as 64 hex.
     revision: String,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/grant-travel`'s body (FIX 11611):
+/// [`SetGrantTravel`].
+pub(crate) fn set_grant_travel_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetGrantTravel>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/federation/grant-travel`'s answer (FIX 11611):
+/// [`GrantTravel`].
+pub(crate) fn grant_travel_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<GrantTravel>()
 }
 
 /// `GET /v1/owner/federation/grant-travel?grant=<id>`: the travel choice
@@ -175,12 +234,13 @@ async fn get_travel(
 async fn set_travel(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetGrantTravel>, JsonRejection>,
+    payload: OwnerJsonBody<SetGrantTravel>,
 ) -> OwnerReply<GrantTravel> {
     let owner = owner(&auth, &server)?;
-    let surface = act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
+    let request = payload.read(&server).await?;
     let travel = blocking(move || -> OwnerResult<GrantTravel> {
         let grant = entity_id("grant", &request.grant)?;
         // The revision the surface presented, passed through: a stale one is

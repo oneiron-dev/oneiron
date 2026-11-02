@@ -77,7 +77,12 @@ impl Memory<'_> {
                 Some(world) => crate::federation::stale_stamped_worlds(&self.vault.store, txn)?
                     .get(&world)
                     .copied()
-                    .map(|stamp| MemoryStaleStamp::from_stamp(stamp, self.vault.now_recorded_at())),
+                    .map(|stamp| {
+                        let at = lane
+                            .judged_at()
+                            .unwrap_or_else(|| self.vault.now_recorded_at());
+                        MemoryStaleStamp::from_stamp(stamp, at)
+                    }),
                 None => None,
             };
             let handle = if entity_type == ENTITY_TYPE_CLAIM {
@@ -197,7 +202,8 @@ impl Memory<'_> {
                 }),
                 value_text: truncate_text(&value_text_of(&value_json), DEFAULT_MAX_FIELD_CHARS),
                 confidence: body.confidence,
-                hedge_bucket: hedge_bucket_for(body.confidence).to_owned(),
+                hedge_bucket: hedge_bucket_for_band(body.confidence_band).to_owned(),
+                confidence_basis: Some(body.confidence_basis),
                 stale,
                 provenance: MemoryProvenance {
                     source: body
@@ -325,6 +331,7 @@ impl Memory<'_> {
                 value_text: truncate_text(&value_text, DEFAULT_MAX_FIELD_CHARS),
                 confidence: 1.0,
                 hedge_bucket: hedge_bucket_for(1.0).to_owned(),
+                confidence_basis: None,
                 stale,
                 provenance: MemoryProvenance {
                     source: "record".to_owned(),

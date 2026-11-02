@@ -33,7 +33,8 @@ use super::head::head_position;
 use super::log::CustodyPosition;
 use super::platform;
 use super::protocol::{
-    ACK_VERSION, AckOperation, AckPosition, AckRecord, EvidenceKind, Lineage, ResidenceCommit,
+    ACK_VERSION, AckOperation, AckPosition, AckRecord, CustodyHomeCursor, CustodyHomePage,
+    CustodySource, DeletionEvidence, DrainAck, DrainTicket, EvidenceKind, Lineage, ResidenceCommit,
     TargetSpec, hex, operation_id,
 };
 
@@ -89,6 +90,90 @@ impl Store {
         Ok(held_position(
             &FolderTarget::at(self.residence_home()?).dir(lineage),
         ))
+    }
+
+    /// One page of what this home holds of `lineage`, for the kit's custody
+    /// fetch (FIX 5846): the head's bytes from `head_offset`, then, once the
+    /// head is whole, the log frames after `after_seq`, from `from_seq`, the
+    /// first the restore needs, or the one after the head's sequence number
+    /// where that is earlier (FIX 12045), through the head's and on past it
+    /// as far as the home's log runs without a gap (FIX 12020), at most
+    /// `fill` bytes of all, or one frame alone where it is larger. Read
+    /// only, under the commit's own lineage lock, so the head and the frames
+    /// it names are one pair; the scan ends at the first frame the home
+    /// lacks from where it starts: a gap, or the end of its log. `None` with
+    /// no head here, or an offset past the head's end.
+    pub(crate) fn residence_custody_page(
+        &self,
+        lineage: Lineage,
+        head_offset: u64,
+        after_seq: u64,
+        from_seq: u64,
+        fill: usize,
+    ) -> Result<Option<CustodyHomePage>> {
+        let root = self.residence_home()?;
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let target = FolderTarget::at(root);
+        let Some(head) = target.head(lineage)? else {
+            return Ok(None);
+        };
+        let head_seq = head_position(&head)?.seq;
+        let Some(rest) = usize::try_from(head_offset)
+            .ok()
+            .and_then(|offset| head.get(offset..))
+        else {
+            return Ok(None);
+        };
+        let head_part = rest[..rest.len().min(fill)].to_vec();
+        let mut room = fill.saturating_sub(head_part.len());
+        let next_offset = head_offset.saturating_add(head_part.len() as u64);
+        let head_len = head.len() as u64;
+        let mut frames = Vec::new();
+        let mut reached = after_seq;
+        // The page holds no room for the next frame: the scan goes on from it.
+        let mut full = false;
+        if next_offset == head_len {
+            // The scan starts at the first frame the restore needs, or right
+            // after the head where that is earlier, as a head older than its
+            // anchor chains from there: a gap before it ends no scan (FIX
+            // 12045).
+            reached = reached.max(from_seq.saturating_sub(1).min(head_seq));
+            // Past the head's sequence number too: a head older than its
+            // anchor chains to the anchor through the frames after it (FIX
+            // 12020).
+            while let Some(seq) = reached.checked_add(1) {
+                let Some(frame) = target.frame(lineage, seq)? else {
+                    break;
+                };
+                if frame.len() > room && !(head_part.is_empty() && frames.is_empty()) {
+                    full = true;
+                    break;
+                }
+                room = room.saturating_sub(frame.len());
+                frames.push((seq, frame));
+                reached = seq;
+            }
+        }
+        let next = if next_offset < head_len {
+            Some(CustodyHomeCursor {
+                head_offset: next_offset,
+                after_seq,
+            })
+        } else {
+            full.then_some(CustodyHomeCursor {
+                head_offset: head_len,
+                after_seq: reached,
+            })
+        };
+        Ok(Some(CustodyHomePage {
+            head_object_id: *blake3::hash(&head).as_bytes(),
+            head_len,
+            head_seq,
+            head_offset,
+            head_part,
+            frames,
+            next,
+        }))
     }
 
     /// Ships one log frame of `lineage` here.
@@ -202,5 +287,77 @@ impl Store {
             rmp_serde::to_vec_named(&ack).map_err(|_| refused("its ack does not encode"))?;
         replace_file(&acks, &ack_name, &encoded)?;
         Ok(ack)
+    }
+
+    /// Drains the lineage `ticket` names for the owner's drain (FIX 5843):
+    /// its head, every stage and every temporary go, synced, and a fresh
+    /// listing counts the heads left. The keyless log stays. Returns this
+    /// member's sweep ack as `residence:<home hex>`. A lineage with nothing
+    /// stored drains to the same ack.
+    pub(crate) fn residence_custody_drain(
+        &self,
+        ticket: &DrainTicket,
+        home: EntityId,
+    ) -> Result<DrainAck> {
+        let lineage = Lineage::of(&ticket.position);
+        let root = self.residence_home()?;
+        // The commit's own lineage lock: no frame or part lands while the
+        // drain sweeps (FIX 6415).
+        let _lock = Self::lineage_lock(&root, lineage)?;
+        let dir = FolderTarget::at(root).dir(lineage);
+        let mut removed = 0_u64;
+        if dir.is_dir() {
+            // Every stage and temporary, as the folder drain sweeps them.
+            for entry in std::fs::read_dir(&dir)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                let Some(text) = name.to_str() else {
+                    continue;
+                };
+                let stage = text.starts_with(STAGE_PREFIX);
+                if !stage && !(text.starts_with(".t") && text.ends_with(".pending")) {
+                    continue;
+                }
+                match std::fs::remove_file(entry.path()) {
+                    Ok(()) => removed = removed.saturating_add(1),
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(err) => return Err(err.into()),
+                }
+            }
+            platform::sync_dir(&dir)?;
+            match std::fs::remove_file(dir.join("head")) {
+                Ok(()) => removed = removed.saturating_add(1),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => return Err(err.into()),
+            }
+            platform::sync_dir(&dir)?;
+        }
+        let mut names: Vec<std::ffi::OsString> = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<std::io::Result<_>>()?,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(err) => return Err(err.into()),
+        };
+        names.sort();
+        let mut inventory = blake3::Hasher::new();
+        let mut heads = 0_u64;
+        for name in &names {
+            let text = name.to_string_lossy();
+            if text == "head" || text.starts_with(STAGE_PREFIX) || text.starts_with(".t") {
+                heads = heads.saturating_add(1);
+            }
+            inventory.update(&(text.len() as u64).to_be_bytes());
+            inventory.update(text.as_bytes());
+        }
+        ticket.ack(
+            &TargetSpec::residence(home),
+            DeletionEvidence {
+                kind: EvidenceKind::ResidenceSweep,
+                superseded_removed: removed,
+                remaining_heads: heads,
+                inventory_digest: hex(inventory.finalize().as_bytes()),
+            },
+        )
     }
 }

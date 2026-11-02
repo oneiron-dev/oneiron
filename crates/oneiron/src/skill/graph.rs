@@ -9,6 +9,7 @@ use crate::llm::decision::questions::{
 };
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Policy is authored in a skill file, not shipped as an engine question set.
 /// Stages can ask per-unit questions, roll up their answers, then propose a pick.
@@ -63,18 +64,17 @@ fn invalid(reason: &'static str) -> Error {
 }
 
 impl GraphSkillProgram {
+    /// Structure only: every stage, input and reference is admitted however
+    /// many there are, and each input runs as its own question (FIX 10152).
     fn validate(&self) -> Result<()> {
         if self.stages.is_empty() {
             return Err(invalid("graph workflow requires at least one stage"));
         }
         for (stage, step) in self.stages.iter().enumerate() {
-            if step.inputs.is_empty() || step.inputs.len() > 4096 || step.question.version == 0 {
+            if step.inputs.is_empty() || step.question.version == 0 {
                 return Err(invalid("invalid graph workflow stage"));
             }
             for input in &step.inputs {
-                if input.context.evidence.len() > 4096 || input.answers.len() > 4096 {
-                    return Err(invalid("too many graph workflow sources"));
-                }
                 for source in &input.answers {
                     if source.stage >= stage
                         || source
@@ -149,6 +149,9 @@ pub fn execute_graph_workflow_skill(
         completed.stages.push(Vec::new());
         for (input_index, input) in step.inputs.iter().enumerate() {
             let mut context = input.context.clone();
+            // Sets keep the joins linear in the sources however many there are.
+            let mut evidence: HashSet<EntityId> = context.evidence.iter().copied().collect();
+            let mut proposed = HashSet::new();
             let mut proposals = Vec::new();
             let mut missing = false;
             for source in &input.answers {
@@ -160,13 +163,10 @@ pub fn execute_graph_workflow_skill(
                 for answer in selected {
                     match answer {
                         Some(answer) => {
-                            if !context.evidence.contains(&answer.claim) {
+                            if evidence.insert(answer.claim) {
                                 context.evidence.push(answer.claim);
                             }
-                            if !proposals
-                                .iter()
-                                .any(|prior: &AnswerRecord| prior.claim == answer.claim)
-                            {
+                            if proposed.insert(answer.claim) {
                                 proposals.push(answer.clone());
                             }
                         }

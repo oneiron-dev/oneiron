@@ -1,6 +1,7 @@
 //! The Coach's skill-maintenance body on the shared wake runner. Drafting and
 //! admission remain separate: this job asks the independent held-out gate and
-//! never activates or supersedes a skill itself. The author drafts on the
+//! never activates or supersedes a skill itself; an edit the owner approved
+//! on an agent-health card settles through that approval. The author drafts on the
 //! optimization attempt (`SkillOptimizeAuthor::draft_on`): the Coach's author
 //! loads the shipped `skill-optimize` workflow there and runs it, and a scored
 //! edit is an outcome of that loaded revision (`coach_learning`). A workflow
@@ -73,6 +74,10 @@ impl HeldOutReplayNotes for PassBoundScorer<'_> {
 
     fn replay_responses(&self, receipts: &[String]) -> Result<SkillReplayResponses> {
         self.inner.replay_responses(receipts)
+    }
+
+    fn rubric(&self) -> Result<Option<crate::skill_optimize::JudgeRubric>> {
+        self.inner.rubric()
     }
 
     fn record_decision(
@@ -148,7 +153,7 @@ fn invalid() -> Error {
     Error::InvalidConfig("invalid Coach skill optimization input".into())
 }
 
-fn resident(input: &Value) -> Result<Option<EntityId>> {
+pub(crate) fn resident(input: &Value) -> Result<Option<EntityId>> {
     match input {
         Value::Nil => Ok(None),
         Value::Map(fields) if fields.len() == 1 && fields[0].0.as_str() == Some("resident") => {
@@ -169,10 +174,12 @@ pub(crate) fn execute(
     if attempt.status.payload.attempt_type != DREAMER_SKILL_OPTIMIZE_ATTEMPT_KIND {
         return Err(invalid());
     }
+    // A host that lends no optimizer leaves the try to wait for one, paced
+    // as a Retry, so it releases its lease at resume (FIX 11161).
     let Some(optimizer) = optimizer else {
         return Ok(DreamerAttemptExecution::Park {
             reason: "Coach skill optimizer has no host author and decision route".into(),
-            cause: DreamerParkCause::Other,
+            cause: DreamerParkCause::Retry,
         });
     };
     if ctx.deadline.in_finalize_window() {
@@ -270,7 +277,19 @@ fn optimize(
         }
         // This gate owns its held-out read and revalidates it at commit. The
         // drafting author never receives the scores or reserved receipts.
-        let verdict = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at)?;
+        let scored = score_gate_skill_edit_in_cycle(vault, &proposal, &scorer, id, at);
+        // An edit the owner approved on an agent-health card settles on that
+        // card on the gate's ruling, a refusal's included, as the owner's
+        // re-apply would (FIX 3725).
+        // One that does not settle (its bytes moved since the approval) stays
+        // pending on its card, said here; the pass goes on.
+        if let Err(error) = vault.settle_approved_skill_edit_by_candidate(&proposal) {
+            tracing::warn!(
+                %error,
+                "an approved skill edit did not settle on the gate's ruling; its card stays pending"
+            );
+        }
+        let verdict = scored?;
         // A scored edit is a held-out outcome for the improver revision that
         // drafted it, a resumed proposal's included: did the edited
         // instructions beat the current ones. A refusal before scoring is
@@ -292,6 +311,7 @@ fn optimize(
         } else {
             0
         },
+        step_hashes: Vec::new(),
     })
 }
 

@@ -1,19 +1,94 @@
 //! One replayed body run (ARCH-0080 §6 Replay): on a run's memo, on a
 //! verb run's saved copy, or live on an entry no run pinned.
 
-use crate::claim::ScopedRead;
+use crate::claim::{PointRead, ScopedRead};
 use crate::runtime_hooks::body::{HookBudgetOverrun, HookRunContext};
 use crate::runtime_hooks::filter;
-use crate::runtime_hooks::read;
-use crate::runtime_hooks::runner::{ask_verdict, input_json, judge};
+use crate::runtime_hooks::read::{self, HistoryAdmission, grant_view::shows_row};
+use crate::runtime_hooks::runner::{ask_verdict, input_json, judge, verdict_context};
 use crate::runtime_hooks::source::FactEntry;
-use crate::runtime_hooks::store::HookRunRecord;
+use crate::runtime_hooks::store::{self, HookRunRecord};
 use crate::runtime_hooks::verb::HookVerbRunRecord;
-use crate::{Error, Result};
+use crate::{EntityId, Error, Result};
 
 use super::{HookReplayResult, PinnedReads, PinnedVerdicts, Replay, input_too_large, ran};
 
 impl Replay<'_> {
+    /// `None` when the exact dependency is shown under the current grant;
+    /// otherwise the truthful replay result, before any saved text runs.
+    fn history_failure(
+        &self,
+        lane: &ScopedRead<'_>,
+        id: EntityId,
+        revision: Option<crate::vault::RevisionRef>,
+        body_hash: Option<[u8; 32]>,
+    ) -> Option<HookReplayResult> {
+        match read::history_admission(lane, self.grant, id, revision, body_hash) {
+            Ok(HistoryAdmission::Shown) => None,
+            Ok(HistoryAdmission::Withheld) => Some(HookReplayResult::Withheld {
+                reason: "a saved dependency is not shown to this hook now".to_owned(),
+            }),
+            Ok(HistoryAdmission::Missing) => Some(HookReplayResult::MissingHistory {
+                reason: "a saved dependency's history is gone".to_owned(),
+            }),
+            Err(error) => Some(HookReplayResult::MissingHistory {
+                reason: error.to_string(),
+            }),
+        }
+    }
+
+    /// Authorizes one verdict evidence row against the exact dependency the
+    /// run recorded. An unknown old revision never falls back to live bytes.
+    fn evidence_failure(
+        &self,
+        lane: &ScopedRead<'_>,
+        memo: &HookRunRecord,
+        id: EntityId,
+    ) -> Option<HookReplayResult> {
+        let Some(dependency) = memo
+            .derivation
+            .dependencies
+            .iter()
+            .find(|dependency| dependency.id == id)
+        else {
+            return Some(HookReplayResult::MissingHistory {
+                reason: "a verdict's evidence dependency was not recorded".to_owned(),
+            });
+        };
+        if let Some(revision) = dependency.revision {
+            return self.history_failure(lane, id, Some(revision), dependency.body_hash);
+        }
+        if let Some(body_hash) = dependency.body_hash {
+            let resolved = (|| -> Result<_> {
+                let txn = self.vault.store.env.read_txn()?;
+                crate::vault::entity_revision::revision_for_body_hash_in_txn(
+                    self.vault, &txn, &id, &body_hash,
+                )
+            })();
+            match resolved {
+                Ok(Some(revision)) => {
+                    return self.history_failure(lane, id, Some(revision), Some(body_hash));
+                }
+                Ok(None) => {
+                    return Some(HookReplayResult::MissingHistory {
+                        reason: "a verdict's evidence revision is gone".to_owned(),
+                    });
+                }
+                Err(error) => {
+                    return Some(HookReplayResult::MissingHistory {
+                        reason: error.to_string(),
+                    });
+                }
+            }
+        }
+        if memo.derivation.grant_hash != self.grant.digest() {
+            return Some(HookReplayResult::MissingHistory {
+                reason: "a verdict's evidence has no revision under the changed grant".to_owned(),
+            });
+        }
+        self.history_failure(lane, id, None, None)
+    }
+
     /// A run pinned this entry: its input as it was, each read only when it
     /// answers what it answered then, and each verdict as the run heard it.
     pub(super) fn from_memo(
@@ -21,6 +96,35 @@ impl Replay<'_> {
         lane: &ScopedRead<'_>,
         memo: &HookRunRecord,
     ) -> HookReplayResult {
+        if memo.history_erased {
+            return HookReplayResult::MissingHistory {
+                reason: "the run's source history was erased".to_owned(),
+            };
+        }
+        if let Some(body_hash) = memo.derivation.event_body_hash {
+            let Some(revision) = memo.derivation.event_revision else {
+                return HookReplayResult::MissingHistory {
+                    reason: "the triggering event's exact revision is gone".to_owned(),
+                };
+            };
+            if let Some(failure) =
+                self.history_failure(lane, memo.entity, Some(revision), Some(body_hash))
+            {
+                return failure;
+            }
+        }
+        for pin in &memo.verdicts {
+            let Some(evidence) = pin.evidence.as_deref() else {
+                return HookReplayResult::MissingHistory {
+                    reason: "a verdict's evidence rows are not known".to_owned(),
+                };
+            };
+            for id in evidence {
+                if let Some(failure) = self.evidence_failure(lane, memo, *id) {
+                    return failure;
+                }
+            }
+        }
         let Some(input) = memo.input_json.as_deref() else {
             return input_too_large();
         };
@@ -33,17 +137,21 @@ impl Replay<'_> {
         let mut verdicts = PinnedVerdicts::new(&memo.verdicts);
         let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {
-            Ok(body) => self.runtime.run_fact_hook(
-                body,
-                input,
-                &mut context,
-                &mut |request: &str| reads.answer(lane, self.grant, request),
-                &mut |request: &str| {
-                    let (reply, evidence) = verdicts.answer(request);
-                    self.heard(evidence);
-                    reply
-                },
-            ),
+            Ok(body) => {
+                // Unavailable until the runtime reports it (FIX 9332).
+                context.body_starts();
+                self.runtime.run_fact_hook(
+                    body,
+                    input,
+                    &mut context,
+                    &mut |request: &str| reads.answer(lane, self.grant, request),
+                    &mut |request: &str| {
+                        let (reply, evidence) = verdicts.answer(request);
+                        self.heard(evidence);
+                        reply
+                    },
+                )
+            }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
         let overrun = self.overrun(&context);
@@ -53,7 +161,7 @@ impl Replay<'_> {
             return HookReplayResult::MissingHistory { reason };
         }
         ran(
-            judge(self.binding, result, overrun),
+            judge(self.binding, result, overrun, &context),
             Some(memo.outcome.as_str()),
             memo.outcome_json.as_deref(),
             true,
@@ -63,23 +171,48 @@ impl Replay<'_> {
 
     /// A verb run saved this case: its input as it was, a post-hook's view
     /// of the result in it, and each read only when it answers what it
-    /// answered then. A verb hook calls no model.
+    /// answered then. A verb hook calls no model. The saved input runs again
+    /// only while the hook's current grant still shows every row whose
+    /// content it holds (FIX 10084); else its history is named gone, never
+    /// run on content the hook may no longer read.
     pub(super) fn verb_run(
         &self,
         lane: &ScopedRead<'_>,
         saved: &HookVerbRunRecord,
     ) -> HookReplayResult {
+        if saved.history_erased {
+            return HookReplayResult::MissingHistory {
+                reason: "the run's source history was erased".to_owned(),
+            };
+        }
         let Some(input) = saved.input_json.as_deref() else {
             return input_too_large();
         };
+        if !saved
+            .dependencies
+            .iter()
+            .all(|id| self.still_shown(lane, *id))
+        {
+            return HookReplayResult::MissingHistory {
+                reason: "a row the saved input held is not shown to this hook now".to_owned(),
+            };
+        }
+        if saved.unattributed && saved.grant != self.grant.digest() {
+            return HookReplayResult::MissingHistory {
+                reason: "the saved input holds content its hook's grant has changed for since"
+                    .to_owned(),
+            };
+        }
         let mut reads = PinnedReads::new(&saved.reads);
         let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let result = match &self.body {
-            Ok(body) => self
-                .runtime
-                .run_hook(body, input, &mut context, &mut |request: &str| {
-                    reads.answer(lane, self.grant, request)
-                }),
+            Ok(body) => {
+                context.body_starts();
+                self.runtime
+                    .run_hook(body, input, &mut context, &mut |request: &str| {
+                        reads.answer(lane, self.grant, request)
+                    })
+            }
             Err(reason) => Err(Error::InvalidConfig(reason.clone())),
         };
         let overrun = self.overrun(&context);
@@ -89,7 +222,7 @@ impl Replay<'_> {
             return HookReplayResult::MissingHistory { reason };
         }
         ran(
-            judge(self.binding, result, overrun),
+            judge(self.binding, result, overrun, &context),
             Some(saved.outcome.as_str()),
             saved.outcome_json.as_deref(),
             true,
@@ -97,15 +230,15 @@ impl Replay<'_> {
         )
     }
 
-    /// No run pinned this entry. The live entity stands in only while its
-    /// body is the one the entry wrote; a generative hook's verdicts ask the
-    /// live ladder, as the runner would.
+    /// No run pinned this entry. The source's exact live or retained revision
+    /// supplies the body the entry wrote; a generative hook's verdicts ask
+    /// the live ladder, as the runner would.
     pub(super) fn live(
         &self,
         lane: &ScopedRead<'_>,
         entry: &FactEntry,
     ) -> Result<Option<HookReplayResult>> {
-        let Some(seen) = read::fact_row(lane, self.grant, entry.entity)? else {
+        let Some(seen) = read::fact_row(lane, self.grant, entry)? else {
             return Ok(None);
         };
         let actor = filter::actor_class(self.vault, entry.actor)?;
@@ -140,18 +273,31 @@ impl Replay<'_> {
             &seen.claim_json,
             now,
         )?;
+        // A live replay is an execution of its own: its verdicts ask under
+        // the entry's run key, and nothing keeps what they settled.
+        let key = store::run_key(self.binding_id, self.binding, entry)?;
         let mut context = HookRunContext::new(self.binding.selector.budget_ms);
         let deadline = context.deadline();
         let mut pins = Vec::new();
+        let mut asked = 0_u32;
         let result = match &self.body {
             Ok(body) => {
                 let mut answer = |request: &str| read::answer(lane, self.grant, request, &mut pins);
                 let mut verdict = |request: &str| {
-                    let (reply, evidence) =
-                        ask_verdict(self.binding, self.grant, self.verdict, request, deadline);
-                    self.heard(evidence.as_deref());
-                    reply
+                    let trusted = verdict_context(
+                        self.binding_id,
+                        self.binding,
+                        self.grant,
+                        &key,
+                        asked,
+                        deadline,
+                    );
+                    asked = asked.saturating_add(1);
+                    let answer = ask_verdict(self.binding, self.verdict, &trusted, request);
+                    self.heard(&answer.evidence);
+                    answer.reply
                 };
+                context.body_starts();
                 self.runtime
                     .run_fact_hook(body, &input, &mut context, &mut answer, &mut verdict)
             }
@@ -160,12 +306,21 @@ impl Replay<'_> {
         let overrun = self.overrun(&context);
         self.served(&pins);
         Ok(Some(ran(
-            judge(self.binding, result, overrun),
+            judge(self.binding, result, overrun, &context),
             None,
             None,
             false,
             true,
         )))
+    }
+
+    /// Whether the hook's current grant still shows the row `id` through
+    /// `lane`; a read that fails shows nothing.
+    fn still_shown(&self, lane: &ScopedRead<'_>, id: crate::EntityId) -> bool {
+        lane.read(&[PointRead::id(id)], None)
+            .ok()
+            .and_then(|read| read.value.into_iter().next().flatten())
+            .is_some_and(|row| shows_row(self.grant, &row).unwrap_or(false))
     }
 
     /// A replayed body's overrun, read once it has ended, on the fresh

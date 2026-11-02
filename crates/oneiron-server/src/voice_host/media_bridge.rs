@@ -103,7 +103,10 @@ pub struct VoiceMediaBindings {
     pub sample_rate: u32,
     pub channels: u16,
     /// The owner's audio side: microphone audio, cuts, VAD and drains.
-    pub audio_in: mpsc::Receiver<VoiceMediaIn>,
+    /// `None` when the connection carries it itself (the wire, a public
+    /// session): absent, never a closed input, so the live hearing ends
+    /// only when the session does (FIX 9543).
+    pub audio_in: Option<mpsc::Receiver<VoiceMediaIn>>,
     /// The brain's events, sent by the brain the connection starts.
     pub brain_out: mpsc::Receiver<VoiceBrainOut>,
     /// The session's cadence for cutting the brain's text into sentences.
@@ -127,10 +130,18 @@ impl VoiceMediaBindings {
         }
         let asr_route = self.door.voice_route(VoiceLane::AsrLive)?;
         let tts_route = self.door.voice_route(VoiceLane::TtsLive)?;
+        // A stock voice never falls back; a banked one may (FIX 3195).
+        let tts_fallbacks = match &self.render {
+            VoiceRender::Bank { .. } => self
+                .door
+                .voice_fallback_routes(VoiceLane::TtsLive, &tts_route),
+            VoiceRender::Stock(_) => Vec::new(),
+        };
         let (queue, worker) = voice_media_channel(self.queue_capacity);
         let tts = MediaTts::new(
             Arc::clone(&self.vault),
             tts_route,
+            tts_fallbacks,
             self.render,
             queue.clone(),
         )?;
@@ -157,7 +168,7 @@ impl VoiceMediaBindings {
             tts,
             MediaBridge {
                 hearing,
-                audio_in: Some(self.audio_in),
+                audio_in: self.audio_in,
                 brain_out: Some(self.brain_out),
                 outputs,
                 playout: self.playout,
@@ -188,6 +199,9 @@ pub(super) struct MediaTts(Arc<Mutex<MediaTtsState>>);
 struct MediaTtsState {
     vault: Arc<Vault>,
     route: MediaVoiceRoute,
+    /// The other admitted speech rungs a banked voice may fall back to
+    /// (FIX 3195); empty for a stock voice.
+    fallbacks: Vec<MediaVoiceRoute>,
     render: VoiceRender,
     queue: VoiceMediaSender,
     current: Option<(GenerationEpoch, MediaTtsAdapter<VoiceMediaSender>)>,
@@ -197,41 +211,56 @@ impl MediaTts {
     fn new(
         vault: Arc<Vault>,
         route: MediaVoiceRoute,
+        fallbacks: Vec<MediaVoiceRoute>,
         render: VoiceRender,
         queue: VoiceMediaSender,
     ) -> oneiron::Result<Self> {
         // A banked voice binds before any generation: no render consent
-        // reaching the route's target and locality, no bindings.
-        match &render {
-            VoiceRender::Stock(_) => {}
-            VoiceRender::Bank {
-                voice_id, register, ..
-            } if route.reference_target => {
-                BankVoiceBinding::bind_reference(
-                    &vault,
-                    voice_id,
-                    &route.target,
-                    register.as_deref(),
-                    route.locality,
-                )?;
+        // reaching a target and locality that holds it, no bindings. One
+        // bound target is enough to open; none refuses with the lane
+        // route's own refusal (FIX 3195).
+        if let VoiceRender::Bank {
+            voice_id,
+            include_generated,
+            register,
+        } = &render
+        {
+            let bind = |route: &MediaVoiceRoute| {
+                if route.reference_target {
+                    BankVoiceBinding::bind_reference(
+                        &vault,
+                        voice_id,
+                        &route.target,
+                        register.as_deref(),
+                        route.locality,
+                    )
+                } else {
+                    BankVoiceBinding::bind(
+                        &vault,
+                        voice_id,
+                        &route.target,
+                        *include_generated,
+                        route.locality,
+                    )
+                }
+            };
+            let mut refusal = bind(&route).err();
+            if refusal.is_some() {
+                for fallback in &fallbacks {
+                    if bind(fallback).is_ok() {
+                        refusal = None;
+                        break;
+                    }
+                }
             }
-            VoiceRender::Bank {
-                voice_id,
-                include_generated,
-                ..
-            } => {
-                BankVoiceBinding::bind(
-                    &vault,
-                    voice_id,
-                    &route.target,
-                    *include_generated,
-                    route.locality,
-                )?;
+            if let Some(error) = refusal {
+                return Err(error);
             }
         }
         Ok(Self(Arc::new(Mutex::new(MediaTtsState {
             vault,
             route,
+            fallbacks,
             render,
             queue,
             current: None,
@@ -256,6 +285,7 @@ impl TtsSeamClient for MediaTts {
             let mut adapter = MediaTtsAdapter::new(
                 Arc::clone(&state.vault),
                 state.route.clone(),
+                state.fallbacks.clone(),
                 state.render.clone(),
                 state.queue.clone(),
             )?;

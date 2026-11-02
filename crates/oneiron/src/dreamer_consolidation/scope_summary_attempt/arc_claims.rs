@@ -6,11 +6,11 @@
 //! on claims; the Arc only reads them, so a line the claims dispute can send
 //! the model back to its turns.
 
-use super::super::call_labels::{CallLabel, CallLabelMap, LabelKind};
+use super::super::call_labels::{CallLabelMap, LabelKind, subject_label};
 use super::super::resources::document_version;
 use super::super::value_projection::rmpv_to_json;
 use super::{ScopeSummaryEvidence, source_pin};
-use crate::claim::{ClaimLifecycleStatus, ClaimSubject, PREDICATE_CONFLICT_OPEN, ScopedRead};
+use crate::claim::{ClaimLifecycleStatus, PREDICATE_CONFLICT_OPEN, ScopedRead};
 use crate::edge::EdgeKind;
 use crate::error::Result;
 use crate::ports::EdgeDirection;
@@ -32,6 +32,9 @@ pub(super) struct ArcClaimEntry {
     pub(super) id: EntityId,
     pub(super) label: String,
     pub(super) body: String,
+    /// The claim as a landed summary's text names it in place of its label
+    /// (FIX 10359): `[predicate = value]`.
+    pub(super) named: String,
 }
 
 /// Every active claim on a subject `turns` name, read through `read` in
@@ -101,28 +104,8 @@ pub(super) fn claims_in_txn(
             id: *claim,
             label: label.to_string(),
             body: words,
+            named: format!("[{} = {}]", decoded.predicate, rmpv_to_json(&decoded.value)),
         });
     }
     Ok(ArcClaims { text, ids, entries })
-}
-
-/// A claim's subject by this call's labels: a listed claim by its `C`
-/// label, any other entity by a `P` label; an edge by its endpoints.
-fn subject_label(labels: &mut CallLabelMap, subject: &ClaimSubject) -> String {
-    let mut label = |id: EntityId| -> CallLabel {
-        labels
-            .label(LabelKind::Claim, id)
-            .unwrap_or_else(|| labels.assign(LabelKind::Entity, id))
-    };
-    match *subject {
-        ClaimSubject::Entity(id) => label(id).to_string(),
-        ClaimSubject::Edge {
-            source,
-            kind,
-            target,
-        } => {
-            let (source, target) = (label(source), label(target));
-            format!("{}({source},{target})", kind.name())
-        }
-    }
 }

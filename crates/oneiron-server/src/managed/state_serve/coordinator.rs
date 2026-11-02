@@ -2,6 +2,8 @@
 //! `serve_managed` keeps the existing boot and drain order in one coordinator.
 //! State, admission, and shutdown definitions remain in the parent module.
 
+use crate::managed::ledger::LEDGER_SCHEDULE_POLL;
+
 use super::{
     Arc, BoundServeListener, CONTRACT_VERSION, ErrorKind, Host, HostLimits, ManagedArgs,
     ManagedCtl, ManagedShutdown, ManagedState, Path, ServeArgs, ServeListener, ShutdownSignal,
@@ -61,6 +63,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // supervisor hands one: never the environment (FIX 5788, FIX 6517).
     let anchor = host.custody_anchor_credentials(config.backup.custody_anchor_url.as_deref())?;
     let mut vault_config = config.base_vault_config();
+    // The supervisor delivered this vault's data key at boot (FIX 4531).
+    vault_config.privacy.data_key_custody = oneiron::VaultDataKeyCustody::SupervisorDelivered;
     // Our cloud hosts this vault. The owner's "Help improve Oneiron" and
     // training choices stand as the supervisor passed them; an unset export
     // takes the managed default, and unset training follows the export.
@@ -101,18 +105,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // is anonymous. The Linear mirror checks this declaration, not a secret.
     server_config.ingress = crate::config::IngressAuth::Supervisor;
     server_config.hosted_private_origins = managed.hosted_private_origins.clone();
-    // Stable, domain-separated custody from the verified vault DEK, not the
-    // per-spawn callback token or caller-controlled HTTP identity headers.
-    // A fresh spawn with the same DEK must recover the same logged host root.
-    let mut issuer_key = blake3::derive_key(
-        "oneiron/managed-supervisor-host-authority/v2",
-        &credentials.dek,
-    );
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(&issuer_key)?;
-    issuer_key.fill(0);
-    let readiness = provision_host_authority(
+    // The host root signs with this vault's own independent issuer seed,
+    // kept in this install's keystore slot under the supervisor's key
+    // directory (FIX-LIST 3018): never the delivered DEK, which escrow
+    // recipients hold, nor the per-spawn token or caller headers. A fresh
+    // spawn of this install loads the same seed, so the same logged root;
+    // with none, the vault serves rootless and still as a managed vault.
+    let (issuer, readiness) = provision_host_authority(
         &vault,
-        &issuer,
         &config.keystore,
         settled.keystore_unbound,
         &managed.data_dir,
@@ -125,7 +125,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // #ov-custody): its sealed artifacts derive from it, and each escrow
     // recipient the node's operator installed keeps a copy of it.
     vault.admit_vault_key(&credentials.dek)?;
-    escrow_vault_key(&vault, &managed)?;
+    escrow_vault_key(
+        &vault,
+        &managed,
+        restore.as_ref().map(|restore| restore.checked_recipients()),
+    )?;
     let spooled = spool_vault_key_escrow(&vault, &managed);
     // A sealed vault serves only once its mirror reopens it at the next start.
     vault.check_page_custody()?;
@@ -135,7 +139,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     // The owner's backups and restore rehearsals, on the tenant's own disk
     // beside the data directory, as plain serve keeps them beside its vault.
-    let owner_host = super::owner_storage::owner_host(&config, rehearsal_config, &managed, anchor);
+    // A backup handoff policy that is not installed holds pruning and is
+    // named missing in the readiness every `Ping` carries (FIX 6705).
+    let (owner_host, backup_handoff) =
+        super::owner_storage::owner_host(&config, rehearsal_config, &managed, anchor);
+    let readiness = match backup_handoff {
+        Some(notice) => readiness.and_missing(notice),
+        None => readiness,
+    };
     // A direct `[linear]` mirror's response custody, private beside them.
     super::owner_storage::linear_responses(&config);
     // Rehearsal scratch a stopped process left in `<data>.rehearsals` goes
@@ -159,8 +170,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         crate::oneironer::build_slot_off_runtime(config.oneironer.clone(), Some(rows)).await?;
     // The browser and desktop guests, as plain serve attaches them: each
     // section's own checks decide, and a run with no guest is refused.
-    // Managed mode reads no environment, so the feedback destination carries
-    // no bearer: our inbox takes none.
+    // Managed mode reads no environment: a private endpoint's bearer comes
+    // from its vault secret alone (FIX 5013); our inbox takes none.
     let mut sync_server = SyncServer::new(Arc::clone(&vault), server_config)
         .map_err(|e| anyhow::anyhow!("sync server init failed: {e}"))?
         .with_embedder(embedder)
@@ -182,10 +193,12 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         .with_feedback(config.feedback.delivery().map(|delivery| {
             crate::feedback_delivery::FeedbackHost {
                 config: delivery,
-                bearer: None,
+                bearer: config.feedback.bearer_from_secret(&vault),
             }
         }))
-        .with_feedback_triage(config.feedback.triage.clone());
+        .with_feedback_triage(config.feedback.triage.clone())
+        // The settings file's `[policy]`, as plain serve applies it (FIX 5042).
+        .with_owner_policy_config(config.policy.owner_policy_config());
     // Its browser readiness starts from the `[browser]` section, its runtime
     // binding and the runtime fact the supervisor observed for this vault's
     // UID (FIX 7670). No state of it stops this start.
@@ -201,7 +214,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     {
         sync_server = sync_server.with_extraction_egress(Arc::new(|_: &oneiron::LlmRequest| true));
     }
-    sync_server.managed_issuer = Some(issuer);
+    sync_server.managed_issuer = Some(crate::server::ManagedIssuer::new(issuer));
     if managed.artifact_socket.is_some() {
         sync_server = sync_server.with_artifact_socket();
     }
@@ -225,6 +238,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let write_admission = Arc::new(admission::Admission::default());
     let reap_gate = Arc::new(std::sync::OnceLock::<Arc<ManagedState>>::new());
     let control = admission::dreamer_control(&write_admission, &reap_gate);
+    // `--no-hooks` turns verb hooks off before any worker starts, so a queued
+    // Continue or Retry taken up below runs none (FIX 9480).
+    if !config.hooks {
+        sync_server.vault().suppress_verb_hooks();
+    }
     let (sync_server, ai) = crate::ai_host::AiHost::attach_controlled(
         sync_server,
         config.models.as_ref(),
@@ -233,6 +251,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     )
     .await;
     let sync_server = Arc::new(sync_server);
+    // A managed vault's attested owner's queued work is judged by this
+    // server's check, installed before any worker takes it up (FIX 11090).
+    crate::managed_owner_check::ServerManagedOwnerCheck::install(&sync_server);
+    // Served sends reach this host's provider APIs and mail server (FIX 4435).
+    crate::builtin_host::install_served_transports(&sync_server);
     // Queued Continue and Retry are taken up from here, on this server (FIX 6920).
     ai.bind_turn_actions(&sync_server);
     // An answered code consent wait's effect runs on this server, as plain
@@ -288,10 +311,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // a served write, as a voice loop call does: a session in flight keeps a
     // reap from finding the vault quiescent, and a frozen vault opens none.
     // One no call named for a minute releases it until the next call names
-    // it. Bound before anything serves.
-    sync_server
-        .live_voice
-        .admit_with(state.background_admission(WriteKind::OwnerWrite));
+    // it; a deleted vault opens none either (FIX 12053). Bound before
+    // anything serves.
+    sync_server.live_voice.admit_with(state.voice_admission());
 
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
@@ -324,9 +346,6 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         drop(hooks_stopped);
         None
     };
-    if !config.hooks {
-        sync_server.vault().suppress_verb_hooks();
-    }
 
     // The owner's `[linear]` mirror and webhook mapping, as plain serve
     // starts them, each pass admitted like a served write and holding it
@@ -337,6 +356,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         state.background_admission(WriteKind::BackgroundOther),
     )
     .await?;
+    // A cold restore's fresh recipients, for the carrier watch's first look
+    // (FIX 11851): captured before `verified` spends the restore. `None`
+    // without a restore, and the watch's first look is then unplanned as
+    // today.
+    #[cfg(target_os = "linux")]
+    let restore_fresh = restore
+        .as_ref()
+        .map(|restore| restore.fresh_recipients().to_vec());
     // Every fallible step is done: a cold restore's receipt and `verified`
     // go out before ctl serves or ready is said.
     if let Some(restore) = restore {
@@ -364,6 +391,24 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             Arc::clone(&sync_server),
             shutdown.clone(),
         );
+        // Its carrier as it stands, and the recipients it delivers later.
+        super::carrier_watch::spawn(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh.clone(),
+        );
+    } else if managed.escrow_recipient.is_some() || managed.break_glass_recipient.is_some() {
+        // A process host's argv escrow recipient files as they stand later: a
+        // file replaced after the start seals at the next look (FIX 11852).
+        super::carrier_watch::spawn_argv_watch(
+            Arc::clone(&state),
+            Arc::clone(&vault),
+            managed.clone(),
+            shutdown.clone(),
+            restore_fresh,
+        );
     }
 
     // Subscribed before the opening push reads the training setting, so a
@@ -375,7 +420,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             "initial wake ledger push failed"
         );
     }
-    let training_report = spawn_training_report(
+    let ledger_report = spawn_ledger_report(
         Arc::clone(&state),
         Arc::clone(&sync_server),
         training_changes,
@@ -387,7 +432,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // quiescent. These and the workers below count as other background
     // passes, unless named (FIX 6902).
     let admitted = || state.background_admission(WriteKind::BackgroundOther);
-    let background = sync_server.spawn_serve_background(admitted());
+    // Held here until stopped: on a start that fails below as on a clean
+    // stop, its admitted passes end before the process does (FIX 9538).
+    let mut background = Some(sync_server.spawn_serve_background(admitted()));
     // Surface events drain under the same admission (OF-218).
     let connector_events = sync_server.spawn_connector_event_worker(admitted());
     // Approved sends leave under the same admission (OF-187).
@@ -395,13 +442,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     // Checked built-in channels, under the same admission (OF-519).
     let builtin_host = crate::builtin_host::spawn(&sync_server, admitted());
     // Failure signals reach our collector under the same admission (OF-380).
-    // Managed mode reads no environment, so the send carries no bearer.
+    // Managed mode reads no environment: the send's bearer is its vault secret (FIX 5013).
     let failure_signals = crate::ai_host::failure_signals::spawn(
         &sync_server,
         crate::ai_host::failure_signals::FailureSignalHost::new(
             &config.failure_signals,
             true,
-            None,
+            config.failure_signals.bearer_from_secret(&vault),
         ),
         admitted(),
     );
@@ -411,6 +458,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     let coach_host = crate::ai_host::coach_host::spawn(&sync_server, admitted());
     // Crossed thresholds ask the ladder whether everything is okay (OF-520).
     let mut ladder_workers = vec![crate::wire_health::spawn(&sync_server, admitted())];
+    // Queued browser program admissions, each pass under the same admission (CUA E8b).
+    ladder_workers.push(crate::ai_host::browser_program_admission::spawn(
+        &sync_server,
+        admitted(),
+    ));
     // The Linear mirror started before ready stops with the ladder.
     ladder_workers.extend(linear);
     // An accepted Coach person-threshold row goes live on the ladder (Q3).
@@ -433,10 +485,13 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     ladder_workers.push(sync_server.spawn_connector_settler_admitted(admitted()));
     // The backup schedule, the owner's setting over `[backup]` (FIX 5621),
     // started while it is off too: each tick is admitted like a served write
-    // and holds it through its policy read, its backup and its pruning.
+    // and holds it through its policy read, its backup and its pruning. It
+    // and the custody publication run on past the vault's deletion, so its
+    // backups go at their deadline (FIX 11710).
     let tick = crate::owner::schedule::SCHEDULE_TICK;
-    ladder_workers.extend(sync_server.spawn_backup_schedule_admitted(tick, admitted()));
-    ladder_workers.extend(sync_server.spawn_custody_publication_admitted(admitted()));
+    ladder_workers
+        .extend(sync_server.spawn_backup_schedule_admitted(tick, state.backup_admission()));
+    ladder_workers.extend(sync_server.spawn_custody_publication_admitted(state.backup_admission()));
     ladder_workers.extend(gpu_poller);
     // Sensitive imported topics ask the owner who sees their later imports (OF-492).
     ladder_workers.push(crate::import_audience::spawn(&sync_server, admitted()));
@@ -509,7 +564,8 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // the vault's owner, or on the owner's own slip from a machine that
         // stands as his enrolled device (FIX 1949 = B), and is admitted like a
         // served write for its whole length: a call in flight keeps a reap from
-        // finding the vault quiescent, and a frozen vault takes no call.
+        // finding the vault quiescent; a frozen vault takes no call, and a
+        // deleted vault takes none either (FIX 12039).
         #[cfg(unix)]
         let voice = crate::voice_host::VoiceBoot::start(
             &sync_server,
@@ -526,7 +582,7 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
                     },
                 )
             }),
-            state.background_admission(WriteKind::OwnerWrite),
+            state.voice_admission(),
         );
         // The supervisor reaches the loop on the vault VM's voice port.
         #[cfg(unix)]
@@ -563,13 +619,14 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // A vault that is a device of another home dials it, on that mesh when
         // the home has a paired address there, as plain serve does (WILL-PLAN
         // L14 row 14): the owner's `[device_sync]` or `oneiron device enrol`
-        // names the home. The connection holds one admission for its whole run,
-        // so a frozen vault starts none and a reap waits for it.
+        // names the home. Each run between freezes holds an admission of its
+        // own (FIX 5127): a freeze pauses it, a reap waits for the pause, and
+        // after a thaw it runs again; a frozen vault starts none.
         let device_sync = crate::device_sync::DeviceSyncHost::start_admitted(
             &sync_server,
             &config,
             mesh.as_ref(),
-            &state.background_admission(WriteKind::OwnerWrite),
+            state.device_sync_freeze(),
         )
         .await;
         let artifact_task = artifacts.map(|listener| {
@@ -609,10 +666,15 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         // none starts after (FIX 5324). A reap's freeze leaves them open; only
         // this stop ends them.
         sync_server.live_voice.stop_all().await;
+        // The recall doors' buffered retrieval rows go in one grouped write
+        // while the vault still takes writes (FIX 11011).
+        sync_server.flush_retrieval_meters();
         // Drain observation writes without thawing a previously quiescent process.
         let telemetry_drained = state.freeze();
         // No new durable background work from here on.
-        background.stop().await;
+        if let Some(background) = background.take() {
+            background.stop().await;
+        }
         connector_events.abort();
         let _ = connector_events.await;
         connector_sends.abort();
@@ -631,6 +693,11 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
         for worker in ladder_workers {
             worker.abort();
             let _ = worker.await;
+        }
+        // The scheduled backup pass in flight ends before exit; none starts
+        // after (FIX 6732).
+        if let Some(host) = &sync_server.owner_host {
+            host.resident_stopped().await;
         }
         // A backup before an idle reap ends before exit; none starts after.
         state.idle_backup.stopped().await;
@@ -662,10 +729,10 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
             tracing::warn!(%error, path = %path.display(), "artifact socket unlink failed");
         }
 
-        // The report task stops before the final push, which reads the setting
+        // The report task stops before the final push, which reads the report
         // again itself.
-        training_report.abort();
-        let _ = training_report.await;
+        ledger_report.abort();
+        let _ = ledger_report.await;
         final_ledger_push(&state, &sync_server).await;
         result?;
         telemetry_drained?;
@@ -673,6 +740,9 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     }
     .await;
     // Still running only when an error left the scope before its join.
+    if let Some(background) = background {
+        background.stop().await;
+    }
     if let Some(tagging) = tagging {
         shutdown.trigger();
         let _ = tagging.await;
@@ -684,23 +754,30 @@ pub async fn serve_managed(args: &ServeArgs, managed: ManagedArgs) -> anyhow::Re
     outcome
 }
 
-/// Reports the vault's training setting to the supervisor as it changes
-/// (FIX 5575), so a status read there never wakes the vault.
+/// Reports the vault's training setting and its schedule to the supervisor
+/// as they change (FIX 5575, FIX 7746), so a status read there never wakes
+/// the vault and its next wake is the one the running vault would ask for.
 ///
-/// Each notification on `changes` only says "re-read committed state": the
-/// setting is read again and pushed with the current entries when it moved
-/// from the last report the supervisor took, or when it took none, so a
-/// refused push goes out again on the next change. Notifications that land
-/// during a push are read as one, since each report replaces the last whole.
-/// It takes no write admission, so the reap freeze never holds it back, and
-/// it ends with shutdown.
-fn spawn_training_report(
+/// Each notification on `changes` only says "re-read committed state", and
+/// so does each [`LEDGER_SCHEDULE_POLL`] tick, since a lease, the sync queue
+/// and a noted deadline move with no signal of their own: the report is read
+/// again and pushed when the setting or the schedule moved from the last
+/// report the supervisor took, or when it took none, so a refused push goes
+/// out again on the next read. Notifications that land during a push are
+/// read as one, since each report replaces the last whole. It takes no write
+/// admission, so the reap freeze never holds it back, and it ends with
+/// shutdown.
+fn spawn_ledger_report(
     state: Arc<ManagedState>,
     server: Arc<SyncServer>,
     mut changes: watch::Receiver<u64>,
     mut stop: ShutdownSignal,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
+        let mut poll = tokio::time::interval(LEDGER_SCHEDULE_POLL);
+        poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // The opening push has just read the report.
+        poll.tick().await;
         loop {
             tokio::select! {
                 () = &mut stop => return,
@@ -709,11 +786,12 @@ fn spawn_training_report(
                         return;
                     }
                 }
+                _ = poll.tick() => {}
             }
-            if let Err(_error) = state.ledger().push_training_if_changed(&server).await {
+            if let Err(_error) = state.ledger().push_live_if_changed(&server).await {
                 tracing::warn!(
                     reason = "wake_ledger_export_failed",
-                    "training setting report failed"
+                    "wake ledger report failed"
                 );
             }
         }

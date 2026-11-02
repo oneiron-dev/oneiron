@@ -17,10 +17,57 @@ pub trait SelfDispatcher {
 /// are released by the rows that produced them. A door always lists them;
 /// `None` is only an answer recorded with no set, which no caller off this
 /// device is released.
+///
+/// Beside them come the observations the door delivered with the answer
+/// (FIX 2135): frames queued on the run's own board connection, drained once
+/// the answer succeeded. They are no part of the verb's output, and each
+/// keeps the rows it was derived from, never mixed into the answer's own.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AgentVerbAnswer {
     pub output: serde_json::Value,
     pub rows: Option<Vec<EntityId>>,
+    pub observations: Vec<RunObservation>,
+}
+
+impl AgentVerbAnswer {
+    /// An answer of `output`, served from `rows`, with no observation
+    /// beside it.
+    #[must_use]
+    pub fn new(output: serde_json::Value, rows: Option<Vec<EntityId>>) -> Self {
+        Self {
+            output,
+            rows,
+            observations: Vec::new(),
+        }
+    }
+
+    /// The rows a run that read this answer is released by: the answer's
+    /// own and every observation's (DEC-0005). `None` when the answer was
+    /// recorded with no row set.
+    #[must_use]
+    pub fn released_rows(&self) -> Option<Vec<EntityId>> {
+        let mut rows = self.rows.clone()?;
+        rows.extend(
+            self.observations
+                .iter()
+                .flat_map(|observation| observation.rows.iter().copied()),
+        );
+        Some(rows)
+    }
+}
+
+/// One frame a run's host door delivered beside a verb's answer (FIX 2135):
+/// queued on the run's own board STREAM connection and drained, never
+/// waited for, once the answer succeeded. The connection and the frame's
+/// epoch and kind name it; `rows` are the rows it was derived from.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RunObservation {
+    /// The run's board connection the frame was queued on.
+    pub connection: String,
+    /// The frame, as the connection's STREAM carries it.
+    pub frame: crate::context_board::BoardStreamFrame,
+    /// The rows the frame was derived from.
+    pub rows: Vec<EntityId>,
 }
 
 /// A verb call the bound door refused or could not run, as the guest sees it:
@@ -39,6 +86,9 @@ pub struct AgentVerbRefusalWords {
     pub code: String,
     pub message: String,
     pub suggestions: Vec<String>,
+    /// The refusal's stable reason codes, as its route typed them (FIX
+    /// 7398); empty when it named none.
+    pub reason_codes: Vec<String>,
 }
 
 /// The refusal a verb call gets from a run whose host binds no verb door.
@@ -49,6 +99,9 @@ pub const AGENT_VERB_DOOR_UNBOUND: &str = "agent_verb_door_unbound";
 /// and saver are not checked. The reads the room serves itself
 /// (`dispatcher::session_verbs`) answer through the room's view instead.
 pub const AGENT_VERB_SESSION_BOUND: &str = "agent_verb_session_bound";
+
+/// The refusal a door that serves no reveal gives a replayed `reveal.wait`.
+const REVEAL_REPLAY_UNSERVED: &str = "reveal_replay_unserved";
 
 /// The host's door onto the SDK verb table.
 ///
@@ -74,6 +127,23 @@ pub trait AgentVerbDoor: Send + Sync {
         invocation: crate::runtime_hooks::InvocationId,
     ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>>;
 
+    /// A granted `reveal.wait` its step made before a park, made again as the
+    /// resumed step replays it (FIX 2360): the value read again under
+    /// `lease`, the T1 lease its kept answer names, for the replayed guest's
+    /// view only; nothing is spent, stamped or extended. A door that serves
+    /// no reveal refuses, and the step keeps its kept answer.
+    fn replay_reveal(
+        &self,
+        _call: &SelfAgentVerbCall,
+        _lease: crate::EntityId,
+        _origin: &crate::memory::HostWriteOrigin,
+        _invocation: crate::runtime_hooks::InvocationId,
+    ) -> crate::Result<std::result::Result<AgentVerbAnswer, AgentVerbRefusal>> {
+        Ok(Err(AgentVerbRefusal {
+            code: REVEAL_REPLAY_UNSERVED.to_owned(),
+        }))
+    }
+
     /// Admits one call the run serves itself, before it runs. The host's
     /// ceiling and credential bind these as they bind [`Self::call`], so a run
     /// keeps no authority its door has lost or never had. A search admitted
@@ -85,6 +155,13 @@ pub trait AgentVerbDoor: Send + Sync {
         &self,
         call: RunCall,
     ) -> std::result::Result<Option<crate::claim::ScopedReadActorKey>, AgentVerbRefusal>;
+
+    /// The verified read key a host turn's hooks use, independently of the
+    /// host's System write attribution. `None` is a typed no-read answer, not
+    /// permission to reconstruct an actor or System lane (FIX 9841).
+    fn host_turn_read_key(&self) -> Option<crate::claim::ScopedReadActorKey> {
+        None
+    }
 
     /// Whether the run's own `vault.search`, admitted with a key, keeps only
     /// surfaceable claims, as the memory surface's own BM25 channel serves
@@ -147,6 +224,22 @@ pub trait AgentVerbDoor: Send + Sync {
     fn refusal_words(&self) -> Option<AgentVerbRefusalWords> {
         None
     }
+
+    /// What the row this door last ran stated of its call receipt, as its
+    /// reply spells it (`call:<32hex>`, or `none; no-record` for an
+    /// anonymous off-record session's call): `None` when it stated nothing.
+    /// An action keeps it on its replay record, so a retry under the same
+    /// key states the first dispatch's receipt again (FIX 8159). A door that
+    /// states no receipt keeps none.
+    fn row_receipt(&self) -> Option<String> {
+        None
+    }
+
+    /// The receipt the first dispatch of a replayed action stated
+    /// ([`Self::row_receipt`]), handed back to this door, whose caller
+    /// states it again: the replay runs no row and writes no receipt of its
+    /// own. A door that states no receipt ignores it.
+    fn replay_row_receipt(&self, _receipt: &str) {}
 
     /// Sends the run's answer to the questions one of its connector calls
     /// waits on (`connector.answer`, ONE-2510), for the run's own caller:

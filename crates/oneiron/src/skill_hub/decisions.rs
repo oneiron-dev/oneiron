@@ -184,7 +184,7 @@ fn replay_state(
                     .zip(&texts)
                     .map(|((id, body), text)| claim_state(*id, body, cut_text(text, cut)))
                     .collect::<Vec<_>>(),
-                "labels_omitted": labels.len() - shown,
+                LABELS_OMITTED: labels.len() - shown,
             })
         });
         let fits =
@@ -194,6 +194,59 @@ fn replay_state(
         }
         shown /= 2;
     }
+}
+
+/// The state field that counts the labels a replay's state leaves to evidence ids.
+const LABELS_OMITTED: &str = "labels_omitted";
+
+/// A claim refinement's held-out replay `state` with the bodies of the labels it left to
+/// evidence ids (FIX 1327), for a provider that reads them: each omitted label's claim is read
+/// by id from `vault`, in the order `evidence` names them after the scored claim, and added
+/// while the whole still fits [`MAX_DECISION_STATE_BYTES`]; the first that does not fit stops
+/// the reading. `labels_omitted` then counts the labels still left to ids, and
+/// `labels_read_by_id` how many were read here. `None` for a state that is not a replay's,
+/// leaves no label out, or fits no more; a label whose claim is gone stays an id.
+///
+/// # Errors
+///
+/// Storage and claim decode errors.
+pub fn claim_replay_filled_state(
+    vault: &crate::Vault,
+    evidence: &[EntityId],
+    state: &Value,
+) -> Result<Option<Value>> {
+    let (Some(omitted), Some(shown)) = (
+        state.get(LABELS_OMITTED).and_then(Value::as_u64),
+        state.get("labels").and_then(Value::as_array).map(Vec::len),
+    ) else {
+        return Ok(None);
+    };
+    let omitted = usize::try_from(omitted).unwrap_or(usize::MAX);
+    // The scored claim is the first evidence id; its labels follow in order.
+    let Some(left) = evidence.get(1 + shown..).filter(|_| omitted > 0) else {
+        return Ok(None);
+    };
+    let mut filled = state.clone();
+    let mut read = 0_usize;
+    for id in left.iter().take(omitted) {
+        let Some(body) = vault.get_claim(id)? else {
+            continue;
+        };
+        let mut next = filled.clone();
+        if let Some(labels) = next.get_mut("labels").and_then(Value::as_array_mut) {
+            labels.push(claim_state(*id, &body, &value_text(&body)));
+        }
+        next[LABELS_OMITTED] = json!(omitted - read - 1);
+        next["labels_read_by_id"] = json!(read + 1);
+        let fits =
+            serde_json::to_vec(&next).is_ok_and(|bytes| bytes.len() <= MAX_DECISION_STATE_BYTES);
+        if !fits {
+            break;
+        }
+        filled = next;
+        read += 1;
+    }
+    Ok((read > 0).then_some(filled))
 }
 
 fn value_text(body: &ClaimBody) -> String {

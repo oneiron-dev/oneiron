@@ -5,7 +5,8 @@
 //! words partly here. A tagged turn's saved set lists the rows it was read
 //! from, but an untagged one keeps no list, so the demotion records what each
 //! kept turn lost, in its own transaction before any row or edge goes, and
-//! adds it to what an earlier demotion recorded. Queued work on the turn
+//! adds it to what an earlier demotion recorded. A PartOf target whose TURN
+//! row is already gone is recorded too (FIX 6263). Queued work on the turn
 //! waits while one of those MESSAGEs lacks its row or its `PartOf` edge to
 //! the turn ([`crate::tagging::tagged_messages_absent_in_txn`]).
 //!
@@ -15,7 +16,8 @@
 //! turn's entry once every MESSAGE it lists is back with its edge, and owes
 //! the turn the tag pass and sieve read it held back then. A deletion takes
 //! the MESSAGE it removes out of every entry, whether or not its row is
-//! here, and a TURN's own entry goes with the turn.
+//! here, and a TURN's own entry goes with the turn, as does a tag pass a
+//! tear left it owed ([`crate::tagging::owe_tag_pass_in_txn`]).
 
 use std::collections::BTreeSet;
 
@@ -37,7 +39,8 @@ const MISSING: SideTable<EntityId, BTreeSet<EntityId>, Named> =
 /// The demotion's write, in its transaction after the final plan and before
 /// any row or edge goes: each kept TURN with the MESSAGEs the call removes
 /// from it, added to what its entry lists already, never in place of it. A
-/// tagged turn and an untagged one are recorded alike.
+/// tagged turn and an untagged one are recorded alike, as is a PartOf target
+/// whose TURN row is already gone (FIX 6263).
 #[cfg(feature = "sync")]
 pub(crate) fn record_in_txn(
     store: &Store,
@@ -166,28 +169,32 @@ pub(crate) fn erase_in_txn(vault: &Vault, txn: &mut RwTxn<'_>, id: &EntityId) ->
 
 /// The physical tear's hook, beside tagging's, with no vault in hand:
 /// [`forget_in_txn`], then each stored turn whose entry it emptied is owed
-/// its sieve read. The tag pass is the erase doors' to owe: they run
-/// [`erase_in_txn`] first, and a bare tear owes none.
+/// its sieve read, and its tag pass through the store for the tagging
+/// reconciler to mark with the vault's tagger (FIX 6262). The erase doors
+/// run [`erase_in_txn`] first and mark the pass themselves, so a tear after
+/// them finds no entry to empty.
 pub(crate) fn tear_in_txn(store: &Store, txn: &mut RwTxn<'_>, id: &EntityId) -> Result<()> {
     for turn in forget_in_txn(store, txn, id)?.1 {
         if store.port_entity_present(txn, &turn)? {
             crate::dreamer_wake::owe_sieve_read_in_txn(store, txn, &turn)?;
+            crate::tagging::owe_tag_pass_in_txn(store, txn, &turn)?;
         }
     }
     Ok(())
 }
 
 /// Takes `id` out of every entry that lists it, whether or not its row and
-/// edges are here, and drops its own entry when it is a TURN, before the
-/// graph goes. Every entry is read: no index leads from a MESSAGE to the
-/// turns that list it. Returns whether an entry named `id`, and the turns
-/// whose entry it emptied, which lack nothing now.
+/// edges are here, and drops its own entry and any tag pass it is owed when
+/// it is a TURN, before the graph goes. Every entry is read: no index leads
+/// from a MESSAGE to the turns that list it. Returns whether an entry named
+/// `id`, and the turns whose entry it emptied, which lack nothing now.
 fn forget_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
 ) -> Result<(bool, Vec<EntityId>)> {
     let mut named = MISSING.delete(store, txn, id)?;
+    named |= crate::tagging::forget_tag_pass_in_txn(store, txn, id)?;
     let mut emptied = Vec::new();
     for (turn, mut missing) in MISSING.scan(store, txn)? {
         if !missing.remove(id) {
@@ -204,15 +211,16 @@ fn forget_in_txn(
     Ok((named, emptied))
 }
 
-/// Whether deleting `id` has an entry to change: its own, as a TURN, or one
-/// that lists it, so a headerless delete of a MESSAGE a demotion took, which
-/// only an untagged turn's entry may name, still reaches the hooks.
+/// Whether deleting `id` has an entry to change: its own, or a tag pass it
+/// is owed, as a TURN, or one that lists it, so a headerless delete of a
+/// MESSAGE a demotion took, which only an untagged turn's entry may name,
+/// still reaches the hooks.
 pub(crate) fn delete_scope_exists_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
     id: &EntityId,
 ) -> Result<bool> {
-    if MISSING.contains(store, txn, id)? {
+    if MISSING.contains(store, txn, id)? || crate::tagging::tag_pass_owed_in_txn(store, txn, id)? {
         return Ok(true);
     }
     for row in MISSING.iter_from(store, txn, &[])? {

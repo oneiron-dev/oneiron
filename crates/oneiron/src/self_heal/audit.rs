@@ -26,7 +26,10 @@ const SEALS: SideTable<[u8; 16], SealedAttemptReceipt, Named> =
 #[serde(deny_unknown_fields)]
 pub struct ObjectiveConfession {
     pub objective: String,
-    pub met: bool,
+    /// The agent's own answer; `None` when it gave none (FIX 9466): a
+    /// missing or malformed confession is recorded as no answer, never
+    /// filled in.
+    pub met: Option<bool>,
     pub flaw: Option<String>,
     pub uncertainty: Option<String>,
 }
@@ -34,7 +37,7 @@ pub struct ObjectiveConfession {
 impl ObjectiveConfession {
     #[must_use]
     pub fn confesses_flaw(&self) -> bool {
-        !self.met || self.flaw.is_some()
+        self.met == Some(false) || self.flaw.is_some()
     }
 
     #[must_use]
@@ -170,8 +173,8 @@ fn validate_confession(confession: &AttemptConfession) -> Result<()> {
             .into_iter()
             .flatten()
         {
-            if text.trim().is_empty() || text.len() > 4096 {
-                return Err(invalid("a confession detail is nonempty and at most 4 KiB"));
+            if text.trim().is_empty() {
+                return Err(invalid("a confession detail is nonempty"));
             }
         }
     }
@@ -236,6 +239,17 @@ impl Vault {
         now: u64,
     ) -> Result<SealedAttemptReceipt> {
         validate_confession(confession)?;
+        // Every detail is kept whole: past `limits.maintenance_text_bytes`
+        // the longest asks, and the seal reads on.
+        let longest = confession
+            .objectives
+            .iter()
+            .flat_map(|objective| [&objective.flaw, &objective.uncertainty])
+            .flatten()
+            .map(String::len)
+            .max()
+            .unwrap_or(0);
+        let _ = self.measure_limit(EngineLimit::MaintenanceTextBytes, longest as u64);
         let key = *confession.attempt.as_bytes();
         if let Some(receipt) = SEALS.get(&self.store, txn, &key)? {
             return if receipt.confession == *confession {

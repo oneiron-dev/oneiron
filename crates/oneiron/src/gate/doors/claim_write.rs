@@ -1,6 +1,12 @@
 //! Claim write entry seams plus the phase-ordered inner executor.
 
+mod closer;
+mod decision_context;
+mod reference_hook;
 mod reference_read;
+
+pub(crate) use reference_hook::check_claim_policy_for_write_with_record_with_reader_reference_probe;
+pub(crate) use reference_read::unresolved_claim_reference;
 
 use super::burst_inputs::claim_burst_inputs;
 use super::consent::{
@@ -31,6 +37,7 @@ use crate::gate::confirm::{
 use crate::gate::constants::LOCAL_WRITE_ACTOR_CLASS;
 use crate::gate::decision::{GateDecision, GateOutcome, GateReasonCode};
 use crate::gate::definition_ceiling::agent_definition_ceiling_for_actor;
+use crate::gate::delegation_chain::evaluate_with_delegation_chain;
 use crate::gate::input::{GateActor, GateContentKind, GateProvenanceHandles};
 use crate::gate::resolution::{PolicyManifestResolution, check_claim_source_trust};
 use crate::llm::{AutoCheckCandidate, AutoCheckOutcome};
@@ -137,6 +144,7 @@ pub(crate) fn check_claim_policy_for_write(
         &mut recorded_decision,
         None,
         operation_effect_body,
+        false,
         None,
     )
 }
@@ -166,6 +174,7 @@ pub(crate) fn check_claim_policy_for_write_with_preflight_decision(
         // The batch/replay claim door only ever carries PERSISTED candidates,
         // so it never opens the synthetic-operation mode.
         false,
+        false,
         None,
     )
 }
@@ -189,6 +198,7 @@ pub(crate) fn check_claim_policy_for_write_with_record(
         recorded_decision,
         None,
         // Every caller of the record seam writes a persisted candidate.
+        false,
         false,
         None,
     )
@@ -226,6 +236,7 @@ pub(crate) fn check_claim_policy_for_write_with_record_with_reader(
         mode,
         recorded_decision,
         None,
+        false,
         false,
         Some(reader),
     )
@@ -266,6 +277,7 @@ fn check_claim_policy_for_write_with_record_inner(
     recorded_decision: &mut Option<RecordedClaimGateDecision>,
     preflight_decision_id: Option<GateDecisionId>,
     operation_effect_body: bool,
+    skip_precommit: bool,
     reader: Option<&crate::claim::ScopedRead<'_>>,
 ) -> Result<()> {
     let mutation_recorded_at = crate::ports::recorded_at_in_txn(store, wtxn)?;
@@ -284,8 +296,14 @@ fn check_claim_policy_for_write_with_record_inner(
 
     // Preserve the write's member identities for both source-trust checks:
     // the evaluator below and the final Auto ceiling check. No member's
-    // permit can answer for a different member of the observed history.
-    let lineage = envelope.map(WriteEnvelope::lineage);
+    // permit can answer for a different member of the observed history. An
+    // exact close by its verified closer renews neither, and is decided,
+    // ceilinged and receipted as that closer (FIX 8655).
+    let closing_actor = closer::exact_close_closer(store, &*wtxn, id, body, transition);
+    let verified_close = closing_actor.is_some();
+    let lineage = envelope
+        .map(WriteEnvelope::lineage)
+        .filter(|_| !verified_close);
 
     // GATE-12: Dreamer authorship is detected exactly once, here, and the
     // provenance handle carries it into the evaluator input below. Pre-commit
@@ -295,7 +313,7 @@ fn check_claim_policy_for_write_with_record_inner(
     // malformed or evidence-free Dreamer candidate instead of letting the
     // bootstrap path commit it unchecked.
     //
-    // `operation_effect_body` is the ONE exception, and it is not an exemption
+    // `operation_effect_body` is the ONE exception on a real write, and it is not an exemption
     // from the floor: a host-typed synthetic memory-verb effect body is GATE
     // MATERIAL, never a persisted claim (the verb's traps persist a lifecycle
     // Put plus an Edge, never the body they gate), so asking a claim-candidate
@@ -309,27 +327,19 @@ fn check_claim_policy_for_write_with_record_inner(
     // candidate door, still clears the full evidence floor.
     let dreamer_run_id = envelope.and_then(dreamer_run_id_from_write_envelope);
     let dreamer_candidate = dreamer_run_id.is_some() && !operation_effect_body;
-    let precommit_denial = if dreamer_candidate {
+    let precommit_denial = if dreamer_candidate && !skip_precommit {
         dreamer_precommit_denial(store, &*wtxn, body)
     } else {
         None
     };
-    // OF-063 (FIX 1218): with the writer's own read, a record the body names
-    // that does not resolve for it here, in this final snapshot, is a hard
-    // deny in the same slot as a validity refusal, after it. A synthetic
-    // operation body is not a persisted claim and is not judged.
-    let mut reference_denial = None;
-    if let Some(reader) = reader.filter(|_| !operation_effect_body)
-        && let Some(field) = reference_read::unresolved_claim_reference(reader, &*wtxn, body)?
-    {
-        tracing::info!(%field, "a claim names a record its writer cannot read; denied");
-        reference_denial = Some(GateReasonCode::DenyUnresolvedRecordReference);
-    }
+    // OF-063 (FIX 1218): the reference verdict over the writer's own read.
+    let reference_denial =
+        reference_hook::reference_denial(&*wtxn, body, reader, operation_effect_body)?;
     let hard_denial = precommit_denial.or(reference_denial);
 
     if policy.enforces_write_gate() {
         let (actor, provenance, agent_definition_ceiling) = if let Some(envelope) = envelope {
-            let actor = envelope.actor();
+            let actor = closing_actor.unwrap_or_else(|| envelope.actor());
             let agent_definition_ceiling = agent_definition_ceiling_for_actor(store, &*wtxn, actor);
             (
                 GateActor {
@@ -368,7 +378,8 @@ fn check_claim_policy_for_write_with_record_inner(
             // check and candidate sensitivity, even for non-Auto public writes.
             // This boolean controls input shape, not permit authorization.
             mode.include_source_in_gate_input
-                || envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit),
+                || envelope.is_some_and(WriteEnvelope::effective_requires_explicit_auto_permit)
+                    && !verified_close,
             agent_definition_ceiling,
             // Claim bodies carry no effect-fact axes the consent evaluator
             // could classify honestly; this door keeps its pre-DEC-0006
@@ -379,13 +390,12 @@ fn check_claim_policy_for_write_with_record_inner(
         // A pre-commit failure REPLACES the policy verdict: the recording,
         // pending and enforcement paths below then run unchanged, and the
         // Deny aborts the caller's batch op before any claim-side write lands.
-        input.foreign_agent_ceiling = envelope
-            .map(|envelope| crate::gate::foreign_agent::resolve(store, &*wtxn, envelope.actor()))
-            .transpose()?
-            .flatten();
+        let writing = envelope.map(|envelope| closing_actor.unwrap_or_else(|| envelope.actor()));
+        input.foreign_agent_ceiling =
+            super::super::foreign_agent::resolve_writing(store, &*wtxn, writing)?;
         let mut decision = match hard_denial {
             Some(reason_code) => GateDecision::deny(reason_code),
-            None => policy.evaluate_gate_with_lineage(&input, lineage),
+            None => evaluate_with_delegation_chain(store, &*wtxn, policy, &input, lineage, writing),
         };
         // GATE-13: persona-core and mirroring-prone predicates are isolated
         // for the DREAMER path only, and only AFTER the validity pass above.
@@ -578,7 +588,6 @@ fn check_claim_policy_for_write_with_record_inner(
         let binding = GateConsentBinding::for_claim(body, policy)?;
         let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
         let created_at = mutation_recorded_at;
-
         let mut decision_record = GateDecisionRecord {
             version: 0,
             decision_id,
@@ -606,6 +615,7 @@ fn check_claim_policy_for_write_with_record_inner(
                     Some(row) => format!("policy_precedence_row_{row}"),
                     None => "policy_precedence_shipped_default".to_owned(),
                 }))
+                .chain(decision.delegation_narrowing_receipt())
                 .chain(checker_receipt_reasons)
                 .collect(),
             system_notices: Vec::new(),
@@ -617,6 +627,11 @@ fn check_claim_policy_for_write_with_record_inner(
             grant_ref: None,
             diff_handle: binding.diff_handle.clone(),
             read_frontier_hash: binding.read_frontier_hash,
+            context: decision_context::claim_decision_context(
+                id,
+                body,
+                input.provenance.dreamer_run_id.as_deref(),
+            ),
             redacted_at: None,
         };
 
@@ -692,12 +707,12 @@ fn check_claim_policy_for_write_with_record_inner(
                     pending_decision.reason_codes
                 },
                 dreamer_run_id: pending_consent_dreamer_run_id(envelope, body),
+                predicate: Some(body.predicate.clone()),
             };
             store.put_pending_gate_consent_in_txn(wtxn, &pending)?;
             // A fresh local confirm on this revision is the item the claim's
-            // owner answers now, and the only one that ends the demotion of
-            // peer revisions. Ordinary pending work and replicated input
-            // never end it.
+            // owner answers now. Ordinary pending work and replicated input
+            // never rebind it.
             if attach_critical_confirm {
                 crate::gate::owner_answer::rebind_owner_answer_obligation_in_txn(
                     store, wtxn, id, &pending,
@@ -753,6 +768,9 @@ fn check_claim_policy_for_write_with_record_inner(
         return reject_gate_decision(GateDecision::deny(reason_code));
     }
 
+    if verified_close {
+        return Ok(());
+    }
     let actor_ref = write_envelope_actor_ref(envelope);
     check_claim_source_trust(body, actor_ref.as_deref(), policy, lineage)
 }

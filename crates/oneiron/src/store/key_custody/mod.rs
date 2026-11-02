@@ -13,12 +13,16 @@
 
 mod anchor;
 mod body_history;
+mod carried_pads;
 mod credential_faults;
+mod erasable;
 mod erase_binding;
+mod erase_evidence;
 mod files;
 mod folder;
 mod fork;
 mod head;
+mod holders;
 mod home;
 mod identity;
 mod kept_images;
@@ -43,6 +47,14 @@ use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 
 pub(crate) use self::anchor::FileAnchor;
+// FIX 8875: the erasable key client and its holder debt, for the home
+// handoff's custody contract (`crate::store::home_handoff_custody`).
+pub(crate) use self::erasable::{
+    ErasableItem, ErasablePurpose, delete_erasable_ref_in_txn, erasable_refs_of_in_txn,
+    put_erasable_ref_in_txn, stage_erasable_retirement_in_txn,
+};
+// FIX 10584 item 3: erased credentials' facts on the custody head.
+pub(crate) use self::erase_evidence::{CredentialFenceFact, FenceFact};
 #[cfg(test)]
 pub(in crate::store) use self::files::arm_after_key_marker_check;
 pub(crate) use self::files::{EntryState, LocalCustody, custody_present};
@@ -65,14 +77,16 @@ pub(crate) use self::identity::{
 pub(in crate::store) use self::identity::{decode_native_path, encode_native_path};
 pub(crate) use self::kept_images::{BodyLease, ImageHolder, InstanceLeases};
 pub(crate) use self::outbox::OutboxTarget;
+// The custody directory's name, for a host's restore destination (FIX 6582).
+pub use self::files::custody_container_path;
 // The one portable directory flush, for the training outbox too (FIX 6880).
 pub use self::platform::sync_dir;
 pub(crate) use self::publication_policy::TargetRecipients;
 pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};
 pub(crate) use self::recipients::RecipientRetirement;
 pub(crate) use self::recovery::{
-    CustodyRequirement, CustodyRoute, CustodySourceAt, ROLLBACK_NOT_PROVEN, refuse_foreign_binding,
-    route_custody,
+    CustodyRequirement, CustodyRoute, CustodySourceAt, PreparedTakeover, ROLLBACK_NOT_PROVEN,
+    TakeoverRefusal, refuse_foreign_binding, route_custody,
 };
 #[cfg(test)]
 pub(crate) use self::retirement::arm_before_retire_lock;

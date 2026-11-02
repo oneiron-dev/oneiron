@@ -10,7 +10,7 @@
 //!   fresh start. Nothing retires it.
 //! - Each history entry is kind `KnownValueEntry`: item = the holding
 //!   custody record's id, never a name derived from a value; generation =
-//!   the holder's entry slot; secret = [`KnownEntry`]'s 44 bytes. A slot is
+//!   the holder's entry slot; secret = [`KnownEntry`]'s 46 bytes. A slot is
 //!   taken past every slot the holder's references or its custody hold, an
 //!   aborted writer's included, and an entry of the same bytes is never
 //!   written twice for one holder. Two holders of the same bytes keep two
@@ -34,6 +34,9 @@
 //! - A pass reads the history in the writer it runs in (no custody guard,
 //!   none after the writer), or, for a stream, through [`KnownHistoryIds`]:
 //!   the ids the stream began with, each pass under the custody read guard.
+
+// A writer's history read with its ids (FIX 12210).
+mod writer_ids;
 
 use std::sync::{Arc, Weak};
 
@@ -121,12 +124,14 @@ impl RawValue for HistoryRefs {
 }
 
 /// One history entry as the index keeps it: a value's byte length, the
-/// keyed tag of its first window and the keyed fingerprint of all of it,
-/// never the value. `len (u32be) | tag (8) | fingerprint (32)` in custody;
-/// wiped when dropped, and never printed.
+/// keyed tag and the keyed rolling value of its first window (FIX 12209),
+/// and the keyed fingerprint of all of it, never the value. `len (u32be) |
+/// tag (8) | rolling (u16be) | fingerprint (32)` in custody; wiped when
+/// dropped, and never printed.
 pub(crate) struct KnownEntry {
     pub(crate) len: u32,
     pub(crate) tag: [u8; KNOWN_TAG_BYTES],
+    pub(crate) rolling: u16,
     pub(crate) fingerprint: [u8; 32],
 }
 
@@ -135,6 +140,7 @@ impl KnownEntry {
         let mut bytes = Zeroizing::new(Vec::with_capacity(ENTRY_BYTES));
         bytes.extend_from_slice(&self.len.to_be_bytes());
         bytes.extend_from_slice(&self.tag);
+        bytes.extend_from_slice(&self.rolling.to_be_bytes());
         bytes.extend_from_slice(&self.fingerprint);
         CustodySecret::from_bytes(bytes)
     }
@@ -146,7 +152,8 @@ impl KnownEntry {
             return None;
         }
         let (len, rest) = bytes.split_at(4);
-        let (tag, fingerprint) = rest.split_at(KNOWN_TAG_BYTES);
+        let (tag, rest) = rest.split_at(KNOWN_TAG_BYTES);
+        let (rolling, fingerprint) = rest.split_at(2);
         let len = u32::from_be_bytes(len.try_into().ok()?);
         if len == 0 {
             return None;
@@ -154,6 +161,7 @@ impl KnownEntry {
         Some(Self {
             len,
             tag: tag.try_into().ok()?,
+            rolling: u16::from_be_bytes(rolling.try_into().ok()?),
             fingerprint: fingerprint.try_into().ok()?,
         })
     }
@@ -162,6 +170,7 @@ impl KnownEntry {
 impl Drop for KnownEntry {
     fn drop(&mut self) {
         self.tag.zeroize();
+        self.rolling.zeroize();
         self.fingerprint.zeroize();
     }
 }
@@ -303,6 +312,59 @@ impl Store {
             }
         }
         Ok(Some(KnownHistory { master, holders }))
+    }
+
+    /// The keyed fingerprint of a run-tree steer intent (FIX 10066): `input`
+    /// hashed under a subkey derived from the index's master, read in the
+    /// writer `wtxn` as [`Self::known_history_in_writer`] reads it. `None`
+    /// while the index keys no value: no master exists, and plain input
+    /// equality stands. Neither the master nor the subkey leaves this
+    /// function.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn intent_fingerprint_in_writer(
+        &self,
+        wtxn: &RwTxn<'_>,
+        input: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
+        const CONTEXT: &str = "oneiron run_tree steer intent fingerprint v1";
+        let Some(at) = INDEX.get(self, wtxn, &())? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, wtxn)?;
+        let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
+        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        Ok(Some(*blake3::keyed_hash(&subkey, input).as_bytes()))
+    }
+
+    /// The vault-keyed MAC of a safeguard model's stated reason (FIX
+    /// 10532): `rationale` hashed under a subkey derived from the index's
+    /// master, so a guess at a short reason cannot be checked against a
+    /// receipt without the vault's key. `txn` is the writer or a snapshot
+    /// taken under the custody read guard ([`Store::custody_snapshot`]).
+    /// `None` while the index keys no value: no master exists. Neither the
+    /// master nor the subkey leaves this function.
+    ///
+    /// # Errors
+    ///
+    /// Custody lost or damaged under a committed reference, and storage
+    /// faults.
+    pub(crate) fn policy_rationale_mac_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        rationale: &[u8],
+    ) -> Result<Option<[u8; 32]>> {
+        const CONTEXT: &str = "oneiron/policy-rationale-mac/v1";
+        let Some(at) = INDEX.get(self, txn, &())? else {
+            return Ok(None);
+        };
+        let custody = self.core.key_custody.bind_in_txn(self, txn)?;
+        let master = copy_master(&custody.read(&index_subject(custody.binding())?.at(at))?)?;
+        let subkey = crate::world_keys::derive_guarded(CONTEXT, &[&master[..]]);
+        Ok(Some(*blake3::keyed_hash(&subkey, rationale).as_bytes()))
     }
 
     /// The ids of the history `txn` commits to, for a stream's sweep

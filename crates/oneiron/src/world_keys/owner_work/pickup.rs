@@ -34,8 +34,9 @@ pub struct OwnerWorkDrain {
 /// Whether a request's pickup reads this install's hybrid secret: a world's
 /// key work and a root change open keys with it, a bundle publication waits
 /// for it as it always has, and a custody register, rotate or bind's holder
-/// opens its protected input with it. A revoke needs no byte, and a rewrap
-/// with no input seals the value its holder holds.
+/// opens its protected input with it. A revoke needs no byte, a rewrap
+/// with no input seals the value its holder holds, and an export secret
+/// reads only the custody leaf it seals (FIX 11845).
 fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
     !matches!(
         work,
@@ -46,7 +47,7 @@ fn reads_machine_secret(work: &OwnerWorkBody) -> bool {
             change: CustodyChange::Rewrap,
             input: None,
             ..
-        }
+        } | OwnerWorkBody::ExportSecret(_)
     )
 }
 
@@ -73,7 +74,7 @@ impl Vault {
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
     /// request stays pending, and nothing is taken over. A custody revoke,
-    /// or a rewrap with no input, reads none.
+    /// a rewrap with no input, or an export secret reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's
@@ -106,6 +107,9 @@ impl Vault {
         // A revoke this install could not carry when the owner made it is
         // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
         self.carry_owed_revokes();
+        // A restore's credentials pending on their source's evidence are
+        // judged again on it (FIX-LIST 10671).
+        self.resolve_pending_credential_restores_logged();
         // A root request's wait ends with the request, whether or not any
         // work names this install now (FIX 5582).
         if let Err(error) = self.settle_root_request_waits() {
@@ -151,7 +155,9 @@ impl Vault {
             let ran = self
                 .with_write_txn(|txn| self.run_owner_work_in_txn(txn, *request, machine, secret));
             match ran {
-                Ok(Ran::Answered(OwnerWorkOutcome::Enacted { .. })) => drain.enacted += 1,
+                Ok(Ran::Answered(
+                    OwnerWorkOutcome::Enacted { .. } | OwnerWorkOutcome::Sealed { .. },
+                )) => drain.enacted += 1,
                 Ok(Ran::Answered(OwnerWorkOutcome::Refused { .. })) => drain.refused += 1,
                 Ok(Ran::Pending) => drain.pending += 1,
                 Ok(Ran::Gone) => {}
@@ -202,6 +208,9 @@ impl Vault {
             }
             (OwnerWorkBody::Custody { .. }, secret) => {
                 self.custody_work_in_txn(txn, &fold, hash, request, secret)?
+            }
+            (OwnerWorkBody::ExportSecret(work), _) => {
+                self.export_secret_work_in_txn(txn, &fold, hash, request, work)?
             }
             (
                 OwnerWorkBody::WorldKey { .. }

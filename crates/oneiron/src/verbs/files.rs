@@ -123,6 +123,15 @@ pub struct FilesLimitCrossed {
     pub observed: u64,
 }
 
+/// Files a rescan imported whose original could not be kept or named on
+/// their ledger rows (FIX 7779): their text landed all the same.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FilesOriginalsUnkept {
+    pub files: u64,
+    pub first_error: String,
+}
+
 /// One rescan of a Files source: its counts, or why it read nothing (a
 /// folder that is not there now retracts nothing).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -136,6 +145,8 @@ pub struct FilesRescanView {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub limits_crossed: Vec<FilesLimitCrossed>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub originals_unkept: Option<FilesOriginalsUnkept>,
 }
 
 /// `vault.files.sources.attach`'s answer: the world (born on the first

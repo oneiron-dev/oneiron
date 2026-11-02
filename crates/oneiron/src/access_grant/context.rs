@@ -45,6 +45,25 @@ pub struct GrantedData<T> {
     pub access_limited: Option<AccessLimited>,
 }
 
+/// The rows of `kind` a principal's reach is read from: every ACCESS_GRANT
+/// row, and of the CLAIMs only the relationship member bindings, through the
+/// predicate index, not every CLAIM in the vault (FIX 11648). The caller
+/// judges each row as before.
+pub(crate) fn principal_reach_ids_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    kind: u8,
+) -> Result<Vec<EntityId>> {
+    if kind == ENTITY_TYPE_CLAIM {
+        return crate::claim::claim_ids_for_predicate_in_txn(
+            &vault.store,
+            txn,
+            crate::federation::PREDICATE_RELATIONSHIP_PERSON_REF,
+        );
+    }
+    crate::ports::EntityStoreRead::port_entity_ids_by_type(&vault.store, txn, kind, None)?.collect()
+}
+
 impl<'v> AccessContext<'v> {
     pub(crate) fn load(
         vault: &'v Vault,
@@ -66,13 +85,7 @@ impl<'v> AccessContext<'v> {
             Ok(crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.is_live())
         };
         for kind in [ENTITY_TYPE_ACCESS_GRANT, ENTITY_TYPE_CLAIM] {
-            for row in crate::ports::EntityStoreRead::port_entity_ids_by_type(
-                &vault.store,
-                txn,
-                kind,
-                None,
-            )? {
-                let id = row?;
+            for id in principal_reach_ids_in(vault, txn, kind)? {
                 let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &id)?
                     .ok_or(Error::CorruptedIndex("access context row"))?;
                 let header = EntityMetadataHeader::parse(&raw)
@@ -163,6 +176,39 @@ impl<'v> AccessContext<'v> {
         record: &crate::federation::Scope,
     ) -> bool {
         self.allows_at(entity_type, space, private, record, self.observed_at)
+    }
+
+    /// Whether this context holds a live grant over some conversation's
+    /// MESSAGEs (FIX 10895): only then is a MESSAGE that names no
+    /// relationship walked to its conversation.
+    pub(crate) fn holds_conversation_grants(&self) -> bool {
+        self.grants.iter().any(|grant| {
+            matches!(
+                grant.scope,
+                super::AccessGrantScope::ConversationMessages { .. }
+            )
+        })
+    }
+
+    /// Whether a live grant of this context's principal admits a MESSAGE of
+    /// `conversation` that names no relationship, at `record`, as of this
+    /// context's snapshot (FIX 10895).
+    pub(crate) fn allows_conversation_message_at_snapshot(
+        &self,
+        conversation: EntityId,
+        record: &crate::federation::Scope,
+    ) -> bool {
+        let Some(principal) = self.principal else {
+            return false;
+        };
+        self.grants.iter().any(|grant| {
+            grant.allows_conversation_message_read(
+                principal,
+                conversation,
+                record,
+                self.observed_at,
+            )
+        })
     }
 
     fn allows_at(

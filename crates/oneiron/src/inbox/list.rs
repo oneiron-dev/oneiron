@@ -30,7 +30,8 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 /// Rows a page serves when its caller names no limit.
 pub const INBOX_PAGE_DEFAULT: usize = 100;
 
-/// The most rows one page serves.
+/// The most rows one page serves: a larger limit is served a page at a time
+/// through `next_after` (Rule 5).
 pub const INBOX_PAGE_MAX: usize = 1_000;
 
 /// Type-index rows one admission round reads.
@@ -75,6 +76,14 @@ pub struct NotificationPage {
     pub rows: Vec<NotificationRow>,
     /// Explicit end marker: `None` means no further delivered row exists.
     pub next_after: Option<String>,
+    /// The rows this page could hold: the caller's limit, or
+    /// [`INBOX_PAGE_MAX`] when it asked for more.
+    #[serde(default)]
+    pub effective_limit: usize,
+    /// The caller's limit was past [`INBOX_PAGE_MAX`] and this page was
+    /// served at it; `next_after` continues to the rest.
+    #[serde(default)]
+    pub limit_clamped: bool,
 }
 
 /// `body` as `caller` reads it.
@@ -126,7 +135,9 @@ fn notification_not_found() -> MemoryError {
 enum InboxMarkWriteScope {
     /// The row's recipient markers name the actor, its read lane still reads
     /// the row in the snapshot that writes, and its Grant admits a write at
-    /// the row's own stored position.
+    /// the row's own stored position. A row stored with no position, as a
+    /// NOTIFICATION that reached this node by sync is, takes the mark as a
+    /// local-row act (Engine 09:39, FIX 6552).
     OwnRowLane,
 }
 
@@ -142,7 +153,8 @@ impl InboxMarkWriteScope {
     /// check), and its Grant at the row's stored position, the per-record
     /// proof the content writer runs
     /// (`Vault::authorize_shared_content_write_in_txn`). A row stored with
-    /// no position admits no one here.
+    /// no position is marked on this node alone and asks no position: the
+    /// mark stamps none, as no local re-put does (FIX 6552, FIX 11925).
     fn admits_in(
         self,
         memory: &Memory<'_>,
@@ -176,11 +188,9 @@ impl InboxMarkWriteScope {
                 if !own {
                     return Ok(false);
                 }
-                vault.authorize_shared_content_write_in_txn(
-                    txn,
-                    id,
-                    &crate::WriteActor::new(memory.actor(), memory.actor_class()),
-                )?;
+                if crate::federation::record_scope::has_stored_position(&vault.store, txn, id)? {
+                    vault.authorize_shared_content_write_in_txn(txn, id, &memory.write_actor())?;
+                }
                 Ok(true)
             }
         }
@@ -190,14 +200,17 @@ impl InboxMarkWriteScope {
 impl Memory<'_> {
     /// One page of the notifications delivered to this actor, in entity-ID
     /// order after the exclusive `after` cursor. A short page or an absent
-    /// `next_after` means the inbox ended.
+    /// `next_after` means the inbox ended. A limit past [`INBOX_PAGE_MAX`] is
+    /// served a page of that many at a time.
     pub fn inbox_list(&self, after: Option<&str>, limit: usize) -> MemoryResult<NotificationPage> {
-        if limit == 0 || limit > INBOX_PAGE_MAX {
+        if limit == 0 {
             return Err(MemoryError::bad_request_with(
-                format!("limit must be between 1 and {INBOX_PAGE_MAX}"),
-                &["Request a smaller page and continue from next_after."],
+                "limit must be at least 1",
+                &["Request one row or more and continue from next_after."],
             ));
         }
+        let limit_clamped = limit > INBOX_PAGE_MAX;
+        let limit = limit.min(INBOX_PAGE_MAX);
         let mut start = after
             .map(EntityId::from_hex)
             .transpose()
@@ -240,7 +253,12 @@ impl Memory<'_> {
         } else {
             None
         };
-        Ok(NotificationPage { rows, next_after })
+        Ok(NotificationPage {
+            rows,
+            next_after,
+            effective_limit: limit,
+            limit_clamped,
+        })
     }
 
     /// Marks one notification delivered to this actor seen or acknowledged,
@@ -332,6 +350,8 @@ impl Memory<'_> {
             if mark == NotificationMark::Acked {
                 body.acked_by.insert(caller.clone(), true);
             }
+            // A row stored with no position stays unstamped: the mark is this
+            // node's local re-put (Engine 09:39, FIX 6552; FIX 11925).
             let learned_at = self.vault().put_notification_in_txn(wtxn, &id, &body)?;
             Ok(row_for(id, learned_at, body, &caller))
         })?;

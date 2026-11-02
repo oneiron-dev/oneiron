@@ -15,6 +15,8 @@ use crate::{EntityId, TimeRange, Vault};
 
 use super::*;
 
+mod request_code_text;
+
 const MACHINE_CONNECTION_DOMAIN: &[u8] = b"oneiron/machine-proof/v1\0";
 /// The request header a machine names itself in, beside the slip proof.
 pub const MACHINE_PROOF_HEADER: &str = "x-oneiron-machine";

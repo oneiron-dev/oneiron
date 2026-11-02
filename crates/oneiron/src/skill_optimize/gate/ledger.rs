@@ -328,17 +328,12 @@ pub fn is_skill_edit_verdict_receipt(record: &ReceiptRecord) -> bool {
 /// the discriminating key prefix. Opens its own read txn, as that projector
 /// does.
 ///
-/// The WALK is bounded as well as the result, following
-/// `edit_distance::graduation::answer_receipts_in_txn`: the verdict ledger
-/// never drains (every ruling appends, and the log is the audit trail), so a
-/// receipt query with `limit = 1` must not decode a lifetime of rulings to
-/// answer. These keys are row-id ordered, which for a UUIDv7 row id IS ruling
-/// order, so walking them NEWEST-FIRST under
-/// [`crate::receipt::MAX_RECEIPT_QUERY_SCAN`] spends the bound on exactly the
-/// rulings a receipt reader asked for, and the newest `query.limit` of the
-/// matches is still what [`retain_newest_receipt`] keeps. A `job_ref` query
-/// stays exhaustive within the walk, as the sibling projectors do and for
-/// their reason: that join runs after collection.
+/// The walk reads the whole ledger, NEWEST-FIRST (row-id order, which for a
+/// UUIDv7 row id IS ruling order), with no count cutting it short (FIX
+/// 3582): past its threshold row it raises one check and reads on (rule 5).
+/// The newest `query.limit` of the matches is what [`retain_newest_receipt`]
+/// keeps. A `job_ref` query stays exhaustive, as the sibling projectors do
+/// and for their reason: that join runs after collection.
 ///
 /// # Errors
 ///
@@ -348,18 +343,15 @@ pub(crate) fn skill_edit_verdict_receipts(
     query: &ReceiptQuery,
 ) -> Result<Vec<ReceiptRecord>> {
     let rtxn = vault.store.env.read_txn()?;
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"skill_edit_verdict",
+    )?;
     let mut out = Vec::new();
-    // One row PAST the cap is reached and never decoded: it is what separates a
-    // ledger holding exactly the cap from one the cap truncated.
-    for (scanned, row) in VERDICTS
-        .iter_rev_from(&vault.store, &rtxn, &[])?
-        .take(crate::receipt::MAX_RECEIPT_QUERY_SCAN + 1)
-        .enumerate()
-    {
-        if scanned == crate::receipt::MAX_RECEIPT_QUERY_SCAN {
-            note_verdict_scan_capped();
-            break;
-        }
+    for row in VERDICTS.iter_rev_from(&vault.store, &rtxn, &[])? {
+        count.row();
         let (id, raw) = row?;
         let record =
             skill_edit_verdict_receipt(&decode_verdict_with_marker(vault, &rtxn, id, &raw)?);
@@ -372,20 +364,8 @@ pub(crate) fn skill_edit_verdict_receipts(
             retain_newest_receipt(&mut out, record, query.limit);
         }
     }
+    count.finish(vault);
     Ok(out)
-}
-
-/// Surfaces a verdict-ledger scan that stopped at the receipt-family work cap.
-///
-/// The discarded remainder is unbounded by construction, so it is never
-/// counted: the fact worth saying is that the answer is a bounded PREFIX of the
-/// family rather than the family, which is exactly what
-/// `edit_distance::graduation` says at its own cap.
-fn note_verdict_scan_capped() {
-    tracing::warn!(
-        scan_cap = crate::receipt::MAX_RECEIPT_QUERY_SCAN,
-        "skill edit verdict scan hit the receipt-family work cap; older rulings were not projected"
-    );
 }
 
 fn skill_edit_verdict_receipt(verdict: &HeldOutVerdict) -> ReceiptRecord {

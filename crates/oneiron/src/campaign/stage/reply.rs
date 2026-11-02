@@ -11,6 +11,7 @@ use super::reentry::{
     MemberStateChange, ReentryPlan, WakeCondition, replace_member_state, snooze_with_wake,
 };
 use crate::campaign::claims::{CampaignMemberState, CrmStageValue, EvidenceBasis, StageKey};
+use crate::campaign::presets::resolve_reply_snooze_policy;
 use crate::{EntityId, Result, Vault};
 
 /// An already-projected comm reply, coded.
@@ -113,19 +114,36 @@ fn promote_from_reply(
     )
 }
 
-/// A coded reply carries no clock, so the wake it can honestly write is the
-/// trigger it can observe. A dated snooze enters through [`snooze_with_wake`].
+/// A positive-later reply pauses the membership for the campaign's own snooze
+/// (FIX 9667), read when the reply is applied: the pause ends
+/// `default_secs` after the reply arrived, and also on a fresh trigger when the
+/// policy says so. The wake is dated from the reply, not from when the engine
+/// got to it.
 fn snooze_from_reply(vault: &Vault, reply: &CodedCommReply) -> Result<StageProjectResult> {
+    let policy = resolve_reply_snooze_policy(vault, reply.campaign_ref)?;
+    let at = reply_wake_at(reply.occurred_at, policy.default_secs);
+    let wake = if policy.wake_on_new_trigger {
+        WakeCondition::AtOrNewTrigger { at }
+    } else {
+        WakeCondition::At(at)
+    };
     let plan = ReentryPlan {
         party_ref: reply.party_ref,
         campaign_ref: reply.campaign_ref,
-        wake: WakeCondition::NewTrigger,
-        restart_touch_index: 0,
+        wake,
+        restart_touch_index: policy.restart_touch_index,
         reason_evidence_ref: reply.message_ref,
         reentry_attempt: None,
     };
     snooze_with_wake(vault, &reply.membership_claim_ref, &plan, reply.occurred_at)?;
     Ok(StageProjectResult::Routed(StageRoute::Snoozed(plan)))
+}
+
+/// When a pause of `duration_secs` from `occurred_at` ends. A sum past the
+/// clock's range ends at its last representable second, which no wake reaches:
+/// the pause keeps its requested length rather than wrapping to a past date.
+const fn reply_wake_at(occurred_at: u64, duration_secs: u64) -> u64 {
+    occurred_at.saturating_add(duration_secs)
 }
 
 fn set_member_state(

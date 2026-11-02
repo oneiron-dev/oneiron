@@ -7,6 +7,7 @@ use super::storage::{
     scope_key, trigger_from_token,
 };
 use super::types::{EscalationTrigger, StandingPolicy, StandingPolicyStatus};
+use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::store::Store;
@@ -76,6 +77,9 @@ pub(crate) fn maybe_propose_standing_policy_at(
             cited_receipts: window.cited_receipts,
             proposed_at: at,
             accepted_at: None,
+            accepted_by: None,
+            decision_ref: None,
+            superseded: Vec::new(),
         };
         STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
         Ok(Some(row_ref))
@@ -145,13 +149,29 @@ pub fn standing_policy_for(
     scope: &str,
     trigger: EscalationTrigger,
 ) -> Result<Option<StandingPolicy>> {
-    let scope = normalized_scope(scope)?;
     let rtxn = vault.store.env.read_txn()?;
+    standing_policy_for_in(vault, &rtxn, scope, trigger)
+}
+
+/// [`standing_policy_for`] read in the caller's transaction, a writer's
+/// included, so a check inside a writer opens no read of its own (FIX
+/// 10696; LMDB refuses a nested reader, FIX 6992).
+///
+/// # Errors
+///
+/// As [`standing_policy_for`].
+pub(crate) fn standing_policy_for_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: &str,
+    trigger: EscalationTrigger,
+) -> Result<Option<StandingPolicy>> {
+    let scope = normalized_scope(scope)?;
     let key = ScopeTriggerKey {
         scope_digest: scope_key(scope),
         trigger,
     };
-    let Some(row) = STANDING_POLICY.get(&vault.store, &rtxn, &key)? else {
+    let Some(row) = STANDING_POLICY.get(&vault.store, txn, &key)? else {
         return Ok(None);
     };
     standing_policy_parts(&row).map(Some)
@@ -167,6 +187,8 @@ fn standing_policy_parts(row: &StoredStandingPolicy) -> Result<StandingPolicy> {
         ruling: ruling_from_parts(&row.ruling, row.delta.as_deref(), STANDING_POLICY_ROW_LABEL)?,
         budget_band_ceiling: row.band_ceiling,
         cited_receipts: row.cited_receipts.clone(),
+        accepted_by: row.accepted_by.clone(),
+        decision_ref: row.decision_ref.clone(),
     })
 }
 
@@ -178,8 +200,18 @@ const fn policy_status(row: &StoredStandingPolicy) -> StandingPolicyStatus {
     }
 }
 
-/// The owner's tap: flips a proposed row to [`StandingPolicyStatus::Accepted`],
+/// The grant target an Admin's or Delegate's Owner-minted `policy.change`
+/// grant names for the power to activate a standing escalation policy: one
+/// target for every row, at vault scope (the FIX 8177 holder door).
+pub const STANDING_POLICY_GRANT_TARGET: &str = "escalation-policy:standing-activate";
+
+/// The holder's tap: flips a proposed row to [`StandingPolicyStatus::Accepted`],
 /// and the only door that does.
+///
+/// The answering holder is found again in the activating writer: its person
+/// proof, then its vault-scope policy power over
+/// [`STANDING_POLICY_GRANT_TARGET`] — a live Owner, or an Admin or Delegate
+/// whose Owner-minted grant names it (FIX 9801).
 ///
 /// Idempotent on a row already accepted — the act happened once, and its
 /// acceptance receipt keeps the time it happened rather than the time it was
@@ -187,16 +219,29 @@ const fn policy_status(row: &StoredStandingPolicy) -> StandingPolicyStatus {
 ///
 /// # Errors
 ///
-/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when no row carries `row_ref`, plus
-/// [`Error::CorruptedIndex`] on an unreadable row and storage failures.
-pub fn accept_standing_policy(vault: &Vault, row_ref: &EntityId) -> Result<()> {
-    accept_standing_policy_at(vault, row_ref, vault.store.clock.now_recorded_at())
+/// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
+/// on a proof that no longer holds, [`Error::InvalidConfig`] when its person
+/// holds no policy power, [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound)
+/// when no row carries `row_ref`, plus [`Error::CorruptedIndex`] on an
+/// unreadable row and storage failures.
+pub fn accept_standing_policy(
+    vault: &Vault,
+    holder: &AuthenticatedOwner,
+    row_ref: &EntityId,
+) -> Result<()> {
+    accept_standing_policy_at(vault, holder, row_ref, vault.store.clock.now_recorded_at())
 }
 
 /// [`accept_standing_policy`] against a caller-supplied clock.
-pub(crate) fn accept_standing_policy_at(vault: &Vault, row_ref: &EntityId, at: u64) -> Result<()> {
+pub(crate) fn accept_standing_policy_at(
+    vault: &Vault,
+    holder: &AuthenticatedOwner,
+    row_ref: &EntityId,
+    at: u64,
+) -> Result<()> {
     let wanted = row_ref.to_hex();
     vault.with_write_txn_grouped(|wtxn| {
+        let actor = standing_policy_holder_in_txn(vault, &*wtxn, holder)?;
         let found = find_standing_policy_in_txn(&vault.store, &*wtxn, &wanted)?;
         let Some((key, mut row)) = found else {
             return Err(Error::Gate(GateError::InvalidConsentBound(
@@ -207,9 +252,35 @@ pub(crate) fn accept_standing_policy_at(vault: &Vault, row_ref: &EntityId, at: u
             return Ok(());
         }
         row.accepted_at = Some(at);
+        row.accepted_by = Some(actor.to_hex());
+        row.decision_ref = Some(holder.decision_id().to_hex());
         STANDING_POLICY.put(&vault.store, wtxn, &key, &row)?;
         Ok(())
     })
+}
+
+/// The answering holder of a standing-policy activation, read in the
+/// activating writer: `holder`'s person proof, then its vault-scope policy
+/// power over [`STANDING_POLICY_GRANT_TARGET`]. Every door that activates a
+/// standing policy asks it in the transaction that writes the row.
+pub(super) fn standing_policy_holder_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    holder: &AuthenticatedOwner,
+) -> Result<EntityId> {
+    let actor = holder.revalidate_person_in_txn(vault, txn)?;
+    if !crate::policy_model::holds_vault_policy_power_in_txn(
+        vault,
+        txn,
+        actor,
+        STANDING_POLICY_GRANT_TARGET,
+        crate::unix_seconds_now(),
+    )? {
+        return Err(Error::InvalidConfig(
+            "a live policy-power holder is required".to_owned(),
+        ));
+    }
+    Ok(actor)
 }
 
 /// The standing-policy row carrying `row_ref`, with its key.

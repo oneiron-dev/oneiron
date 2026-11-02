@@ -601,44 +601,40 @@ impl<'a> DreamerRunnerStore<'a> {
         }
     }
 
+    /// Defers a leased try to `retry_at` as the SAME row (FIX 3863): its
+    /// spend settles, the deferral joins the row's history and the row waits
+    /// scheduled, so a window demoted for months keeps one row, one stamp
+    /// and one scope however often it waits, and its paid steps replay free.
     pub(crate) fn defer_selection(
         &self,
         admitted: &super::DreamerAdmittedAttempt,
         budget: super::SettleDreamerBudget,
         retry_at: u64,
+        step_hashes: &[[u8; 32]],
     ) -> Result<()> {
         let source = &admitted.status.attempt;
         if budget.child_attempt != source.id || retry_at <= budget.now {
             return Err(invalid_dreamer_runner("invalid selection retry"));
         }
         self.vault.with_write_txn_grouped(|txn| {
-            self.settle_budget_in_txn(txn, budget.clone())?;
-            let crate::attempt_queue::RetryOutcome::Retried(record) = self.attempts.retry_in_txn(
+            let unpinned =
+                super::deferral::unpinned_step_hashes_in_txn(self, txn, source.id, step_hashes)?;
+            self.settle_budget_and_step_receipts_in_txn(txn, budget.clone(), &unpinned)?;
+            self.attempts.requeue_in_txn(
                 txn,
-                crate::attempt_queue::RetryAttempt {
+                crate::attempt_queue::RequeueAttempt {
                     id: source.id,
                     lease_owner: source
                         .lease_owner
                         .clone()
                         .ok_or_else(|| invalid_dreamer_runner("selection retry missing lease"))?,
                     attempt_count: source.attempt_count,
-                    backoff_until: retry_at,
-                    last_error: Some("consolidation selection deferred".into()),
-                    now: budget.now,
+                    reason: super::SELECTION_DEFERRED_REASON.into(),
+                    due_at: retry_at,
                 },
             )?;
-            super::authority::stamp_attempt(
-                self.vault,
-                txn,
-                &record,
-                &admitted.status.payload.attempt_type,
-            )?;
-            crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
-                self.vault, txn, source.id, record.id,
-            )?;
-            // The source never runs again; its retry lists afresh.
+            // Its next run lists afresh.
             crate::dreamer_consolidation::unpin_neighbourhood_in_txn(self.vault, txn, source.id)?;
-            ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
             Ok(())
         })
     }
@@ -819,6 +815,9 @@ impl<'a> DreamerRunnerStore<'a> {
                 self.attempts.retry_in_txn(txn, input)?;
             super::authority::stamp_attempt(self.vault, txn, &record, &payload.attempt_type)?;
             crate::dreamer_consolidation::branch_scope::inherit_retry_scope_in_txn(
+                self.vault, txn, source.id, record.id,
+            )?;
+            crate::dreamer_consolidation::pin_lineage_origin_in_txn(
                 self.vault, txn, source.id, record.id,
             )?;
             ensure_run_tree_record_in_txn(self.vault, txn, &record)?;
@@ -1011,17 +1010,24 @@ impl<'a> DreamerRunnerStore<'a> {
             reason: input.reason,
             cause: input.cause,
             park_owner: input.park_owner,
+            carried_spend: input.carried_spend,
             parked_at: input.now,
         };
         let existing = PARKED.get(&self.vault.store, &*wtxn, &record.attempt_id)?;
-        if let Some(existing) = existing
+        if let Some(existing) = &existing
             && existing.park_owner != record.park_owner
         {
             return Err(invalid_dreamer_runner(
                 "dreamer parked row is owned by a different parker",
             ));
         }
+        if let Some(existing) = &existing {
+            super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, existing)?;
+            super::program::unindex_program_hold_in_txn(self.vault, wtxn, existing)?;
+        }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
+        super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
+        super::program::index_program_hold_in_txn(self.vault, wtxn, &record)?;
         crate::dreamer_wake::record_checkpoint_in_txn(self.vault, wtxn, &record);
         Ok(record)
     }
@@ -1075,6 +1081,8 @@ impl<'a> DreamerRunnerStore<'a> {
         let (status, _) = self
             .status_with_park_in_txn(wtxn, attempt_id)?
             .ok_or(invalid_dreamer_runner("dreamer resumed attempt must exist"))?;
+        super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
+        super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         if let Some(lease_owner) = status.attempt.lease_owner.as_deref() {
             // Callers pass their own clock (the trap layer's counts
@@ -1136,6 +1144,16 @@ impl<'a> DreamerRunnerStore<'a> {
         attempt_id: AttemptId,
     ) -> Result<bool> {
         Ok(PARKED.get(&self.vault.store, txn, &attempt_id)?.is_some())
+    }
+
+    /// Every attempt that holds a parked row: each keeps its lease until the
+    /// signal it waits on resumes it, so a lease reclaim holds them all.
+    pub(crate) fn parked_ids(&self) -> Result<std::collections::HashSet<AttemptId>> {
+        let rtxn = self.vault.store.env.read_txn()?;
+        Ok(PARKED
+            .scan_keys(&self.vault.store, &rtxn, &[])?
+            .into_iter()
+            .collect())
     }
 
     /// Pure proposal step. This method performs no LMDB write and enqueues no

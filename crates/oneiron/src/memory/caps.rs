@@ -202,6 +202,21 @@ pub fn check_blob_bytes(len: usize) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// Reads a rendering token budget a binding passed as its host language's
+/// number (FIX 9962): a non-negative whole number, 0 rendering uncut. Like
+/// [`check_unix_seconds`], it proves the number narrows exactly.
+pub fn check_token_budget_number(value: f64) -> Result<u64, MemoryError> {
+    if !value.is_finite() || value < 0.0 || value.fract() != 0.0 || value > 9_007_199_254_740_991.0
+    {
+        return Err(MemoryError::bad_request(
+            "token_budget must be a non-negative whole number of tokens",
+        ));
+    }
+    // Proven finite, non-negative, whole and below 2^53 above.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    Ok(value as u64)
+}
+
 /// Rejects a timestamp that is not a usable Unix-seconds value (I14).
 ///
 /// The public bindings take timestamps as the host language's number type —
@@ -263,9 +278,9 @@ fn check_unit_interval(label: &str, value: f64) -> Result<f32, MemoryError> {
     Ok(value as f32)
 }
 
-/// Checks the witness batch and each message before either transport dispatches.
+/// Checks each message of the witness batch before either transport
+/// dispatches; the batch takes every message it names.
 pub fn check_witness_turn(turn: &WitnessTurn) -> Result<(), MemoryError> {
-    check_batch_len("messages", turn.messages.len())?;
     for message in &turn.messages {
         check_payload_bytes("message content", message.content.len())?;
     }

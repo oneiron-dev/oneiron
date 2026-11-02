@@ -7,25 +7,54 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::OwnerResult;
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new().route("/settings/room-threads", get(read).post(put))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/settings/room-threads",
+                summary: "The owner's two room-thread switches, as they read now.",
+                row: None,
+            },
+            get(read),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/settings/room-threads",
+                summary: "Sets either switch, or both, and answers the two as they now read.",
+                row: None,
+            },
+            post(put),
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/room-threads`'s body (FIX 11611):
+/// [`RoomThreadSettingsChange`].
+pub(crate) fn room_thread_change_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RoomThreadSettingsChange>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/settings/room-threads`'s answer (FIX 11611):
+/// [`RoomThreadSettings`].
+pub(crate) fn room_thread_settings_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RoomThreadSettings>()
 }
 
 /// The owner's two switches, as they read now.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RoomThreadSettings {
     /// Whether an Admin may walk into a private thread, from now on.
@@ -35,7 +64,7 @@ struct RoomThreadSettings {
 }
 
 /// A change to either switch, or both; an absent one stays as it is.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RoomThreadSettingsChange {
     #[serde(default)]
@@ -71,10 +100,10 @@ async fn read(
 async fn put(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RoomThreadSettingsChange>, JsonRejection>,
+    payload: OwnerJsonBody<RoomThreadSettingsChange>,
 ) -> OwnerReply<RoomThreadSettings> {
     let owner = owner(&auth, &server)?;
-    let change = json_payload(payload)?;
+    let change = payload.read(&server).await?;
     let settings = blocking(move || -> OwnerResult<RoomThreadSettings> {
         Ok(server
             .vault()

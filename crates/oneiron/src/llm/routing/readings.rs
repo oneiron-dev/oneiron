@@ -12,10 +12,11 @@ use super::{
     CallPurpose, DescriptionPolicy, MeasuredDescription, ModelDescription, SeatSettings, invalid,
     purpose_key,
 };
-use crate::Result;
+use crate::error::Error;
 use crate::llm::decision::{DecisionAnswer, TypedDecision};
 use crate::llm::seat::SeatPolicy;
 use crate::llm::{ModelId, ReasoningEffort};
+use crate::task_type::TaskTypeRef;
 
 /// One candidate's grade: the model, the effort it was graded at, and its
 /// complete typed decision.
@@ -39,16 +40,26 @@ impl DescriptionGrading {
     }
 }
 
-/// Every candidate's complete grade, in the order the route asked them.
+/// Every candidate's complete grade, in the order the route asked them, and
+/// the type stamp of the task they were graded for.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DescriptionFitnessReadings {
     pub gradings: Vec<DescriptionGrading>,
+    /// The task's type stamp as placed, which the grades read (ARCH-0079,
+    /// "placed once, read everywhere"); none for an untyped task.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub type_ref: Option<TaskTypeRef>,
 }
 
 impl DescriptionFitnessReadings {
-    /// Each asked candidate's grade, paired with its decision.
-    pub(super) fn of(candidates: &[Candidate<'_>], decisions: Vec<TypedDecision>) -> Self {
+    /// Each asked candidate's grade, paired with its decision, for a task
+    /// stamped `type_ref`.
+    pub(super) fn of(
+        candidates: &[Candidate<'_>],
+        decisions: Vec<TypedDecision>,
+        type_ref: Option<&TaskTypeRef>,
+    ) -> Self {
         Self {
             gradings: candidates
                 .iter()
@@ -59,6 +70,7 @@ impl DescriptionFitnessReadings {
                     decision,
                 })
                 .collect(),
+            type_ref: type_ref.cloned(),
         }
     }
 }
@@ -72,10 +84,29 @@ pub(super) struct Resolved<'a> {
     pub(super) grading: DescriptionFitnessReadings,
 }
 
+/// What a route that chose nothing reports (FIX 10465): why it chose
+/// nothing, with every candidate's grade it computed, as a chosen route
+/// carries them; empty when grading never ran.
+pub(super) struct Unrouted {
+    pub(super) reason: Error,
+    pub(super) grading: DescriptionFitnessReadings,
+}
+
+impl Unrouted {
+    /// A route that failed before grading ran: its error, with no grades.
+    fn failed(reason: Error) -> Self {
+        Self {
+            reason,
+            grading: DescriptionFitnessReadings::default(),
+        }
+    }
+}
+
 /// Seats and verdicts share the seat policy's composition, ceiling and
 /// evidence order; this router adds no default of its own. The highest
 /// positive grade wins, with its description line, grade and effort, and
-/// every candidate's grade rides with it.
+/// every candidate's grade rides with it; a route that chooses nothing
+/// reports its grades with its reason.
 pub(super) fn resolve<'a>(
     policy: &'a DescriptionPolicy,
     seat_policy: &SeatPolicy,
@@ -83,9 +114,12 @@ pub(super) fn resolve<'a>(
     settings: &SeatSettings,
     purpose: &CallPurpose,
     task: &str,
+    type_ref: Option<&TaskTypeRef>,
     decisions: &DescriptionDecisions<'_>,
-) -> Result<Resolved<'a>> {
-    let composed = seat_policy.compose_defaults(&purpose_key(purpose), Some(policy))?;
+) -> std::result::Result<Resolved<'a>, Unrouted> {
+    let composed = seat_policy
+        .compose_defaults(&purpose_key(purpose), Some(policy))
+        .map_err(Unrouted::failed)?;
     let rows: Vec<_> = policy
         .models
         .iter()
@@ -103,18 +137,21 @@ pub(super) fn resolve<'a>(
                 .map(|line| (row, line, effort))
         })
         .collect();
-    let grading = decisions.fitness(
-        task,
-        &rows
-            .iter()
-            .map(|&(row, description, effort)| Candidate {
-                model: &row.model,
-                description,
-                effort,
-            })
-            .collect::<Vec<_>>(),
-    )?;
-    let (chosen, line, fitness, effort) = rows
+    let grading = decisions
+        .fitness(
+            task,
+            type_ref,
+            &rows
+                .iter()
+                .map(|&(row, description, effort)| Candidate {
+                    model: &row.model,
+                    description,
+                    effort,
+                })
+                .collect::<Vec<_>>(),
+        )
+        .map_err(Unrouted::failed)?;
+    let winner = rows
         .into_iter()
         .zip(grading.gradings.iter().map(DescriptionGrading::fitness))
         .filter_map(|((row, line, effort), fitness)| {
@@ -122,8 +159,13 @@ pub(super) fn resolve<'a>(
                 .filter(|fitness| *fitness > 0.0)
                 .map(|fitness| (row, line, fitness, effort))
         })
-        .max_by(|a, b| a.2.total_cmp(&b.2))
-        .ok_or_else(|| invalid("no description candidate passed judgment"))?;
+        .max_by(|a, b| a.2.total_cmp(&b.2));
+    let Some((chosen, line, fitness, effort)) = winner else {
+        return Err(Unrouted {
+            reason: invalid("no description candidate passed judgment"),
+            grading,
+        });
+    };
     Ok(Resolved {
         chosen,
         line,

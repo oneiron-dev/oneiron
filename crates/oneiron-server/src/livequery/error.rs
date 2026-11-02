@@ -26,6 +26,16 @@ pub(crate) struct AppError {
     /// on an ask with the invocation and the ask, or hidden.
     #[serde(skip_serializing_if = "Option::is_none")]
     hook: Option<Box<oneiron::runtime_hooks::VerbHookStop>>,
+    /// The refusal's stable reason codes, in its producer's order, when it
+    /// named any (FIX 7398).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    reason_codes: Vec<String>,
+    #[serde(
+        default,
+        rename = "legal_hold",
+        skip_serializing_if = "Option::is_none"
+    )]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
 }
 
 impl AppError {
@@ -44,6 +54,8 @@ impl AppError {
             narrowing: None,
             wrong_root: None,
             hook: None,
+            reason_codes: Vec::new(),
+            legal_hold: None,
         }
     }
 
@@ -139,15 +151,43 @@ impl AppError {
             ["Name a fresh invocation for a different call."],
         )
     }
+
+    /// The first call's writes landed or its open intent expired, but its
+    /// reply was not kept. The call never runs again under this id.
+    pub(super) fn invocation_reply_not_kept(committed_writes: u32) -> Self {
+        Self::new(
+            crate::idempotency::REPLY_NOT_KEPT_STATE,
+            format!(
+                "the first request with this invocation committed {committed_writes} write(s) while it ran; its reply was not kept"
+            ),
+            [
+                "Read the resource's current state to see what landed.",
+                "Send the request with a new invocation to act again.",
+            ],
+        )
+    }
+
+    /// The first response was erased and never becomes a cache miss.
+    pub(super) fn invocation_response_erased() -> Self {
+        Self::new(
+            crate::api::INVOCATION_RESPONSE_ERASED,
+            "the first response with this invocation was erased",
+            ["Send the request with a new invocation to act again."],
+        )
+    }
 }
 
 impl From<ApiError> for AppError {
     fn from(error: ApiError) -> Self {
-        Self::new(
-            error.code().as_str(),
-            error.message(),
-            error.suggestions().to_vec(),
-        )
+        let legal_hold = error.legal_hold().cloned().map(Box::new);
+        Self {
+            legal_hold,
+            ..Self::new(
+                error.code().as_str(),
+                error.message(),
+                error.suggestions().to_vec(),
+            )
+        }
     }
 }
 
@@ -168,6 +208,8 @@ impl From<MemoryError> for AppError {
             narrowing: error.read_receipt,
             wrong_root: error.wrong_root,
             hook: error.hook,
+            reason_codes: error.reason_codes,
+            legal_hold: error.legal_hold,
             ..Self::new(&error.code, error.message, error.suggestions)
         }
     }

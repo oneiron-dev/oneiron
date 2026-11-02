@@ -38,6 +38,10 @@ pub const DISSENT_NOTE_KIND: &str = "opinion/dissent";
 /// it as the prompt. Readable on an explicit read, kept out of default
 /// context and out of extraction.
 pub(crate) const COMPACTION_INTENT_NOTE_KIND: &str = "compaction/intent";
+/// The authored prompt a lens is compiled from (FIX 9896): its CODE
+/// kind=lens row's birth names it as the prompt. Readable on an explicit
+/// read, kept out of default context and out of extraction.
+pub(crate) const LENS_INTENT_NOTE_KIND: &str = "lens/intent";
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionDefault {
@@ -122,6 +126,13 @@ const SHIPPED: &[(
     ),
     (
         COMPACTION_INTENT_NOTE_KIND,
+        ExtractionDefault::Disabled,
+        ContextDefault::ExplicitOnly,
+        RetentionDefault::Durable,
+        None,
+    ),
+    (
+        LENS_INTENT_NOTE_KIND,
         ExtractionDefault::Disabled,
         ContextDefault::ExplicitOnly,
         RetentionDefault::Durable,

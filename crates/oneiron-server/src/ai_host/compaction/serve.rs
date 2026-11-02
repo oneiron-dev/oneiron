@@ -23,12 +23,14 @@ use oneiron::llm::{
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence,
 };
-use oneiron::{BudgetGuard, LlmResponse};
+use oneiron::skill_optimize::union_source_rows;
+use oneiron::{BudgetGuard, EntityId, LlmResponse};
 
 use super::{
     BACKEND_KEY, COMPACTION_RUN, CompactionMeter, ServedCompactionBackend, output_tokens, refused,
 };
-use crate::ai_host::payer_funding::scope_funding;
+use crate::ai_host::live_lease::LiveLease;
+use crate::ai_host::payer_funding::{PayerFault, scope_funding};
 use crate::models::{RoleCall, RoleRefusal};
 
 impl ServedCompactionBackend {
@@ -53,6 +55,7 @@ impl ServedCompactionBackend {
                     schema: compaction_reply_schema(),
                 },
                 locality: self.locality,
+                host_keyless: false,
             },
             messages: vec![
                 LlmMessage {
@@ -135,8 +138,12 @@ impl ServedCompactionBackend {
         &self,
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
+        sources: Option<Vec<EntityId>>,
         admit: &Admit,
-        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
+        dress: impl FnOnce(
+            &mut LlmRequest,
+            CallRoom,
+        ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
     ) -> Result<Served<D>, CompactionRefusal> {
         let started = Instant::now();
         let mut llm = self.llm_request(request, retry);
@@ -153,13 +160,20 @@ impl ServedCompactionBackend {
             Admit::Role => Dispatch::Walk,
             Admit::Exact { .. } => Dispatch::Exact,
         };
-        self.send(started, call, dispatch, request.summary_token_budget, dress)?
-            .ok_or_else(|| {
-                refused(
-                    CompactionSuppression::TurnScoped { check: None },
-                    "the call was not sent".to_owned(),
-                )
-            })
+        self.send(
+            started,
+            call,
+            dispatch,
+            sources,
+            request.summary_token_budget,
+            dress,
+        )?
+        .ok_or_else(|| {
+            refused(
+                CompactionSuppression::TurnScoped { check: None },
+                "the call was not sent".to_owned(),
+            )
+        })
     }
 
     /// One admitted call, sent as `dispatch` says (one admitted as exactly
@@ -174,16 +188,21 @@ impl ServedCompactionBackend {
         started: Instant,
         mut call: RoleCall,
         dispatch: Dispatch<'_>,
+        sources: Option<Vec<EntityId>>,
         summary_token_budget: u64,
-        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
+        dress: impl FnOnce(
+            &mut LlmRequest,
+            CallRoom,
+        ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
     ) -> Result<Option<Served<D>>, CompactionRefusal> {
-        let (worn, guard, payer) = match self.ready(&mut call, summary_token_budget, dress) {
-            Ok(ready) => ready,
-            // Under `auto` nothing has gone out yet: the flight's cheap
-            // writer runs instead (FIX 6029).
-            Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
-            Err(refusal) => return Err(refusal),
-        };
+        let (worn, home_rows, guard, payer) =
+            match self.ready(&mut call, summary_token_budget, dress) {
+                Ok(ready) => ready,
+                // Under `auto` nothing has gone out yet: the flight's cheap
+                // writer runs instead (FIX 6029).
+                Err(_) if matches!(dispatch, Dispatch::WhileWarm(_)) => return Ok(None),
+                Err(refusal) => return Err(refusal),
+            };
         let step_hash = call.request.canonical_hash().ok();
         let sent = if matches!(dispatch, Dispatch::Walk) {
             None
@@ -191,7 +210,29 @@ impl ServedCompactionBackend {
             serde_json::to_vec(&call.request).ok()
         };
         let model = call.request.model.clone();
-        let run = self.models.funded_run(COMPACTION_RUN, guard.clone(), payer);
+        let run = self
+            .models
+            .funded_run(COMPACTION_RUN, guard.clone(), payer)
+            .sourced(union_source_rows([sources, home_rows]));
+        // A run's scope lends this call a live lease, as a reader child's
+        // (FIX 11748): its admission meets the room the scope has left now,
+        // siblings' spend included, and its own spend books once.
+        let live = match &self.meter {
+            CompactionMeter::Scope(scope) => {
+                let limit = guard.read().limit_units;
+                Some(LiveLease::new(
+                    &self.vault,
+                    Some(scope.clone()),
+                    guard.clone(),
+                    limit,
+                    0,
+                ))
+            }
+            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => None,
+        };
+        if let Some(live) = &live {
+            live.book_and_revise();
+        }
         let reply = match dispatch {
             Dispatch::Walk => self
                 .handle
@@ -210,9 +251,8 @@ impl ServedCompactionBackend {
                 ))
             }
         };
-        if let CompactionMeter::Scope(scope) = &self.meter
-            && let Err(error) =
-                AgentDispatcher::new(&self.vault).record_guard_spend(scope, guard.read().used_units)
+        if let Some(live) = &live
+            && let Err(error) = live.book_rest()
         {
             tracing::error!(%error, "a compaction call's spend did not book on its run's scope");
         }
@@ -244,8 +284,12 @@ impl ServedCompactionBackend {
         &self,
         call: &mut RoleCall,
         summary_token_budget: u64,
-        dress: impl FnOnce(&mut LlmRequest, CallRoom) -> Result<D, CompactionRefusal>,
-    ) -> Result<(D, BudgetGuard, Option<PayerPerson>), CompactionRefusal> {
+        dress: impl FnOnce(
+            &mut LlmRequest,
+            CallRoom,
+        ) -> Result<(D, Option<Vec<EntityId>>), CompactionRefusal>,
+    ) -> Result<(D, Option<Vec<EntityId>>, BudgetGuard, Option<PayerPerson>), CompactionRefusal>
+    {
         // The admitted model, not the configured ladder, must hold the call.
         let Some(&context) = self.allowances.get(&call.request.model) else {
             return Err(refused(
@@ -264,7 +308,7 @@ impl ServedCompactionBackend {
                 ),
             ));
         }
-        let worn = dress(
+        let (worn, home_rows) = dress(
             &mut call.request,
             CallRoom {
                 context,
@@ -284,22 +328,31 @@ impl ServedCompactionBackend {
         let turn =
             |error: String| refused(CompactionSuppression::TurnScoped { check: None }, error);
         // A pass under a room-paid scope bills its root payer's own account
-        // (OF-531); a payer this host cannot bill holds the pass for the turn.
+        // (OF-531); a payer this host cannot bill holds the pass for the turn,
+        // and one the owners must first approve holds it until they say yes
+        // (FIX 3740).
         let (guard, payer) = match &self.meter {
             CompactionMeter::CodeMode(guard) => (guard.clone(), None),
             // A chat turn's flight bills the payer its turn resolved, on its
             // own guard on the chat actor's line (FIX 4465 D).
             CompactionMeter::Chat { guard, payer } => (guard.clone(), payer.clone()),
             CompactionMeter::Scope(scope) => {
-                let payer = scope_funding(&self.vault, Some(scope), false)
-                    .map_err(|fault| turn(fault.to_string()))?;
+                let payer =
+                    scope_funding(&self.vault, Some(scope), false).map_err(
+                        |fault| match fault {
+                            PayerFault::Needed { .. } => {
+                                refused(CompactionSuppression::PayerNeeded, fault.to_string())
+                            }
+                            PayerFault::Missing { .. } => turn(fault.to_string()),
+                        },
+                    )?;
                 let guard = AgentDispatcher::new(&self.vault)
                     .guard_for_scope(scope)
                     .map_err(|error| turn(error.to_string()))?;
                 (guard, payer)
             }
         };
-        Ok((worn, guard, payer))
+        Ok((worn, home_rows, guard, payer))
     }
 
     /// What its context holds beside the reply and the prompt on `model`.
@@ -328,6 +381,21 @@ impl CompactionBackend for ServedCompactionBackend {
         &self.key
     }
 
+    /// The runtime's recovery count (FIX 1112): a run's turn-scoped hold
+    /// ends at its next breakpoint once a model seat comes back.
+    fn recoveries(&self) -> u64 {
+        *self.models.recoveries().borrow()
+    }
+
+    /// A pass held on its payer tries again once its scope's funding reads
+    /// yes, read as [`Self::ready`] first read it (FIX 3740).
+    fn funded(&self) -> bool {
+        match &self.meter {
+            CompactionMeter::Scope(scope) => scope_funding(&self.vault, Some(scope), false).is_ok(),
+            CompactionMeter::CodeMode(_) | CompactionMeter::Chat { .. } => true,
+        }
+    }
+
     fn tier_class(&self) -> CompactionTierClass {
         CompactionTierClass::Cheap
     }
@@ -354,7 +422,18 @@ impl CompactionBackend for ServedCompactionBackend {
         request: &CompactionRequest,
         retry: Option<CompactionCheck>,
     ) -> Result<CompactionProduct, CompactionRefusal> {
-        let served = self.serve(request, retry, &Admit::Role, |_, _| Ok(()))?;
+        // The seat resolved at bind is the exact model: admit it directly,
+        // with no role-route rewrite or fallback (FIX 4541).
+        let admit = Admit::Exact {
+            model: self.model.clone(),
+            locality: self.locality,
+        };
+        let sources = request
+            .window_read_from_sources
+            .then_some(request.sources.clone());
+        let served = self.serve(request, retry, sources, &admit, |_, _| {
+            Ok(((), Some(Vec::new())))
+        })?;
         Ok(product_of(&served.response, served.latency))
     }
 }

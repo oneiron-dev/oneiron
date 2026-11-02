@@ -8,7 +8,7 @@
 
 use super::store::Version;
 use oneiron_vault_contract::vm_outbox::{VmOutboxKind, vm_outbox_member};
-use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags};
+use rustix::fs::{AtFlags, FileType, FlockOperation, Mode, OFlags, RenameFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -22,6 +22,10 @@ const MAX_DEPTH: usize = 5;
 /// A training outbox's lock, which its producer and its shipper each take
 /// for a coherent local snapshot or commit.
 const TRAINING_LOCK: &str = ".lock";
+/// What a kept diverged copy's side name ends with, before the copy's digest.
+const ASIDE_MARK: &str = ".diverged-";
+/// The longest name one directory entry takes.
+const NAME_MAX: usize = 255;
 
 /// A local file's identity and size, as a scan compares it to skip a digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -395,9 +399,15 @@ pub(super) fn remove(root: &File, kind: VmOutboxKind, member: &str) -> std::io::
         Err(Errno::NOENT) => return Ok(()),
         Err(error) => return Err(error.into()),
     }
-    if kind != VmOutboxKind::Custody {
-        return Ok(());
+    if kind == VmOutboxKind::Custody {
+        drop_empty_custody_dirs(root, member)?;
     }
+    Ok(())
+}
+
+/// Drops each custody batch or log directory `member`'s removal leaves
+/// empty, syncing each parent; `<slot>/<target>` stay.
+fn drop_empty_custody_dirs(root: &File, member: &str) -> std::io::Result<()> {
     // `<slot>/<target>` stay: only the batch and its `log` may empty.
     let parts: Vec<&str> = member.split('/').collect();
     for keep in (3..parts.len()).rev() {
@@ -411,4 +421,85 @@ pub(super) fn remove(root: &File, kind: VmOutboxKind, member: &str) -> std::io::
         }
     }
     Ok(())
+}
+
+/// Moves `member` under `root` to its side name, a hidden sibling naming the
+/// copy's digest `held` ([`aside_name`]), and syncs its directory: the copy
+/// stays whole under its own name, out of the member's way, and no list,
+/// walk or producer takes it for a member (FIX 11736). A side name already
+/// there is never replaced; one that hashes to `held` holds the same bytes,
+/// so the twin at the member's name goes and the copy counts as aside
+/// (FIX 11985). Returns the side name, or `None` when no file is at the
+/// member's name.
+pub(super) fn move_aside(root: &File, member: &str, held: &str) -> std::io::Result<Option<String>> {
+    let (dir, leaf) = match parent_of(root, member, None) {
+        Ok(found) => found,
+        Err(error) if is_gone(&error) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let aside = aside_leaf(&leaf, held);
+    match rustix::fs::renameat_with(
+        &dir,
+        leaf.as_str(),
+        &dir,
+        aside.as_str(),
+        RenameFlags::NOREPLACE,
+    ) {
+        Ok(()) => dir.sync_all()?,
+        Err(Errno::NOENT) => return Ok(None),
+        Err(Errno::EXIST)
+            if open_file_at(&dir, &aside)
+                .and_then(|file| digest(&file))
+                .is_ok_and(|version| version.blake3 == held) =>
+        {
+            match rustix::fs::unlinkat(&dir, leaf.as_str(), AtFlags::empty()) {
+                Ok(()) | Err(Errno::NOENT) => dir.sync_all()?,
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(Some(aside_name(member, held)))
+}
+
+/// Deletes `member`'s side copy hashing to `held` under `root`, and syncs
+/// its directory; one not there is gone already (FIX 11985). For custody,
+/// a batch directory it leaves empty goes too, as on [`remove`]
+/// (FIX 12011).
+pub(super) fn remove_aside(
+    root: &File,
+    kind: VmOutboxKind,
+    member: &str,
+    held: &str,
+) -> std::io::Result<()> {
+    let (dir, leaf) = match parent_of(root, member, None) {
+        Ok(found) => found,
+        Err(error) if is_gone(&error) => return Ok(()),
+        Err(error) => return Err(error),
+    };
+    match rustix::fs::unlinkat(&dir, aside_leaf(&leaf, held).as_str(), AtFlags::empty()) {
+        Ok(()) => dir.sync_all()?,
+        Err(Errno::NOENT) => return Ok(()),
+        Err(error) => return Err(error.into()),
+    }
+    if kind == VmOutboxKind::Custody {
+        drop_empty_custody_dirs(root, member)?;
+    }
+    Ok(())
+}
+
+/// The side name of `member`'s copy hashing to `held`, relative to its
+/// kind's root: `.<leaf>.diverged-<held>` beside the member, the leaf cut to
+/// fit one name.
+pub(super) fn aside_name(member: &str, held: &str) -> String {
+    match member.rsplit_once('/') {
+        Some((parent, leaf)) => format!("{parent}/{}", aside_leaf(leaf, held)),
+        None => aside_leaf(member, held),
+    }
+}
+
+fn aside_leaf(leaf: &str, held: &str) -> String {
+    let room = NAME_MAX.saturating_sub(1 + ASIDE_MARK.len() + held.len());
+    let kept = leaf.get(..leaf.len().min(room)).unwrap_or(leaf);
+    format!(".{kept}{ASIDE_MARK}{held}")
 }

@@ -5,7 +5,8 @@
 //! point. Beside it sits the home the owner picked. The host and the cloud have no home.
 //! The passphrase piece stores nothing: its point is Argon2id(passphrase), and the line is
 //! fitted through it and the secret, so the passphrase alone (or with any public byte) is
-//! one point and opens nothing, and testing a guess needs a stored piece.
+//! one point and opens nothing, and testing a guess needs a stored piece. The issuing
+//! machine's own piece lives in its device-only key slots (`store`, FIX 2063).
 use rand_core::{OsRng, RngCore};
 use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfc_quick};
 use zeroize::{Zeroize, Zeroizing};
@@ -13,10 +14,12 @@ use zeroize::{Zeroize, Zeroizing};
 use crate::EntityId;
 
 mod piece;
+mod store;
 #[cfg(test)]
 mod tests;
 
 pub use piece::{KitId, KitPiece, PieceExport, RecoveryCode};
+pub(crate) use store::{KitPiecePair, KitPieceStore, join_kept_piece, vault_key_piece_install};
 
 const SALT_CONTEXT: &str = "oneiron/kit/v2/passphrase-salt";
 const TAG_CONTEXT: &str = "oneiron/kit/v2/tag";
@@ -37,7 +40,9 @@ pub enum KitSecretKind {
 }
 
 /// Where the owner keeps one piece. There is no host, cloud or server variant.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum PieceHome {
     /// The issuing machine, in its device-only key slot; never the vault store or sync.
@@ -67,7 +72,9 @@ impl PieceHome {
 }
 
 /// Where the owner keeps a recovery code. Only a file on a machine leaves with it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeKeeping {
     /// A file on one of the owner's machines.
@@ -83,7 +90,9 @@ pub enum CodeKeeping {
 }
 
 /// A machine that holds a piece.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum KitMachine {
     /// The issuing machine.
@@ -93,7 +102,9 @@ pub enum KitMachine {
 }
 
 /// What losing one machine leaves, judged from the homes at issue. Clients word it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum KitCoverage {
     /// Losing any one machine that holds a piece still leaves two pieces.
@@ -255,6 +266,7 @@ impl IssuedKit {
 /// A rebuilt secret. Debug never prints it; drop scrubs it.
 pub struct RestoredKitSecret {
     kind: KitSecretKind,
+    kit_id: KitId,
     bytes: Zeroizing<[u8; 32]>,
     reissue_advised: bool,
     stored_pieces: u8,
@@ -272,6 +284,10 @@ impl RestoredKitSecret {
     /// The secret the kit carried.
     pub fn kind(&self) -> KitSecretKind {
         self.kind
+    }
+    /// The kit the pieces belong to.
+    pub fn kit_id(&self) -> KitId {
+        self.kit_id
     }
     /// Explicit access for the vault-key unlock or the recovery-root rebuild.
     pub fn as_bytes(&self) -> &[u8; 32] {
@@ -347,6 +363,10 @@ pub enum KitError {
     /// The points do not rebuild this kit's secret. Never says which piece was wrong.
     #[error("the pieces do not open this kit")]
     NoMatch,
+    /// Too few pieces were given, and this machine's own piece, which its key slots
+    /// hold, could not be read to make up the two (FIX 2063).
+    #[error("this machine's kit piece could not be read; give two pieces")]
+    KeptPieceUnreadable,
 }
 
 /// Issues a kit for a vault's data key on any valid custody, a hosted one included: the
@@ -559,6 +579,7 @@ pub fn restore_kit(
     }
     Ok(RestoredKitSecret {
         kind,
+        kit_id: first.kit_id,
         bytes: secret,
         reissue_advised: first
             .cost

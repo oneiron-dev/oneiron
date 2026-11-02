@@ -37,6 +37,7 @@ mod fetch;
 mod handlers;
 #[cfg(unix)]
 mod host;
+mod isolation;
 mod landing;
 mod measure;
 pub mod mesh;
@@ -54,6 +55,10 @@ mod route;
 mod sandbox;
 #[cfg(unix)]
 pub mod seal;
+// The mesh's stop as its organ work sees it (FIX 4755, 4756). It builds
+// everywhere, as the router and the mesh client that read it do.
+#[path = "host/shutdown.rs"]
+mod shutdown;
 #[cfg(unix)]
 mod slot;
 mod spec;
@@ -66,6 +71,7 @@ pub use fetch::GuardedFetch;
 pub use handlers::{Answered, AskHandler, AskHandlers, AskRequest};
 #[cfg(unix)]
 pub use host::{CallMeasure, CallSize, OrganHost};
+pub use isolation::{DescendantFence, NamespaceFact, OrganIsolation};
 pub use landing::propose_organ_outputs;
 #[cfg(unix)]
 pub use mesh::OrganService;
@@ -80,8 +86,7 @@ pub use resource_memory::{FloorRefusal, MachineFloor, MemoryGrow};
 pub use route::{
     NodeWait, OrganNodes, OrganRouter, RanOn, Routed, VaultOrganNodes, can_start_organs,
 };
-#[cfg(unix)]
-pub use sandbox::{DescendantFence, NamespaceFact, OrganIsolation};
+pub use shutdown::MeshCancel;
 #[cfg(unix)]
 pub use slot::{OrganState, OrganStatus};
 pub use spec::{

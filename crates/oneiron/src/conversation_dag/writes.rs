@@ -1,8 +1,6 @@
 //! Atomic append, explicit HEAD moves and canonical-index repair.
 
-use super::graph::{
-    self, CANONICAL, HEAD, actor_in_txn, chain, invalid, read_id, require_member, require_type,
-};
+use super::graph::{self, CANONICAL, HEAD, actor_in_txn, chain, invalid, read_id, require_type};
 use super::migration::migrate_in_txn;
 use super::policy::{self, AppendFailure};
 use super::{AddressMode, AppendRecord, AppendedRecord, DagPage, DagPageRequest};
@@ -11,10 +9,12 @@ use crate::batch::EdgeValueFields;
 use crate::edge::EdgeKind;
 use crate::error::{RecordError, Result};
 use crate::memory::{Memory, MemoryResult};
-use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_TURN};
+use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::{EntityId, Vault};
 use heed::RwTxn;
 use rmpv::Value;
+
+mod messages;
 
 pub(super) fn value(created_at: u64) -> EdgeValueFields {
     EdgeValueFields {
@@ -155,11 +155,17 @@ pub(crate) fn append_at_in_txn(
     )? {
         return Err(invalid("erased person cannot append to this room"));
     }
+    // FIX 9771: a MESSAGE joins its TURN, never HEAD or the canonical line.
+    if input.kind == ENTITY_TYPE_MESSAGE {
+        return messages::append_message_in_txn(vault, txn, input, summary, thread, id);
+    }
     if thread && input.advance {
         return Err(invalid("HEAD never enters a thread"));
     }
-    if input.kind != ENTITY_TYPE_TURN {
-        return Err(invalid("append_record admits TURN only"));
+    if input.kind != ENTITY_TYPE_TURN || input.containing_turn.is_some() {
+        return Err(invalid(
+            "append_record admits a TURN, or a MESSAGE of its TURN",
+        ));
     }
     require_type(
         &vault.store,
@@ -249,7 +255,16 @@ pub(crate) fn append_at_in_txn(
         .quote
         .map(|quote| super::quote::prove_in_txn(vault, txn, input, quote, id))
         .transpose()?;
-    let reply_to = super::quote::reply_target(input.reply_to, quote.as_ref())?;
+    // FIX 9771: the exact TURN or MESSAGE answered; the reply is placed
+    // against its TURN.
+    let target = super::quote::append_target_in_txn(
+        vault,
+        txn,
+        input.conversation,
+        input.reply_to,
+        quote.as_ref(),
+    )?;
+    let reply_to = target.as_ref().map(super::DagReplyTarget::placement);
     // Validate all recipients before writing the record. Addressing is never a
     // room-membership or audience test: a non-member may be mentioned.
     let mut seen = std::collections::HashSet::new();
@@ -286,18 +301,13 @@ pub(crate) fn append_at_in_txn(
     else {
         return Err(invalid("record body must be a map"));
     };
-    if let Some(asking) = reply_to {
-        require_member(&vault.store, txn, &input.conversation, &asking)?;
-        let asking_body = require_type(&vault.store, txn, &asking, ENTITY_TYPE_TURN)?;
+    if let Some(target) = &target {
+        let anchor = quote.as_ref().map(|quote| quote.anchor);
         entries.extend([
             (Value::from("addr"), Value::from("reply")),
             (
                 Value::from("reply_to"),
-                super::quote::reply_pointer(
-                    asking,
-                    blake3::hash(&asking_body).to_hex().to_string(),
-                    quote.as_ref(),
-                ),
+                super::quote::reply_pointer_in_txn(vault, txn, target, anchor)?,
             ),
         ]);
         if let Some(summary) = summary {
@@ -486,6 +496,9 @@ pub(crate) fn append_at_in_txn(
         id,
         head: if input.advance { Some(id) } else { old_head },
         parent: input.parent,
+        kind: ENTITY_TYPE_TURN,
+        containing_turn: None,
+        reply_target: target,
     })
 }
 
@@ -555,8 +568,8 @@ pub(super) fn set_head_in_txn(
 }
 
 impl Vault {
-    /// Appends one immutable TURN and atomically updates topology and
-    /// membership. `writer` is the caller's bound surface, the byline `input`
+    /// Appends one immutable TURN, or a MESSAGE of a TURN (FIX 9771), and
+    /// atomically updates topology and membership. `writer` is the caller's bound surface, the byline `input`
     /// names (OF-063): every typed ref the append names (conversation,
     /// parent, reply target, quoted MESSAGE and its TURN, session and
     /// recipients) must read for it in the append's own transaction. The

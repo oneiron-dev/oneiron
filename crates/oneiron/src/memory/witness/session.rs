@@ -319,10 +319,8 @@ impl Memory<'_> {
             };
             verify_actor_binding_in_txn(self.vault, &*wtxn, self.actor, self.actor_class)?;
             if self.vault.shared_vault_creation_in_txn(wtxn)?.is_some() {
-                self.vault.verify_write_actor_in_txn(
-                    wtxn,
-                    &crate::WriteActor::new(self.actor, self.actor_class),
-                )?;
+                self.vault
+                    .verify_write_actor_in_txn(wtxn, &self.write_actor())?;
             }
             if !session.is_member_in_txn(wtxn, room, self.actor)? {
                 return Err(MemoryError::new(
@@ -433,6 +431,7 @@ impl Memory<'_> {
             learned_at: plan.learned_at,
             occurred: plan.occurred,
             op,
+            source_run: None,
         };
         let put = |id: &EntityId, entity_type: u8, data: &[u8]| BatchOp::Put {
             id: *id,
@@ -558,13 +557,12 @@ impl Memory<'_> {
         // read-your-own-writes over its predecessors. Atomicity is untouched:
         // this is all still one base txn and one overlay segment.
         for entry in entries {
-            crate::batch::apply_ops_session(
+            crate::embed::apply_ops_session_projected(
+                self.vault,
                 &sink.session.read_view()?,
                 sink.route,
-                &self.vault.config,
-                &self.vault.analyzer,
                 wtxn,
-                vec![entry],
+                entry,
             )?;
         }
         let alias_ids = std::iter::once(plan.turn_id)

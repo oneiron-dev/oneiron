@@ -221,57 +221,69 @@ pub(crate) fn settle_embedder_section(
 
 /// A managed vault's settings file, which managed mode has already refused
 /// leaf by leaf (`managed::settings`), settled once over the `config` it
-/// built from argv: read in the config file's schema, its `[models]`
-/// resolved beside the file (`dir`), applied as the vault file's layer, its
-/// `[embedder]` settled as [`settle_embedder_section`] settles one, and the
-/// result refused as serve refuses a config that cannot serve. No other
-/// layer is read: no environment, no default config path.
+/// built from argv: `table`, what it kept of the file at `path` whose text
+/// is `raw`, read in the config file's schema, its `[models]` resolved
+/// beside the file, applied as the vault file's layer, its `[embedder]`
+/// settled as [`settle_embedder_section`] settles one, and the result
+/// refused as serve refuses a config that cannot serve. No other layer is
+/// read: no environment, no default config path. A table that does not read
+/// names only the place in `raw` where it fails, and a `[models]` or
+/// `[embedder]` that does not settle only where its table starts, never the
+/// value refused (FIX 9477, 10687, 10925); the caller names the file.
 pub(crate) fn settle_managed_settings(
     config: &mut ServeConfig,
     table: toml::Table,
-    dir: Option<&Path>,
+    path: &Path,
+    raw: &str,
 ) -> anyhow::Result<()> {
+    // The deserializer's error names the value it refused, and the table
+    // keeps no place in the file: it is dropped unread, and the file's own
+    // text read again for the place.
     let mut file: FileServeConfig = toml::Value::Table(table)
         .try_into()
-        .context("parse the settings file")?;
+        .map_err(|_| super::locate_toml_failure::<FileServeConfig>(raw))?;
+    // A section that does not settle names only where its table starts in
+    // `raw`: its own error may name the value it refused (FIX 10925).
     let models = file
         .models
         .take()
-        .map(|models| models.resolve(dir))
+        .map(|models| models.resolve(path.parent()))
         .transpose()
+        .map_err(|_| super::locate_toml_section(raw, "models"))
         .context("the settings file's [models]")?;
     let embedder = file.embedder.take();
     let mut values = PartialServeConfig::from(file);
     values.models = models;
     values.apply_to(config, ConfigLayer::Vault)?;
     if let Some(section) = embedder {
-        settle_embedder_section(config, section).context("the settings file's [embedder]")?;
+        settle_embedder_section(config, section)
+            .map_err(|_| super::locate_toml_section(raw, "embedder"))
+            .context("the settings file's [embedder]")?;
     }
     validate_serve_config(config)
 }
 
 /// The config file's `[backup]` table alone: a mistyped setting elsewhere in
-/// the file does not stop it being read.
+/// the file does not stop it being read. A file that does not parse names
+/// only itself and the place it failed (FIX 9477).
 fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverride>> {
+    /// The file with every key but `[backup]` skipped unread.
+    #[derive(Deserialize)]
+    struct BackupOnly {
+        backup: Option<BackupConfigOverride>,
+    }
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read config file {}", path.display()))?;
-    let mut table: toml::Table =
-        toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
-    table
-        .remove("backup")
-        .map(|section| {
-            section
-                .try_into()
-                .with_context(|| format!("parse [backup] in config file {}", path.display()))
-        })
-        .transpose()
+    let file: BackupOnly = super::parse_toml(path, &raw)?;
+    Ok(file.backup)
 }
 
+/// The config file's layer. A file that does not parse names only itself
+/// and the place it failed (FIX 9477).
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("read config file {}", path.display()))?;
-    let mut config: FileServeConfig =
-        toml::from_str(&raw).with_context(|| format!("parse config file {}", path.display()))?;
+    let mut config: FileServeConfig = super::parse_toml(path, &raw)?;
     let models = config
         .models
         .take()
@@ -329,6 +341,7 @@ struct FileServeConfig {
     failure_signals: Option<FailureSignalsConfigOverride>,
     self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    policy: Option<super::PolicyConfig>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
@@ -343,6 +356,7 @@ struct FileServeConfig {
     connectors: Option<std::collections::BTreeMap<String, super::ConnectorHostConfig>>,
     embedding: Option<super::EmbeddingConfig>,
     line: Option<super::LineConfig>,
+    channel_endpoints: Option<super::ChannelEndpointsConfig>,
     linear: Option<super::LinearConfig>,
     privacy_posture: Option<HostingPrivacyPosture>,
     failure_signal_export: Option<bool>,
@@ -398,6 +412,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             failure_signals: value.failure_signals,
             self_heal: value.self_heal,
             recall: value.recall,
+            policy: value.policy,
             skills: value.skills,
             keystore: value.keystore,
             limits: value.limits,
@@ -412,6 +427,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             connectors: value.connectors,
             embedding: value.embedding,
             line: value.line,
+            channel_endpoints: value.channel_endpoints,
             linear: value.linear,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -420,6 +436,7 @@ impl From<FileServeConfig> for PartialServeConfig {
             maximum_tier: value.maximum_tier,
             device_class: value.device_class,
             esign_delivery_outbox_dir: None,
+            cloud_registration_pins: None,
             publisher_training_outbox_dir: None,
             publisher_training_self_host_shipper: None,
             publisher_training_intake_origin: None,
@@ -472,6 +489,7 @@ struct PartialServeConfig {
     failure_signals: Option<FailureSignalsConfigOverride>,
     self_heal: Option<SelfHealConfigOverride>,
     recall: Option<RecallConfigOverride>,
+    policy: Option<super::PolicyConfig>,
     skills: Option<SkillsConfigOverride>,
     keystore: Option<KeystoreConfigOverride>,
     limits: Option<LimitsConfigOverride>,
@@ -496,6 +514,8 @@ struct PartialServeConfig {
     embedding: Option<super::EmbeddingConfig>,
     /// `[line]` is file-only, as `[browser]` is.
     line: Option<super::LineConfig>,
+    /// `[channel_endpoints]` is file-only, as `[line]` is.
+    channel_endpoints: Option<super::ChannelEndpointsConfig>,
     /// `[linear]` is file-only, as `[native_mail]` is; a plain serve's
     /// `ONEIRON_LINEAR_*` environment is read beside it at serve start.
     linear: Option<super::LinearConfig>,
@@ -509,6 +529,9 @@ struct PartialServeConfig {
     device_class: Option<oneiron::authority::MachineDeviceClass>,
     /// `--esign-delivery-outbox-dir` is argv-only: no file key, no env.
     esign_delivery_outbox_dir: Option<PathBuf>,
+    /// `--cloud-registration-pins` is argv-only, as the outbox: no file key,
+    /// no env, no owner setting (G7).
+    cloud_registration_pins: Option<PathBuf>,
     /// `--publisher-training-outbox-dir` is argv-only: no file key, no env.
     publisher_training_outbox_dir: Option<PathBuf>,
     /// `--publisher-training-self-host-shipper` is argv-only, as the outbox.
@@ -575,6 +598,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("failure_signals", &self.failure_signals)
             .field("self_heal", &self.self_heal)
             .field("recall", &self.recall)
+            .field("policy", &self.policy)
             .field("skills", &self.skills)
             .field("keystore", &self.keystore)
             .field("limits", &self.limits)
@@ -589,6 +613,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("connectors", &self.connectors)
             .field("embedding", &self.embedding)
             .field("line", &self.line)
+            .field("channel_endpoints", &self.channel_endpoints)
             .field("linear", &self.linear)
             .field("privacy_posture", &self.privacy_posture)
             .field(
@@ -598,6 +623,7 @@ impl fmt::Debug for PartialServeConfig {
             .field("maximum_tier", &self.maximum_tier)
             .field("device_class", &self.device_class)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
+            .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
                 "publisher_training_outbox_dir",
                 &self.publisher_training_outbox_dir,
@@ -666,6 +692,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             failure_signals: None,
             self_heal: None,
             recall: None,
+            policy: None,
             skills: None,
             keystore: value
                 .keystore_dir
@@ -686,6 +713,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             connectors: None,
             embedding: None,
             line: None,
+            channel_endpoints: None,
             linear: None,
             privacy_posture: value.privacy_posture,
             failure_signal_export: value.failure_signal_export,
@@ -694,6 +722,7 @@ impl From<&ServeArgs> for PartialServeConfig {
             maximum_tier: None,
             device_class: None,
             esign_delivery_outbox_dir: value.esign_delivery_outbox_dir.clone(),
+            cloud_registration_pins: value.cloud_registration_pins.clone(),
             publisher_training_outbox_dir: value.publisher_training_outbox_dir.clone(),
             publisher_training_self_host_shipper: value
                 .publisher_training_self_host_shipper

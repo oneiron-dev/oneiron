@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use oneiron::memory::extraction::{
-    EncoderAttempt, EncoderExecution, EncoderInput, EncoderMessage, EncoderOutput,
+    EncoderAttempt, EncoderExecution, EncoderInput, EncoderMessage, EncoderOutput, EncoderRegister,
     ExecutionCompute, ExecutionPick, ExecutionRuntime,
 };
 
@@ -212,12 +212,9 @@ impl WorkerSpec {
     /// A candle model loaded where it always loads (`engines::load`), before
     /// the listener binds. Its thread warms it once, and it is Ready.
     pub(crate) fn local(engine: Engine, tagger: LocalTagger) -> Self {
+        let descriptor = Self::validate_local(engine, &tagger);
         Self {
-            descriptor: WorkerDescriptor::candle(
-                engine,
-                tagger.stack_sha16(),
-                tagger.max_input_tokens(),
-            ),
+            descriptor,
             // Candle runs one unpadded sequence at a time.
             batch: 1,
             bring: Bring::Once {
@@ -227,12 +224,19 @@ impl WorkerSpec {
         }
     }
 
+    /// What [`Self::local`] would run, without its thread or its warm-up
+    /// call: what init validates.
+    pub(crate) fn validate_local(engine: Engine, tagger: &LocalTagger) -> WorkerDescriptor {
+        WorkerDescriptor::candle(engine, tagger.stack_sha16(), tagger.max_input_tokens())
+    }
+
     /// The configured endpoint, which must report `checkpoint`: one opaque
     /// worker, Ready at once. Its server warms itself, and one that is not
     /// up yet fails its calls, not the worker.
     pub(crate) fn endpoint(tagger: Arc<HttpTagger>, checkpoint: &str) -> Self {
+        let descriptor = Self::validate_endpoint(checkpoint);
         Self {
-            descriptor: WorkerDescriptor::endpoint(checkpoint),
+            descriptor,
             // The dispatcher sends it one call at a time.
             batch: 1,
             bring: Bring::Once {
@@ -240,6 +244,12 @@ impl WorkerSpec {
                 warm: None,
             },
         }
+    }
+
+    /// What [`Self::endpoint`] would run, without its thread: what init
+    /// validates.
+    pub(crate) fn validate_endpoint(checkpoint: &str) -> WorkerDescriptor {
+        WorkerDescriptor::endpoint(checkpoint)
     }
 
     /// A platform runtime's worker, started after the listener binds and
@@ -291,6 +301,8 @@ fn warm_input() -> EncoderInput {
             text: WARM_TEXT.to_owned(),
         }],
         context: Vec::new(),
+        following: Vec::new(),
+        register: EncoderRegister::Live,
         language: None,
         speaker: None,
     }
@@ -331,7 +343,7 @@ pub(super) fn serve_unit(
     unit: Unit,
 ) -> Option<&'static str> {
     let started = Instant::now();
-    let (results, fault) = run_unit(worker, &unit);
+    let (results, fault, panicked) = run_unit(worker, &unit);
     let ran = started.elapsed();
     let answered = unit
         .into_iter()
@@ -346,6 +358,7 @@ pub(super) fn serve_unit(
             );
             let attempt = EncoderAttempt {
                 execution: Some(execution),
+                panicked,
                 result,
             };
             (job, attempt)
@@ -355,27 +368,51 @@ pub(super) fn serve_unit(
     fault
 }
 
-/// One unit as one [`Worker::run_batch`] call: one result per call, in
-/// order. A worker that panics, or answers another number of calls, fails
-/// every call of the unit, and the fault is named.
+/// One unit as one [`Worker::run_batch`] call over every window of its
+/// calls, in order: one result per call, each call's windows merged into
+/// its one answer (FIX 9518), and a call any of whose windows failed failing
+/// with that window's error. A worker that panics, or answers another number
+/// of windows, fails every call of the unit, and the fault is named.
 fn run_unit(
     worker: &mut dyn Worker,
     unit: &[(Job, ExecutionPick)],
-) -> (Vec<oneiron::Result<EncoderOutput>>, Option<&'static str>) {
-    let inputs: Vec<&EncoderInput> = unit.iter().map(|(job, _)| &job.input).collect();
-    let (code, fault) = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs))) {
-        Ok(results) if results.len() == inputs.len() => return (results, None),
+) -> (
+    Vec<oneiron::Result<EncoderOutput>>,
+    Option<&'static str>,
+    bool,
+) {
+    let inputs: Vec<&EncoderInput> = unit
+        .iter()
+        .flat_map(|(job, _)| job.windows.inputs())
+        .collect();
+    let (code, fault, panicked) = match catch_unwind(AssertUnwindSafe(|| worker.run_batch(&inputs)))
+    {
+        Ok(results) if results.len() == inputs.len() => {
+            let mut results = results.into_iter();
+            let answers = unit
+                .iter()
+                .map(|(job, _)| {
+                    let parts: Vec<_> = results.by_ref().take(job.windows.len()).collect();
+                    parts
+                        .into_iter()
+                        .collect::<oneiron::Result<Vec<EncoderOutput>>>()
+                        .and_then(|outputs| job.windows.merge(outputs))
+                })
+                .collect();
+            return (answers, None, false);
+        }
         Ok(_) => (
             "the worker answered another number of calls",
             "wrong_result_count",
+            false,
         ),
-        Err(_) => ("the worker panicked", "worker_panicked"),
+        Err(_) => ("the worker panicked", "worker_panicked", true),
     };
-    let failed = inputs
+    let failed = unit
         .iter()
         .map(|_| Err(failure(WORKER_TOOL, code)))
         .collect();
-    (failed, Some(fault))
+    (failed, Some(fault), panicked)
 }
 
 /// Loading, then Warming when the spec asks, then Ready. `None` when the
@@ -398,8 +435,13 @@ fn bring_up(
             return None;
         }
     };
+    // A worker its owner retired while it came up stays out of service, and
+    // its next unit ends its thread (FIX 7108).
+    let serving = move |scheduler: &super::Scheduler| {
+        scheduler.workers[index].state != WorkerState::Unavailable
+    };
     if let Some(input) = warm {
-        shared.settle(index, WorkerState::Warming, None);
+        shared.settle_if(index, WorkerState::Warming, None, serving);
         // The warm-up only warms: a failed one leaves the worker taking work,
         // its calls failing and retrying one by one as an unwarmed one's do.
         let warmed = catch_unwind(AssertUnwindSafe(|| worker.run(&input)));
@@ -407,6 +449,6 @@ fn bring_up(
             tracing::warn!(worker = index, "an Oneironer worker's warm-up call failed");
         }
     }
-    shared.settle(index, WorkerState::Ready, None);
+    shared.settle_if(index, WorkerState::Ready, None, serving);
     Some(worker)
 }

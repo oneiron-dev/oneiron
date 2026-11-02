@@ -3,15 +3,12 @@ mod artifact_previews;
 mod board_publisher;
 mod browser_seats;
 mod connector_events;
+mod connector_replies;
 mod connector_sends;
 mod consult_settle;
 mod core;
 mod courtesy_delete;
-#[allow(
-    unused_imports,
-    reason = "the old module name, for branches cut before the rename"
-)]
-use self::courtesy_delete as cooperative_deletion;
+mod deletion;
 mod desktop_seats;
 mod embedding;
 mod housekeeping;
@@ -36,6 +33,7 @@ mod reader_runner;
 mod recall;
 mod recall_hyde;
 mod recall_rerank;
+pub(crate) mod removal_delivery;
 mod resident_pump;
 mod run_host_door;
 mod space_move;
@@ -47,7 +45,9 @@ mod windows;
 pub(crate) use self::artifact_previews::ArtifactPreviews;
 pub(crate) use self::browser_seats::{BrowserSeat, BrowserSeats, HandleLine};
 pub(crate) use self::core::BroadcastPayload;
+pub(crate) use self::core::ManagedIssuer;
 pub use self::core::{SyncServer, TaskWorkTurn};
+pub(crate) use self::deletion::DeletionMarker;
 pub(crate) use self::desktop_seats::{DesktopSeat, DesktopSeats};
 pub(crate) use self::desktop_seats::{RunSeats, Seat, SeatGuest};
 pub(crate) use self::housekeeping::{HousekeepingAdmission, PassControl, admit_every_pass};

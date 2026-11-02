@@ -23,6 +23,8 @@
 //! pin's own key bindings, and hands both to the adoption door, which
 //! verifies them against the pin and refuses what this vault cannot take.
 
+mod parts;
+
 use base64::Engine;
 use serde::Deserialize;
 use serde_json::json;
@@ -40,8 +42,8 @@ use crate::authority::{
 };
 use crate::sync::client::SyncClientConfig;
 use crate::sync::residence::{
-    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_TAIL_PAGE_MAX, held_authority_entries,
-    held_authority_history, import_authority_page,
+    AUTHORITY_CHECKPOINT_PART_MAX, AUTHORITY_ENTRY_PART_MAX, AUTHORITY_TAIL_PAGE_MAX,
+    held_authority_entries, held_authority_history, import_authority_page,
 };
 use crate::sync::transport::TransportError;
 
@@ -50,8 +52,9 @@ use crate::sync::transport::TransportError;
 const MAX_PAGES: usize = 1024;
 
 /// The most signed bytes one append page carries: inside the request frame
-/// once base64 and the RPC envelope are added.
-const APPEND_PAGE_BYTES: usize = 4 << 20;
+/// once base64 and the RPC envelope are added, as one entry part is. An
+/// entry past it goes alone, in parts (FIX 8246).
+const APPEND_PAGE_BYTES: usize = AUTHORITY_ENTRY_PART_MAX;
 
 #[derive(Deserialize)]
 struct AuthorityTailReply {
@@ -60,6 +63,9 @@ struct AuthorityTailReply {
     /// lacks, as concatenated 32-byte hashes in base64.
     #[serde(default)]
     wanted: String,
+    /// The entries the page names by reference, fetched in parts (FIX 8246).
+    #[serde(default)]
+    parted: Vec<parts::AuthorityEntryRefReply>,
 }
 
 /// One page of a range fetch, naming the selection it serves. The home's
@@ -71,6 +77,9 @@ struct AuthorityRangeReply {
     rows: Vec<String>,
     #[serde(default)]
     next: Option<String>,
+    /// The rows the page names by reference, fetched in parts (FIX 8246).
+    #[serde(default)]
+    parted: Vec<parts::AuthorityEntryRefReply>,
 }
 
 /// One part of a kept checkpoint image.
@@ -135,6 +144,9 @@ pub(crate) async fn catch_up_authority(
     let mut wanted = None;
     // Entries refused this round: named as held, so the home pages past them.
     let mut skipped = BTreeSet::new();
+    // Parents of those refused entries: asked for as required history, so a
+    // row refused for missing parents can land once they arrive.
+    let mut required = BTreeSet::new();
     for _ in 0..MAX_PAGES {
         let mut held = held_authority_entries(vault).map_err(storage)?;
         held.extend(skipped.iter().copied());
@@ -149,7 +161,7 @@ pub(crate) async fn catch_up_authority(
             )
             .await?;
         let reply: AuthorityTailReply = serde_json::from_value(reply).map_err(|_| refused())?;
-        if reply.entries.len() > AUTHORITY_TAIL_PAGE_MAX {
+        if reply.entries.len() + reply.parted.len() > AUTHORITY_TAIL_PAGE_MAX {
             return Err(refused());
         }
         let entries = reply
@@ -158,11 +170,13 @@ pub(crate) async fn catch_up_authority(
             .map(|entry| base64::engine::general_purpose::STANDARD.decode(entry))
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| refused())?;
+        let entries = parts::join_page(&mut rpc, entries, reply.parted).await?;
         let count = entries.len();
         let page = import_authority_page(vault, &entries).map_err(storage)?;
         taken += page.written;
         if !page.refused.is_empty() {
             tracing::debug!(refused = page.refused.len(), "authority entries refused");
+            required.extend(refused_parent_hashes(&entries, &page.refused));
             skipped.extend(page.refused);
         }
         if count < AUTHORITY_TAIL_PAGE_MAX {
@@ -176,7 +190,8 @@ pub(crate) async fn catch_up_authority(
             tracing::debug!(appended, "authority entries appended to the home");
         }
     }
-    let (repaired, missing) = repair_authority_history(vault, &mut rpc, &skipped).await?;
+    let (repaired, missing) =
+        repair_authority_history(vault, &mut rpc, &skipped, &required).await?;
     taken += repaired;
     if !missing.is_complete() {
         tracing::warn!(
@@ -312,15 +327,22 @@ async fn append_authority(
         if !wanted.contains(&hash) {
             continue;
         }
-        if entry.len() > APPEND_PAGE_BYTES {
-            return Err(refused());
-        }
-        if page.len() == AUTHORITY_TAIL_PAGE_MAX || bytes + entry.len() > APPEND_PAGE_BYTES {
+        // An entry past one page goes alone, in parts (FIX 8246).
+        let alone = entry.len() > APPEND_PAGE_BYTES;
+        if !page.is_empty()
+            && (alone
+                || page.len() == AUTHORITY_TAIL_PAGE_MAX
+                || bytes + entry.len() > APPEND_PAGE_BYTES)
+        {
             pages.push(std::mem::take(&mut page));
             bytes = 0;
         }
         bytes += entry.len();
         page.push(entry);
+        if alone {
+            pages.push(std::mem::take(&mut page));
+            bytes = 0;
+        }
     }
     if !page.is_empty() {
         pages.push(page);
@@ -330,15 +352,22 @@ async fn append_authority(
         if index > 0 && index % MAX_PAGES == 0 {
             tokio::task::yield_now().await;
         }
-        let entries: Vec<String> = page
-            .iter()
-            .map(|entry| base64::engine::general_purpose::STANDARD.encode(entry))
-            .collect();
-        let reply: AuthorityAppendReply = serde_json::from_value(
-            rpc.request("residence.authority.append", json!({ "entries": entries }))
-                .await?,
-        )
-        .map_err(|_| refused())?;
+        let reply: AuthorityAppendReply = match page.as_slice() {
+            [entry] if entry.len() > APPEND_PAGE_BYTES => {
+                parts::append_authority_parts(rpc, entry).await?
+            }
+            _ => {
+                let entries: Vec<String> = page
+                    .iter()
+                    .map(|entry| base64::engine::general_purpose::STANDARD.encode(entry))
+                    .collect();
+                serde_json::from_value(
+                    rpc.request("residence.authority.append", json!({ "entries": entries }))
+                        .await?,
+                )
+                .map_err(|_| refused())?
+            }
+        };
         // Each entry's outcome: a refused one waits for the next round.
         let took = packed_count(&reply.accepted)?;
         let held_back = packed_count(&reply.refused)?;
@@ -375,13 +404,36 @@ fn packed_count(packed: &str) -> Result<usize, TransportError> {
     Ok(raw.len() / 32)
 }
 
+/// The parents of the entries in `entries` that `refused` names, decoded
+/// here: an entry that does not decode contributes nothing.
+fn refused_parent_hashes(
+    entries: &[Vec<u8>],
+    refused: &BTreeSet<AuthorityEntryHash>,
+) -> BTreeSet<AuthorityEntryHash> {
+    let mut parents = BTreeSet::new();
+    for entry in entries {
+        let Ok(body) = decode_authority_log_entry_body(entry) else {
+            continue;
+        };
+        let Ok(hash) = authority_entry_hash(&body) else {
+            continue;
+        };
+        if refused.contains(&hash) {
+            parents.extend(body.parent_hashes.iter().copied());
+        }
+    }
+    parents
+}
+
 /// Fetches the history this machine's rows name and it lacks, by exact hash,
 /// each missing entry with its ancestors down to what this machine holds or
 /// staged, parents first, and imports each page through the repair door. It
 /// asks again after each page, since a fetched entry may name further
 /// ancestors, and stops once nothing is missing, the home serves none of it,
 /// or the door refuses a page. `refused` are entries refused this round:
-/// named as held, so no page carries them again. Once a round, a request for
+/// named as held, so no page carries them again. `required` are the parents
+/// of those refused entries: asked for with the history, so a row refused
+/// for missing parents lands once they arrive. Once a round, a request for
 /// the whole adopted coverage pages it by the image instead, under one fixed
 /// selection and held set, the cursor walking it; its end is no proof of
 /// completeness, so the round asks again after it and fetches what remains
@@ -390,12 +442,14 @@ async fn repair_authority_history(
     vault: &Vault,
     rpc: &mut ResidenceRpc,
     refused: &BTreeSet<AuthorityEntryHash>,
+    required: &BTreeSet<AuthorityEntryHash>,
 ) -> Result<(usize, AuthorityHistoryRequest), TransportError> {
     let mut refused = refused.clone();
+    let mut required = required.clone();
     let mut written = 0;
     let mut cursor = None;
     let mut request = vault
-        .authority_history_request(&BTreeSet::new())
+        .authority_history_request(&required)
         .map_err(storage)?;
     // The covered pass in flight, and whether this round has run one.
     let mut pass: Option<AuthorityHistoryFetch> = None;
@@ -458,9 +512,10 @@ async fn repair_authority_history(
                 refused: dropped,
             } => {
                 written += landed.len();
+                required.extend(refused_parent_hashes(&rows, &dropped));
                 refused.extend(dropped);
                 vault
-                    .authority_history_request(&BTreeSet::new())
+                    .authority_history_request(&required)
                     .map_err(storage)?
             }
             AuthorityRepairOutcome::Staged {
@@ -531,7 +586,7 @@ async fn fetch_authority_range(
         Err(error) => return Err(error),
     };
     let reply: AuthorityRangeReply = serde_json::from_value(reply).map_err(|_| refused())?;
-    if reply.rows.len() > AUTHORITY_HISTORY_PAGE_MAX
+    if reply.rows.len() + reply.parted.len() > AUTHORITY_HISTORY_PAGE_MAX
         || base64::engine::general_purpose::STANDARD
             .decode(&reply.selection)
             .ok()
@@ -546,6 +601,7 @@ async fn fetch_authority_range(
         .map(|row| base64::engine::general_purpose::STANDARD.decode(row))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| refused())?;
+    let rows = parts::join_page(rpc, rows, reply.parted).await?;
     let next = reply
         .next
         .map(|next| {

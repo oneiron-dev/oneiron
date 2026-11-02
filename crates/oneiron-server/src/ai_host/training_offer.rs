@@ -29,10 +29,11 @@ use oneiron::skill_optimize::offer_pilot::{
     training_destination as destination,
 };
 use oneiron::skill_optimize::{
-    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCost, OfferEvidence,
-    OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer, TrainingOfferDraft,
-    model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role, training_offer,
-    training_offer_checks, training_offer_skill_id, training_offers, union_source_rows,
+    ComputeDestination, EvalSeat, OfferCandidate, OfferCheckInput, OfferCheckOutcome, OfferCost,
+    OfferEvidence, OfferIntent, OfferModelPin, OfferOption, SeatWorkload, TrainingOffer,
+    TrainingOfferDraft, model_role_seat, offer_skill_cell, offer_training_handoff, seat_model_role,
+    training_offer, training_offer_checks, training_offer_skill_id, training_offers,
+    union_source_rows,
 };
 use oneiron::training_pack::{TrainingRun, TrainingState};
 use oneiron::{EntityId, Error, LlmMessageRole, ModelLocality, Vault};
@@ -44,12 +45,14 @@ use crate::server::SyncServer;
 use crate::usage::SeatUsage;
 
 mod check;
+mod choices;
 mod cost;
 mod draft;
 mod pilot;
 mod sources;
 mod unverifiable;
 pub(super) use check::check;
+use choices::{recipe_choices, stock_choices};
 use cost::{candidate_monthly, monthly, payback};
 use sources::Sources;
 use unverifiable::{Alone, Unverifiable};
@@ -62,8 +65,10 @@ const WINDOW_SECS: u64 = 30 * DAY_SECS;
 const MONTH_SECS: u64 = 30 * DAY_SECS;
 /// When an offer's promise is checked, after it is made.
 const CHECK_AFTER_SECS: u64 = 30 * DAY_SECS;
-/// The catalog's per-million list prices carry no currency; they are read as
-/// this one.
+/// The currency an offer quotes its money in. Only a catalog row quoted in it
+/// projects a month's bill; a row quoted in another currency, or in none its
+/// provider named, projects none and stays an option (FIX 9534). A row whose
+/// rates are all zero is free in any currency and projects zero.
 const CATALOG_CURRENCY: &str = "USD";
 /// How far a checked month may run over the promised one and still hold.
 const COST_TOLERANCE: f64 = 0.10;
@@ -75,7 +80,9 @@ const BUDGET_UNITS: u64 = 1 << 20;
 const PRICING_NOTE: &str = "Both sides are priced at list price on this seat's measured \
     token counts, cached prompt tokens at each model's quoted cache rates, or at its input price \
     where it quotes none; the candidate's counts are the incumbent's scaled by how many tokens \
-    each model's tokenizer counts in one fixed passage.";
+    each model's tokenizer counts in one fixed passage. Only list prices quoted in USD are \
+    priced: a model whose price names another currency, or none, shows no figure. A free model, \
+    every rate zero, shows 0 in any currency.";
 /// The note instead when the candidate's price is an estimate: a tokenizer
 /// of the two was never measured.
 const ESTIMATE_NOTE: &str = "The candidate's price is an estimate: it is priced at list \
@@ -361,135 +368,8 @@ impl Brief {
             sources.set(row.source_rows.as_deref());
         }
         let baseline_monthly = monthly(current, &workload, &usage);
-        let mut stock: Vec<Choice> = registry
-            .iter()
-            .filter(|row| row.catalog.model != current.catalog.model)
-            .filter(|row| {
-                current
-                    .catalog
-                    .capabilities
-                    .iter()
-                    .all(|capability| row.catalog.supports(capability))
-            })
-            .filter_map(|row| {
-                let (pin, backend) = pin(row)?;
-                let licence = licence(row)?;
-                let (monthly, estimate) = candidate_monthly(current, row, &workload, &usage);
-                let label = format!("switch to {}", row.catalog.model.as_str());
-                Some(Choice {
-                    id: String::new(),
-                    label: if estimate {
-                        format!("{label} (estimated price)")
-                    } else {
-                        label
-                    },
-                    candidate: OfferCandidate::Stock {
-                        model: pin.clone(),
-                        licence: licence.clone(),
-                        source: backend.clone(),
-                    },
-                    pin,
-                    monthly,
-                    estimate,
-                    destination: match row.catalog.locality {
-                        ModelLocality::OnDevice => ComputeDestination::OnDevice,
-                        ModelLocality::OwnServer => ComputeDestination::SelfHosted {
-                            host: backend.clone(),
-                        },
-                        ModelLocality::ThirdParty => ComputeDestination::Hosted {
-                            provider: backend.clone(),
-                            rows_leaving: 0,
-                        },
-                    },
-                    evidence_refs: Vec::new(),
-                    pilot: None,
-                    data: serde_json::json!({
-                        "kind": "switch",
-                        "model": row.catalog.model.as_str(),
-                        "display_name": row.catalog.display_name,
-                        "locality": row.catalog.locality,
-                        "backend": backend,
-                        "licence": licence,
-                        "context_window_tokens": row.catalog.context_window_tokens,
-                        "monthly_at_list_price": monthly,
-                        "estimate": estimate,
-                        "public_benchmarks": row.scores,
-                    }),
-                })
-            })
-            .collect();
-        // The cheapest first, unknown prices last. Every option rides whole
-        // (Rule 5).
-        stock.sort_by(|a, b| match (a.monthly, b.monthly) {
-            (Some(a), Some(b)) => a.total_cmp(&b),
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (None, None) => std::cmp::Ordering::Equal,
-        });
-        let mut recipes: Vec<Choice> = Vec::new();
-        // A question head trains no seat's role, so no offer recipe names it.
-        let mut seat_runs: Vec<&TrainingRun> = runs
-            .iter()
-            .filter(|run| {
-                run.plan
-                    .target
-                    .role_binding()
-                    .is_some_and(|(run_role, _)| run_role == role)
-                    && run.plan.seat == seat
-            })
-            .collect();
-        seat_runs.sort_by_key(|run| std::cmp::Reverse((run.created_at, run.id)));
-        for run in &seat_runs {
-            // Each seat run is read for its recipe, kept or not (FIX 5760).
-            sources.set(run.source_rows.as_deref());
-            let Some(base) = base_pin(run) else {
-                continue;
-            };
-            if recipes.iter().any(|choice| choice.pin == base) {
-                continue;
-            }
-            let Some(licence) = registry
-                .iter()
-                .find(|row| row.catalog.model == run.plan.starting_checkpoint.model)
-                .and_then(licence)
-            else {
-                continue;
-            };
-            let Some(destination) = destination(run) else {
-                continue;
-            };
-            let recipe_ref = format!("training_run:{}", run.id.to_hex());
-            recipes.push(Choice {
-                id: String::new(),
-                label: format!("train from {}", base.model),
-                candidate: OfferCandidate::TrainRecipe {
-                    base: base.clone(),
-                    recipe_ref: recipe_ref.clone(),
-                    licence: licence.clone(),
-                },
-                pin: base.clone(),
-                // A custom model's serving price is not known before it runs.
-                monthly: None,
-                estimate: false,
-                destination: destination.clone(),
-                evidence_refs: vec![recipe_ref.clone()],
-                pilot: None,
-                data: serde_json::json!({
-                    "kind": "train",
-                    "base": base.model,
-                    "recipe": recipe_ref,
-                    "licence": licence,
-                    "state": run.state,
-                    "destination": destination,
-                    "held_out": run.evaluation.as_ref().map(|evaluation| serde_json::json!({
-                        "cases": evaluation.cases,
-                        "metrics": evaluation.metrics,
-                        "passed": evaluation.passed,
-                    })),
-                    "monthly_at_list_price": null,
-                }),
-            });
-        }
+        let stock = stock_choices(registry, current, &workload, &usage);
+        let (recipes, seat_runs) = recipe_choices(runs, registry, role, &seat, &mut sources);
         let mut choices: Vec<Choice> = stock.into_iter().chain(recipes).collect();
         if choices.is_empty() {
             return Ok(None);
@@ -505,9 +385,10 @@ impl Brief {
             .rev()
             .find(|cohort| cohort.retired_at.is_none());
         // The cohort's cases and labels, as the ledger keeps their rows
-        // (FIX 5760); a lineage read that fails leaves them unknown.
+        // (FIX 5760); a lineage read that fails stops the draft instead of
+        // erasing its rows to unknown (FIX 11913).
         if let Some(cohort) = &cohort {
-            let read = vault.eval_cohort_source_rows(&cohort.id).ok().flatten();
+            let read = vault.eval_cohort_source_rows(&cohort.id)?;
             sources.set(read.as_deref());
         }
         // Names and the rubric revision ride whole (Rule 5).
@@ -560,6 +441,8 @@ impl Brief {
                 "checks": checks.iter().map(|check| serde_json::json!({
                     "held": check.held,
                     "observed_monthly_cost": check.observed_monthly_cost,
+                    // Why a check could not judge, e.g. unverifiable_unpriced_cache (FIX 6318).
+                    "note": check.note,
                 })).collect::<Vec<_>>(),
             }));
         }

@@ -14,8 +14,7 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -25,34 +24,54 @@ use oneiron::authority::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/machines/answer", get(get_answer).post(set_answer))
-        .route("/machines/remove", post(remove))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/machines/answer",
+                summary: "One machine's answer (`?machine=<id>`): its role, the carrier of the owner's standing answer, and the revision a surface presents back as seen.",
+                row: None,
+            },
+            get(get_answer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/answer",
+                summary: "The owner marks or re-marks one of his machines yours, work or school, or rented, from any linked surface; a stale seen is a conflict.",
+                row: None,
+            },
+            post(set_answer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/remove",
+                summary: "The owner removes one of his machines, terminally; a stale seen is a conflict.",
+                row: None,
+            },
+            post(remove),
+        ),
+    ]
 }
 
 /// Where the owner's say-so reached this install, for the act's audit and
 /// receipts only: no rule reads it. The hosted console behind his
 /// supervisor's `ManagedOwnerAction`; a linked machine that proved itself on
 /// this very request; else this install's own surface (its host action, its
-/// CLI or its app).
-pub(crate) fn act_surface(server: &SyncServer, auth: &CoreAuth, headers: &HeaderMap) -> ActSurface {
-    surface_of(server, auth, || {
-        crate::auth::required_machine_proof(headers).ok()
-    })
-}
-
-/// [`act_surface`] on a request whose `extensions` may hold the caller the
-/// binding door admitted (FIX 6160): the machine proof that door kept for
-/// this caller's slip, never read from the headers again, where it kept
-/// one; the headers' as [`act_surface`] reads them on any other request.
-/// A missing or malformed proof is this install, as there.
+/// CLI or its app). The machine proof is the one the binding door kept for
+/// this caller's slip in `extensions` (FIX 6160), never read from the
+/// headers again, where it kept one; the headers' on any other request
+/// (FIX 6340: every door reads it here). A missing or malformed proof is
+/// this install.
 pub(crate) fn act_surface_admitted(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -119,7 +138,7 @@ struct MachineQuery {
     machine: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct SetAnswer {
     /// The MACHINE row, as 32 hex.
@@ -133,7 +152,7 @@ struct SetAnswer {
     seen: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RemoveMachine {
     /// The MACHINE row, as 32 hex.
@@ -143,7 +162,7 @@ struct RemoveMachine {
     seen: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct MachineAnswer {
     machine: String,
     /// The roster chain's role: `yours`, `work_school`, `rented`,
@@ -202,6 +221,21 @@ async fn get_answer(
     Ok(Json(answer))
 }
 
+/// The OpenAPI schema of `POST /v1/owner/machines/answer`'s body (FIX 11617): [`SetAnswer`].
+pub(crate) fn set_answer_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<SetAnswer>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/machines/remove`'s body (FIX 11617): [`RemoveMachine`].
+pub(crate) fn remove_machine_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RemoveMachine>()
+}
+
+/// The OpenAPI schema of the machines answer/remove answers (FIX 11617): [`MachineAnswer`].
+pub(crate) fn machine_answer_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<MachineAnswer>()
+}
+
 /// `POST /v1/owner/machines/answer`: the owner marks or re-marks one of his
 /// machines. A role change between linked roles takes no carrier power away.
 async fn set_answer(
@@ -209,11 +243,11 @@ async fn set_answer(
     headers: HeaderMap,
     extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<SetAnswer>, JsonRejection>,
+    payload: OwnerJsonBody<SetAnswer>,
 ) -> OwnerReply<MachineAnswer> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &request.machine)?;
         let seen = request
@@ -243,11 +277,11 @@ async fn remove(
     headers: HeaderMap,
     extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<RemoveMachine>, JsonRejection>,
+    payload: OwnerJsonBody<RemoveMachine>,
 ) -> OwnerReply<MachineAnswer> {
     let owner = owner(&auth, &server)?;
     let surface = act_surface_admitted(&server, &auth, &headers, &extensions);
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answer = blocking(move || -> OwnerResult<MachineAnswer> {
         let machine = entity_id("machine", &request.machine)?;
         let seen = request

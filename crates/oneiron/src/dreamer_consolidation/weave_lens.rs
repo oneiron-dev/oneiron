@@ -9,7 +9,10 @@
 //! composes it into the reader's lens. A plan still refused after its repair
 //! lands as the period's refusal, which the opened digest names.
 
+use super::request_sources::{CallBackend, SourcedBackend};
+use super::residency::spent_or_deferred;
 use super::step_charge::StepChargeTally;
+use crate::attempt_queue::{AttemptQueue, ReadSetProducer};
 use crate::claim::{
     WEAVE_LENS_PLAN_REPAIRS, WeaveLensRefusal, WeaveLensRender, WeaveLiveLens,
     weave_lens_answer_plan, weave_lens_repair_text,
@@ -17,9 +20,7 @@ use crate::claim::{
 use crate::dreamer_runner::{
     DREAMER_WEAVE_LENS_ATTEMPT_KIND, DreamerAdmittedAttempt, DreamerParkCause,
 };
-use crate::dreamer_wake::{
-    DREAMER_HARD_CUT_PARK_REASON, DreamerAttemptExecution, WakeAttemptContext,
-};
+use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::error::{Error, Result};
 use crate::llm::manifest::ModelRole;
 use crate::llm::{
@@ -47,6 +48,9 @@ pub struct WeaveLensModel<'a> {
     pub role: ModelRole,
     /// The Dreamer, whose step it is.
     pub actor: WriteActor,
+    /// `backend` bound per call to the rows its input was read from, when
+    /// the host lends that (FIX 6998).
+    pub sourced: Option<&'a dyn SourcedBackend>,
 }
 
 fn invalid(reason: &str) -> Error {
@@ -54,7 +58,10 @@ fn invalid(reason: &str) -> Error {
 }
 
 fn owed_nothing() -> Result<DreamerAttemptExecution> {
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }
 
 /// One generate step of a period render.
@@ -67,31 +74,43 @@ enum LensStep {
     Exit(DreamerAttemptExecution),
 }
 
-/// Runs `request` as a durable step, tallying what it spent.
+/// Runs `request` as a durable step on `backend`, tallying what it spent.
 async fn lens_step(
     step_ctx: &DurableStepContext<'_>,
     model: &WeaveLensModel<'_>,
+    backend: &dyn LlmBackend,
     request: LlmRequest,
     charges: &mut StepChargeTally,
+    ctx: &WakeAttemptContext<'_>,
 ) -> Result<LensStep> {
-    let step_hash = request
-        .canonical_hash()
-        .map_err(|_| invalid("the request did not hash"))?;
+    let step_hash = match request.canonical_hash() {
+        Ok(step_hash) => step_hash,
+        Err(_) => {
+            return spent_or_deferred(invalid("the request did not hash"), ctx, charges)
+                .map(LensStep::Exit);
+        }
+    };
     Ok(
-        match call_as_step(step_ctx, model.backend, model.guard, request).await {
-            Ok(StepOutcome::Finished { response, .. }) => {
-                charges.record_terminal(
+        match call_as_step(step_ctx, backend, model.guard, request).await {
+            Ok(StepOutcome::Finished {
+                response, memoized, ..
+            }) => {
+                if let Err(error) = charges.record_terminal(
                     step_ctx.vault,
                     step_ctx.attempt_id,
                     step_hash,
                     &response.usage,
-                )?;
+                ) {
+                    if !memoized {
+                        charges.record_usage(&response.usage);
+                    }
+                    return spent_or_deferred(error, ctx, charges).map(LensStep::Exit);
+                }
                 LensStep::Answer(response)
             }
-            Ok(StepOutcome::Trapped { .. }) => LensStep::Exit(DreamerAttemptExecution::Park {
-                reason: "durable step trapped for resume".to_owned(),
-                cause: DreamerParkCause::Signal,
-            }),
+            Ok(StepOutcome::Trapped { .. }) => LensStep::Exit(
+                charges.park_for("durable step trapped for resume", DreamerParkCause::Signal),
+            ),
             Err(DurableStepError::SpentFinalizeRefused { usage }) => {
                 charges.record_usage(&usage);
                 LensStep::Exit(charges.checkpoint())
@@ -103,23 +122,16 @@ async fn lens_step(
                     errors.join("; ")
                 ))
             }
-            Err(DurableStepError::DeadlineHardCut) => {
-                LensStep::Exit(DreamerAttemptExecution::Park {
-                    reason: DREAMER_HARD_CUT_PARK_REASON.to_owned(),
-                    cause: DreamerParkCause::Checkpoint,
-                })
+            Err(DurableStepError::DeadlineHardCut) => LensStep::Exit(charges.checkpoint()),
+            Err(DurableStepError::FinalizeRefused) => LensStep::Exit(
+                charges.park_for("wake pass finalize window", DreamerParkCause::Checkpoint),
+            ),
+            Err(DurableStepError::Engine(error)) => {
+                return spent_or_deferred(error, ctx, charges).map(LensStep::Exit);
             }
-            Err(DurableStepError::FinalizeRefused) => {
-                LensStep::Exit(DreamerAttemptExecution::Park {
-                    reason: "wake pass finalize window".to_owned(),
-                    cause: DreamerParkCause::Checkpoint,
-                })
-            }
-            Err(DurableStepError::Engine(error)) => return Err(error),
-            Err(other) => LensStep::Exit(DreamerAttemptExecution::Park {
-                reason: other.to_string(),
-                cause: DreamerParkCause::of_step(&other),
-            }),
+            Err(other) => LensStep::Exit(
+                charges.park_for(&other.to_string(), DreamerParkCause::of_step(&other)),
+            ),
         },
     )
 }
@@ -141,6 +153,7 @@ fn answer_text(response: &LlmResponse) -> String {
 fn lens_request(
     model: ModelId,
     locality: ModelLocality,
+    keyless: bool,
     instruction: String,
     text: String,
 ) -> Result<LlmRequest> {
@@ -161,6 +174,7 @@ fn lens_request(
                 schema: crate::claim::weave_lens_plan_schema()?,
             },
             locality,
+            host_keyless: keyless,
         }
         .with_purpose_defaults(),
         messages: vec![
@@ -204,6 +218,7 @@ pub fn live_weave_lens_request(
     let request = lens_request(
         model,
         locality,
+        false,
         live.instruction.clone(),
         live.input.clone(),
     )?;
@@ -223,7 +238,7 @@ pub fn live_weave_lens_request(
 /// on the row. A refused plan gets [`WEAVE_LENS_PLAN_REPAIRS`] repair turns;
 /// then its refusal lands on the row instead. A period re-rendered, withheld,
 /// already rendered or refused since it was queued is owed nothing, and
-/// neither is one whose skill is retired.
+/// neither is one whose skill is retired or whose lens pack is not Active.
 pub async fn run_weave_lens(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,
@@ -241,18 +256,36 @@ pub async fn run_weave_lens(
     if stored.rendered_at != rendered_at || stored.lens.is_some() || stored.lens_refused.is_some() {
         return owed_nothing();
     }
-    let skill = crate::claim::weave_report_skill_id()?;
-    let loaded = match ctx.vault.load_attempt_skill_pack(
+    // The render reads the skill's pack and the period's report: both
+    // declared before either reads (FIX 7019, 7073).
+    super::declare_attempt_reads(
+        ctx.vault,
         record.id,
-        &skill,
-        record.lease_owner.as_deref().unwrap_or_default(),
-        record.attempt_count,
-        model.model.as_str(),
-        ctx.now_ms / 1_000,
-    ) {
-        Ok(loaded) => loaded,
+        &[
+            ReadSetProducer::SKILL_PACK,
+            ReadSetProducer::DREAMER_WEAVE_REPORT,
+        ],
+    );
+    // The skill is the weave lens pack's: a pack not installed Active, or a
+    // lens that no longer mounts, renders nothing.
+    let Some((lens, skill)) = crate::claim::weave_report_lens(ctx.vault)? else {
+        return owed_nothing();
+    };
+    let loaded = match ctx.vault.render_mounted_lens(&lens, || {
+        ctx.vault.load_attempt_skill_pack(
+            record.id,
+            &skill,
+            record.lease_owner.as_deref().unwrap_or_default(),
+            record.attempt_count,
+            model.model.as_str(),
+            ctx.now_ms / 1_000,
+        )
+    }) {
+        Ok(Some(loaded)) => loaded,
         // A retired, unapproved or deleted skill renders nothing.
-        Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => return owed_nothing(),
+        Ok(None) | Err(Error::EntityNotFound | Error::InvalidClaimBody(_)) => {
+            return owed_nothing();
+        }
         Err(error) => return Err(error),
     };
     let Some(instruction) = loaded
@@ -264,12 +297,27 @@ pub async fn run_weave_lens(
     else {
         return owed_nothing();
     };
+    super::record_attempt_reads(
+        ctx.vault,
+        record.id,
+        ReadSetProducer::DREAMER_WEAVE_REPORT,
+        Some(stored.report.value.source_rows()),
+    );
     let text = crate::claim::weave_lens_model_input(ctx.vault, &stored)?;
+    // The render's every call reads the skill and the period only: it sends
+    // under the attempt's read set, once that set is complete (FIX 6998).
+    let rows = AttemptQueue::new(ctx.vault)
+        .get(record.id)
+        .ok()
+        .flatten()
+        .and_then(|queued| queued.source_rows().map(<[_]>::to_vec));
+    let backend = CallBackend::new(model.backend, model.sourced, rows);
     let locality = model
         .inference
         .selected_locality()
         .ok_or_else(|| invalid("the host binding names no locality"))?;
-    let request = lens_request(model.model.clone(), locality, instruction, text)?;
+    let keyless = model.inference.selected_keyless();
+    let request = lens_request(model.model.clone(), locality, keyless, instruction, text)?;
     let mut request = ctx
         .vault
         .authorize_model_role(model.role, request, &model.inference)?
@@ -287,7 +335,16 @@ pub async fn run_weave_lens(
     let mut charges = StepChargeTally::default();
     let mut reason = String::new();
     for _ in 0..=WEAVE_LENS_PLAN_REPAIRS {
-        let response = match lens_step(&step_ctx, &model, request.clone(), &mut charges).await? {
+        let response = match lens_step(
+            &step_ctx,
+            &model,
+            backend.get(),
+            request.clone(),
+            &mut charges,
+            ctx,
+        )
+        .await?
+        {
             LensStep::Answer(response) => response,
             LensStep::Refused(refused) => {
                 reason = refused;
@@ -300,7 +357,7 @@ pub async fn run_weave_lens(
         }
         match weave_lens_answer_plan(&answer_text(&response), &stored.report.value) {
             Ok(plan) => {
-                ctx.vault.attach_weave_lens(
+                if let Err(error) = ctx.vault.attach_weave_lens(
                     reader,
                     scheduled_for,
                     rendered_at,
@@ -311,9 +368,12 @@ pub async fn run_weave_lens(
                         model: model.model.as_str().to_owned(),
                         rendered_at: ctx.vault.store.clock.now_recorded_at(),
                     },
-                )?;
+                ) {
+                    return spent_or_deferred(error, ctx, &charges);
+                }
                 return Ok(DreamerAttemptExecution::Completed {
                     completed_units: charges.units,
+                    step_hashes: charges.step_hashes.clone(),
                 });
             }
             // The refused answer and why go back to the model; the repair
@@ -337,7 +397,7 @@ pub async fn run_weave_lens(
         %reason,
         "the weave lens plan did not meet its period; no render"
     );
-    ctx.vault.refuse_weave_lens(
+    if let Err(error) = ctx.vault.refuse_weave_lens(
         reader,
         scheduled_for,
         rendered_at,
@@ -348,8 +408,11 @@ pub async fn run_weave_lens(
             model: model.model.as_str().to_owned(),
             refused_at: ctx.vault.store.clock.now_recorded_at(),
         },
-    )?;
+    ) {
+        return spent_or_deferred(error, ctx, &charges);
+    }
     Ok(DreamerAttemptExecution::Completed {
         completed_units: charges.units,
+        step_hashes: charges.step_hashes.clone(),
     })
 }

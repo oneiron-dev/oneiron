@@ -89,6 +89,8 @@ impl AgentDispatcher<'_> {
         let source_fingerprint = source_content_fingerprint(&requested_definition)?;
         let fork_ref =
             attenuated_fork_id(requested_ref, &source_fingerprint, parent_attempt, run_id)?;
+        // FIX 9180: the fork is the seat dispatched in the source's place.
+        self.observe_seat(fork_ref);
         // The fork is the row this dispatch NAMES, so its in-memory body is
         // also the composition snapshot: re-reading it would open a second
         // snapshot that cannot see this transaction's own write.

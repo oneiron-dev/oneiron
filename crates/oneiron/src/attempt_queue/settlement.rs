@@ -35,6 +35,9 @@ impl AttemptQueue<'_> {
             self.store.notify_attempt_observers();
             // The TASK this attempt realizes folds its board status from it.
             self.store.notify_task_updates(realized_task(record));
+            // FIX 11482: the settled row's job notice commits here, outside
+            // any owner scope, so this door sends the signal itself.
+            self.store.notify_notification_updates();
         }
         Ok(outcome)
     }
@@ -51,6 +54,9 @@ impl AttemptQueue<'_> {
         if let FailOutcome::Failed(record) = &outcome {
             self.store.notify_attempt_observers();
             self.store.notify_task_updates(realized_task(record));
+            // FIX 11482: the settled row's job notice commits here, outside
+            // any owner scope, so this door sends the signal itself.
+            self.store.notify_notification_updates();
         }
         Ok(outcome)
     }

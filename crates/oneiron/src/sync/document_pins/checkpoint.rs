@@ -52,13 +52,13 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
                 }
             }
         }
-        Ok(Carried::Parted(parts)) => match key_ids(key) {
+        Ok(Carried::Parted(parted)) => match key_ids(key) {
             Some((message, citation)) => Placement::Manifest {
                 holders: vec![Holder::new(
                     OwnerRef::entity(&citation),
                     vec![OwnerRef::entity(&message)],
                 )],
-                parts,
+                parts: parted.parts,
                 joined: Some(SyncUnclassified::ActorSplit(PARTED_PIN)),
             },
             None => undecodable(),

@@ -27,13 +27,14 @@
 //!   its holders: one holder's erase owes its retirement to the final
 //!   holder's release ([`shared_wait`], FIX 6588).
 
+mod replay;
 mod shared_wait;
 
 use std::collections::BTreeMap;
 
 use heed::{RoTxn, RwTxn};
 
-use super::opaque_response::{OPAQUE_ERASED, ResponseOwners, ResponseScan};
+use super::opaque_response::{ResponseOwners, ResponseScan, is_opaque_erased, stamp_opaque_erased};
 use super::retention::{ErasedNotes, stage_erase};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
@@ -167,6 +168,18 @@ pub(crate) struct ResponseCarriage {
     pub(crate) retired: usize,
 }
 
+impl ResponseCarriage {
+    /// The whole row carried, `stub` in its place, which a retired instance
+    /// keeps whole.
+    pub(crate) fn whole(stub: Vec<u8>) -> Self {
+        Self {
+            keep: 0,
+            retired: stub.len(),
+            stub,
+        }
+    }
+}
+
 /// A family of row-held responses (KS-2B1; KS-2B2 adds the host's HTTP
 /// idempotency entries and media jobs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -182,6 +195,8 @@ pub(crate) enum ResponseFamily {
     /// An HTTP idempotency cache entry: its request, headers, target and
     /// response (KS-2B2).
     Http,
+    /// A durable invocation intent or its settled JSON outcome (FIX 11889).
+    InvocationClaim,
     /// A media job's row: its request and its end (KS-2B2).
     MediaJob,
     /// One of a media job's clips, in a row of its own beside the job's.
@@ -204,6 +219,29 @@ pub(crate) enum ResponseFamily {
     /// query, the candidate and every row its evidence came from; a retired
     /// memo leaves nothing (FIX 10089).
     SavedQueryMemo,
+    /// The reply assertions a MESSAGE born whole kept (FIX 10260), carried
+    /// whole: an owner's erase retires the row.
+    MessageReplyAssertions,
+    /// A row of the voice reference bank (FIX 8972): a pack, an identity,
+    /// its incarnation, a target pointer, the current render decision, a
+    /// recorded render event or an owner index entry, carried whole and
+    /// erased with the bank's subject or creator.
+    VoiceBank,
+    /// A centroid verdict's evidence snapshot (FIX 10094): the candidate's
+    /// and labels' copied vectors and the retrieval run, carried whole and
+    /// owned by every source it copied; a retired snapshot keeps its erased
+    /// marker (FIX 10822).
+    CentroidEvidence,
+    /// A report cluster (FIX 9856): its member ISSUEs' copied vectors and
+    /// their centroid, carried whole and owned by every member; a retired
+    /// cluster leaves nothing.
+    ReportCluster,
+    /// A typed question's copies of one judgment answer (FIX 9918, 11236):
+    /// its answer row, carried whole and owned by the answer claim, its
+    /// unit and its receipt's principal; its outcome labels and closed
+    /// window, owned by the answer claim alone. A retired copy leaves
+    /// nothing, as the owner's erase deletes it live.
+    TypedQuestion,
 }
 
 impl ResponseFamily {
@@ -222,17 +260,33 @@ impl ResponseFamily {
                     Self::ModelStepSubmission,
                 ),
                 (&side_table::SAVED_QUERY_MEMO, Self::SavedQueryMemo),
+                (
+                    &side_table::SELF_HEAL_CENTROID_EVIDENCE,
+                    Self::CentroidEvidence,
+                ),
+                (
+                    &side_table::MESSAGE_REPLY_ASSERTIONS,
+                    Self::MessageReplyAssertions,
+                ),
+                (&side_table::FEEDBACK_REPORT_CLUSTER, Self::ReportCluster),
+                (&side_table::TYPED_QUESTION, Self::TypedQuestion),
             ]
             .into_iter()
             .find(|(decl, _)| key.starts_with(decl.prefix))
             .map(|(_, family)| family)
-            .or_else(|| crate::code_run::settled_wait_key(key).then_some(Self::WaitSettled)),
+            .or_else(|| crate::code_run::settled_wait_key(key).then_some(Self::WaitSettled))
+            .or_else(|| {
+                crate::voice_identity::ref_bank::voice_bank_row(key).then_some(Self::VoiceBank)
+            }),
             ResponseDb::Entities => EntityMetadataHeader::parse(value)
                 .filter(|header| header.entity_type == crate::registry::ENTITY_TYPE_CLAIM)
                 .map(|_| Self::StepClaim),
             ResponseDb::SyncState => {
                 if key.starts_with(side_table::HTTP_IDEMPOTENCY_REPLY.prefix) {
                     return Some(Self::Http);
+                }
+                if key.starts_with(side_table::INVOCATION_CLAIM.prefix) {
+                    return Some(Self::InvocationClaim);
                 }
                 crate::store::media_key(key).map(|media| match media {
                     MediaKey::Job => Self::MediaJob,
@@ -248,7 +302,9 @@ impl ResponseFamily {
     pub(crate) const fn database(self) -> ResponseDb {
         match self {
             Self::StepClaim => ResponseDb::Entities,
-            Self::Http | Self::MediaJob | Self::MediaPart => ResponseDb::SyncState,
+            Self::Http | Self::InvocationClaim | Self::MediaJob | Self::MediaPart => {
+                ResponseDb::SyncState
+            }
             Self::AttemptPayload => ResponseDb::Attempts,
             Self::ProgramStep
             | Self::StepState
@@ -257,7 +313,12 @@ impl ResponseFamily {
             | Self::WaitDelivery
             | Self::WaitSettled
             | Self::ModelStepSubmission
-            | Self::SavedQueryMemo => ResponseDb::VaultMeta,
+            | Self::SavedQueryMemo
+            | Self::MessageReplyAssertions
+            | Self::VoiceBank
+            | Self::CentroidEvidence
+            | Self::ReportCluster
+            | Self::TypedQuestion => ResponseDb::VaultMeta,
         }
     }
 
@@ -272,16 +333,12 @@ impl ResponseFamily {
     /// census, binding, stale and retire path reads it through: no response
     /// (a bodyless step, a state with no payload, a claim whose response
     /// rests in an artifact, an erased reply or marker, a dispatch with no
-    /// text), a decoded one, or, for a STEP, step-state, replay or step
-    /// claim row that does not decode, an opaque one (FIX 6227).
+    /// text), a decoded one, or, for a row its family recognizes that does
+    /// not decode or whose stub does not encode, an opaque one (FIX 6227,
+    /// 9390). A clip's raw bytes always carry: it bears no marker.
     pub(crate) fn scan(self, key: &[u8], value: &[u8]) -> ResponseScan {
-        let whole = |stub: Vec<u8>| ResponseCarriage {
-            keep: 0,
-            retired: stub.len(),
-            stub,
-        };
         // An opaque response's erased form holds nothing.
-        if value == OPAQUE_ERASED {
+        if self != Self::MediaPart && is_opaque_erased(value) {
             return ResponseScan::NotResponse;
         }
         match self {
@@ -289,26 +346,39 @@ impl ResponseFamily {
             Self::StepState => crate::llm::step_state_carriage(value),
             Self::StepClaim => crate::llm::step_claim_carriage(value),
             Self::Replay => crate::code_run::replay_carriage(value),
-            Self::Http => ResponseScan::decoded(crate::store::http_carriage(value).map(whole)),
-            Self::MediaJob => {
-                ResponseScan::decoded(crate::store::media_job_carriage(value).map(whole))
-            }
-            Self::MediaPart => {
-                ResponseScan::decoded(crate::store::media_part_carriage(value).map(whole))
-            }
+            Self::Http => crate::store::http_scan(value),
+            Self::InvocationClaim => crate::store::invocation_claim_scan(value),
+            Self::MediaJob => crate::store::media_job_scan(value),
+            Self::MediaPart => ResponseScan::decoded(
+                crate::store::media_part_carriage(value).map(ResponseCarriage::whole),
+            ),
             // The whole row; nothing stays once retired: the row goes.
-            Self::BlockedCapture => ResponseScan::decoded(
-                crate::self_heal::blocked_reports::blocked_capture_stub(key, value).map(whole),
-            ),
-            Self::WaitDelivery | Self::WaitSettled => {
-                ResponseScan::decoded(crate::code_run::wait_reply_stub(value).map(whole))
+            Self::BlockedCapture => {
+                crate::self_heal::blocked_reports::blocked_capture_scan(key, value)
             }
-            Self::AttemptPayload => ResponseScan::decoded(
-                crate::attempt_queue::attempt_payload_stub(key, value).map(whole),
-            ),
+            Self::WaitDelivery | Self::WaitSettled => crate::code_run::wait_reply_scan(value),
+            Self::AttemptPayload => crate::attempt_queue::attempt_payload_scan(key, value),
             Self::ModelStepSubmission => crate::llm::submission_carriage(value),
             Self::SavedQueryMemo => crate::saved_query::memo_carriage(value),
+            Self::CentroidEvidence => crate::self_heal::centroid_evidence_carriage(value),
+            Self::MessageReplyAssertions => crate::memory::reply_assertions_scan(value),
+            Self::ReportCluster => crate::feedback::intake::report_cluster_carriage(value),
+            Self::VoiceBank => crate::voice_identity::ref_bank::voice_bank_scan(key, value),
+            Self::TypedQuestion => {
+                crate::llm::decision::questions::typed_question_carriage(key, value)
+            }
         }
+    }
+
+    /// Whether a checkpoint's payload placement gives the row `key` to the
+    /// response client (FIX 9179): it holds a response, or the erased form
+    /// one leaves (the explicit marker, a wait's erased reply). Any other
+    /// row of a mixed family stays where its family is classed.
+    pub(crate) fn placed_as_response(self, key: &[u8], value: &[u8]) -> bool {
+        is_opaque_erased(value)
+            || self.scan(key, value) != ResponseScan::NotResponse
+            || (matches!(self, Self::WaitDelivery | Self::WaitSettled)
+                && crate::code_run::wait_reply_erased(value))
     }
 
     /// Who owns the opaque response in the row `key`, as far as its key
@@ -341,6 +411,12 @@ impl ResponseFamily {
             )?);
             return Ok(ResponseOwners::Partial(owners));
         }
+        if self == Self::VoiceBank {
+            return crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value);
+        }
+        if self == Self::MessageReplyAssertions {
+            return Ok(crate::memory::reply_assertions_opaque_owners(key, value));
+        }
         let owners = self.owners(store, txn, key, value)?;
         Ok(match self {
             Self::StepClaim => ResponseOwners::Known(owners),
@@ -370,6 +446,7 @@ impl ResponseFamily {
             )?]),
             Self::Replay => crate::code_run::replay_owners(store, txn, value),
             Self::Http => Ok(crate::store::http_owners(value)),
+            Self::InvocationClaim => Ok(crate::store::invocation_claim_owners(value)),
             Self::MediaJob => Ok(crate::store::media_job_owners(value)),
             Self::BlockedCapture => Ok(crate::self_heal::blocked_reports::blocked_capture_owners(
                 key, value,
@@ -379,6 +456,22 @@ impl ResponseFamily {
             Self::AttemptPayload => Ok(crate::attempt_queue::attempt_payload_owners(key, value)),
             Self::ModelStepSubmission => Ok(crate::llm::submission_owners(value)),
             Self::SavedQueryMemo => Ok(crate::saved_query::memo_owners(value)),
+            Self::CentroidEvidence => Ok(crate::self_heal::centroid_evidence_owners(value)),
+            Self::MessageReplyAssertions => Ok(crate::memory::reply_assertions_owners(value)),
+            Self::ReportCluster => Ok(crate::feedback::intake::report_cluster_owners(value)),
+            // A bank row's are its subject's or creator's, as far as the
+            // bank's own rows prove them; the rest are reported.
+            Self::VoiceBank => {
+                let owners =
+                    crate::voice_identity::ref_bank::voice_bank_owners(store, txn, key, value)?;
+                if !owners.proved() {
+                    tracing::warn!(
+                        "a voice bank row is bound under the owners the bank proves; the rest \
+                         are not known"
+                    );
+                }
+                Ok(owners.into_ids())
+            }
             // A clip's owners are its job's, as the job's row stamps them.
             Self::MediaPart => {
                 let Some(MediaKey::Part { job }) = crate::store::media_key(key) else {
@@ -390,6 +483,9 @@ impl ResponseFamily {
                     .map(|row| crate::store::media_job_owners(&row))
                     .unwrap_or_default())
             }
+            Self::TypedQuestion => Ok(crate::llm::decision::questions::typed_question_owners(
+                key, value,
+            )),
         }
     }
 
@@ -414,19 +510,27 @@ impl ResponseFamily {
                 drop_row(databases, ResponseDb::SyncState, key);
                 Ok(())
             }
-            Self::BlockedCapture => {
+            // A retired bank row goes, as the bank's erase deletes it live.
+            Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
-            // A retired memo's row goes; the next evaluation derives anew.
-            Self::SavedQueryMemo => {
+            // A retired memo's row goes; the next evaluation derives anew. A
+            // retired cluster's row goes, as its member's erase remakes it
+            // live without that member. A retired answer copy's row goes, as
+            // the owner's erase deletes it live (FIX 9918, 11236).
+            Self::SavedQueryMemo | Self::ReportCluster | Self::TypedQuestion => {
                 drop_row(databases, ResponseDb::VaultMeta, key);
                 Ok(())
             }
+            // A retired centroid snapshot's row keeps its stub, the erased
+            // marker, as its source's erase leaves it live (FIX 10822).
+            Self::CentroidEvidence => Ok(()),
             Self::ProgramStep
             | Self::StepState
             | Self::Replay
             | Self::Http
+            | Self::InvocationClaim
             | Self::MediaJob
             | Self::WaitDelivery
             | Self::WaitSettled
@@ -438,8 +542,9 @@ impl ResponseFamily {
     /// Leaves the live row `key` its erased disposition in `wtxn`, as
     /// `carriage` names it: an activation's prune of a row whose instance
     /// its source retired. A `vault_meta` row takes its stub as far as the
-    /// disposition keeps it (an opaque one's, its erased marker); a claim,
-    /// the erase's shell beside its markers.
+    /// disposition keeps it (an opaque one's, its erased marker, stamped
+    /// with the time it retired, FIX 10710); a claim, the erase's shell
+    /// beside its markers.
     ///
     /// # Errors
     ///
@@ -455,6 +560,7 @@ impl ResponseFamily {
             carriage
                 .stub
                 .get(..carriage.retired)
+                .map(stamp_opaque_erased)
                 .ok_or(Error::InvariantViolation(
                     "a response stub shorter than it keeps",
                 ))
@@ -466,22 +572,23 @@ impl ResponseFamily {
             | Self::Replay
             | Self::WaitDelivery
             | Self::WaitSettled
-            | Self::ModelStepSubmission => store.side_vault_meta().put(wtxn, key, kept()?),
-            Self::BlockedCapture => {
+            | Self::ModelStepSubmission
+            | Self::CentroidEvidence => store.side_vault_meta().put(wtxn, key, &kept()?),
+            Self::BlockedCapture | Self::MessageReplyAssertions | Self::VoiceBank => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
-            Self::SavedQueryMemo => {
+            Self::SavedQueryMemo | Self::ReportCluster | Self::TypedQuestion => {
                 store.side_vault_meta().delete(wtxn, key)?;
                 Ok(())
             }
             Self::AttemptPayload => {
-                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, kept()?)
+                crate::attempt_queue::retire_attempt_payload_in_txn(store, wtxn, key, &kept()?)
             }
-            Self::Http | Self::MediaJob => {
+            Self::Http | Self::InvocationClaim | Self::MediaJob => {
                 store
                     .side_sync_state()?
-                    .put(wtxn, sync_state_key(key)?, kept()?)
+                    .put(wtxn, sync_state_key(key)?, &kept()?)
             }
             Self::MediaPart => {
                 store

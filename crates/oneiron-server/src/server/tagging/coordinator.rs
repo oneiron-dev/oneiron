@@ -8,12 +8,14 @@
 //! once, and its admission rides with it through the call to the end of its
 //! settlement's write. A ready live marker is never passed over for bulk: a
 //! wake that shows one drops a bulk wait, and while live is held or full no
-//! bulk is claimed. A running call is never pre-empted, so under unbroken
-//! live load bulk waits, with no timer. The markers resident in a class,
+//! bulk is claimed. A running call is never pre-empted; under unbroken live
+//! load the dispatcher still gives bulk a unit after each live streak
+//! (FIX 9519), with no timer. The markers resident in a class,
 //! claimed through settled, stay within the dispatcher's pending cap for it;
 //! the rest wait in the store. A failed call holds new claims in its class
-//! for its backoff (a live failure or a store error holds both classes),
-//! while every call already issued settles and wakes stay observed. A call
+//! for its backoff (a live failure holds bulk too), while every call
+//! already issued settles and wakes stay observed. A store error holds bulk
+//! claims and the upkeep for its own backoff, never live. A call
 //! already claimed can outlast the managed reap's bound: nothing times it
 //! out, cancels it or refuses it. A stop from the host (FIX 7252) ends new
 //! claims and upkeep, and the loop returns once every call it made has
@@ -34,7 +36,7 @@ use tokio::sync::broadcast;
 use tokio::task::JoinError;
 use tokio::time::Instant;
 
-use super::{FIRST_BACKOFF, MAX_BACKOFF, MIN_IDLE, until_ready};
+use super::{FIRST_BACKOFF, MAX_BACKOFF, MIN_IDLE, TaggerConfigured, until_ready};
 use crate::oneironer::{DispatchClaim, ProviderTagger};
 use crate::server::core::SyncServer;
 use crate::server::housekeeping::{HousekeepingAdmission, PassControl};
@@ -48,7 +50,7 @@ type Settled = (ExtractionWork, Result<Box<Settlement>, JoinError>);
 /// A settlement on its blocking unit.
 type SettleFuture = Pin<Box<dyn std::future::Future<Output = Settled> + Send>>;
 /// The probe of the tagger between rounds.
-type ProbeFuture = Pin<Box<dyn std::future::Future<Output = bool> + Send>>;
+type ProbeFuture = Pin<Box<dyn std::future::Future<Output = TaggerConfigured> + Send>>;
 /// The host's stop: once it resolves, no new claim and no upkeep.
 pub(super) type StopFuture = Pin<Box<dyn std::future::Future<Output = ()> + Send>>;
 
@@ -69,7 +71,7 @@ struct Settlement {
     admission: Box<dyn Send>,
 }
 
-/// One class's backoff: how long its next failure holds new claims, and
+/// One hold's backoff: how long its next failure holds its claims, and
 /// until when the last one does.
 #[derive(Clone, Copy)]
 struct Backoff {
@@ -100,11 +102,22 @@ pub(super) struct Coordinator {
     /// Markers resident in each class, claimed through settled.
     resident: [usize; 2],
     backoff: [Backoff; 2],
+    /// The store's own hold over bulk claims and the upkeep.
+    store_backoff: Backoff,
     /// No claim and no upkeep before this: the host paused or refused.
     paused_until: Option<Instant>,
     /// When the loop reads the store again with no wake: the idle or retry
     /// wait.
     idle_until: Option<Instant>,
+    /// When the pacing slice ends while a hold parks the loop: its expiry
+    /// probes the tagger, without ending the round.
+    probe_slice: Option<Instant>,
+    /// The pacing slice's own delay: the next slice lands this long after
+    /// the last arming. It doubles while holds park the loop, capped, and
+    /// returns to the first backoff once no hold is left or the tagger
+    /// answers again, so the first slice of an outage lands before any
+    /// hold longer than the first backoff expires.
+    probe_slice_delay: Duration,
     /// The earliest retry a settled marker was given that no read has
     /// reached since.
     next_retry: Option<u64>,
@@ -112,12 +125,17 @@ pub(super) struct Coordinator {
     dirty: bool,
     upkeep_due: bool,
     probe_due: bool,
+    /// The probe went unanswered since the tagger last answered: its next
+    /// ready answer wakes what waited out the outage.
+    probe_outage: bool,
     /// Claims since the round began.
     claimed: usize,
-    /// The tagger is not the configured one, a unit ended for good or the
-    /// stop came: no new claim, and the loop ends once what it owns has
-    /// settled.
+    /// The tagger is not the configured one, a unit failed or the stop
+    /// came: no new claim, and the loop ends once what it owns has settled.
     stopping: bool,
+    /// A claim, settle, upkeep or read unit ended: the supervisor restarts
+    /// the loop once what it owns has settled, unless the stop came too.
+    failed: bool,
 }
 
 impl Coordinator {
@@ -157,29 +175,35 @@ impl Coordinator {
             stop: Some(stop),
             resident: [0; 2],
             backoff: [backoff; 2],
+            store_backoff: backoff,
             paused_until: None,
             idle_until: None,
+            probe_slice: None,
+            probe_slice_delay: FIRST_BACKOFF,
             next_retry: None,
             dirty: true,
             // The first round starts with the upkeep a pass starts with.
             upkeep_due: true,
             probe_due: false,
+            probe_outage: false,
             claimed: 0,
             stopping: false,
+            failed: false,
         })
     }
 
-    /// Runs until the tagger is refused, a unit ends for good or the stop
-    /// comes, and what it owns has settled.
-    pub(super) async fn run(mut self) {
+    /// Runs until the tagger is refused, a unit fails or the stop comes, and
+    /// what it owns has settled. The stop to restart on when a unit failed
+    /// and shutdown was not asked for; `None` on a clean stop.
+    pub(super) async fn run(mut self) -> Option<StopFuture> {
         loop {
             self.read_stop();
             if self.drained() {
-                return;
+                return self.restart();
             }
             self.refill().await;
             if self.drained() {
-                return;
+                return self.restart();
             }
             let deadline = self.deadline();
             tokio::select! {
@@ -194,7 +218,7 @@ impl Coordinator {
                     self.on_settled(work, done);
                 }
                 woke = self.wake.recv(), if self.wake_open => self.on_wake(woke),
-                configured = wait_on(self.probe.as_mut()) => self.on_probe(configured),
+                configured = wait_on(self.probe.as_mut()) => self.on_probe(configured).await,
                 () = sleep_until(deadline) => self.on_timer(),
             }
         }
@@ -202,10 +226,14 @@ impl Coordinator {
 
     /// Starts what is due and allowed: the probe between rounds, the upkeep a
     /// round starts with, and a read of the store when it may have changed.
-    /// No new claim starts while the tagger is probed.
+    /// No new claim starts while the tagger is probed. The pause is read
+    /// before a due probe starts, so a paused pass starts no probe.
     async fn refill(&mut self) {
         if self.stopping {
             self.want = None;
+            return;
+        }
+        if self.paused() {
             return;
         }
         if self.probe_due && self.probe.is_none() {
@@ -214,11 +242,11 @@ impl Coordinator {
             let probe = async move { server.tagger_still_configured().await };
             self.probe = Some(Box::pin(probe));
         }
-        if self.probe.is_some() || self.paused() {
+        if self.probe.is_some() {
             return;
         }
         if self.upkeep_due {
-            if self.held(ExtractionWork::Live) {
+            if self.held(ExtractionWork::Live) || self.store_held() {
                 return;
             }
             self.upkeep().await;
@@ -248,15 +276,16 @@ impl Coordinator {
             Ok(Ok(class)) => class,
             Ok(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "tagging read failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
                 return;
             }
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging read task ended; worker stopping"
+                    "tagging read task ended; coordinator restarting"
                 );
                 self.stopping = true;
+                self.failed = true;
                 return;
             }
         };
@@ -279,7 +308,10 @@ impl Coordinator {
         if self.held(work) || self.resident[lane(work)] >= self.tagger.pending_cap(work) {
             return;
         }
-        self.want = Some((work, Box::pin(self.tagger.claim_room(work))));
+        // The vault's background tagging waits its own turn beside every
+        // other caller's claims (FIX 9519).
+        let caller = self.reconciler.caller().clone();
+        self.want = Some((work, Box::pin(self.tagger.claim_room(work, caller))));
     }
 
     /// Room came in the wanted class: the pause, an admission and the pause
@@ -306,11 +338,11 @@ impl Coordinator {
         let control = self.control.clone();
         let unit = tokio::task::spawn_blocking(move || {
             let prepared = (!control.paused()).then(|| reconciler.prepare_next(work));
-            // A ready call's window is counted here, on the blocking unit, so
-            // its tokenizer encode never runs on this task (FIX 7331).
+            // A ready call's windows are planned here, on the blocking unit,
+            // so its tokenizer encode never runs on this task (FIX 7331).
             let window = match &prepared {
                 Some(Ok(TaggingPreparation::Ready(ready))) => {
-                    Some(tagger.count_window(ready.input()))
+                    Some(tagger.plan_windows(ready.input()))
                 }
                 _ => None,
             };
@@ -322,10 +354,11 @@ impl Coordinator {
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging claim task ended; worker stopping"
+                    "tagging claim task ended; coordinator restarting"
                 );
                 self.resident[lane(work)] -= 1;
                 self.stopping = true;
+                self.failed = true;
                 return;
             }
         };
@@ -346,7 +379,7 @@ impl Coordinator {
         // Refilled at once, without waiting for older calls.
         self.dirty = true;
         let started = Instant::now();
-        let completion = self.tagger.submit(claim, prepared.input().clone(), window);
+        let completion = self.tagger.submit(claim, window);
         self.calls.push(Box::pin(async move {
             let attempt = completion.answer().await;
             Box::new(Called {
@@ -372,7 +405,7 @@ impl Coordinator {
             Some(Ok(_)) => self.dirty = true,
             Some(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "tagging claim failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
                 self.upkeep_due = true;
             }
         }
@@ -413,10 +446,11 @@ impl Coordinator {
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging settlement task ended; worker stopping"
+                    "tagging settlement task ended; coordinator restarting"
                 );
                 self.resident[lane(work)] -= 1;
                 self.stopping = true;
+                self.failed = true;
                 return;
             }
         };
@@ -424,7 +458,7 @@ impl Coordinator {
             Ok(trace) => self.settled(&trace),
             Err(error) => {
                 tracing::warn!(kind = ?error.kind(), "tagging settlement failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
                 self.upkeep_due = true;
             }
         }
@@ -463,12 +497,59 @@ impl Coordinator {
 
     /// The probe answered: a tagger that is not the configured one stops new
     /// claims, and what is owned settles under the facts it was prepared
-    /// with; every other marker waits in the store.
-    fn on_probe(&mut self, configured: bool) {
+    /// with; every other marker waits in the store. An unanswered probe
+    /// marks the outage, and the next ready answer after one wakes what
+    /// waited it out: the holds clear and the engine's waiting retries run
+    /// now. A ready answer with no outage behind it does nothing.
+    async fn on_probe(&mut self, configured: TaggerConfigured) {
         self.probe = None;
-        if !configured {
-            self.stopping = true;
-            self.want = None;
+        match configured {
+            TaggerConfigured::Refused => {
+                self.stopping = true;
+                self.want = None;
+            }
+            TaggerConfigured::Unreachable => {
+                self.probe_outage = true;
+            }
+            TaggerConfigured::Ready => {
+                if !self.probe_outage {
+                    return;
+                }
+                self.probe_outage = false;
+                for backoff in &mut self.backoff {
+                    backoff.until = None;
+                    backoff.delay = FIRST_BACKOFF;
+                }
+                self.store_backoff.until = None;
+                self.store_backoff.delay = FIRST_BACKOFF;
+                self.probe_slice = None;
+                self.probe_slice_delay = FIRST_BACKOFF;
+                self.dirty = true;
+                let reconciler = Arc::clone(&self.reconciler);
+                let now = reconciler.now();
+                let done =
+                    tokio::task::spawn_blocking(move || reconciler.wake_tagging_retries(now)).await;
+                match done {
+                    Ok(Ok(0)) => {}
+                    Ok(Ok(woke)) => {
+                        tracing::info!(
+                            woke,
+                            "the tagger recovered; waiting tagging retries run now"
+                        )
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(kind = ?error.kind(), "tagging retries did not wake on the tagger's recovery")
+                    }
+                    // Best-effort: the wake never fails the loop, and the
+                    // commit broadcast re-drives the claims it moved.
+                    Err(error) => {
+                        tracing::warn!(
+                            panicked = error.is_panic(),
+                            "tagging retry wake task ended; retries wait out their backoff"
+                        )
+                    }
+                }
+            }
         }
     }
 
@@ -498,10 +579,28 @@ impl Coordinator {
         self.stopping && self.calls.is_empty() && self.settlements.is_empty()
     }
 
-    /// A hold or the idle wait ran out. The idle wait's end starts a round,
-    /// as an empty pass's wait did: a probe, the upkeep, a read.
+    /// The stop to restart on: a failed unit hands its still-pending stop
+    /// back to the supervisor, which runs the next loop on it. A clean stop
+    /// took the stop already, and a refused tagger keeps none.
+    fn restart(self) -> Option<StopFuture> {
+        if self.failed { self.stop } else { None }
+    }
+
+    /// A hold, the pacing slice or the idle wait ran out. The idle wait's
+    /// end starts a round, as an empty pass's wait did: a probe, the upkeep,
+    /// a read. The slice's end only probes, while a hold still parks the
+    /// loop.
     fn on_timer(&mut self) {
         let now = Instant::now();
+        if passed(&mut self.probe_slice, now) {
+            if self.holds_pending() {
+                self.probe_due = true;
+                self.probe_slice_delay = (self.probe_slice_delay * 2).min(MAX_BACKOFF);
+                self.probe_slice = Some(now + self.probe_slice_delay);
+            } else {
+                self.probe_slice_delay = FIRST_BACKOFF;
+            }
+        }
         if passed(&mut self.idle_until, now) {
             self.end_round();
         }
@@ -509,6 +608,7 @@ impl Coordinator {
         for backoff in &mut self.backoff {
             passed(&mut backoff.until, now);
         }
+        passed(&mut self.store_backoff.until, now);
         self.dirty = true;
     }
 
@@ -539,14 +639,15 @@ impl Coordinator {
             Ok(Ok(true)) => self.pause(),
             Ok(Err(error)) => {
                 tracing::warn!(kind = ?error.kind(), "tagging upkeep failed; backing off");
-                self.fail(ExtractionWork::Live);
+                self.fail_store();
             }
             Err(error) => {
                 tracing::error!(
                     panicked = error.is_panic(),
-                    "tagging upkeep task ended; worker stopping"
+                    "tagging upkeep task ended; coordinator restarting"
                 );
                 self.stopping = true;
+                self.failed = true;
             }
         }
     }
@@ -573,10 +674,10 @@ impl Coordinator {
         self.dirty = true;
     }
 
-    /// A unit in `work`'s class failed (a store error counts as live): no new
-    /// claim in the class for its backoff, and a live failure holds bulk too.
-    /// A class already held keeps its hold, so calls that fail together
-    /// count once. Whether this failure started a hold.
+    /// A call in `work`'s class failed: no new claim in the class for its
+    /// backoff, and a live failure holds bulk too. A class already held
+    /// keeps its hold, so calls that fail together count once. Whether this
+    /// failure started a hold.
     fn fail(&mut self, work: ExtractionWork) -> bool {
         let now = Instant::now();
         let backoff = &mut self.backoff[lane(work)];
@@ -590,6 +691,27 @@ impl Coordinator {
             let bulk = &mut self.backoff[lane(ExtractionWork::Bulk)];
             bulk.until = Some(bulk.until.map_or(until, |held| held.max(until)));
         }
+        if self.probe_slice.is_none() {
+            self.probe_slice = Some(now + self.probe_slice_delay);
+        }
+        true
+    }
+
+    /// A store read, claim, settlement or upkeep failed: bulk claims and
+    /// the upkeep wait out the store's own backoff, while live claims go
+    /// on. A store already held keeps its hold, so errors that fail
+    /// together count once. Whether this failure started a hold.
+    fn fail_store(&mut self) -> bool {
+        let now = Instant::now();
+        let store = &mut self.store_backoff;
+        if store.until.is_some_and(|until| now < until) {
+            return false;
+        }
+        store.until = Some(now + store.delay);
+        store.delay = (store.delay * 2).min(MAX_BACKOFF);
+        if self.probe_slice.is_none() {
+            self.probe_slice = Some(now + self.probe_slice_delay);
+        }
         true
     }
 
@@ -598,9 +720,20 @@ impl Coordinator {
         self.want.as_ref().map(|(work, _)| *work)
     }
 
-    /// Whether new claims in `work`'s class wait out a failure.
+    /// Whether new claims in `work`'s class wait out a failure: its own
+    /// backoff, or, for bulk, the store's hold.
     fn held(&self, work: ExtractionWork) -> bool {
+        if work == ExtractionWork::Bulk && self.store_held() {
+            return true;
+        }
         self.backoff[lane(work)]
+            .until
+            .is_some_and(|until| Instant::now() < until)
+    }
+
+    /// Whether a store error still holds bulk claims and the upkeep.
+    fn store_held(&self) -> bool {
+        self.store_backoff
             .until
             .is_some_and(|until| Instant::now() < until)
     }
@@ -611,14 +744,22 @@ impl Coordinator {
             .is_some_and(|until| Instant::now() < until)
     }
 
-    /// When the loop wakes with no event: the end of a hold or of the idle
-    /// wait.
+    /// Whether a failure hold still parks new claims: the pacing slice
+    /// only probes while one does.
+    fn holds_pending(&self) -> bool {
+        self.held(ExtractionWork::Live) || self.held(ExtractionWork::Bulk)
+    }
+
+    /// When the loop wakes with no event: the end of a hold, of the pacing
+    /// slice or of the idle wait.
     fn deadline(&self) -> Option<Instant> {
         [
             self.paused_until,
             self.backoff[0].until,
             self.backoff[1].until,
+            self.store_backoff.until,
             self.idle_until,
+            self.probe_slice,
         ]
         .into_iter()
         .flatten()

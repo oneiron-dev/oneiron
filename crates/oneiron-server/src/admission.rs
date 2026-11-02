@@ -104,6 +104,16 @@ impl<K: Eq + Hash + Clone + Send + 'static> Admission<K> {
         self.line.admit_background_blocking()
     }
 
+    /// [`Self::admit_background_blocking`] whose wait ends at `wait`, the
+    /// time its caller's own clock has left (FIX 9526): the same line and
+    /// place, served last, never the pool's longer wait.
+    pub(crate) fn admit_background_blocking_for(
+        &self,
+        wait: Duration,
+    ) -> Result<Permit, WaitTimedOut> {
+        self.line.admit_background_blocking_for(wait)
+    }
+
     /// A free permit for the host's own work, or `None` with nothing put in
     /// line: the work waits for a later look rather than for a turn.
     pub(crate) fn try_admit_background(&self) -> Option<Permit> {

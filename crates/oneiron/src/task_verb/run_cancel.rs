@@ -7,9 +7,12 @@
 //! branch realizes, the agent whose run it is, and the agent that spawned
 //! it. Every other caller's cancel becomes a proposal: the soft cancel's own
 //! Proposed `tasks.cancel` claim naming the branch, and the branch is not
-//! touched. Standing is judged in the writer that would cancel, so it is
-//! judged as it stands when the cancel commits. A caller with no actor to
-//! own a proposal keeps today's immediate cancel.
+//! touched. The claim names its target as the soft cancel's do, the TASK
+//! the branch realizes by its id (a task-less branch by its attempt), and
+//! the branch in `branch_ref`; an approval cancels that branch (FIX 8946).
+//! Standing is judged in the writer that would cancel, so it is judged as
+//! it stands when the cancel commits. A caller with no actor to own a
+//! proposal keeps today's immediate cancel.
 
 use rmpv::Value;
 
@@ -31,6 +34,7 @@ use crate::memory::{
 };
 use crate::task_verb::sdk::AgentVerb;
 
+use super::cancel_settlement::BRANCH_REF_KEY;
 use super::consts::TASK_CANCEL_PROPOSAL_PREDICATE;
 use super::presence_scan::attempt_hex;
 use super::rate_limit::task_verb_contract;
@@ -84,16 +88,16 @@ impl Memory<'_> {
                 .get_in_write_txn(wtxn, branch)?
                 .ok_or(Error::EntityNotFound)?;
             if !self.cancel_standing_in(wtxn, key.as_ref(), &queue, &record)? {
-                return Ok::<_, MemoryError>(Err(proposal_subject(&record, self.actor())));
+                return Ok::<_, MemoryError>(Err(proposal_target(&record, self.actor())));
             }
             Ok(Ok(queue.intervene_in_txn(wtxn, input)?))
         })?;
-        let subject = match decided {
+        let (subject, target_ref) = match decided {
             Ok(outcome) => {
                 self.vault().store.notify_attempt_observers();
                 return Ok(RunCancelOutcome::Applied(outcome));
             }
-            Err(subject) => subject,
+            Err(target) => target,
         };
         // The soft cancel's own proposal for a target its caller does not
         // own: the claim names the branch, and nothing else is written.
@@ -101,7 +105,11 @@ impl Memory<'_> {
         let (proposal_ref, _gate_decision_ref) = self.persist_task_proposal(
             TASK_CANCEL_PROPOSAL_PREDICATE,
             Value::Map(vec![
-                (Value::from("target_ref"), Value::from(attempt_hex(branch))),
+                (Value::from("target_ref"), Value::from(target_ref)),
+                (
+                    Value::from(BRANCH_REF_KEY),
+                    Value::from(attempt_hex(branch)),
+                ),
                 (
                     Value::from("mode"),
                     Value::from(DEFAULT_TASK_CANCEL_MODE.as_str()),
@@ -180,13 +188,16 @@ fn no_standing(error: &MemoryError) -> bool {
     error.code == MEMORY_CODE_FORBIDDEN || error.code == MEMORY_CODE_NOT_FOUND
 }
 
-/// The subject a proposal to cancel `record` is about: the TASK it
-/// realizes, else the proposing caller, as the soft cancel's spawn
-/// proposal names it.
-fn proposal_subject(record: &AttemptRecord, caller: EntityId) -> EntityId {
-    record
+/// The subject a proposal to cancel `record` is about and the target it
+/// names: the TASK it realizes, by its id; else the proposing caller and the
+/// branch's attempt, as the soft cancel's spawn proposal names them.
+fn proposal_target(record: &AttemptRecord, caller: EntityId) -> (EntityId, String) {
+    match record
         .task_ref
         .as_deref()
         .and_then(|task| EntityId::from_hex(task).ok())
-        .unwrap_or(caller)
+    {
+        Some(task) => (task, task.to_hex()),
+        None => (caller, attempt_hex(record.id)),
+    }
 }

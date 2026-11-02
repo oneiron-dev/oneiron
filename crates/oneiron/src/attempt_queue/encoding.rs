@@ -41,15 +41,17 @@ const ERR_RECORD_PAST_VALUE_CAPACITY: &str =
     "attempt record exceeds LMDB's 4294967295-byte value capacity";
 /// The members of a row a caller authored, which the side-row wall reads beside
 /// the payload (OF-067): the failure text, the intervention, signal, ask and
-/// cancel notes, and the requeued failures (FIX 5240). The queue's own ids,
+/// cancel notes, the requeued failures (FIX 5240) and the outputs and
+/// checkpoint a settled try left behind (FIX 9578). The queue's own ids,
 /// keys, states and times index the row and are never rewritten.
-const AUTHORED_MEMBERS: [&str; 6] = [
+const AUTHORED_MEMBERS: [&str; 7] = [
     "last_error",
     "events",
     "signals",
     "asks",
     "cancel_state",
     "history",
+    "terminal_exhaust",
 ];
 const ERR_READY_KEY_LEN: &str = "ready index key must be 24 bytes";
 
@@ -271,6 +273,10 @@ pub(super) fn encode_admitted_record(
 }
 
 pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<AttemptRecord> {
+    // The erased marker of a retired dispatch row that never decoded reads
+    // as the typed unavailable, before any version or map (FIX 9390).
+    let family = crate::store::ResponseFamily::AttemptPayload;
+    let raw = crate::store::ResponseRead::of(family, expected_id.as_bytes(), raw).present()?;
     let Some((&version, body)) = raw.split_first() else {
         return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             "missing attempt record version",
@@ -434,13 +440,18 @@ pub(crate) fn decode_record(raw: &[u8], expected_id: AttemptId) -> Result<Attemp
 }
 
 /// Reconstruct disposable queue indexes after a canonical restore: the ready,
-/// dedupe and run indexes, from the attempt rows that landed. A restore over
-/// a live vault lands the free-time tries as the live vault holds them beside
-/// the image's other attempts (FIX 6577), so the run index the image carried
-/// is rebuilt with the others, as the open-time backfill builds it.
+/// dedupe, run, kind, retry-child and annotation-hold indexes, from the
+/// attempt rows that landed. A restore over a live vault lands the free-time
+/// tries as the live vault holds them beside the image's other attempts (FIX
+/// 6577), so the run index the image carried is rebuilt with the others, as
+/// the open-time backfill builds it. A row in `opaque` (an agent dispatch's
+/// row that never decoded and landed as it rested) and the erased marker of
+/// a retired one stay as they are, indexed nowhere, so none of them runs, and
+/// the restore names how many (FIX 9390).
 pub(crate) fn rebuild_checkpoint_indexes(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
+    opaque: &std::collections::BTreeSet<Vec<u8>>,
 ) -> Result<()> {
     let rows: Vec<_> = store
         .attempt_records
@@ -448,9 +459,18 @@ pub(crate) fn rebuild_checkpoint_indexes(
         .map(|row| row.map(|(key, value)| (key.to_vec(), value.to_vec())))
         .collect::<std::result::Result<_, _>>()?;
     store.clear_attempt_run_index_in_txn(txn)?;
+    super::index::clear_in_txn(store, txn)?;
+    let mut unindexed = 0_usize;
     for (key, value) in rows {
         let id = AttemptId::from_bytes(&key)?;
-        let record = decode_record(&value, id)?;
+        let record = match decode_record(&value, id) {
+            Ok(record) => record,
+            Err(_) if crate::store::is_opaque_erased(&value) || opaque.contains(&key) => {
+                unindexed += 1;
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
         if matches!(record.state, AttemptState::Queued | AttemptState::Scheduled) {
             store
                 .attempt_ready
@@ -467,6 +487,16 @@ pub(crate) fn rebuild_checkpoint_indexes(
             )?;
         }
         store.put_attempt_run_index_in_txn(txn, record.run_id.as_deref(), id.as_bytes())?;
+        super::index::put_created_in_txn(store, txn, &record)?;
+        if record.annotation_hold().is_some() {
+            super::index::put_annotation_hold_in_txn(store, txn, id)?;
+        }
+    }
+    if unindexed > 0 {
+        tracing::warn!(
+            unindexed,
+            "agent dispatch rows that never decoded landed as they rested, indexed nowhere"
+        );
     }
     Ok(())
 }

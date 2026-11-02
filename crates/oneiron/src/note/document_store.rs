@@ -1,8 +1,8 @@
 //! Actor-bound NOTE editor verbs and atomic entity-document persistence.
 
 use super::document::{
-    NoteDocument, NoteDocumentView, NoteEdit, NoteEditOutcome, NotePin, NoteSpanResolution,
-    frontier, invalid,
+    NoteDocument, NoteDocumentView, NotePin, NoteScalarEdit, NoteScalarEditOutcome,
+    NoteSpanResolution, frontier, invalid,
 };
 use super::pin_index::{NOTE_PIN_CITING, NOTE_PIN_CLAIM, NOTE_PIN_SOURCE};
 use super::side_keys::HexHexHash;
@@ -72,12 +72,15 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
+/// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
 pub(super) fn persist_replica(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
+    super::replica::seal::refuse_frozen_motion(vault, txn, doc)?;
     super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
     persist_structural(vault, txn, doc, false)
 }
@@ -101,15 +104,10 @@ fn persist_structural(
 ) -> Result<()> {
     super::ensure_citations_ready(&vault.store, txn, doc.id)?;
     super::citation_erase::validate_pins(vault, txn, &doc.pins()?)?;
-    // The title lands beside the body, in the document and the title index,
-    // so it is scanned as the body is, under the same switch, as an import's
-    // titles are. So is each citation's quote, which the pin rows below keep:
-    // its hash checks it, so no handle can stand in it. Both refuse before
-    // the body's secrets are lifted.
+    // Each citation's quote, which the pin rows below keep, is scanned as the
+    // body is, under the same switch: its hash checks it, so no handle can
+    // stand in it. It refuses before the body's secrets are lifted.
     if secret_scan_mode_in_txn(&vault.store, txn)? == SecretScanMode::On {
-        if let Some(title) = doc.title()? {
-            scan_write_payload(title.as_bytes())?;
-        }
         for pin in doc.pins()? {
             scan_write_payload(pin.quote_text.as_bytes())?;
         }
@@ -149,34 +147,72 @@ fn persist_structural(
     Ok(())
 }
 
-/// The live text as the NOTE stores it (OF-067; ARCH-0069 #mask-on-write),
-/// admitted before its snapshot, history, receipt or text index is written.
-/// With the owner's switch on, each secret the batch door's text rules place
-/// goes to custody and the live text keeps its handle. Without `masks` the
-/// text keeps the plain door: its writer owns its bytes, so a hit refuses.
-/// Returns whether the text changed.
+/// The live text and title as the NOTE stores them (OF-067; ARCH-0069
+/// #mask-on-write; FIX 1098), admitted with one plan before its snapshot,
+/// history, receipt, title index or text index is written. With the owner's
+/// switch on, each secret the batch door's text rules place goes to custody
+/// and the text or title keeps its handle. Without `masks` both keep the
+/// plain door: their writer owns their bytes, so a hit refuses. Returns
+/// whether either changed.
 fn admit_body(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
     masks: bool,
 ) -> Result<bool> {
-    let mut text = doc.view()?.markdown;
+    let markdown = doc.view()?.markdown;
+    let title = doc.title()?;
     if !masks {
-        scan_content_in_txn(&vault.store, txn, text.as_bytes())?;
+        for text in title.iter().chain([&markdown]) {
+            scan_content_in_txn(&vault.store, txn, text.as_bytes())?;
+        }
         return Ok(false);
     }
-    let masked = admit_parts_in_txn(
-        vault,
-        txn,
-        doc.id,
-        &mut [("text:markdown", Part::Text(&mut text))],
-        &mut Lifted::default(),
-    )?;
-    if masked {
+    let mut text = markdown.clone();
+    let mut admitted = title.clone();
+    let mut parts = vec![("text:markdown", Part::Text(&mut text))];
+    if let Some(admitted) = &mut admitted {
+        parts.push((TITLE_PLACE, Part::Text(admitted)));
+    }
+    if !admit_parts_in_txn(vault, txn, doc.id, &mut parts, &mut Lifted::default())? {
+        return Ok(false);
+    }
+    drop(parts);
+    let [body_masked, title_masked] = [text != markdown, admitted != title];
+    if body_masked {
         doc.mask_body(&text)?;
     }
-    Ok(masked)
+    if let Some(admitted) = admitted.as_deref().filter(|_| title_masked) {
+        doc.mask_title(admitted)?;
+    }
+    Ok(body_masked || title_masked)
+}
+
+/// Where a NOTE title's secrets were found, for their custody records.
+const TITLE_PLACE: &str = "text:title";
+
+/// `title`, a title a writer authors for `note`, as the NOTE stores it
+/// (OF-067; FIX 1098): admitted as its live text is, before any operation
+/// writes it, so no history holds what the handle stands in. With the
+/// owner's switch on, each secret the batch door's text rules place goes to
+/// custody and the title keeps its handle; `lifted` is the write's one plan.
+/// A hit no span places refuses as before.
+pub(super) fn admit_title(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    note: EntityId,
+    title: &str,
+    lifted: &mut Lifted,
+) -> Result<String> {
+    let mut admitted = title.to_owned();
+    admit_parts_in_txn(
+        vault,
+        txn,
+        note,
+        &mut [(TITLE_PLACE, Part::Text(&mut admitted))],
+        lifted,
+    )?;
+    Ok(admitted)
 }
 
 impl Vault {
@@ -185,6 +221,27 @@ impl Vault {
     pub fn note_document(&self, id: EntityId) -> Result<NoteDocumentView> {
         let txn = self.store.env.read_txn()?;
         load(self, &txn, id)?.view()
+    }
+
+    /// [`Self::note_document`] with the keys the lift marked in its texts
+    /// (its markdown, title and each pin's quote), read in one snapshot. A
+    /// display projection for a reader other than the owner shows each key
+    /// as its handle; each pin, its quote and hash stay the stored originals,
+    /// and a display quote is never a pin (OF-067; FIX 2967).
+    #[cfg(feature = "sync")]
+    pub(super) fn note_document_keys(
+        &self,
+        id: EntityId,
+    ) -> Result<(NoteDocumentView, crate::batch::secret_scan::LiftedKeys)> {
+        let txn = self.store.env.read_txn()?;
+        let view = load(self, &txn, id)?.view()?;
+        let mut texts = vec![view.markdown.as_str()];
+        texts.extend(view.title.as_deref());
+        for pin in &view.pins {
+            texts.push(pin.quote_text.as_str());
+        }
+        let keys = crate::batch::secret_scan::LiftedKeys::of_in_txn(&self.store, &txn, texts)?;
+        Ok((view, keys))
     }
 
     pub fn pin_note_span(
@@ -251,7 +308,10 @@ impl Memory<'_> {
         let kind = NoteKind::Plugin("brief".into());
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
+        // The brief's commits after its birth name the actor's stamp token
+        // (FIX 10930), read on a write of its own before the content write.
+        let stamp = crate::provenance::actor_stamp(self.vault(), actor)?;
         let body = encode_note_body(&NoteBody {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
@@ -304,7 +364,7 @@ impl Memory<'_> {
             let doc = NoteDocument::birth(id, &markdown, &actor)?;
             for pin in pins {
                 validate_pin_source(self.vault(), content.read(), pin)?;
-                doc.add_pin(pin, &actor)?;
+                doc.add_pin(pin, stamp)?;
             }
             let now = self.vault().now_recorded_at();
             content.apply_batch(
@@ -333,6 +393,7 @@ impl Memory<'_> {
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),
                     },
+                    stamp,
                 )?;
                 persist_authoritative(self.vault(), txn, &doc)?;
                 Ok(())
@@ -340,7 +401,7 @@ impl Memory<'_> {
         })?;
         #[cfg(feature = "sync")]
         self.vault().notify_note_document(id);
-        self.entity_ref_receipt(&id)
+        self.entity_ref_receipt_of(&id, crate::registry::ENTITY_TYPE_NOTE)
     }
 
     /// Adds an authenticated claim citation to this NOTE. Stable cursor data is
@@ -361,7 +422,7 @@ impl Memory<'_> {
         &self,
         note: EntityId,
         title: impl Into<String>,
-    ) -> MemoryResult<NoteEditOutcome> {
+    ) -> MemoryResult<NoteScalarEditOutcome> {
         Ok(self
             .apply_local_note_operation(
                 note,
@@ -380,8 +441,8 @@ impl Memory<'_> {
         &self,
         note: EntityId,
         base: &[u8],
-        edits: &[NoteEdit],
-    ) -> MemoryResult<NoteEditOutcome> {
+        edits: &[NoteScalarEdit],
+    ) -> MemoryResult<NoteScalarEditOutcome> {
         Ok(self
             .apply_local_note_operation(
                 note,
@@ -588,12 +649,7 @@ pub(super) fn require_note_writer(
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
     if !body.author_ref.is(memory.actor())
-        && !super::proposals::automatic_edit_grant(
-            memory.vault(),
-            txn,
-            id,
-            crate::WriteActor::new(memory.actor(), memory.actor_class()),
-        )?
+        && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(
@@ -627,3 +683,8 @@ pub(crate) fn resolve_deck_pin_in_txn(
     super::citation_erase::validate_pins(vault, txn, std::slice::from_ref(pin))?;
     load(vault, txn, pin.document)?.resolve(pin)
 }
+
+mod deck;
+pub(crate) use deck::{
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+};

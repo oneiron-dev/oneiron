@@ -14,6 +14,7 @@ use super::{
     whole_vault_export_excludes_entity,
 };
 use crate::Vault;
+use crate::authority::{HolderExportNeed, HolderExportRequest};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::CallerLocality;
 use crate::edge::{EdgeActorClass, parse_strict_edge_record};
@@ -22,7 +23,6 @@ use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_SECRET_CUSTODY;
 use crate::serialize::{DocumentTail, DocumentWriter};
 use crate::settings::ReadDestination;
-use crate::vault::live_entity_row_in_txn;
 use crate::write_envelope::WriteActor;
 
 /// One run's result manifests, as its replay record names them, each with
@@ -109,12 +109,17 @@ impl Vault {
     /// Each record's side rows and stored files go with it as they do in the
     /// whole-vault archive, never past `records`, and no vault-wide row does
     /// (FIX 3681). Its diary reads are `reader`'s, the owner who receives it.
-    pub(crate) fn export_records_archive(
+    /// `freeze` reads in the archive's own snapshot, before its rows, so
+    /// what it answers (the removal's frozen positions, FIX-LIST 8224) and
+    /// the bytes archived are one state.
+    pub(crate) fn export_records_archive<T>(
         &self,
         records: &BTreeSet<EntityId>,
         reader: WriteActor,
-    ) -> Result<WholeVaultExport> {
-        self.export_in_memory(|vault, spool| {
+        freeze: impl FnOnce(&heed::RoTxn<'_>) -> Result<T>,
+    ) -> Result<(WholeVaultExport, T)> {
+        let mut frozen = None;
+        let archive = self.export_in_memory(|vault, spool| {
             vault
                 .export_archive_snapshot(
                     CallerLocality::OffDevice,
@@ -122,11 +127,16 @@ impl Vault {
                     ExportCut::Archive,
                     false,
                     reader,
-                    |_| Ok::<_, Error>(()),
+                    |rtxn| {
+                        frozen = Some(freeze(rtxn)?);
+                        Ok::<_, Error>(())
+                    },
                     spool,
                 )
                 .map(|(_, receipt)| receipt)
-        })
+        })?;
+        let frozen = frozen.ok_or(Error::InvariantViolation("records archive froze nothing"))?;
+        Ok((archive, frozen))
     }
 
     /// "Export to OKF" (OF-222): the vault as an Open Knowledge Format v0.1
@@ -285,6 +295,9 @@ impl Vault {
         let mut thread_roots = crate::workspace_roster::ExportThreadRoots::default();
         let mut agent_fork_hashes = BTreeMap::new();
         let mut diaries = ExportDiaryLedger::new(reader)?;
+        // FIX 4624(b): each custody value the archive carries but that does
+        // not open here, by id and generation, for its holder.
+        let mut holder_requests = Vec::new();
         let attaches_files = cut == ExportCut::Archive;
         for entry in
             crate::ports::EntityStoreRead::port_entity_raw_records_borrowed(&self.store, &rtxn)?
@@ -316,7 +329,7 @@ impl Vault {
             if header.entity_type == ENTITY_TYPE_SECRET_CUSTODY {
                 if only.is_none()
                     && cut == ExportCut::Archive
-                    && live_entity_row_in_txn(&self.store, &rtxn, &id)?.is_live()
+                    && row_live_in_txn(&self.store, &rtxn, &id)?
                 {
                     let handle = crate::ports::ShortIdStoreRead::port_short_id_reference(
                         &self.store,
@@ -324,7 +337,7 @@ impl Vault {
                         &id,
                     )?
                     .map(|(name, hash)| format!("{name}:{hash:02x}"));
-                    if let Some(secret) = archive_custody_secret(
+                    if let Some((secret, need)) = archive_custody_secret(
                         &self.store,
                         &id,
                         handle,
@@ -334,6 +347,7 @@ impl Vault {
                     )? {
                         sources.insert(id);
                         writer.secret(&secret)?;
+                        holder_requests.extend(need.map(HolderExportRequest::unrecorded));
                     }
                 }
                 continue;
@@ -563,6 +577,7 @@ impl Vault {
             )
             .map(|(sink, mut receipt)| {
                 receipt.thread_roots = thread_roots;
+                receipt.holder_requests = holder_requests;
                 (sink, receipt)
             })
             .map_err(E::from)
@@ -649,7 +664,14 @@ fn note_diary_author(
 /// record goes as its handle, to re-enter after import. The stored body is
 /// sealed (KS-6): the archive's is the plaintext DTO, its value opened
 /// explicitly from current custody; one that does not open goes as its
-/// handle, warned.
+/// handle, warned. A cloud registration slot's value never goes, on this
+/// device or not: it is the engine's own, and its owner signs in again.
+///
+/// A portable value the archive carries that does not open here is named
+/// beside its row, by id and generation, for its holder to seal to the owner
+/// (FIX 4624(b)): only that one. A value withheld (secrets left out, a
+/// revoked record, a cloud slot, a device-bound value going off its device)
+/// is named nowhere.
 fn archive_custody_secret(
     store: &crate::store::Store,
     id: &EntityId,
@@ -657,24 +679,38 @@ fn archive_custody_secret(
     body: &[u8],
     on_device: bool,
     include_secrets: bool,
-) -> Result<Option<ArchiveSecretCustody>> {
+) -> Result<Option<(ArchiveSecretCustody, Option<HolderExportNeed>)>> {
     use crate::secret_custody::{CustodyClass, SecretCustodyStatus};
     use base64::Engine as _;
-    let (record, plain) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
+    let (record, value) = crate::secret_custody::archive_custody_body(store, id, body, |record| {
         include_secrets
             && record.status == SecretCustodyStatus::Active
+            && !crate::secret_custody::is_cloud_registration_slot(&record.name)
             && (on_device || (!record.device_only && record.class == CustodyClass::CustodyPortable))
     })?;
     if record.status == SecretCustodyStatus::Revoked {
         return Ok(None);
     }
-    Ok(Some(ArchiveSecretCustody {
-        id: id.to_hex(),
-        name: record.name.clone(),
-        handle,
-        metadata: record.metadata(),
-        body: plain.map(|plain| base64::engine::general_purpose::STANDARD.encode(&*plain)),
-    }))
+    // The archive carries this value and it did not open: it goes as its
+    // handle, and its holder is asked for it when it may leave its device.
+    let need = (value.is_unopened()
+        && !record.device_only
+        && record.class == CustodyClass::CustodyPortable)
+        .then_some(HolderExportNeed {
+            secret: *id,
+            generation: record.rotation_generation,
+        });
+    let plain = value.into_opened();
+    Ok(Some((
+        ArchiveSecretCustody {
+            id: id.to_hex(),
+            name: record.name.clone(),
+            handle,
+            metadata: record.metadata(),
+            body: plain.map(|plain| base64::engine::general_purpose::STANDARD.encode(&*plain)),
+        },
+        need,
+    )))
 }
 
 /// Whether the export's locality filter withholds `carrier`, a row another

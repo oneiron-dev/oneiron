@@ -1,3 +1,7 @@
+//! Affect facade: VAD annotations, claim VAD, triggers and coping outcomes.
+//! Entry: `Vad`, re-exported with its annotation types from contracts.
+//! oneiron_contracts::affect owns the wire types; local children own the rest.
+
 mod annotation;
 mod annotation_as;
 mod claim_vad;
@@ -28,4 +32,6 @@ pub use self::trigger::{
 };
 pub(crate) use self::trigger::{decode_entity_ref, validate_affect_trigger_claim_structure};
 use self::trigger::{decode_vad_delta, reject_duplicate, vad_delta_value};
-pub use oneiron_contracts::affect::{Vad, VadAnnotation, VadAnnotationSource, VadComponent};
+pub use oneiron_contracts::affect::{
+    DerivationFreshness, Vad, VadAnnotation, VadAnnotationSource, VadComponent,
+};

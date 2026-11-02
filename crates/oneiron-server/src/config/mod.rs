@@ -2,9 +2,11 @@
 
 pub mod backup;
 pub mod browser;
+mod channel_endpoints;
 pub mod connectors;
 pub mod desktop;
 pub mod device_sync;
+mod diagnostics;
 pub mod embedder;
 mod embedder_shape;
 mod embedder_space;
@@ -23,6 +25,7 @@ pub mod models;
 pub mod native_mail;
 pub mod oneironer;
 mod page_seal;
+mod policy;
 mod recall;
 pub mod remote_embedder;
 mod self_heal;
@@ -33,9 +36,11 @@ mod trusted_proxy;
 
 pub use backup::{BackupConfig, default_backup_dir};
 pub use browser::BrowserConfig;
+pub use channel_endpoints::ChannelEndpointsConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};
 pub use desktop::DesktopConfig;
 pub use device_sync::DeviceSyncConfig;
+pub(crate) use diagnostics::{locate_toml_failure, locate_toml_section, parse_toml};
 pub use embedder::{
     EmbedderArgs, EmbedderConfig, EmbedderDevice, EmbedderLocality, EmbedderProvider,
     EmbedderQuant, EndpointEmbedderConfig, LocalEmbedderConfig,
@@ -67,6 +72,7 @@ pub use native_mail::NativeMailConfig;
 pub use oneironer::{
     OneironerArgs, OneironerConfig, OneironerConfigOverride, OneironerMode, OneironerProvider,
 };
+pub use policy::PolicyConfig;
 pub use recall::RecallConfig;
 pub use self_heal::{DetectorConfig, DetectorTier, SelfHealConfig};
 pub use serve_args::ServeArgs;

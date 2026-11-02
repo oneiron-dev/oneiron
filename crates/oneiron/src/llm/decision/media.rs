@@ -9,14 +9,15 @@ use base64::Engine as _;
 use serde_json::Value;
 use std::collections::BTreeSet;
 
-/// Images one call may carry.
-pub const MAX_DECISION_IMAGES: usize = 8;
-/// Encoded bytes of one image, as handed in.
+/// Encoded bytes of one image, as handed in. A call carries every image its question
+/// reads: their count and total size are no refusal (Rule 5, FIX 9903), and no image is
+/// dropped to fit.
 pub const MAX_DECISION_IMAGE_BYTES: usize = 10 * 1024 * 1024;
-/// Encoded bytes of every image in one call.
-pub const MAX_DECISION_IMAGES_BYTES: usize = 20 * 1024 * 1024;
 /// The long edge a seat is sent unless it states its own.
 pub const DECISION_IMAGE_EDGE: u32 = 2_048;
+/// The short edge a seat is sent at least: Jev refuses smaller images, so a small crop
+/// is upscaled to it, keeping its aspect ratio.
+pub const JEV_MIN_EDGE: u32 = 280;
 
 /// One image a question reads. The question names it in backticks, as in "where is
 /// `mug` in `camera`?"; a reference image is one more named image. The image fills the
@@ -35,13 +36,11 @@ pub struct DecisionImage {
 }
 
 impl DecisionImage {
-    /// A call's images: at most eight, uniquely named, PNG or JPEG, inside the byte
-    /// bounds. A name is a plain state key of ASCII letters, digits and `_`.
+    /// A call's images: uniquely named, PNG or JPEG, each inside its byte bound. A name is
+    /// a plain state key of ASCII letters, digits and `_`.
     pub fn validate_all(images: &[Self]) -> LlmResult<()> {
         let mut names = BTreeSet::new();
-        let mut total = 0usize;
         for image in images {
-            total = total.saturating_add(image.image.bytes.len());
             if image.name.is_empty()
                 || image.name.len() > 64
                 || !image
@@ -55,9 +54,6 @@ impl DecisionImage {
             {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
-        }
-        if images.len() > MAX_DECISION_IMAGES || total > MAX_DECISION_IMAGES_BYTES {
-            return Err(FatalLlmError::InvalidRequest.into());
         }
         Ok(())
     }
@@ -83,9 +79,10 @@ impl DecisionImage {
         }
     }
 
-    /// The image with its long edge at most `max_edge` pixels, in its own format, at
-    /// [`fitted_size`]. A box is in fractions of the image, so it reads the same on the
-    /// smaller copy; small text may still need a crop before the call.
+    /// The image at [`fitted_size`], in its own format: its long edge at most `max_edge`
+    /// pixels, its short edge at least [`JEV_MIN_EDGE`]. A box is in fractions of the
+    /// image, so it reads the same on the resized copy; small text may still need a crop
+    /// before the call.
     pub fn fitted(&self, max_edge: u32) -> LlmResult<ImageBytes> {
         let format = match self.format() {
             Some("png") => image::ImageFormat::Png,
@@ -98,15 +95,25 @@ impl DecisionImage {
         if (width, height) == (decoded.width(), decoded.height()) {
             return Ok(self.image.clone());
         }
-        let smaller = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
+        let resized = decoded.resize_exact(width, height, image::imageops::FilterType::Triangle);
         let mut bytes = std::io::Cursor::new(Vec::new());
-        smaller
+        resized
             .write_to(&mut bytes, format)
             .map_err(|_| FatalLlmError::InvalidRequest)?;
         Ok(ImageBytes {
             bytes: bytes.into_inner(),
             media_type: self.image.media_type.clone(),
         })
+    }
+
+    /// [`Self::fitted`] on a blocking thread, for a seat answering on an async runtime:
+    /// the decode and resize run off the runtime's workers. What it sends and the errors
+    /// it returns are [`Self::fitted`]'s.
+    pub async fn fitted_async(&self, max_edge: u32) -> LlmResult<ImageBytes> {
+        let image = self.clone();
+        tokio::task::spawn_blocking(move || image.fitted(max_edge))
+            .await
+            .map_err(|_| FatalLlmError::InvalidRequest)?
     }
 
     /// Standard padded base64 of `image`, with no `data:` prefix.
@@ -134,24 +141,29 @@ impl DecisionImage {
 }
 
 /// The size [`DecisionImage::fitted`] sends a `width` by `height` image at under
-/// `max_edge`: unchanged when its long edge fits, else scaled to fit with its aspect
-/// kept, each side rounded and at least one pixel.
+/// `max_edge`: unchanged when its long edge fits and its short edge reaches
+/// [`JEV_MIN_EDGE`], else scaled with its aspect kept, each side rounded and at least
+/// one pixel. A short side under the floor is upscaled to it, as Jev refuses smaller
+/// images; the long edge never passes `max_edge`, which wins on a side that cannot meet
+/// both.
 pub fn fitted_size(width: u32, height: u32, max_edge: u32) -> (u32, u32) {
     let edge = max_edge.max(1);
-    if width.max(height) <= edge {
+    let longest = width.max(height);
+    let shortest = width.min(height);
+    let floor = JEV_MIN_EDGE.min(edge);
+    if longest == 0 || (longest <= edge && shortest >= floor) {
         return (width, height);
     }
-    let ratio = f64::from(edge) / f64::from(width.max(height));
+    let down = f64::from(edge) / f64::from(longest);
+    let up = f64::from(floor) / f64::from(shortest.max(1));
+    let ratio = down.min(up.max(1.0));
     let side = |length: u32| ((f64::from(length) * ratio).round() as u32).clamp(1, edge);
     (side(width), side(height))
 }
 
-/// Audio clips one call may carry.
-pub const MAX_DECISION_AUDIO: usize = 4;
-/// Encoded bytes of one clip, as handed in.
+/// Encoded bytes of one clip, as handed in. As with images, a call's clip count and total
+/// size are no refusal.
 pub const MAX_DECISION_AUDIO_BYTES: usize = 10 * 1024 * 1024;
-/// Encoded bytes of every clip in one call.
-pub const MAX_DECISION_AUDIOS_BYTES: usize = 20 * 1024 * 1024;
 
 /// One audio clip a question reads, as in "is `audio_0` someone speaking?". Like an
 /// image, the clip fills the state field of its name. The seat hears the encoded clip
@@ -169,13 +181,11 @@ pub struct DecisionAudio {
 }
 
 impl DecisionAudio {
-    /// A call's clips: at most four, uniquely named, WAV or MP3, inside the byte bounds.
-    /// A name is a plain state key, as an image's is.
+    /// A call's clips: uniquely named, WAV or MP3, each inside its byte bound. A name is a
+    /// plain state key, as an image's is.
     pub fn validate_all(audio: &[Self]) -> LlmResult<()> {
         let mut names = BTreeSet::new();
-        let mut total = 0usize;
         for clip in audio {
-            total = total.saturating_add(clip.bytes.len());
             if clip.name.is_empty()
                 || clip.name.len() > 64
                 || !clip
@@ -189,9 +199,6 @@ impl DecisionAudio {
             {
                 return Err(FatalLlmError::InvalidRequest.into());
             }
-        }
-        if audio.len() > MAX_DECISION_AUDIO || total > MAX_DECISION_AUDIOS_BYTES {
-            return Err(FatalLlmError::InvalidRequest.into());
         }
         Ok(())
     }

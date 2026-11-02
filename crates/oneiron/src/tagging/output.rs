@@ -1,10 +1,12 @@
-//! What a tagger's answer must satisfy before a marker settles on it.
+//! What a tagger's answer must satisfy before a marker settles on it: its
+//! structure, never its size. An answer with any number of spans or links
+//! that holds every rule settles, held import and worker answer alike
+//! (FIX 9944, 10166).
 
 use serde::{Deserialize, Serialize};
 
 use crate::memory::extraction::{EncoderInput, EncoderOutput, NerSpan};
 
-const MAX_ROWS: usize = 4096;
 const MAX_LABEL_BYTES: usize = 64;
 
 /// Why an answer was refused. Each code names the rule it broke and carries
@@ -12,8 +14,6 @@ const MAX_LABEL_BYTES: usize = 64;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OutputRefusal {
-    /// More than 4,096 spans, links, context links or speaker links.
-    TooManyRows,
     /// A mood value outside valence −1..1, arousal and dominance 0..1.
     MoodOutOfRange,
     /// A span names a message the input does not have.
@@ -60,12 +60,10 @@ pub(super) fn check_moved_output(
     if stack.is_some_and(|stack| output.stack_sha16.as_deref() != Some(stack)) {
         return Err(OutputRefusal::OtherStack);
     }
-    if output.spans.len() > MAX_ROWS {
-        return Err(OutputRefusal::TooManyRows);
-    }
     if output.vad.is_some_and(|vad| vad.validate().is_err()) {
         return Err(OutputRefusal::MoodOutOfRange);
     }
+    check_mood_parts(input, output)?;
     for span in &output.spans {
         let Some(message) = input.messages.get(span.message) else {
             return Err(OutputRefusal::UnknownMessage);
@@ -81,6 +79,33 @@ pub(super) fn check_moved_output(
         }
     }
     check_links(input, output)
+}
+
+/// The windows' moods of a turn read in several (FIX 9518): each in range,
+/// from a place in one of the input's messages to a later or equal place in
+/// another, on character boundaries.
+pub(crate) fn check_mood_parts(
+    input: &EncoderInput,
+    output: &EncoderOutput,
+) -> Result<(), OutputRefusal> {
+    let place = |message: usize, at: usize| {
+        input
+            .messages
+            .get(message)
+            .is_some_and(|each| at <= each.text.len() && each.text.is_char_boundary(at))
+    };
+    for part in &output.mood_parts {
+        if part.vad.validate().is_err() {
+            return Err(OutputRefusal::MoodOutOfRange);
+        }
+        if !place(part.message, part.start)
+            || !place(part.end_message, part.end)
+            || (part.message, part.start) > (part.end_message, part.end)
+        {
+            return Err(OutputRefusal::BadOffsets);
+        }
+    }
+    Ok(())
 }
 
 /// The order rule: spans come in (message, start, end) order and never
@@ -107,12 +132,6 @@ pub(crate) fn check_links(
     input: &EncoderInput,
     output: &EncoderOutput,
 ) -> Result<(), OutputRefusal> {
-    if output.links.len() > MAX_ROWS
-        || output.context_links.len() > MAX_ROWS
-        || output.speaker_links.len() > MAX_ROWS
-    {
-        return Err(OutputRefusal::TooManyRows);
-    }
     let mut linked = std::collections::BTreeSet::new();
     let mut claim = |span: usize| {
         if span < output.spans.len() && linked.insert(span) {
@@ -154,16 +173,14 @@ pub(crate) fn check_links(
     Ok(())
 }
 
-/// The text the input sent for `message` of context turn `turn`.
+/// The text the input sent for `message` of context turn `turn`: an earlier
+/// turn, or a later one of a conversation register (FIX 10167).
 pub(super) fn context_text<'a>(
     input: &'a EncoderInput,
     turn: &str,
     message: &str,
 ) -> Option<&'a str> {
-    input
-        .context
-        .iter()
-        .find(|each| each.turn == turn)?
+    crate::memory::extraction::register_turn(input, turn)?
         .messages
         .iter()
         .find(|each| each.id == message)

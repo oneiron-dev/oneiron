@@ -1090,5 +1090,8 @@ fn send_following(
     Err("too many redirects".to_owned())
 }
 
+mod revision;
+pub(crate) use revision::ResolvedLocalRevision;
+
 #[cfg(test)]
 mod tests;

@@ -11,11 +11,12 @@ use std::sync::Arc;
 use oneiron::WriteActor;
 use oneiron::core_write::{
     ConversationTurnCreateInput, CoreBatchCommit, CoreBatchWriteInput, CoreBatchWriteReceipt,
-    CoreEntityWriteReceipt, DagRecordAppendInput, DagRecordAppendReceipt,
+    CoreEntityWriteReceipt, CoreWriteLane, DagRecordAppendInput, DagRecordAppendReceipt,
 };
 use oneiron::dreamer_wake::WakeTurnSubject;
 use oneiron::memory::{MemoryResult, ProducerRows};
 
+use super::clock_ingress;
 use super::host_doors::support::{Listed, hex_rows, internal, naming, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -47,7 +48,7 @@ pub(crate) async fn write_core_turn(
     let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
     let auth = auth.clone();
-    let receipt = tokio::task::spawn_blocking(move || {
+    let receipt = clock_ingress::run_blocking(move || {
         let writer = match crate::api::scoped_read_for_core_auth(&vault, &auth) {
             Ok(writer) => writer,
             Err(refused) => {
@@ -151,7 +152,14 @@ pub(crate) async fn vault_batch(
 }
 
 /// One atomic batch, committed at owner grade only when `auth` carries it,
-/// its TURNs platform announcements only at `auth`'s owner authority.
+/// its TURNs platform announcements only at `auth`'s owner authority. It is
+/// held to `auth`'s write lane ([`core_write_lane`], FIX 1223, 6068): a put
+/// over a stored row outside it refuses as missing, and under a read lane a
+/// CLAIM's typed record refs must resolve. A credential that grants no read
+/// is held to the bounds of what it may write to, and its CLAIMs commit as
+/// before. A batch carries no byline: the bound action's `vault.batch` door
+/// is this one, so a caller no action binds commits as a bound one does
+/// (FIX 9154).
 pub(crate) async fn write_core_batch(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -164,7 +172,51 @@ pub(crate) async fn write_core_batch(
     };
     let announcement = crate::api::announcement_authority(server, auth);
     let vault = Arc::clone(&server.vault);
-    tokio::task::spawn_blocking(move || vault.write_core_batch(&input, commit, announcement))
-        .await
-        .map_err(|_| internal("vault.batch"))?
+    let auth = auth.clone();
+    clock_ingress::run_blocking(move || {
+        let lane = core_write_lane(&vault, &auth)
+            .map_err(|refused| super::FacadeApiError::from(refused).into_memory_error())?;
+        vault.write_core_batch_in_lane(&input, commit, announcement, &lane)
+    })
+    .await
+    .map_err(|_| internal("vault.batch"))?
+}
+
+/// The lane a core write from `auth` is held to (FIX 6068, 10781): the read
+/// its credential reads under on every `/v1` door; for a credential that
+/// grants no read, the read its target key gives, which judges what it may
+/// write to without asking the read verb (`Vault::credential_target_key`),
+/// where its connection sits; unbound when that leaves no bounds to judge.
+/// An owner-grade caller whose read is refused writes unbound, as before.
+/// Every other refusal of the read is the error. It is built before any
+/// write opens, so no read snapshot opens inside a writer.
+pub(crate) fn core_write_lane<'a>(
+    vault: &'a oneiron::Vault,
+    auth: &CoreAuth,
+) -> Result<CoreWriteLane<'a>, crate::error::ApiError> {
+    let refused = match crate::api::scoped_read_for_core_auth(vault, auth) {
+        Ok(read) => return Ok(CoreWriteLane::Read(read)),
+        Err(refused) => refused,
+    };
+    if auth.is_owner_grade() {
+        return Ok(CoreWriteLane::Unbound);
+    }
+    if !matches!(
+        refused.details(),
+        crate::error::ApiErrorDetails::Unauthorized
+    ) {
+        return Err(refused);
+    }
+    let Some(proof) = auth.verified_slip() else {
+        return Ok(CoreWriteLane::Unbound);
+    };
+    let key = vault
+        .credential_target_key(proof)
+        .map_err(|error| crate::api::core_engine_error("credential target key failed", error))?;
+    let Some(key) = key else {
+        return Ok(CoreWriteLane::Unbound);
+    };
+    Ok(CoreWriteLane::Target(
+        vault.scoped_read(key.for_destination(&auth.destination())),
+    ))
 }

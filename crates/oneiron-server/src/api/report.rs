@@ -31,20 +31,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 impl SyncServer {
     /// Every hosted report uses the host's embedder, never the caller's budget.
     /// A missing/unready embedder cannot keep a report out of the inbox.
-    pub(crate) async fn report_off_runtime(
-        self: &Arc<Self>,
-        actor: EntityId,
-        class: EdgeActorClass,
-        proof: Option<VerifiedSlip>,
-        locality: CallerLocality,
-        room: Option<EntityId>,
-        input: ReportRequest,
-    ) -> MemoryResult<ReportReceipt> {
-        self.report_off_runtime_listing(actor, class, proof, locality, room, input)
-            .await
-            .0
-    }
-
     pub(crate) async fn report_off_runtime_listing(
         self: &Arc<Self>,
         actor: EntityId,

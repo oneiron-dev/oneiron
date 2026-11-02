@@ -78,7 +78,9 @@ pub struct PackPermissions {
     pub organs: Vec<String>,
     pub section_verbs: Vec<String>,
     pub section_authorities: Vec<String>,
-    /// Only added powers are the widening passed to the fit ladder.
+    /// Only added powers are the widening passed to the fit ladder: a
+    /// hook's lower budget or narrower scope and an organ's lower ceiling
+    /// are not added.
     pub widening_grants: Vec<String>,
     pub widening_wakes: Vec<String>,
     pub widening_hooks: Vec<String>,
@@ -211,6 +213,10 @@ pub struct PackInstallReceipt {
     /// all the same (FIX 5493).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notices: Vec<crate::share_travel::WorldRecipientNotice>,
+    /// The holds the owner lifted on these exact bytes through
+    /// `Vault::activate_pack_candidate`: the owner activated this install.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub owner_activated: Vec<PackCandidateReason>,
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PackInstallDisposition {

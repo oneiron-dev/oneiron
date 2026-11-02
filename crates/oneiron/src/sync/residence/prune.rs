@@ -19,7 +19,7 @@ use crate::Vault;
 use crate::error::Result;
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::store::Store;
-use crate::store::legal_hold::HoldActor;
+use crate::store::legal_hold::{HoldActor, is_hold_refusal};
 use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
 use crate::sync::WindowKey;
 
@@ -55,6 +55,45 @@ pub fn record_item_touch(vault: &Vault, item: EntityId) -> Result<()> {
         }
         Ok(())
     })
+}
+
+/// Erase reach for the read caches of `items` (FIX 7608, owner ruling KEY
+/// STORE = A, FIX 10799): an erased item's cached body, text document,
+/// opened marker, touch row and thin index rows go in the erase's own
+/// transaction, under its id and its masked copy's alike. Absent-ok key
+/// deletes only: nothing is decoded, no mark is read, and an item with no
+/// cache erases as before.
+pub(crate) fn erase_item_caches_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    items: &[EntityId],
+) -> Result<()> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let hexes: Vec<String> = items.iter().map(EntityId::to_hex).collect();
+    for hex in &hexes {
+        for family in ["ri:b:", "ri:d:", "ro:e:", TOUCH_PREFIX] {
+            store.sync_state.delete(txn, &format!("{family}{hex}"))?;
+        }
+    }
+    // A thin index row is keyed `ri:w:{window}:{item}`, in whichever window
+    // listed the item.
+    let listed: Vec<String> = store
+        .sync_state
+        .prefix_iter(txn, "ri:w:")?
+        .map(|row| row.map(|(key, _)| key.to_string()))
+        .collect::<std::result::Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|key| {
+            key.rsplit_once(':')
+                .is_some_and(|(_, item)| hexes.iter().any(|hex| hex == item))
+        })
+        .collect();
+    for key in &listed {
+        store.sync_state.delete(txn, key)?;
+    }
+    Ok(())
 }
 
 /// Drop the read caches of unpromoted items last touched before `before`
@@ -102,14 +141,22 @@ pub(crate) fn prune_thin_items_in_txn(
             continue;
         }
         // A legal hold keeps every byte of the rows it names, a cached
-        // copy too: a held item's cache stays (OF-470).
+        // copy too: a held item's cache stays (OF-470). So does a cached pad
+        // whose world, or a claim its key seals, a hold names, read from the
+        // cache before anything goes (FIX 3061). Any other failure fails.
         let Ok(item) = EntityId::from_hex(id) else {
             continue;
         };
-        if vault
+        match vault
             .store
             .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)
-            .is_err()
+        {
+            Ok(()) => {}
+            Err(error) if is_hold_refusal(&error) => continue,
+            Err(error) => return Err(error),
+        }
+        if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{id}"))?
+            && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?
         {
             continue;
         }

@@ -13,6 +13,11 @@ use super::admission::InFlightCounts;
 use crate::managed::ManagedError;
 use crate::managed::ledger::FrozenReport;
 
+/// How long `prepare_reap` waits, once frozen, for device sync to pause
+/// (FIX 5127): within the supervisor's 2 s ctl call (a call). One still
+/// running then reads as a live sync writer.
+const DEVICE_SYNC_PAUSE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
 /// What a reap's freeze, drain and export found
 /// ([`ManagedState::freeze_drain_export`]).
 pub(super) struct Prepared {
@@ -90,7 +95,8 @@ impl ManagedState {
     }
 
     /// The strict quiescence `prepare_reap` reports, from `in_flight`, the
-    /// admitted writes of every kind read once frozen, and whether the lease
+    /// counted writes read once frozen (a device sync run is judged through
+    /// the sync session check instead), and whether the lease
     /// table `drained`: none in flight, drained, still frozen, and no sync
     /// session that could still commit. The idle reap's preparation judges
     /// its own.
@@ -108,15 +114,31 @@ impl ManagedState {
         // Counted BEFORE drain/export. A writer finishing after export must
         // not turn a stale exported ledger into a quiescent reply.
         let at_freeze = self.freeze_counted()?;
-        self.drain_export(at_freeze).await
+        // Device sync is not counted; its last write lands before the
+        // export, or it reads as live.
+        self.device_sync_paused(tokio::time::Instant::now() + DEVICE_SYNC_PAUSE_WAIT)
+            .await;
+        self.drain_export(at_freeze, true, None).await
     }
 
-    /// The drain and the export after a freeze that found `at_freeze`.
+    /// The drain and the export after a freeze that found `at_freeze`. With
+    /// `drain_leases` false the lease table is not drained, and reads as not
+    /// drained. A drain still under way at `deadline` is cut there and reads
+    /// as not drained; the export then answers at once (FIX 11742). The
+    /// sweep's job ends with the cut, so later sweeps run.
     pub(super) async fn drain_export(
         &self,
         at_freeze: InFlightCounts,
+        drain_leases: bool,
+        deadline: Option<tokio::time::Instant>,
     ) -> Result<Prepared, ManagedError> {
-        let drained = self.drain_lease_table().await;
+        let drained = drain_leases
+            && match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, self.drain_lease_table())
+                    .await
+                    .unwrap_or(false),
+                None => self.drain_lease_table().await,
+            };
         let report = self.ledger.export_at_freeze(&self.server).await?;
         // The pages carry the entries, so they are bounds-checked before
         // they are served rather than after a supervisor has trusted them,

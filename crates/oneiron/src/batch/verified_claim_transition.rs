@@ -7,6 +7,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::Store;
 use crate::temporal::TimeRange;
+use crate::write_envelope::WriteActor;
 
 #[derive(Debug, Clone)]
 pub(crate) struct VerifiedClaimTransition {
@@ -21,6 +22,10 @@ pub(crate) struct VerifiedClaimTransition {
     // A succession births a new row: `prior_hash` then pins the predecessor
     // it was derived from, and the successor id must still be unwritten.
     successor_of: Option<EntityId>,
+    // A typed lifecycle door's close (FIX 8655, 10044, 10045): the closer it
+    // verified, never the row's birth author, and the time it closed at.
+    closer: Option<WriteActor>,
+    closed_at: Option<u64>,
 }
 
 impl VerifiedClaimTransition {
@@ -63,6 +68,8 @@ impl VerifiedClaimTransition {
             learned_at: *learned_at,
             edge_delta: None,
             successor_of: None,
+            closer: None,
+            closed_at: None,
         })
     }
 
@@ -104,6 +111,8 @@ impl VerifiedClaimTransition {
             learned_at: *learned_at,
             edge_delta: None,
             successor_of: Some(*predecessor),
+            closer: None,
+            closed_at: None,
         })
     }
 
@@ -361,6 +370,25 @@ impl VerifiedClaimTransition {
             crate::ports::EntityStoreRead::port_entity_raw(store, txn, &pinned)?
                 .is_some_and(|raw| blake3::hash(&raw).as_bytes() == &self.prior_hash),
         )
+    }
+
+    /// This proof stamped with its lifecycle door's close: `closer` the actor
+    /// the door verified (none for a raw close), closing at `at`. Only the
+    /// lifecycle materialization stamps it.
+    pub(in crate::batch) fn closed_by(mut self, closer: Option<WriteActor>, at: u64) -> Self {
+        self.closer = closer;
+        self.closed_at = Some(at);
+        self
+    }
+
+    /// The actor a typed lifecycle door verified closing this claim.
+    pub(crate) const fn closer(&self) -> Option<WriteActor> {
+        self.closer
+    }
+
+    /// The time a lifecycle door closed this claim at.
+    pub(crate) const fn closed_at(&self) -> Option<u64> {
+        self.closed_at
     }
 
     /// The predecessor a succession proof was derived from; `None` for an

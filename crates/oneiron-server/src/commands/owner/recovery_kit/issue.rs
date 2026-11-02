@@ -14,10 +14,12 @@ use oneiron::world_keys::{IssuedVaultKeyKit, IssuedWorldKit, StoredCost, VaultKe
 use serde::Serialize;
 use zeroize::Zeroizing;
 
-use super::{emit, open, read_passphrase};
+use super::super::vault_key::{KeyNeed, UnlockRequest, open_with_unlock, refuse_two_stdin_secrets};
+use super::{INSTEAD, emit, read_passphrase};
 use crate::cli::RecoveryKitIssueArgs;
 use crate::commands::credential_file;
-use crate::owner::local_owner;
+use crate::config::resolve_serve_config;
+use crate::owner::host_owner;
 use crate::owner::recovery_kit::kit_id;
 use crate::owner::vault_key::hex;
 
@@ -42,9 +44,18 @@ struct Issued {
 }
 
 pub(super) fn issue(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
+    let unlock = UnlockRequest::of(&args.unlock);
+    refuse_two_stdin_secrets(
+        &unlock,
+        passphrase_reads_stdin(&args),
+        "the kit passphrase",
+        "--secret-file",
+    )?;
     let (homes, passphrase) = issue_inputs(&args)?;
-    let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock(&config, &unlock, KeyNeed::Open, INSTEAD)?;
+    refuse_this_machine_without_keystore(&vault, &homes)?;
+    let owner = host_owner(&vault)?;
     let vault_id = vault
         .world_kit_status()?
         .vault_id
@@ -98,21 +109,25 @@ struct IssuedVaultKey {
 /// `recovery-kit issue-vault-key` (FIX 4532): a kit of the vault data key on
 /// a stopped vault, the homes the owner names at today's passphrase cost,
 /// each stored piece's recovery code written to its owner-only file as
-/// `issue` writes a world kit's. A locked key is unlocked with this machine's
-/// wrap; a vault with no key gets none minted. The world kit, its escrow wrap
-/// and every other wrap stay as they are.
+/// `issue` writes a world kit's. A locked key is unlocked as `confirm`
+/// unlocks it (FIX 11386, 2201): this install's keystore by default, or the
+/// unlock `--unlock` names. A vault with no key gets none minted. The world
+/// kit, its escrow wrap and every other wrap stay as they are.
 pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> {
+    let unlock = UnlockRequest::of(&args.unlock);
+    refuse_two_stdin_secrets(
+        &unlock,
+        passphrase_reads_stdin(&args),
+        "the kit passphrase",
+        "--secret-file",
+    )?;
     let (homes, passphrase) = issue_inputs(&args)?;
-    let vault = open(&args.serve)?;
-    let owner = local_owner(&vault)?;
-    match vault.vault_key_status()? {
-        VaultKeyStatus::NoKey => {
-            anyhow::bail!("the vault has no data key yet: there is nothing to put in a kit")
-        }
-        VaultKeyStatus::Locked => vault.unlock_vault_key().map_err(|error| {
-            anyhow::anyhow!("the vault key stays locked, so no kit of it is issued: {error}")
-        })?,
-        VaultKeyStatus::Unlocked => {}
+    let config = resolve_serve_config(&args.serve)?;
+    let vault = open_with_unlock(&config, &unlock, KeyNeed::HeldIfAny, INSTEAD)?;
+    refuse_this_machine_without_keystore(&vault, &homes)?;
+    let owner = host_owner(&vault)?;
+    if vault.vault_key_status()? == VaultKeyStatus::NoKey {
+        anyhow::bail!("the vault has no data key yet: there is nothing to put in a kit")
     }
     let IssuedVaultKeyKit {
         vault_id,
@@ -143,6 +158,12 @@ pub(super) fn issue_vault_key(args: RecoveryKitIssueArgs) -> anyhow::Result<()> 
         pieces: files,
         listed,
     })
+}
+
+/// Whether issuing with `args` reads the kit passphrase from stdin: a
+/// `passphrase` home with no `--secret-file`.
+fn passphrase_reads_stdin(args: &RecoveryKitIssueArgs) -> bool {
+    args.homes.iter().any(|home| home == "passphrase") && args.secret_file.is_none()
 }
 
 /// A kit issue's three homes and, for a `passphrase` home, the passphrase,
@@ -219,12 +240,23 @@ fn parse_home(text: &str) -> anyhow::Result<PieceHome> {
             "trusted-person" => PieceHome::TrustedPerson,
             "security-key" => PieceHome::SecurityKey,
             "passphrase" => PieceHome::Passphrase,
-            "this-machine" => anyhow::bail!(
-                "--home this-machine waits for device-piece custody; pick another home"
-            ),
+            "this-machine" => PieceHome::ThisMachine,
             _ => anyhow::bail!("--home {text} is not a kit home"),
         },
     })
+}
+
+/// A `this-machine` home's piece stays in this install's keystore (FIX 2063):
+/// refused as before while the host installed none.
+fn refuse_this_machine_without_keystore(
+    vault: &oneiron::Vault,
+    homes: &[PieceHome; 3],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !homes.contains(&PieceHome::ThisMachine) || vault.device_keystore_assurance().is_some(),
+        "--home this-machine waits for device-piece custody; pick another home"
+    );
+    Ok(())
 }
 
 /// `dir` and its parents; a directory it makes is owner-only.

@@ -10,14 +10,20 @@
 //! it journaled, `receipt_ref` and all. A fence refusal, a take another holds
 //! and a status read keep none. A call in an anonymous off-record session
 //! keeps none either (Engine ruling, #1968), as every receipt writer there:
-//! such a session keeps nothing.
+//! such a session keeps nothing. One record is exempt (Engine 10-26,
+//! ARCH-0052, FIX 10694): a consult interruption's frozen consent case is an
+//! authority record, kept in such a session too, with its authority fields
+//! only and no conversation content, as is the ConsentRequired fact beside
+//! it.
 //!
 //! Each receipt is indexed in the transaction that keeps it: by its TASK and
 //! time, which a status read names the newest of (FIX 3270) and whose row of
 //! the write that settled the TASK a replayed Done names (FIX 3272), and by
 //! time alone, which a receipt query reads newest first (FIX 3271).
 //!
-//! The receipt is narrative, not authority: no gate or proof reads it.
+//! The receipt is narrative, not authority: no gate or proof reads it, save
+//! the one row the engine keeps for itself, a consult interruption's frozen
+//! consent case (FIX 9742), which only the engine writes and reads back.
 
 use std::ops::Bound;
 
@@ -26,8 +32,7 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryResult};
 use crate::receipt::{
-    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, append_task_type_fields,
-    retain_newest_receipt,
+    ReceiptKind, ReceiptQuery, ReceiptRecord, append_task_type_fields, retain_newest_receipt,
 };
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::task_type::TaskTypeRef;
@@ -187,6 +192,31 @@ pub(super) fn mark_settled_in(
     Ok(())
 }
 
+/// Names `kind` at `reference` as the anchor of the settled receipt kept
+/// under `id`, in the anchoring write's transaction
+/// ([`super::settlement_anchor`]). A receipt that already names an anchor
+/// keeps it, and one not kept anchors nothing. Only its fields change, so
+/// its index rows stand.
+pub(super) fn anchor_in(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    id: &str,
+    kind: &str,
+    reference: &str,
+) -> MemoryResult<()> {
+    let key = id.to_owned();
+    let Some(mut row) = RECEIPTS.get(&vault.store, &*wtxn, &key)? else {
+        return Ok(());
+    };
+    if super::settlement_anchor::names_anchor(&row.fields) {
+        return Ok(());
+    }
+    row.fields
+        .extend(super::settlement_anchor::anchor_fields(kind, reference));
+    RECEIPTS.put(&vault.store, wtxn, &key, &row)?;
+    Ok(())
+}
+
 /// The receipt of the write that settled `task` at `finished_at` (FIX 3272),
 /// the least id when more than one was marked then: what a replay of that
 /// settlement names. `None` when that write kept none.
@@ -227,6 +257,25 @@ pub(super) fn newest_for_task_in(
     Ok(newest.map(|(_, id)| id))
 }
 
+/// The receipt of the newest write that settled `task`, read in `txn`: its
+/// `outcome` is the terminal disposition token (`completed`, `failed`, ...)
+/// and its `actor` the reporter that settled it. `None` while no kept write
+/// settled the TASK. ED-07 routing pairs a run's measured work with it when
+/// an anchor stands behind it (FIX 7828).
+pub(crate) fn settled_receipt_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    task: EntityId,
+) -> crate::Result<Option<ReceiptRecord>> {
+    for row in BY_TASK.iter_rev_from(&vault.store, txn, task.as_bytes())? {
+        let ((_, _, id), role) = row?;
+        if role == ROLE_SETTLED {
+            return RECEIPTS.get(&vault.store, txn, &id);
+        }
+    }
+    Ok(None)
+}
+
 /// [`stamp_record_in`] for one answer: keeps its lifecycle, when it owes
 /// one, and names it in `receipt_ref`.
 pub(super) fn stamp_in(
@@ -250,6 +299,16 @@ pub(super) fn replayed_in(
     id: String,
 ) -> MemoryResult<Option<String>> {
     Ok(RECEIPTS.contains(&vault.store, txn, &id)?.then_some(id))
+}
+
+/// The row kept under `id`, as it was kept, read in `txn`: for a record the
+/// engine keeps for itself and reads back (FIX 9742). `None` when none is.
+pub(super) fn kept_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &str,
+) -> MemoryResult<Option<ReceiptRecord>> {
+    Ok(RECEIPTS.get(&vault.store, txn, &id.to_owned())?)
 }
 
 /// [`replayed_in`] in a read of its own.
@@ -287,14 +346,16 @@ fn project(
 }
 
 /// Drops every lifecycle receipt naming `id` as its TASK or its parked
-/// proposal, in the transaction that erases it; a no-op for any other
-/// entity, as the report journal's erase is. The table keys on the receipt
-/// id, so its rows are found by what each one names.
+/// proposal, and the review a TASK kept for its settlement, in the
+/// transaction that erases it; a no-op for any other entity, as the report
+/// journal's erase is. The table keys on the receipt id, so its rows are
+/// found by what each one names.
 pub(crate) fn erase_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> crate::Result<()> {
+    super::settlement_anchor::erase_in_txn(store, txn, id)?;
     let hex = id.to_hex();
     for (key, row) in RECEIPTS.scan(store, txn)? {
         if row.trigger_ref.as_deref() == Some(hex.as_str())
@@ -346,9 +407,10 @@ pub(crate) fn erase_lifecycle_actor_in_txn(
 }
 
 /// The kept lifecycle receipts `query` matches, for the receipt family
-/// (`Vault::receipts`). Reads at most [`MAX_RECEIPT_QUERY_SCAN`] rows of the
-/// time index within the query's time bounds, newest first (FIX 3271), and
-/// stops once a full page can take no older row.
+/// (`Vault::receipts`). Reads the time index within the query's time bounds,
+/// newest first (FIX 3271), to its end or until a full page can take no
+/// older row; no count cuts it short (FIX 3582), and past its threshold row
+/// it raises one check (rule 5).
 pub(crate) fn task_lifecycle_receipts(
     vault: &Vault,
     query: &ReceiptQuery,
@@ -368,10 +430,14 @@ pub(crate) fn task_lifecycle_receipts(
     // rows come newest first. An older row cannot displace any of it; one as
     // old may, by the page's tie order.
     let mut floor: Option<u64> = None;
-    for row in BY_TIME
-        .iter_rev_range(&vault.store, &rtxn, start.as_ref(), end.as_ref())?
-        .take(MAX_RECEIPT_QUERY_SCAN)
-    {
+    let mut count = crate::scan_check::ScanCount::start(
+        &vault.store,
+        &rtxn,
+        crate::scan_check::EngineScan::ReceiptSourceRows,
+        b"task_lifecycle",
+    )?;
+    for row in BY_TIME.iter_rev_range(&vault.store, &rtxn, start.as_ref(), end.as_ref())? {
+        count.row();
         let ((at, id), ()) = row?;
         if query.job_ref.is_none()
             && out.len() >= query.limit
@@ -392,5 +458,6 @@ pub(crate) fn task_lifecycle_receipts(
             retain_newest_receipt(&mut out, receipt, query.limit);
         }
     }
+    count.finish(vault);
     Ok(out)
 }

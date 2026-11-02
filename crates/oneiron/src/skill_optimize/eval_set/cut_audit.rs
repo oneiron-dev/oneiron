@@ -23,7 +23,7 @@ use super::cohort::{EvalCohort, cut_members_in_txn, membership_digest, retired_f
 use super::{CASE_PREFIX, EvalCase, EvalSeat, FamilyPurpose, family_in_txn, rows_in_txn};
 use crate::Vault;
 use crate::edit_distance::reservoir::amendment_receipt_id;
-use crate::edit_distance::{ProposalArtifactRef, finalized_proposal_text};
+use crate::edit_distance::{ProposalArtifactRef, retained_proposal};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::receipt::attempt_pack_receipt;
@@ -323,10 +323,10 @@ fn case_texts(
         }
     }
     for artifact in artifacts {
-        match finalized_proposal_text(vault, ProposalArtifactRef::new(artifact))? {
-            Some(proposal) => {
-                texts.push(proposal.proposed_text);
-                texts.push(proposal.final_text);
+        match retained_ends(vault, artifact)? {
+            Some((proposed, finalized)) => {
+                texts.push(proposed);
+                texts.push(finalized);
             }
             None => gaps.push(CoverageGap {
                 case: case.case,
@@ -335,6 +335,19 @@ fn case_texts(
         }
     }
     Ok(texts)
+}
+
+/// An artifact's proposed and final texts, read through its retained
+/// document; `None` when the artifact or either end no longer reads, which
+/// the audit records as a coverage gap.
+fn retained_ends(vault: &Vault, artifact: EntityId) -> Result<Option<(String, String)>> {
+    let Some(proposal) = retained_proposal(vault, ProposalArtifactRef::new(artifact))? else {
+        return Ok(None);
+    };
+    Ok(proposal
+        .proposed_text()
+        .into_text()
+        .zip(proposal.final_text().into_text()))
 }
 
 /// Token shingles of `texts` under the pinned normalizer, each kept only as
@@ -469,11 +482,11 @@ fn case_texts_listing(
         }
     }
     for artifact in artifacts {
-        match finalized_proposal_text(vault, ProposalArtifactRef::new(artifact))? {
-            Some(proposal) => {
+        match retained_ends(vault, artifact)? {
+            Some((proposed, finalized)) => {
                 rows.push(artifact);
-                texts.push(proposal.proposed_text);
-                texts.push(proposal.final_text);
+                texts.push(proposed);
+                texts.push(finalized);
             }
             None => gaps.push(CoverageGap {
                 case: case.case,

@@ -70,7 +70,8 @@ const LAST_MONTH: &str = "9999-12";
 /// each part framed as its length, a big-endian `u32`, then its bytes. The
 /// derived key is zeroized when it drops.
 pub(super) fn keyed_digest(key: &[u8; 32], context: &str, parts: &[&[u8]]) -> [u8; 32] {
-    let derived = Zeroizing::new(blake3::derive_key(context, key));
+    // FIX 6669: derive straight into the guard.
+    let derived = crate::world_keys::derive_guarded(context, &[&key[..]]);
     let mut digest = blake3::Hasher::new_keyed(&derived);
     for part in parts {
         // A part is a kind, an id or a month: far below 4 GiB.

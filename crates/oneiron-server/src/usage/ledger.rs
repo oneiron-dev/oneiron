@@ -211,6 +211,10 @@ pub struct CycleSettlements {
 /// first wrote it.
 fn settlement(stored: &StoredUsageEvent, call: &UsageRun) -> RunRungSettlement {
     let event = &stored.event;
+    // A call at rates free in any currency costs zero in none it names; its
+    // frozen snapshot names the price table of any unpriced call that kept
+    // its rates (FIX 9534).
+    let free = stored.cost.is_none() && free_call(event);
     RunRungSettlement {
         instance: call.instance.clone(),
         lease: call.lease.clone(),
@@ -231,13 +235,33 @@ fn settlement(stored: &StoredUsageEvent, call: &UsageRun) -> RunRungSettlement {
         usage_reported: call.usage_reported,
         settlement_refused: call.settlement_refused,
         occurred_at: event.occurred_at.unwrap_or(stored.recorded_at),
-        cost_amount: stored.cost.as_ref().map(|cost| cost.amount),
+        cost_amount: stored
+            .cost
+            .as_ref()
+            .map(|cost| cost.amount)
+            .or(free.then_some(0)),
         currency: stored.cost.as_ref().map(|cost| cost.currency.clone()),
         price_table_snapshot: stored
             .cost
             .as_ref()
-            .map(|cost| cost.price_table_snapshot.clone()),
+            .map(|cost| cost.price_table_snapshot.clone())
+            .or_else(|| {
+                event
+                    .cost_rates
+                    .as_ref()
+                    .map(|rates| rates.price_table_snapshot.clone())
+            }),
     }
+}
+
+/// Whether `event` is priced at rates free in any currency that name none:
+/// its price is zero in whatever currency a sum it joins is kept in.
+fn free_call(event: &UsageEvent) -> bool {
+    event.unpriced.is_none()
+        && event
+            .cost_rates
+            .as_ref()
+            .is_some_and(|rates| rates.currency.is_none() && rates.free_in_any_currency())
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -272,6 +296,8 @@ pub struct SeatUsage {
     pub output_tokens: u64,
     /// The stamped prices summed, in 10^-9 units of `currency`.
     pub cost_amount: u64,
+    /// The first priced call's currency; `None` when no call named one, as
+    /// when every call was free in any currency (FIX 9534).
     pub currency: Option<String>,
     /// False when any call in the window has no price, a price in another
     /// currency, or one the sum cannot hold: exactly when
@@ -280,8 +306,12 @@ pub struct SeatUsage {
     /// The unpriced calls whose record says they measured no tokens.
     pub no_usage: u64,
     /// The unpriced calls whose record says no list price was frozen on
-    /// them at admission.
+    /// them at admission, those on the owner's own key to a custom endpoint
+    /// included (FIX 7765).
     pub unpriced_model: u64,
+    /// The unpriced calls whose record says their frozen rates name no
+    /// currency and are not free in any (FIX 9534).
+    pub unknown_currency: u64,
     /// The unpriced calls whose record says their frozen rates quote no rate
     /// for a cache dimension they measured.
     pub unpriced_cache: UnpricedCache,
@@ -324,6 +354,7 @@ impl SeatUsage {
         [
             self.no_usage,
             self.unpriced_model,
+            self.unknown_currency,
             self.unpriced_cache.calls,
             self.mixed_currency,
             self.sum_overflow,
@@ -447,9 +478,19 @@ impl UsageLedger {
                                 }
                             }
                             (Some(_), _) => usage.mixed_currency += 1,
+                            // Free in any currency: zero joins the sum in
+                            // its currency, whichever that is (FIX 9534).
+                            (None, None) if free_call(&stored.event) => {}
                             (None, Some(UnpricedReason::NoUsage)) => usage.no_usage += 1,
                             (None, Some(UnpricedReason::UnpricedModel)) => {
                                 usage.unpriced_model += 1;
+                            }
+                            // No list price was frozen on it either (FIX 7765).
+                            (None, Some(UnpricedReason::CustomEndpoint)) => {
+                                usage.unpriced_model += 1;
+                            }
+                            (None, Some(UnpricedReason::UnknownCurrency)) => {
+                                usage.unknown_currency += 1;
                             }
                             (None, Some(UnpricedReason::UnquotedCache { dimensions })) => {
                                 usage.unpriced_cache.add(dimensions);

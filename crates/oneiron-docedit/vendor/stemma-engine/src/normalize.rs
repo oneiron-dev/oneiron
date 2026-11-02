@@ -6,18 +6,12 @@ use quick_xml::name::QName;
 use xmltree::{Element, XMLNode};
 
 use crate::docx::DocxArchive;
-use crate::word_xml::is_w_tag;
+use crate::word_xml::{is_w_tag, preorder_elements};
 
 /// WordprocessingML main namespace URI. Mirrors `word_xml::WORD_NS` (kept private
 /// there); used by the streaming preflight scanner to resolve whether an element
 /// is in the Word namespace without materializing an `xmltree` tree.
 const WORD_NS: &str = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
-
-/// Element depth limit for the streaming preflight scan, mirroring
-/// `word_xml::MAX_XML_ELEMENT_DEPTH` (entity-expansion / runaway-nesting defense).
-/// Must stay in sync with that constant; see its doc comment for the rationale
-/// behind the stack-safe value.
-const MAX_XML_ELEMENT_DEPTH: usize = 512;
 
 // =============================================================================
 // Error types
@@ -299,15 +293,14 @@ fn collect_note_part_path(
     Ok(None)
 }
 
+/// Every note or comment reference id in the tree, walked by an explicit
+/// stack, so depth costs heap (FIX 10655).
 fn collect_note_reference_ids(element: &Element, kind: NoteKind, ids: &mut HashSet<String>) {
-    if kind.is_reference_tag(local_element_name(element))
-        && let Some(id) = get_attr(element, "id")
-    {
-        ids.insert(id.to_string());
-    }
-    for child in &element.children {
-        if let XMLNode::Element(child) = child {
-            collect_note_reference_ids(child, kind, ids);
+    for element in preorder_elements(element) {
+        if kind.is_reference_tag(local_element_name(element))
+            && let Some(id) = get_attr(element, "id")
+        {
+            ids.insert(id.to_string());
         }
     }
 }
@@ -942,8 +935,9 @@ fn classify_scan_element(
 
 /// Streaming scan of a single story part's XML bytes. Tallies revision/comment
 /// counts without building an `xmltree` tree. DOCTYPE is rejected (entity-
-/// expansion defense) and element nesting is bounded by `MAX_XML_ELEMENT_DEPTH`,
-/// matching the guards on the tree-building parse path.
+/// expansion defense). Element nesting is an observation, never a reason to
+/// stop (FIX 10655): the scan keeps its open elements' namespace frames on the
+/// heap and recurses over nothing.
 fn scan_part_streaming(
     bytes: &[u8],
 ) -> Result<(PartRevisionCounts, PartCommentCounts), NormalizeError> {
@@ -963,7 +957,6 @@ fn scan_part_streaming(
     let mut rev_counts = PartRevisionCounts::default();
     let mut comment_counts = PartCommentCounts::default();
     let mut scope: Vec<ScanNsFrame> = Vec::new();
-    let mut depth = 0usize;
     let mut buf = Vec::new();
 
     let to_err = |reader: &Reader<&[u8]>, e: quick_xml::Error| {
@@ -979,15 +972,6 @@ fn scan_part_streaming(
             .map_err(|e| to_err(&reader, e))?;
         match event {
             Event::Start(ref start) => {
-                depth += 1;
-                if depth > MAX_XML_ELEMENT_DEPTH {
-                    return Err(NormalizeError::XmlParseQuick(
-                        WordXmlError::XmlDepthExceeded {
-                            limit: MAX_XML_ELEMENT_DEPTH,
-                            depth,
-                        },
-                    ));
-                }
                 let frame = ns_frame_from_start(start, &reader)?;
                 scope.push(frame);
                 let (prefix, local) = split_name(start.name());
@@ -1000,15 +984,6 @@ fn scan_part_streaming(
                 );
             }
             Event::Empty(ref start) => {
-                let empty_depth = depth + 1;
-                if empty_depth > MAX_XML_ELEMENT_DEPTH {
-                    return Err(NormalizeError::XmlParseQuick(
-                        WordXmlError::XmlDepthExceeded {
-                            limit: MAX_XML_ELEMENT_DEPTH,
-                            depth: empty_depth,
-                        },
-                    ));
-                }
                 // An empty element's own xmlns declarations are in scope for
                 // resolving its own name, so push, classify, then pop.
                 let frame = ns_frame_from_start(start, &reader)?;
@@ -1024,7 +999,6 @@ fn scan_part_streaming(
                 scope.pop();
             }
             Event::End(_) => {
-                depth = depth.saturating_sub(1);
                 scope.pop();
             }
             Event::DocType(_) => {
@@ -1358,53 +1332,98 @@ fn selected_wid(el: &Element, selected: &std::collections::HashSet<u32>) -> bool
 /// verbatim. Matching never descends INTO a carrier: a stacked revision is not
 /// individually addressable (the classifier reports it census-only), so a
 /// selected id that happens to match a stacked carrier's id must not mutate it.
+/// Descends by an explicit stack ([`rebuild_children`]; FIX 10655).
 fn resolve_selected_in(
     parent: &mut Element,
     selected: &std::collections::HashSet<u32>,
     accept: bool,
     resolved: &mut usize,
 ) {
-    let mut new_children: Vec<XMLNode> = Vec::with_capacity(parent.children.len());
-    for child in parent.children.drain(..) {
-        match child {
-            XMLNode::Element(mut el)
-                if (is_w_tag(&el, "ins") || is_w_tag(&el, "del"))
-                    && selected_wid(&el, selected) =>
-            {
-                *resolved += 1;
-                let is_addition = is_w_tag(&el, "ins");
-                // accept+addition or reject+deletion → keep the wrapped content;
-                // otherwise the whole carrier is dropped.
-                let keep_children = accept == is_addition;
-                if keep_children {
-                    if !is_addition {
-                        // Restoring a deletion: w:delText → w:t before promoting.
-                        let mut stats = NormalizeStats::default();
-                        convert_del_text_to_t(&mut el, &mut stats, true);
-                    }
-                    // Promote the children VERBATIM: any carrier nested in them
-                    // was stacked, is census-only by the classifier, and stays
-                    // pending markup.
-                    new_children.extend(el.children);
-                }
-                // else: dropped entirely
+    rebuild_children(
+        parent,
+        false,
+        &mut SelectedPass {
+            selected,
+            accept,
+            resolved,
+        },
+    );
+}
+
+/// [`resolve_selected_in`]'s pass. What it remembers of a wrapper it
+/// descends into is whether the wrapper held a content revision before.
+struct SelectedPass<'p> {
+    selected: &'p std::collections::HashSet<u32>,
+    accept: bool,
+    resolved: &'p mut usize,
+}
+
+impl RebuildPass for SelectedPass<'_> {
+    type Disposition = bool;
+
+    fn enter(&mut self, _element: &mut Element, _opaque: bool) {}
+
+    fn visit(
+        &mut self,
+        node: XMLNode,
+        _opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    ) -> Option<Descend<bool>> {
+        let mut el = match node {
+            XMLNode::Element(el) => el,
+            other => {
+                rebuilt.push(other);
+                return None;
             }
-            XMLNode::Element(mut el) => {
-                // Recurse through ordinary wrappers (paragraph, hyperlink,
-                // smartTag, …) but never INTO a revision carrier — its interior
-                // is stacked territory.
-                let had_nested_revision = has_nested_content_revision(&el);
-                if !is_content_revision(&el) {
-                    resolve_selected_in(&mut el, selected, accept, resolved);
+        };
+        if (is_w_tag(&el, "ins") || is_w_tag(&el, "del")) && selected_wid(&el, self.selected) {
+            *self.resolved += 1;
+            let is_addition = is_w_tag(&el, "ins");
+            // accept+addition or reject+deletion → keep the wrapped content;
+            // otherwise the whole carrier is dropped.
+            let keep_children = self.accept == is_addition;
+            if keep_children {
+                if !is_addition {
+                    // Restoring a deletion: w:delText → w:t before promoting.
+                    let mut stats = NormalizeStats::default();
+                    convert_del_text_to_t(&mut el, &mut stats, true);
                 }
-                if !is_revision_emptied_hyperlink(&el, had_nested_revision) {
-                    new_children.push(XMLNode::Element(el));
-                }
+                // Promote the children VERBATIM: any carrier nested in them
+                // was stacked, is census-only by the classifier, and stays
+                // pending markup.
+                rebuilt.extend(el.children);
             }
-            other => new_children.push(other),
+            // else: dropped entirely
+            return None;
+        }
+        // Descend through ordinary wrappers (paragraph, hyperlink, smartTag,
+        // …) but never INTO a revision carrier — its interior is stacked
+        // territory.
+        let had_nested_revision = has_nested_content_revision(&el);
+        if !is_content_revision(&el) {
+            return Some(Descend {
+                element: el,
+                opaque: false,
+                disposition: had_nested_revision,
+            });
+        }
+        if !is_revision_emptied_hyperlink(&el, had_nested_revision) {
+            rebuilt.push(XMLNode::Element(el));
+        }
+        None
+    }
+
+    fn leave(
+        &mut self,
+        element: Element,
+        had_nested_revision: bool,
+        _opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    ) {
+        if !is_revision_emptied_hyperlink(&element, had_nested_revision) {
+            rebuilt.push(XMLNode::Element(element));
         }
     }
-    parent.children = new_children;
 }
 
 /// Reject children of an element in-place (inverse of `normalize_children`).
@@ -1414,125 +1433,18 @@ fn resolve_selected_in(
 /// - w:del / w:moveFrom → unwrap (restore deletions)
 /// - w:delText → convert to w:t (restore deleted text)
 /// - *PrChange → restore previous properties from the record
-/// - Everything else → recurse
+/// - Everything else → descend
+///
+/// Descends by an explicit stack ([`rebuild_children`]; FIX 10655).
 fn reject_children(parent: &mut Element, stats: &mut NormalizeStats, inside_opaque: bool) {
-    settle_inline_sdt_deletion_envelopes(parent, false, stats);
-    settle_inserted_mark_restored_with_move(parent, stats, inside_opaque);
-    // Join paragraphs whose mark insertion this reject un-proposes (must
-    // precede the revision pass, which drops the markers).
-    join_mark_resolved_paragraphs(parent, /*keep_inserted=*/ false, stats);
-
-    // First pass: reject *PrChange records — restore the previous
-    // properties they carry (§17.13.5.29–.32; accept drops the record and
-    // keeps the new properties instead).
-    reject_pr_changes(parent, stats, inside_opaque);
-
-    // Second pass: handle content revisions with inverted logic.
-    let mut new_children: Vec<XMLNode> = Vec::with_capacity(parent.children.len());
-
-    for child in parent.children.drain(..) {
-        match child {
-            XMLNode::Element(el) if is_w_tag(&el, "ins") || is_w_tag(&el, "moveTo") => {
-                // w:ins, w:moveTo → drop entirely (reject additions)
-                let count = 1 + count_nested_revisions(&el);
-                if inside_opaque {
-                    stats.opaque_resolved += count;
-                } else {
-                    stats.revisions_resolved += count;
-                }
-            }
-            XMLNode::Element(mut el) if is_w_tag(&el, "del") || is_w_tag(&el, "moveFrom") => {
-                // w:del, w:moveFrom → unwrap: keep children, drop the wrapper
-                if inside_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
-                }
-                // Convert w:delText → w:t inside these children before promoting
-                convert_del_text_to_t(&mut el, stats, inside_opaque);
-                if is_w_tag(&el, "moveFrom") {
-                    // Word's reachable "insert paragraph, then move it" shape
-                    // serializes the earlier insertion inside moveFrom at the
-                    // source. Rejecting the move restores that source content
-                    // and settles the nested insertion as normal content; a
-                    // generic recursive reject would wrongly delete it.
-                    unwrap_insertions_restored_with_move_from(&mut el, stats, inside_opaque);
-                }
-                // Recursively reject children before promoting them
-                reject_children(&mut el, stats, inside_opaque);
-                // Promote all children of the revision wrapper
-                new_children.extend(el.children);
-            }
-            XMLNode::Element(el) if is_move_range_marker(&el) => {
-                // Move range delimiters go with the move they bracket
-                // (reject un-proposed the move: moveFrom content restored,
-                // moveTo dropped — see is_move_range_marker).
-                if inside_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
-                }
-            }
-            XMLNode::Element(el) if is_w_tag(&el, "tr") && has_row_tracking(&el, "ins") => {
-                // Row-level tracked insertion (w:trPr/w:ins): drop the entire
-                // row on reject. The row was added as a tracked change — undoing
-                // that means removing it entirely.
-                let count = 1 + count_nested_revisions(&el);
-                if inside_opaque {
-                    stats.opaque_resolved += count;
-                } else {
-                    stats.revisions_resolved += count;
-                }
-            }
-            XMLNode::Element(el) if is_w_tag(&el, "tc") && has_cell_tracking(&el, "cellIns") => {
-                // Cell-level tracked insertion (w:tcPr/w:cellIns, §17.13.5.2):
-                // drop the entire cell on reject — the cell was added as a
-                // tracked change, undoing that removes it. Mirrors the IR
-                // reject path (tracked_model.rs). A STACKED cell (cellIns +
-                // cellDel) also lands here: it drops in both full resolutions.
-                let count = 1 + count_nested_revisions(&el);
-                if inside_opaque {
-                    stats.opaque_resolved += count;
-                } else {
-                    stats.revisions_resolved += count;
-                }
-            }
-            XMLNode::Element(mut el) => {
-                // Non-revision element: recurse into it
-                let had_nested_revision = has_nested_content_revision(&el);
-                let child_opaque = inside_opaque || is_opaque_container(&el);
-                reject_children(&mut el, stats, child_opaque);
-                // A surviving cell's w:cellDel marker (§17.13.5.1) is resolved
-                // on reject: the cell is restored, the marker goes.
-                if is_w_tag(&el, "tc") {
-                    let stripped = strip_cell_tracking_markers(&mut el);
-                    if inside_opaque {
-                        stats.opaque_resolved += stripped;
-                    } else {
-                        stats.revisions_resolved += stripped;
-                    }
-                }
-                // OOXML §17.4.37: a table must contain a non-zero number of rows.
-                // After rejection drops all inserted rows, a table can end up with
-                // zero w:tr children. Remove it rather than producing invalid XML.
-                if is_w_tag(&el, "tbl") && !has_any_row(&el) {
-                    // Table is now empty — drop it entirely.
-                } else if is_revision_emptied_hyperlink(&el, had_nested_revision) {
-                    // A paragraph-level hyperlink carries revisions on its inner
-                    // runs. Resolving away every run removes the hyperlink too;
-                    // retaining an empty relationship-bearing shell would invent
-                    // a semantic object absent from this terminal.
-                } else {
-                    new_children.push(XMLNode::Element(el));
-                }
-            }
-            other => {
-                new_children.push(other);
-            }
-        }
-    }
-
-    parent.children = new_children;
+    rebuild_children(
+        parent,
+        inside_opaque,
+        &mut ResolvePass {
+            stats,
+            keep_inserted: false,
+        },
+    );
 }
 
 fn settle_inserted_mark_restored_with_move(
@@ -1540,15 +1452,24 @@ fn settle_inserted_mark_restored_with_move(
     stats: &mut NormalizeStats,
     inside_opaque: bool,
 ) {
+    /// Whether a `w:ins` sits inside a `w:moveFrom` in the tree, walked by an
+    /// explicit stack, so depth costs heap (FIX 10655).
     fn has_nested_insert_in_move_from(element: &Element, inside_move_from: bool) -> bool {
-        let inside_move_from = inside_move_from || is_w_tag(element, "moveFrom");
-        if inside_move_from && is_w_tag(element, "ins") {
-            return true;
+        let mut stack = vec![(element, inside_move_from)];
+        while let Some((element, inside_move_from)) = stack.pop() {
+            let inside_move_from = inside_move_from || is_w_tag(element, "moveFrom");
+            if inside_move_from && is_w_tag(element, "ins") {
+                return true;
+            }
+            stack.extend(
+                element
+                    .children
+                    .iter()
+                    .filter_map(XMLNode::as_element)
+                    .map(|child| (child, inside_move_from)),
+            );
         }
-        element.children.iter().any(|child| {
-            matches!(child, XMLNode::Element(child)
-                if has_nested_insert_in_move_from(child, inside_move_from))
-        })
+        false
     }
 
     for child in &mut parent.children {
@@ -1583,54 +1504,77 @@ fn settle_inserted_mark_restored_with_move(
     }
 }
 
+/// Settle every `w:ins` under a rejected `w:moveFrom` as normal content: its
+/// children take its place. Descends by an explicit stack
+/// ([`rebuild_children`]; FIX 10655).
 fn unwrap_insertions_restored_with_move_from(
     parent: &mut Element,
     stats: &mut NormalizeStats,
     inside_opaque: bool,
 ) {
-    let mut children = Vec::with_capacity(parent.children.len());
-    for child in parent.children.drain(..) {
-        match child {
+    rebuild_children(parent, inside_opaque, &mut InsertionsPass { stats });
+}
+
+/// [`unwrap_insertions_restored_with_move_from`]'s pass.
+struct InsertionsPass<'p> {
+    stats: &'p mut NormalizeStats,
+}
+
+impl RebuildPass for InsertionsPass<'_> {
+    type Disposition = ();
+
+    fn enter(&mut self, _element: &mut Element, _opaque: bool) {}
+
+    fn visit(
+        &mut self,
+        node: XMLNode,
+        opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    ) -> Option<Descend<()>> {
+        match node {
             XMLNode::Element(mut insertion) if is_w_tag(&insertion, "ins") => {
-                if inside_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
-                }
-                children.append(&mut insertion.children);
+                self.stats.count_resolved(opaque, 1);
+                rebuilt.append(&mut insertion.children);
+                None
             }
-            XMLNode::Element(mut element) => {
-                unwrap_insertions_restored_with_move_from(&mut element, stats, inside_opaque);
-                children.push(XMLNode::Element(element));
+            XMLNode::Element(element) => Some(Descend {
+                element,
+                opaque,
+                disposition: (),
+            }),
+            other => {
+                rebuilt.push(other);
+                None
             }
-            other => children.push(other),
         }
     }
-    parent.children = children;
+
+    fn leave(&mut self, element: Element, (): (), _opaque: bool, rebuilt: &mut Vec<XMLNode>) {
+        rebuilt.push(XMLNode::Element(element));
+    }
 }
 
 /// Convert `w:delText` → `w:t` and `w:delInstrText` → `w:instrText`
-/// in-place, recursively. Used during reject to restore deleted content
-/// as normal content — both element types are only valid inside `w:del`.
+/// in-place, through the whole tree. Used during reject to restore deleted
+/// content as normal content — both element types are only valid inside
+/// `w:del`. An explicit stack, so depth costs heap (FIX 10655).
 fn convert_del_text_to_t(element: &mut Element, stats: &mut NormalizeStats, inside_opaque: bool) {
-    for child in element.children.iter_mut() {
-        let el = match child {
-            XMLNode::Element(el) => el,
-            _ => continue,
-        };
-
-        // delText → t, delInstrText → instrText (the deleted↔plain run-content
-        // pairs — the single source of truth in DELETED_RUN_CONTENT_PAIRS).
-        if let Some(plain_local) = plain_run_content_name(local_element_name(el)) {
-            rename_local_preserving_prefix(el, plain_local);
-            if inside_opaque {
-                stats.opaque_resolved += 1;
+    let mut stack = vec![(element, inside_opaque)];
+    while let Some((element, inside_opaque)) = stack.pop() {
+        for el in element
+            .children
+            .iter_mut()
+            .filter_map(XMLNode::as_mut_element)
+        {
+            // delText → t, delInstrText → instrText (the deleted↔plain run-content
+            // pairs — the single source of truth in DELETED_RUN_CONTENT_PAIRS).
+            if let Some(plain_local) = plain_run_content_name(local_element_name(el)) {
+                rename_local_preserving_prefix(el, plain_local);
+                stats.count_resolved(inside_opaque, 1);
             } else {
-                stats.revisions_resolved += 1;
+                let child_opaque = inside_opaque || is_opaque_container(el);
+                stack.push((el, child_opaque));
             }
-        } else {
-            let child_opaque = inside_opaque || is_opaque_container(el);
-            convert_del_text_to_t(el, stats, child_opaque);
         }
     }
 }
@@ -1693,11 +1637,15 @@ struct TreeRangeCapture {
     end: Option<Element>,
 }
 
-/// Snapshot every paired range marker in a part tree.
+/// Snapshot every paired range marker in a part tree. A half met again
+/// later in document order replaces the one met before; the walk is the
+/// explicit-stack pre-order of [`preorder_elements`] (FIX 10655).
 fn capture_tree_range_markers(
     root: &Element,
 ) -> std::collections::HashMap<TreeRangeKey, TreeRangeCapture> {
-    fn walk(el: &Element, map: &mut std::collections::HashMap<TreeRangeKey, TreeRangeCapture>) {
+    let mut map: std::collections::HashMap<TreeRangeKey, TreeRangeCapture> =
+        std::collections::HashMap::new();
+    for el in preorder_elements(root) {
         if let Some((family, id, is_start)) = tree_range_marker_of(el) {
             let slot = map.entry((family, id)).or_default();
             if is_start {
@@ -1706,22 +1654,18 @@ fn capture_tree_range_markers(
                 slot.end = Some(el.clone());
             }
         }
-        for child in &el.children {
-            if let XMLNode::Element(c) = child {
-                walk(c, map);
-            }
-        }
     }
-    let mut map = std::collections::HashMap::new();
-    walk(root, &mut map);
     map
 }
 
-/// Presence of each pair's start/end after resolution: `(start, end)`.
+/// Presence of each pair's start/end after resolution: `(start, end)`,
+/// walked by the explicit-stack pre-order of [`preorder_elements`]
+/// (FIX 10655).
 fn survivor_tree_range_markers(
     root: &Element,
 ) -> std::collections::HashMap<TreeRangeKey, (bool, bool)> {
-    fn walk(el: &Element, map: &mut std::collections::HashMap<TreeRangeKey, (bool, bool)>) {
+    let mut map = std::collections::HashMap::new();
+    for el in preorder_elements(root) {
         if let Some((family, id, is_start)) = tree_range_marker_of(el) {
             let slot = map.entry((family, id)).or_insert((false, false));
             if is_start {
@@ -1730,14 +1674,7 @@ fn survivor_tree_range_markers(
                 slot.1 = true;
             }
         }
-        for child in &el.children {
-            if let XMLNode::Element(c) = child {
-                walk(c, map);
-            }
-        }
     }
-    let mut map = std::collections::HashMap::new();
-    walk(root, &mut map);
     map
 }
 
@@ -1770,36 +1707,34 @@ fn collapse_torn_range_markers_in_tree(
 }
 
 /// Insert `partner` immediately adjacent to the surviving half of `key` (after a
-/// surviving start, before a surviving end). Stops at the first survivor found.
+/// surviving start, before a surviving end). Stops at the first survivor found:
+/// each element's children are searched before its descendants, elements in
+/// document order (pre-order), by an explicit stack (FIX 10655).
 fn insert_tree_partner_adjacent(
     el: &mut Element,
     key: &TreeRangeKey,
     survivor_is_start: bool,
     partner: Element,
 ) -> bool {
-    let mut survivor_at: Option<usize> = None;
-    for (i, child) in el.children.iter().enumerate() {
-        if let XMLNode::Element(c) = child
-            && let Some((family, id, is_start)) = tree_range_marker_of(c)
-            && family == key.0
-            && id == key.1
-            && is_start == survivor_is_start
-        {
-            survivor_at = Some(i);
-            break;
-        }
-    }
-    if let Some(i) = survivor_at {
-        let at = if survivor_is_start { i + 1 } else { i };
-        el.children.insert(at, XMLNode::Element(partner));
-        return true;
-    }
-    for child in el.children.iter_mut() {
-        if let XMLNode::Element(c) = child
-            && insert_tree_partner_adjacent(c, key, survivor_is_start, partner.clone())
-        {
+    let mut stack = vec![el];
+    while let Some(el) = stack.pop() {
+        let survivor_at = el.children.iter().position(|child| {
+            matches!(child, XMLNode::Element(c)
+            if tree_range_marker_of(c).is_some_and(|(family, id, is_start)| {
+                family == key.0 && id == key.1 && is_start == survivor_is_start
+            }))
+        });
+        if let Some(i) = survivor_at {
+            let at = if survivor_is_start { i + 1 } else { i };
+            el.children.insert(at, XMLNode::Element(partner));
             return true;
         }
+        stack.extend(
+            el.children
+                .iter_mut()
+                .rev()
+                .filter_map(XMLNode::as_mut_element),
+        );
     }
     false
 }
@@ -1942,17 +1877,17 @@ struct NormalizeStats {
     opaque_resolved: u32,
 }
 
-/// Normalize children of an element in-place.
-///
-/// This is the core recursive transformation. For each child:
-/// - w:ins / w:moveTo → unwrap (replace element with its children)
-/// - w:del / w:moveFrom → drop entirely
-/// - w:delText → drop
-/// - *PrChange → remove from parent properties element
-/// - Everything else → recurse
-///
-/// `inside_opaque` tracks whether we're inside an opaque container (w:sdt, etc.)
-/// so we can count those separately.
+impl NormalizeStats {
+    /// Count `count` resolved revisions, inside an opaque container or not.
+    fn count_resolved(&mut self, inside_opaque: bool, count: u32) {
+        if inside_opaque {
+            self.opaque_resolved += count;
+        } else {
+            self.revisions_resolved += count;
+        }
+    }
+}
+
 /// Which paragraph-mark tracked markers (`w:pPr/w:rPr`) a paragraph carries,
 /// as `(insertion_class, deletion_class)`. A moved paragraph's pilcrow carries
 /// `w:moveTo` / `w:moveFrom` (the moved-paragraph twin of `w:ins` / `w:del`),
@@ -2253,148 +2188,385 @@ fn join_mark_resolved_paragraphs(
     }
 }
 
+/// Accept the revisions under `parent` in place: the core transformation.
+/// For each child:
+/// - w:ins / w:moveTo → unwrap (replace element with its children)
+/// - w:del / w:moveFrom → drop entirely
+/// - w:delText → drop
+/// - *PrChange → remove from parent properties element
+/// - Everything else → descend
+///
+/// `inside_opaque` tracks whether we're inside an opaque container (w:sdt,
+/// etc.) so we can count those separately. Descends by an explicit stack
+/// ([`rebuild_children`]; FIX 10655).
 fn normalize_children(parent: &mut Element, stats: &mut NormalizeStats, inside_opaque: bool) {
-    settle_inline_sdt_deletion_envelopes(parent, true, stats);
-    // Join paragraphs whose mark deletion this accept applies (must precede
-    // the revision pass, which drops the markers).
-    join_mark_resolved_paragraphs(parent, /*keep_inserted=*/ true, stats);
+    rebuild_children(
+        parent,
+        inside_opaque,
+        &mut ResolvePass {
+            stats,
+            keep_inserted: true,
+        },
+    );
+}
 
-    // First pass: remove *PrChange children from property elements.
-    // We do this before the main pass because these are children of property
-    // elements (w:rPr, w:pPr, etc.), not direct content flow elements.
-    remove_pr_changes(parent, stats, inside_opaque);
+// =============================================================================
+// Stack-safe children rebuilding (FIX 10655)
+// =============================================================================
 
-    // Second pass: handle content revisions (ins/del/moveFrom/moveTo/delText).
-    // We need to rebuild the children list because unwrapping can expand one
-    // child into multiple children.
-    let mut new_children: Vec<XMLNode> = Vec::with_capacity(parent.children.len());
+/// A child a [`RebuildPass`] descends into: its own children are rebuilt
+/// next, under `opaque`, and then it is handed back to the pass with its
+/// `disposition`.
+struct Descend<T> {
+    element: Element,
+    opaque: bool,
+    disposition: T,
+}
 
-    for child in parent.children.drain(..) {
-        match child {
-            XMLNode::Element(el) if is_drop_revision(&el) => {
-                // w:del, w:moveFrom → drop entirely
-                let count = 1 + count_nested_revisions(&el);
-                if inside_opaque {
-                    stats.opaque_resolved += count;
-                } else {
-                    stats.revisions_resolved += count;
-                }
+/// One pass that rebuilds an element's children, and the children of every
+/// element it descends into, as the recursive passes did: each element's
+/// children in order, each descended child's subtree finished before the
+/// next sibling.
+trait RebuildPass {
+    /// What the pass keeps about a child while it descends into it.
+    type Disposition;
+
+    /// Runs on an element before its children are rebuilt under `opaque`.
+    fn enter(&mut self, element: &mut Element, opaque: bool);
+
+    /// Meets one child of an element whose children are rebuilt under
+    /// `opaque`: keeps, drops or splices it into `rebuilt`, or descends.
+    fn visit(
+        &mut self,
+        node: XMLNode,
+        opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    ) -> Option<Descend<Self::Disposition>>;
+
+    /// Takes back a descended child, its children rebuilt, into its parent's
+    /// `rebuilt`; the parent's children are rebuilt under `opaque`.
+    fn leave(
+        &mut self,
+        element: Element,
+        disposition: Self::Disposition,
+        opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    );
+}
+
+/// Rebuild `root`'s children under `root_opaque` with `pass`, descending by
+/// an explicit stack of the elements whose children are being rebuilt, so a
+/// deep tree costs heap, not thread stack (FIX 10655).
+fn rebuild_children<P: RebuildPass>(root: &mut Element, root_opaque: bool, pass: &mut P) {
+    struct Frame<T> {
+        element: Element,
+        children: std::vec::IntoIter<XMLNode>,
+        rebuilt: Vec<XMLNode>,
+        opaque: bool,
+        disposition: T,
+    }
+
+    pass.enter(root, root_opaque);
+    let children = std::mem::take(&mut root.children);
+    let mut root_rebuilt = Vec::with_capacity(children.len());
+    let mut root_children = children.into_iter();
+    let mut stack: Vec<Frame<P::Disposition>> = Vec::new();
+    loop {
+        let (children, rebuilt, opaque) = match stack.last_mut() {
+            Some(frame) => (&mut frame.children, &mut frame.rebuilt, frame.opaque),
+            None => (&mut root_children, &mut root_rebuilt, root_opaque),
+        };
+        if let Some(node) = children.next() {
+            if let Some(Descend {
+                mut element,
+                opaque,
+                disposition,
+            }) = pass.visit(node, opaque, rebuilt)
+            {
+                pass.enter(&mut element, opaque);
+                let children = std::mem::take(&mut element.children);
+                stack.push(Frame {
+                    rebuilt: Vec::with_capacity(children.len()),
+                    children: children.into_iter(),
+                    element,
+                    opaque,
+                    disposition,
+                });
             }
-            XMLNode::Element(el) if is_del_text(&el) => {
-                // w:delText → drop
-                if inside_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
-                }
-            }
-            XMLNode::Element(mut el) if is_unwrap_revision(&el) => {
-                // w:ins, w:moveTo → unwrap: keep children, drop the wrapper
-                if inside_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
-                }
-                // Recursively normalize children before promoting them
-                normalize_children(&mut el, stats, inside_opaque);
-                // Promote all children of the revision wrapper
-                new_children.extend(el.children);
-            }
-            XMLNode::Element(el) if is_move_range_marker(&el) => {
-                // Move range delimiters go with the move they bracket
-                // (accept resolved the move: moveTo content kept, moveFrom
-                // dropped — see is_move_range_marker for why these must not
-                // survive).
-                if inside_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
-                }
-            }
-            XMLNode::Element(el) if is_w_tag(&el, "tr") && has_row_tracking(&el, "del") => {
-                // Row-level tracked deletion (w:trPr/w:del): drop the entire
-                // row on accept. ECMA-376 §17.13.5.12 — a w:del inside w:trPr
-                // marks the whole row as deleted; accepting a deletion yields
-                // the document as if the content were never present, so the
-                // row (and all its cell content) is removed. This mirrors the
-                // reject path for inserted rows (w:trPr/w:ins) above, and keeps
-                // this path in agreement with the IR accept path
-                // (tracked_model.rs), which also removes the row.
-                let count = 1 + count_nested_revisions(&el);
-                if inside_opaque {
-                    stats.opaque_resolved += count;
-                } else {
-                    stats.revisions_resolved += count;
-                }
-            }
-            XMLNode::Element(el) if is_w_tag(&el, "tc") && has_cell_tracking(&el, "cellDel") => {
-                // Cell-level tracked deletion (w:tcPr/w:cellDel, §17.13.5.1):
-                // drop the entire cell on accept — same semantics as the IR
-                // accept path (tracked_model.rs), which removes the cell. A
-                // STACKED cell (cellIns + cellDel) also lands here: it drops
-                // in both full resolutions (origin rules).
-                let count = 1 + count_nested_revisions(&el);
-                if inside_opaque {
-                    stats.opaque_resolved += count;
-                } else {
-                    stats.revisions_resolved += count;
-                }
-            }
-            XMLNode::Element(mut el) => {
-                // Non-revision element: recurse into it
-                let had_nested_revision = has_nested_content_revision(&el);
-                let child_opaque = inside_opaque || is_opaque_container(&el);
-                normalize_children(&mut el, stats, child_opaque);
-                // A surviving cell's w:cellIns marker (§17.13.5.2) is resolved
-                // on accept: the cell stays, the marker goes.
-                if is_w_tag(&el, "tc") {
-                    let stripped = strip_cell_tracking_markers(&mut el);
-                    if inside_opaque {
-                        stats.opaque_resolved += stripped;
-                    } else {
-                        stats.revisions_resolved += stripped;
-                    }
-                }
-                // OOXML §17.4.37: a table must contain a non-zero number of rows.
-                // After acceptance drops all deleted rows, a table can end up with
-                // zero w:tr children. Remove it rather than producing invalid XML.
-                if is_w_tag(&el, "tbl") && !has_any_row(&el) {
-                    // Table is now empty — drop it entirely.
-                } else if is_revision_emptied_hyperlink(&el, had_nested_revision) {
-                    // See the reject path above: inner-run tracking is the legal
-                    // OOXML carrier for a paragraph-level hyperlink insertion or
-                    // deletion, so an emptied wrapper is part of that revision.
-                } else {
-                    new_children.push(XMLNode::Element(el));
-                }
-            }
-            other => {
-                // Text, Comment, CData, PI nodes — keep as-is
-                new_children.push(other);
-            }
+            continue;
+        }
+        let Some(Frame {
+            mut element,
+            rebuilt,
+            disposition,
+            ..
+        }) = stack.pop()
+        else {
+            break;
+        };
+        element.children = rebuilt;
+        match stack.last_mut() {
+            Some(parent) => pass.leave(element, disposition, parent.opaque, &mut parent.rebuilt),
+            None => pass.leave(element, disposition, root_opaque, &mut root_rebuilt),
+        }
+    }
+    root.children = root_rebuilt;
+}
+
+/// What the accept and reject passes do with a child once its own children
+/// are rebuilt.
+enum ResolveDisposition {
+    /// A revision wrapper being unwrapped: its children take its place.
+    Unwrap,
+    /// Any other element: kept, unless the resolution emptied it.
+    Keep { had_nested_revision: bool },
+}
+
+/// The accept (`keep_inserted`) or reject pass of [`normalize_children`] and
+/// [`reject_children`].
+struct ResolvePass<'p> {
+    stats: &'p mut NormalizeStats,
+    keep_inserted: bool,
+}
+
+impl RebuildPass for ResolvePass<'_> {
+    type Disposition = ResolveDisposition;
+
+    fn enter(&mut self, element: &mut Element, opaque: bool) {
+        if self.keep_inserted {
+            settle_inline_sdt_deletion_envelopes(element, true, self.stats);
+            // Join paragraphs whose mark deletion this accept applies (must
+            // precede the revision pass, which drops the markers).
+            join_mark_resolved_paragraphs(element, /*keep_inserted=*/ true, self.stats);
+            // First pass: remove *PrChange children from property elements.
+            // We do this before the main pass because these are children of
+            // property elements (w:rPr, w:pPr, etc.), not direct content flow
+            // elements.
+            remove_pr_changes(element, self.stats, opaque);
+        } else {
+            settle_inline_sdt_deletion_envelopes(element, false, self.stats);
+            settle_inserted_mark_restored_with_move(element, self.stats, opaque);
+            // Join paragraphs whose mark insertion this reject un-proposes
+            // (must precede the revision pass, which drops the markers).
+            join_mark_resolved_paragraphs(element, /*keep_inserted=*/ false, self.stats);
+            // First pass: reject *PrChange records — restore the previous
+            // properties they carry (§17.13.5.29–.32; accept drops the record
+            // and keeps the new properties instead).
+            reject_pr_changes(element, self.stats, opaque);
         }
     }
 
-    parent.children = new_children;
+    fn visit(
+        &mut self,
+        node: XMLNode,
+        opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    ) -> Option<Descend<ResolveDisposition>> {
+        // Second pass: handle content revisions. The children list is rebuilt
+        // because unwrapping can expand one child into multiple children.
+        let el = match node {
+            XMLNode::Element(el) => el,
+            other => {
+                // Text, Comment, CData, PI nodes — keep as-is
+                rebuilt.push(other);
+                return None;
+            }
+        };
+        if self.keep_inserted {
+            self.visit_accept(el, opaque)
+        } else {
+            self.visit_reject(el, opaque)
+        }
+    }
+
+    fn leave(
+        &mut self,
+        mut element: Element,
+        disposition: ResolveDisposition,
+        opaque: bool,
+        rebuilt: &mut Vec<XMLNode>,
+    ) {
+        let had_nested_revision = match disposition {
+            // Promote all children of the revision wrapper
+            ResolveDisposition::Unwrap => {
+                rebuilt.extend(element.children);
+                return;
+            }
+            ResolveDisposition::Keep {
+                had_nested_revision,
+            } => had_nested_revision,
+        };
+        // A surviving cell's tracking marker is resolved: w:cellIns on accept
+        // (§17.13.5.2), w:cellDel on reject (§17.13.5.1). The cell stays, the
+        // marker goes.
+        if is_w_tag(&element, "tc") {
+            let stripped = strip_cell_tracking_markers(&mut element);
+            self.stats.count_resolved(opaque, stripped);
+        }
+        // OOXML §17.4.37: a table must contain a non-zero number of rows.
+        // After the resolution drops every tracked row, a table can end up
+        // with zero w:tr children. Remove it rather than producing invalid XML.
+        if is_w_tag(&element, "tbl") && !has_any_row(&element) {
+            // Table is now empty — drop it entirely.
+        } else if is_revision_emptied_hyperlink(&element, had_nested_revision) {
+            // A paragraph-level hyperlink carries revisions on its inner
+            // runs. Resolving away every run removes the hyperlink too;
+            // retaining an empty relationship-bearing shell would invent a
+            // semantic object absent from this terminal.
+        } else {
+            rebuilt.push(XMLNode::Element(element));
+        }
+    }
+}
+
+impl ResolvePass<'_> {
+    /// Accept one element child.
+    fn visit_accept(&mut self, el: Element, opaque: bool) -> Option<Descend<ResolveDisposition>> {
+        if is_drop_revision(&el) {
+            // w:del, w:moveFrom → drop entirely
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
+            return None;
+        }
+        if is_del_text(&el) {
+            // w:delText → drop
+            self.stats.count_resolved(opaque, 1);
+            return None;
+        }
+        if is_unwrap_revision(&el) {
+            // w:ins, w:moveTo → unwrap: keep children, drop the wrapper, its
+            // children normalized before they are promoted
+            self.stats.count_resolved(opaque, 1);
+            return Some(Descend {
+                element: el,
+                opaque,
+                disposition: ResolveDisposition::Unwrap,
+            });
+        }
+        if is_move_range_marker(&el) {
+            // Move range delimiters go with the move they bracket (accept
+            // resolved the move: moveTo content kept, moveFrom dropped — see
+            // is_move_range_marker for why these must not survive).
+            self.stats.count_resolved(opaque, 1);
+            return None;
+        }
+        if is_w_tag(&el, "tr") && has_row_tracking(&el, "del") {
+            // Row-level tracked deletion (w:trPr/w:del): drop the entire row
+            // on accept. ECMA-376 §17.13.5.12 — a w:del inside w:trPr marks
+            // the whole row as deleted; accepting a deletion yields the
+            // document as if the content were never present, so the row (and
+            // all its cell content) is removed. This mirrors the reject path
+            // for inserted rows (w:trPr/w:ins), and keeps this path in
+            // agreement with the IR accept path (tracked_model.rs), which also
+            // removes the row.
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
+            return None;
+        }
+        if is_w_tag(&el, "tc") && has_cell_tracking(&el, "cellDel") {
+            // Cell-level tracked deletion (w:tcPr/w:cellDel, §17.13.5.1):
+            // drop the entire cell on accept — same semantics as the IR accept
+            // path (tracked_model.rs), which removes the cell. A STACKED cell
+            // (cellIns + cellDel) also lands here: it drops in both full
+            // resolutions (origin rules).
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
+            return None;
+        }
+        Some(Self::descend_into(el, opaque))
+    }
+
+    /// Reject one element child.
+    fn visit_reject(
+        &mut self,
+        mut el: Element,
+        opaque: bool,
+    ) -> Option<Descend<ResolveDisposition>> {
+        if is_w_tag(&el, "ins") || is_w_tag(&el, "moveTo") {
+            // w:ins, w:moveTo → drop entirely (reject additions)
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
+            return None;
+        }
+        if is_w_tag(&el, "del") || is_w_tag(&el, "moveFrom") {
+            // w:del, w:moveFrom → unwrap: keep children, drop the wrapper
+            self.stats.count_resolved(opaque, 1);
+            // Convert w:delText → w:t inside these children before promoting
+            convert_del_text_to_t(&mut el, self.stats, opaque);
+            if is_w_tag(&el, "moveFrom") {
+                // Word's reachable "insert paragraph, then move it" shape
+                // serializes the earlier insertion inside moveFrom at the
+                // source. Rejecting the move restores that source content and
+                // settles the nested insertion as normal content; a generic
+                // reject would wrongly delete it.
+                unwrap_insertions_restored_with_move_from(&mut el, self.stats, opaque);
+            }
+            // Reject the children before promoting them
+            return Some(Descend {
+                element: el,
+                opaque,
+                disposition: ResolveDisposition::Unwrap,
+            });
+        }
+        if is_move_range_marker(&el) {
+            // Move range delimiters go with the move they bracket (reject
+            // un-proposed the move: moveFrom content restored, moveTo dropped
+            // — see is_move_range_marker).
+            self.stats.count_resolved(opaque, 1);
+            return None;
+        }
+        if is_w_tag(&el, "tr") && has_row_tracking(&el, "ins") {
+            // Row-level tracked insertion (w:trPr/w:ins): drop the entire row
+            // on reject. The row was added as a tracked change — undoing that
+            // means removing it entirely.
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
+            return None;
+        }
+        if is_w_tag(&el, "tc") && has_cell_tracking(&el, "cellIns") {
+            // Cell-level tracked insertion (w:tcPr/w:cellIns, §17.13.5.2):
+            // drop the entire cell on reject — the cell was added as a tracked
+            // change, undoing that removes it. Mirrors the IR reject path
+            // (tracked_model.rs). A STACKED cell (cellIns + cellDel) also
+            // lands here: it drops in both full resolutions.
+            self.stats
+                .count_resolved(opaque, 1 + count_nested_revisions(&el));
+            return None;
+        }
+        Some(Self::descend_into(el, opaque))
+    }
+
+    /// A non-revision element: descend into it, remembering whether it held
+    /// a content revision before.
+    fn descend_into(el: Element, opaque: bool) -> Descend<ResolveDisposition> {
+        let had_nested_revision = has_nested_content_revision(&el);
+        let child_opaque = opaque || is_opaque_container(&el);
+        Descend {
+            element: el,
+            opaque: child_opaque,
+            disposition: ResolveDisposition::Keep {
+                had_nested_revision,
+            },
+        }
+    }
 }
 
 fn is_revision_emptied_hyperlink(element: &Element, had_nested_revision: bool) -> bool {
     had_nested_revision && is_w_tag(element, "hyperlink") && !has_hyperlink_payload(element)
 }
 
+/// Whether any element under `element` is a content revision or a
+/// `w:delText`, walked by an explicit stack (FIX 10655).
 fn has_nested_content_revision(element: &Element) -> bool {
-    element.children.iter().any(|child| {
-        matches!(child, XMLNode::Element(child) if is_content_revision(child)
-            || is_del_text(child)
-            || has_nested_content_revision(child))
-    })
+    preorder_elements(element)
+        .skip(1)
+        .any(|child| is_content_revision(child) || is_del_text(child))
 }
 
+/// Whether any element under `element` carries visible hyperlink payload,
+/// walked by an explicit stack (FIX 10655).
 fn has_hyperlink_payload(element: &Element) -> bool {
-    element.children.iter().any(|child| {
-        let XMLNode::Element(child) = child else {
-            return false;
-        };
+    preorder_elements(element).skip(1).any(|child| {
         if matches!(child.name.as_str(), "t" | "instrText" | "delText")
             && child
                 .children
@@ -2403,7 +2575,7 @@ fn has_hyperlink_payload(element: &Element) -> bool {
         {
             return true;
         }
-        if matches!(
+        matches!(
             child.name.as_str(),
             "tab"
                 | "br"
@@ -2418,10 +2590,7 @@ fn has_hyperlink_payload(element: &Element) -> bool {
                 | "footnoteReference"
                 | "endnoteReference"
                 | "commentReference"
-        ) {
-            return true;
-        }
-        has_hyperlink_payload(child)
+        )
     })
 }
 
@@ -2512,52 +2681,56 @@ fn restore_pr_change_in_place(el: &mut Element, stats: &mut NormalizeStats, insi
     };
 }
 
-/// Reject *PrChange records in all property elements, recursively: each
+/// Reject *PrChange records in all property elements under `element`: each
 /// record's previous properties are restored (see
 /// [`restore_pr_change_in_place`]); the accept-side counterpart is
 /// [`remove_pr_changes`], which keeps the new properties and drops the
-/// record.
+/// record. Each element is restored before its own children are visited,
+/// by an explicit stack (FIX 10655).
 fn reject_pr_changes(element: &mut Element, stats: &mut NormalizeStats, inside_opaque: bool) {
-    for child in element.children.iter_mut() {
-        let el = match child {
-            XMLNode::Element(el) => el,
-            _ => continue,
-        };
-        let child_opaque = inside_opaque || is_opaque_container(el);
-        restore_pr_change_in_place(el, stats, child_opaque);
-        reject_pr_changes(el, stats, child_opaque);
+    let mut stack = vec![(element, inside_opaque)];
+    while let Some((element, inside_opaque)) = stack.pop() {
+        for el in element
+            .children
+            .iter_mut()
+            .filter_map(XMLNode::as_mut_element)
+        {
+            let child_opaque = inside_opaque || is_opaque_container(el);
+            restore_pr_change_in_place(el, stats, child_opaque);
+            stack.push((el, child_opaque));
+        }
     }
 }
 
-/// Remove *PrChange elements from all property elements, recursively.
+/// Remove *PrChange elements from all property elements under `element`.
 ///
 /// Walks the tree and for each property element (w:rPr, w:pPr, etc.),
 /// removes any *PrChange child while keeping the parent property element.
+/// Each element loses its records before its remaining children are
+/// visited, by an explicit stack (FIX 10655).
 fn remove_pr_changes(element: &mut Element, stats: &mut NormalizeStats, inside_opaque: bool) {
-    for child in element.children.iter_mut() {
-        let el = match child {
-            XMLNode::Element(el) => el,
-            _ => continue,
-        };
+    let mut stack = vec![(element, inside_opaque)];
+    while let Some((element, inside_opaque)) = stack.pop() {
+        for el in element
+            .children
+            .iter_mut()
+            .filter_map(XMLNode::as_mut_element)
+        {
+            // Compute opaque flag before the closure to avoid borrow conflict
+            let child_opaque = inside_opaque || is_opaque_container(el);
 
-        // Compute opaque flag before the closure to avoid borrow conflict
-        let child_opaque = inside_opaque || is_opaque_container(el);
-
-        // Remove *PrChange children from this element
-        el.children.retain(|c| match c {
-            XMLNode::Element(e) if is_pr_change(e) => {
-                if child_opaque {
-                    stats.opaque_resolved += 1;
-                } else {
-                    stats.revisions_resolved += 1;
+            // Remove *PrChange children from this element
+            el.children.retain(|c| match c {
+                XMLNode::Element(e) if is_pr_change(e) => {
+                    stats.count_resolved(child_opaque, 1);
+                    false
                 }
-                false
-            }
-            _ => true,
-        });
+                _ => true,
+            });
 
-        // Recurse into all remaining children
-        remove_pr_changes(el, stats, child_opaque);
+            // Visit all remaining children
+            stack.push((el, child_opaque));
+        }
     }
 }
 
@@ -2592,20 +2765,13 @@ pub(crate) fn resolve_pr_change_on_element(el: &mut Element, keep_new: bool) {
 
 /// Count revision elements nested inside a dropped element (w:del, w:moveFrom).
 /// These are counted because they are also being resolved (removed) as part of
-/// dropping the parent.
+/// dropping the parent. Walked by an explicit stack (FIX 10655).
 fn count_nested_revisions(element: &Element) -> u32 {
-    let mut count = 0u32;
-    for child in &element.children {
-        let el = match child {
-            XMLNode::Element(el) => el,
-            _ => continue,
-        };
-        if is_content_revision(el) || is_pr_change(el) || is_del_text(el) {
-            count += 1;
-        }
-        count += count_nested_revisions(el);
-    }
-    count
+    let nested = preorder_elements(element)
+        .skip(1)
+        .filter(|el| is_content_revision(el) || is_pr_change(el) || is_del_text(el))
+        .count();
+    u32::try_from(nested).unwrap_or(u32::MAX)
 }
 
 // =============================================================================

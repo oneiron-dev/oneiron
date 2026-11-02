@@ -3,11 +3,11 @@
 use super::GeneratedUiNode;
 use crate::lens::atom::{FiniteF64, LensAtom, LensNode, LensText};
 use crate::lens::self_ui::{SelfUiAction, SelfUiValue};
-use crate::lens::validate::{MAX_LENS_TOKEN_BYTES, validate_lens_collection_len};
+use crate::lens::validate::MAX_LENS_TOKEN_BYTES;
 use crate::lens::wire_ids::{
     LensAtomId, LensRenderId, SelfUiActionId, SelfUiOptionValue, SelfUiStateKey,
 };
-use crate::lens::wire_limits::{deserialize_limited_vec, serialize_tagged};
+use crate::lens::wire_limits::serialize_tagged;
 use crate::{Error, Result};
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -93,7 +93,7 @@ pub struct GeneratedUiActionEvent {
     pub card_id: LensRenderId,
     pub element_id: LensAtomId,
     pub action_id: SelfUiActionId,
-    #[serde(default, deserialize_with = "deserialize_limited_vec")]
+    #[serde(default)]
     pub patch: Vec<GeneratedUiStatePatch>,
     pub occurred_at: u64,
 }
@@ -217,8 +217,6 @@ impl<'de> Deserialize<'de> for GeneratedUiStateSnapshot {
         D: Deserializer<'de>,
     {
         let values = BTreeMap::<SelfUiStateKey, SelfUiStateValue>::deserialize(deserializer)?;
-        validate_lens_collection_len("generated-ui $state entries", values.len())
-            .map_err(de::Error::custom)?;
         Ok(Self { values })
     }
 }
@@ -288,7 +286,9 @@ impl GeneratedUiStatePatch {
 }
 
 /// Canonical card lifecycle. `completed`/`expired` are archive *reasons*, not phases.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedUiCardPhase {
     Generating,
@@ -297,7 +297,7 @@ pub enum GeneratedUiCardPhase {
     Archived,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum GeneratedUiArchiveReason {
     Completed,
@@ -306,7 +306,7 @@ pub enum GeneratedUiArchiveReason {
     Superseded,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GeneratedUiCardLifecycle {
     pub phase: GeneratedUiCardPhase,
@@ -436,8 +436,6 @@ pub(super) fn validate_generated_ui_interactivity(
     actions: &[GeneratedUiActionDeclaration],
     state: &GeneratedUiStateSnapshot,
 ) -> Result<()> {
-    validate_lens_collection_len("generated-ui action declarations", actions.len())?;
-
     let by_id = elements
         .iter()
         .map(|element| (element.id.as_str(), element))
@@ -505,10 +503,6 @@ pub(in crate::lens) fn validate_generated_ui_state_bindings(
     state: &GeneratedUiStateSnapshot,
 ) -> Result<()> {
     for element in elements {
-        validate_lens_collection_len(
-            "generated-ui $bind descriptors",
-            element.state_bindings.len(),
-        )?;
         if element.state_bindings.is_empty() {
             continue;
         }
@@ -564,8 +558,6 @@ pub(in crate::lens) fn apply_generated_ui_state_patch(
     current: &GeneratedUiStateSnapshot,
     patch: &[GeneratedUiStatePatch],
 ) -> Result<GeneratedUiStateSnapshot> {
-    validate_lens_collection_len("generated-ui state patch", patch.len())?;
-
     for (key, value) in current.values() {
         let declared = schema.get(key).ok_or_else(|| {
             Error::InvalidConfig(

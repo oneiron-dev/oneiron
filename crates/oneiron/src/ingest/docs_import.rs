@@ -1,5 +1,5 @@
 //! Atomic bulk consent and thin-star docs membership. Derivations never rewrite source evidence.
-use super::{DocsExport, DocsSegment, docs_extraction_id, docs_semantic_segments};
+use super::{DocsExport, DocsPage, DocsSegment, docs_extraction_id, docs_semantic_segments};
 use crate::batch::{
     ApplyOpsGateMode, BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader,
     apply_ops_with_gate_mode,
@@ -19,6 +19,14 @@ use crate::{EntityId, TimeRange, Vault};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap};
+
+/// One page's prepared segments, summaries, annotation and predicted birth.
+type PreparedDocsPage = (
+    Vec<DocsSegment>,
+    Vec<Option<String>>,
+    Option<Value>,
+    super::BlobBirthDecision,
+);
 
 /// Stable durable-entity binding for one docs derivation slot. Key: the
 /// extraction id string.
@@ -207,48 +215,8 @@ impl Vault {
         // Optional model calls never hold the LMDB writer slot. Consent is rechecked at commit.
         let mut prepared = Vec::new();
         for page in &docs.pages {
-            let predicted = {
-                let read = self.store.env.read_txn()?;
-                let key = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
-                match EXTRACTION.get(&self.store, &read, &key)? {
-                    Some(id) => {
-                        super::fingerprint::prepare_blob_birth(
-                            &self.store,
-                            &read,
-                            &id,
-                            page.text.as_bytes(),
-                            &page.text,
-                        )?
-                        .decision
-                    }
-                    None => {
-                        super::fingerprint::prepare_new_blob_birth(page.text.as_bytes(), &page.text)
-                            .decision
-                    }
-                }
-            };
-            let changed = match &predicted {
-                super::BlobBirthDecision::Unchanged(_) => Vec::new(),
-                super::BlobBirthDecision::Changed { blocks, .. } => blocks.clone(),
-            };
-            let segments = docs_semantic_segments(&page.text);
-            let summaries = segments
-                .iter()
-                .map(|segment| {
-                    if changed.contains(&segment.block) {
-                        summary.map(|model| model.summarize(segment)).transpose()
-                    } else {
-                        Ok(None)
-                    }
-                })
-                .collect::<Result<Vec<_>>>()?;
-            let annotation = if matches!(predicted, super::BlobBirthDecision::Unchanged(_)) {
-                None
-            } else {
-                classifier
-                    .map(|model| model.classify(&page.text))
-                    .transpose()?
-            };
+            let (segments, summaries, annotation, predicted) =
+                self.prepare_docs_page(docs, page, summary, classifier)?;
             prepared.push((page, segments, summaries, annotation, predicted));
         }
         let mut txn = self.store.env.write_txn()?;
@@ -442,19 +410,7 @@ impl Vault {
                 receipt.annotation_refs.push(annotation_reference(&key));
             }
         }
-        for op in &ops {
-            if let BatchOp::Put {
-                id, entity_type, ..
-            } = op
-                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, &txn, id)?
-                    .is_some_and(|raw| {
-                        crate::batch::EntityMetadataHeader::parse(&raw)
-                            .is_none_or(|header| header.entity_type != *entity_type)
-                    })
-            {
-                return Err(invalid("docs extraction id occupied by another kind"));
-            }
-        }
+        self.validate_docs_put_kinds(&txn, &ops)?;
         apply_ops_with_gate_mode(
             &self.store,
             &self.config,
@@ -466,14 +422,7 @@ impl Vault {
             ApplyOpsGateMode::new(false, true).with_text_births(text_births),
         )?;
         // A stable id a re-import writes again keeps its first birth.
-        for (row, birth) in &births {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                &self.store,
-                &mut txn,
-                row,
-                birth,
-            )?;
-        }
+        self.stamp_docs_births(&mut txn, &births)?;
         for (asset, fingerprint) in fingerprint_updates {
             fingerprint.persist(&self.store, &mut txn, &asset)?;
         }
@@ -485,6 +434,91 @@ impl Vault {
         txn.commit()?;
         Ok(receipt)
     }
+    /// One page's model-side preparation, outside the writer: its predicted
+    /// blob birth, its semantic segments, the summaries of its changed
+    /// segments and its classifier annotation.
+    fn prepare_docs_page(
+        &self,
+        docs: &DocsExport,
+        page: &DocsPage,
+        summary: Option<&dyn DocsSummaryModel>,
+        classifier: Option<&dyn DocsInjectionClassifier>,
+    ) -> Result<PreparedDocsPage> {
+        let predicted = {
+            let read = self.store.env.read_txn()?;
+            let key = docs_extraction_id(&docs.corpus_id, &page.page_id, "asset");
+            match EXTRACTION.get(&self.store, &read, &key)? {
+                Some(id) => {
+                    super::fingerprint::prepare_blob_birth(
+                        &self.store,
+                        &read,
+                        &id,
+                        page.text.as_bytes(),
+                        &page.text,
+                    )?
+                    .decision
+                }
+                None => {
+                    super::fingerprint::prepare_new_blob_birth(page.text.as_bytes(), &page.text)
+                        .decision
+                }
+            }
+        };
+        let changed = match &predicted {
+            super::BlobBirthDecision::Unchanged(_) => Vec::new(),
+            super::BlobBirthDecision::Changed { blocks, .. } => blocks.clone(),
+        };
+        let segments = docs_semantic_segments(&page.text);
+        let summaries = segments
+            .iter()
+            .map(|segment| {
+                if changed.contains(&segment.block) {
+                    summary.map(|model| model.summarize(segment)).transpose()
+                } else {
+                    Ok(None)
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let annotation = if matches!(predicted, super::BlobBirthDecision::Unchanged(_)) {
+            None
+        } else {
+            classifier
+                .map(|model| model.classify(&page.text))
+                .transpose()?
+        };
+        Ok((segments, summaries, annotation, predicted))
+    }
+
+    /// Refuses a docs extraction id another entity kind already occupies.
+    fn validate_docs_put_kinds(&self, txn: &heed::RoTxn<'_>, ops: &[BatchOp]) -> Result<()> {
+        for op in ops {
+            if let BatchOp::Put {
+                id, entity_type, ..
+            } = op
+                && crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
+                    .is_some_and(|raw| {
+                        crate::batch::EntityMetadataHeader::parse(&raw)
+                            .is_none_or(|header| header.entity_type != *entity_type)
+                    })
+            {
+                return Err(invalid("docs extraction id occupied by another kind"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Stamps each written row's birth unless it already has one.
+    fn stamp_docs_births(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        births: &[(EntityId, RowBirth)],
+    ) -> Result<()> {
+        for (row, birth) in births {
+            crate::provenance::birth::stamp_birth_if_absent_in_txn(&self.store, txn, row, birth)?;
+        }
+        Ok(())
+    }
+
     pub fn docs_annotation(&self, reference: &str) -> Result<Option<Value>> {
         let prefix =
             std::str::from_utf8(ANNOTATION.decl().prefix).expect("annotation prefix is ASCII");

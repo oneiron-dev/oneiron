@@ -13,6 +13,9 @@ use crate::limit_ask::{EngineLimit, LimitWatch};
 
 use super::RunTreeAdapter;
 
+mod intent;
+pub(crate) use intent::SignalIntent;
+
 /// Caller-authenticated control intent; the adapter must resolve the actor and
 /// cancel standing before calling this storage door.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,8 +211,31 @@ impl RunTreeAdapter<'_> {
     }
 
     /// Non-blocking Signal admission. Reusing a key with identical input
-    /// returns its original pending/settled receipt; conflicting reuse fails.
+    /// returns its original pending/settled receipt, as stored; conflicting
+    /// reuse fails. A signal the side-row wall masked matches its identical
+    /// retry by the keyed fingerprint kept beside it (FIX 10066).
     pub fn signal(&self, input: RunSignalInput) -> Result<RunBranchSignal> {
+        let mut txn = self.vault.store.env.write_txn()?;
+        let (stored, landed) = self.signal_in_txn(&mut txn, input)?;
+        if landed {
+            txn.commit()?;
+            // In sync builds this wakes a subscribed local caller; foreign hosts
+            // without that path use the durable peek handle instead.
+            self.vault.store.notify_attempt_observers();
+        }
+        Ok(stored)
+    }
+
+    /// [`Self::signal`] in the caller's writer (FIX 8533), so a caller can
+    /// commit its own record with the signal. Answers the receipt and whether
+    /// this call landed it; `false` is a replay of the receipt the key
+    /// already holds, which wrote nothing. A caller that commits a landed
+    /// signal then wakes the attempt observers.
+    pub(crate) fn signal_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        input: RunSignalInput,
+    ) -> Result<(RunBranchSignal, bool)> {
         field(&input.run_id)?;
         field(&input.key)?;
         field(&input.actor)?;
@@ -236,21 +262,22 @@ impl RunTreeAdapter<'_> {
                 field(answer)?;
             }
         }
-        let mut txn = self.vault.store.env.write_txn()?;
         let mut record = self
             .queue
-            .get_in_txn(&txn, input.branch)?
+            .get_in_txn(txn, input.branch)?
             .ok_or_else(|| Error::InvalidConfig("missing Signal branch".into()))?;
         if record.run_id.as_deref() != Some(&input.run_id) {
             return Err(Error::InvalidConfig("Signal run mismatch".into()));
         }
         if let Some(prior) = record.signals.iter().find(|s| s.key == input.key) {
-            if prior.actor != input.actor || prior.kind != input.kind {
+            if (prior.actor != input.actor || prior.kind != input.kind)
+                && !intent::retry_matches(self.vault, txn, &record, &input)
+            {
                 return Err(Error::InvalidConfig(
                     "Signal key reused with different intent".into(),
                 ));
             }
-            return Ok(prior.clone());
+            return Ok((prior.clone(), false));
         }
         if !live(record.state) {
             return Err(Error::InvalidConfig("Signal branch not live".into()));
@@ -275,7 +302,7 @@ impl RunTreeAdapter<'_> {
                     return Err(Error::InvalidConfig("ask already answered".into()));
                 }
             } else {
-                let at = crate::ports::recorded_at_in_txn(&self.vault.store, &mut txn)?;
+                let at = crate::ports::recorded_at_in_txn(&self.vault.store, txn)?;
                 ask.answers.push(RunAskAnswer {
                     who: who.clone(),
                     answer: answer.clone(),
@@ -284,13 +311,14 @@ impl RunTreeAdapter<'_> {
                 });
                 super::ask_wait::signal_waiters_in_txn(
                     self.vault,
-                    &mut txn,
+                    txn,
                     input.branch,
                     handle,
                     at.saturating_mul(1000),
                 )?;
             }
         }
+        let intent_bytes = intent::intent_bytes(&input);
         let signal = RunBranchSignal {
             key: input.key,
             actor: input.actor,
@@ -298,12 +326,55 @@ impl RunTreeAdapter<'_> {
             state: RunSignalState::Pending,
         };
         record.signals.push(signal.clone());
-        self.save(&mut txn, &mut record)?;
-        txn.commit()?;
-        // In sync builds this wakes a subscribed local caller; foreign hosts
-        // without that path use the durable peek handle instead.
-        self.vault.store.notify_attempt_observers();
-        Ok(signal)
+        self.save(txn, &mut record)?;
+        // The receipt as the side-row wall stored it, which a retry replays.
+        let stored = record
+            .signals
+            .iter()
+            .find(|s| s.key == signal.key)
+            .cloned()
+            .unwrap_or_else(|| signal.clone());
+        if stored != signal
+            && let Some(bytes) = intent_bytes
+        {
+            self.keep_intent_in(txn, &mut record, &stored.key, &bytes);
+        }
+        Ok((stored, true))
+    }
+
+    /// Keeps the keyed fingerprint of a masked signal's exact intent beside
+    /// it (FIX 10066), in a savepoint of the admitting writer: a fingerprint
+    /// that does not read or a row that does not save again is logged, and
+    /// the admission stands without it, so its retries are judged by plain
+    /// equality as before.
+    fn keep_intent_in(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        record: &mut crate::attempt_queue::AttemptRecord,
+        key: &str,
+        bytes: &[u8],
+    ) {
+        let Some(fingerprint) = intent::fingerprint_in(self.vault, txn, bytes) else {
+            return;
+        };
+        let mut kept = record.clone();
+        kept.signal_intents.push(SignalIntent {
+            key: key.to_owned(),
+            fingerprint,
+        });
+        let saved = (|| -> Result<()> {
+            let mut savepoint = self.vault.store.env.nested_write_txn(txn)?;
+            self.save(&mut savepoint, &mut kept)?;
+            savepoint.commit()?;
+            Ok(())
+        })();
+        match saved {
+            Ok(()) => *record = kept,
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "a masked Signal's intent fingerprint was not kept; plain equality decides"
+            ),
+        }
     }
 
     /// Returns partial answers without blocking or consuming them. The caller

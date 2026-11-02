@@ -6,10 +6,12 @@ pub use credential_filter::{
 };
 pub(crate) use credential_filter::{served_messagepack_json, served_stored_messagepack_json};
 mod archive_index;
+mod archive_project;
 mod archive_read;
 mod archive_side_tables;
 mod archive_spool;
 mod archive_types;
+pub(crate) use archive_project::project_stored_archive;
 pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
@@ -53,6 +55,7 @@ use crate::store::{STORAGE_ABI_VERSION, STORAGE_SCHEMA_VERSION};
 #[cfg(test)]
 use std::collections::BTreeSet;
 
+mod agent_person_import;
 mod asset_reserve;
 mod document_import;
 mod document_snapshot;
@@ -65,6 +68,7 @@ mod expression_import;
 mod expression_import_tests;
 mod provenance_import;
 mod result_reserve;
+mod secret_supplement;
 mod snapshot_body;
 pub(crate) use document_snapshot::{ExportSnapshotBody, ExportSnapshotEntity, ExportSnapshotRun};
 pub use document_types::*;

@@ -315,7 +315,8 @@ pub(super) fn apply_world_privacy(
     // settings at its `seen` (FIX 4480): a widen by an agent is irreversible
     // in effect, and only a holder's own yes writes one. Valid, without
     // effect, so it never stalls what descends from it. Its Grant row is no
-    // authority-log row, so the fold trusts the carrier for it (contract §4).
+    // authority-log row, so the fold trusts the carrier for it (contract §4)
+    // and a view judges the Grant on its own rows (FIX 11426).
     if matches!(edit.act.by, ActBy::Agent { .. }) && !agent_edit_narrows(state, edit) {
         state.refused_world_edits.insert(hash);
         return Ok(());
@@ -337,6 +338,9 @@ pub(super) fn apply_world_privacy(
             disputed: false,
         }),
     );
+    if let Some(agent) = super::carried_act::AgentCarriedAct::of(&edit.act, entry.ts) {
+        state.agent_carried_acts.insert(hash, agent);
+    }
     Ok(())
 }
 

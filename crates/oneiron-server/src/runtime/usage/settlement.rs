@@ -5,7 +5,7 @@
 use super::{
     AdmittedCall, Payer, PayerAccount, RunEvent, RunReceipt, UnpricedReason, UsageAllocation,
     UsageEvent, UsageEventOrigin, UsageEventType, UsageMode, UsageRun, UsageTokenCounts,
-    VaultUsage,
+    VaultUsage, pricing,
 };
 
 impl VaultUsage {
@@ -14,7 +14,10 @@ impl VaultUsage {
             RunEvent::Admitted(facts) => {
                 // The host's override for this exact offer, else the
                 // catalog's list price for the admitted model as it reads
-                // now; either is frozen on the call.
+                // now; either is frozen on the call. A call on the owner's
+                // own key to a custom endpoint freezes neither and reads no
+                // row: it logs token counts only (FIX 7765).
+                let custom_endpoint = pricing::custom_endpoint(facts);
                 let overridden = self
                     .provider_rates
                     .read()
@@ -24,6 +27,7 @@ impl VaultUsage {
                 // The host's override reads no row; the catalog's price, the
                 // rows its row was read from (FIX 5760).
                 let (rates, price_sources) = match overridden {
+                    _ if custom_endpoint => (None, Some(Vec::new())),
                     Some(rates) => (Some(rates), Some(Vec::new())),
                     None => self.catalog.snapshot(facts),
                 };
@@ -45,6 +49,7 @@ impl VaultUsage {
                         AdmittedCall {
                             facts: *facts.clone(),
                             rates,
+                            custom_endpoint,
                             price_sources,
                             owner,
                         },
@@ -71,6 +76,7 @@ impl VaultUsage {
                 let Some(AdmittedCall {
                     facts,
                     rates,
+                    custom_endpoint,
                     price_sources,
                     owner,
                 }) = facts.filter(|_| *dispatched)
@@ -117,21 +123,31 @@ impl VaultUsage {
                 }) || service_quantity.is_some();
                 // A reservation is not measured provider usage. A call left
                 // without a price is never priced at zero, and its record
-                // says why, the first that holds: it measured no tokens; no
-                // rates were frozen on it at admission; or they quote no rate
-                // for cache dimensions it measured, named.
+                // says why, the first that holds: it measured no tokens; it
+                // went out on the owner's own key to a custom endpoint (FIX
+                // 7765); no rates were frozen on it at admission; they name
+                // no currency and are not free in any (FIX 9534); or they
+                // quote no rate for cache dimensions it measured, named.
                 let measured = usage_reported && usage.is_some();
                 let unpriced = match &rates {
-                    Some(rates) if measured && rates.prices(&token_counts) => None,
+                    Some(rates) if measured && rates.prices(&token_counts) && rates.priced() => {
+                        None
+                    }
                     _ if token_counts == UsageTokenCounts::default() => {
                         Some(UnpricedReason::NoUsage)
                     }
+                    None if custom_endpoint => Some(UnpricedReason::CustomEndpoint),
                     None => Some(UnpricedReason::UnpricedModel),
+                    Some(rates) if !rates.priced() => Some(UnpricedReason::UnknownCurrency),
                     Some(rates) => Some(UnpricedReason::UnquotedCache {
                         dimensions: rates.unquoted_cache(&token_counts),
                     }),
                 };
-                let rates = rates.filter(|rates| measured && rates.prices(&token_counts));
+                // A priced call keeps the rates it is priced at; one unpriced
+                // for their unknown currency keeps them too, their snapshot
+                // and digest with them.
+                let rates = rates
+                    .filter(|_| matches!(unpriced, None | Some(UnpricedReason::UnknownCurrency)));
                 let payer = facts.payer_person.as_ref();
                 // The engine's stamp, never the run's name or a prompt.
                 let bound = facts.attribution.as_ref();

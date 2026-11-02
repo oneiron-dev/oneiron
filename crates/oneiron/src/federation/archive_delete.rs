@@ -15,6 +15,7 @@
 
 use std::collections::BTreeSet;
 
+use super::record_scope::note_world::any_world_at;
 use super::{
     FederationGrant, FederationGrantRole, FederationGrantScope, MembershipStanding, Scope,
     ScopeAxis, decode_federation_grant_body,
@@ -226,7 +227,18 @@ impl TargetRecord {
             id,
             header.entity_type,
             &body,
-        )?;
+        )?
+        // A NOTE carries every world it is in; each grant or credential
+        // holds it at one of them (FIX-LIST 9433).
+        .map(|position| {
+            super::record_scope::note_world::every_world_position(
+                &vault.store,
+                txn,
+                id,
+                header.entity_type,
+                position,
+            )
+        });
         Ok(Some(Self {
             id,
             kind: header.entity_type,
@@ -352,9 +364,11 @@ fn agent_arm(
             || grant.role != FederationGrantRole::Delegate
             || !grant.confers_at(now)
             || !names_delete(&grant.authority_scope)
-            || !grant
-                .authority_scope
-                .admits(DELETE_VERB, &delete_record(position), &Scope::top())
+            || !grant.authority_scope.admits(
+                DELETE_VERB,
+                &delete_record(&any_world_at(position, &grant.authority_scope.worlds)),
+                &Scope::top(),
+            )
         {
             continue;
         }
@@ -466,7 +480,8 @@ fn credential_reaches(
 fn role_axes_admit(ceiling: &Scope, position: &Scope) -> bool {
     let mut role = ceiling.clone();
     role.verbs = ScopeAxis::All;
-    role.admits(DELETE_VERB, &delete_record(position), &Scope::top())
+    let position = any_world_at(position, &ceiling.worlds);
+    role.admits(DELETE_VERB, &delete_record(&position), &Scope::top())
 }
 
 /// Whether `scope` lists the `delete` class in an explicit verb set: a

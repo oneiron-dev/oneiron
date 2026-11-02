@@ -1,3 +1,7 @@
+//! Emergency reschedule proposal planning and its admitted content.
+//! Entry: `plan_emergency_reschedule`.
+//! Defines its own items.
+
 use super::*;
 use crate::side_table::{self, LegacyJson, SideCodec, SideTable};
 
@@ -423,9 +427,11 @@ pub(super) fn plan_item(
             end: proposals[0].end_utc,
         }
     };
-    // No invitation existed: cancellation is local plus apology, not a fake
-    // CANCEL or a synthetic sequence-zero invite. A later pick sends the first REQUEST.
-    let ics = if method == CalendarInviteMethod::Cancel && invite_before.is_none() {
+    // A RequestUpdate proposes and sends no calendar revision: its proposals
+    // stay unconfirmed, and the counterparty's pick sends the REQUEST for the
+    // one picked (FIX 9635). With no invitation, a cancellation is local plus
+    // apology, not a fake CANCEL or a synthetic sequence-zero invite.
+    let ics = if method == CalendarInviteMethod::Request || invite_before.is_none() {
         None
     } else {
         Some(

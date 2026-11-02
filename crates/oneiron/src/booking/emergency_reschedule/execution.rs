@@ -1,3 +1,7 @@
+//! Emergency reschedule effect delivery.
+//! Entry: `execute_emergency_plan`.
+//! Defines its own items.
+
 use super::*;
 
 /// Commits locally on the home node, then consumes the real CAL outcome and
@@ -189,6 +193,9 @@ pub(super) fn dispatch_item_effect(
                 wrong_root: None,
                 hook: None,
                 retry_after: None,
+                resets_at: Vec::new(),
+                reason_codes: Vec::new(),
+                legal_hold: None,
             },
         )));
     }

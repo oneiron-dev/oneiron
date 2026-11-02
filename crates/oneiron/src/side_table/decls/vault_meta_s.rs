@@ -9,6 +9,10 @@ side_tables! {
     /// epoch. Key: id16 + id16 + u64be. Encoded as hand-rolled CANONICAL JSON (sorted object keys),
     /// not a plain derive, so the codec is `Raw` rather than `LegacyJson`.
     SAVED_QUERY_MEMBERSHIP_EVENT: VaultMeta b"saved_query.event.v1:" Raw;
+    /// One swept saved query's health as its last wake left it (FIX 11250): when and by which pass
+    /// it was woken, what that came to, its failures in a row and its lag behind the change it
+    /// answered. Key: id16.
+    SAVED_QUERY_HEALTH: VaultMeta b"saved_query.health.v1:" Named;
     /// Cached match-evaluator verdict for one (query, entity, evidence) triple. Key: id16 + id16 +
     /// hash32. Encoded as hand-rolled CANONICAL JSON (sorted object keys), not a plain derive, so
     /// the codec is `Raw` rather than `LegacyJson`.
@@ -52,6 +56,11 @@ side_tables! {
     /// staged to retire) or still owed. Never a value, key, name or count; a re-entered credential
     /// takes a new id. Key: id16 (custody record id).
     SECRET_CUSTODY_ERASE: VaultMeta b"secret_custody:erase:v1:" Raw Engine;
+    /// The sealed copy one export secret request's holder committed (FIX 4624(b)): the custody
+    /// value sealed to the recipient machine the owner chose, in its numbered envelopes, kept for
+    /// the owner to fetch. Holds no plaintext; its signed result names its digest. Key: hash32 (the
+    /// request's entry hash).
+    SECRET_CUSTODY_EXPORT_OUTPUT: VaultMeta b"secret_custody:export_output:v1:" Raw Ciphertext;
     SECRET_CUSTODY_INPUT: VaultMeta b"secret_custody:input:v1:" Raw Ciphertext;
     /// Name index mapping a live secret-custody record's name to its EntityId, then the name's
     /// generation high-water as a big-endian u32, kept after the record is gone (FIX 5958). Key:
@@ -75,6 +84,22 @@ side_tables! {
     /// pending. Canonical (FIX 5337): a checkpoint carries it with the record it was taken into,
     /// and a restore over a live vault keeps the live vault's. Key: hex32(entity id).
     SECRET_CUSTODY_REBIND: VaultMeta b"secret_custody:rebind:v1:" Raw Engine;
+    /// A restore batch whose owner's confirm stands on this vault while any of its credentials
+    /// still waits (FIX-LIST 10671 (b)): the custody passes land those under it. Runtime tier, so
+    /// no image carries one and an image's receipt is never an election here. Holds nothing but
+    /// its key. Key: id16 (restore batch).
+    SECRET_CUSTODY_RESTORE_ELECTION: VaultMeta b"secret_custody:restore_election:v1:" Named Engine;
+    /// One credential a restore keeping this host's custody landed withheld, pending, because
+    /// its source vault did not read (FIX-LIST 10671 (a)): its row as the image carried it, the
+    /// value sealed under its generation's key, the digest of the withheld row that took its
+    /// place, and the binding whose source it waits on. Never a plaintext or a key. Key: id16
+    /// (restore batch) + id16 (custody record id).
+    SECRET_CUSTODY_RESTORE_PENDING: VaultMeta b"secret_custody:restore_pending:v1:" Named Ciphertext;
+    /// The owner's release of one restore batch's pending credentials (FIX-LIST 10671 (b)): who
+    /// confirmed, when, the typed confirm and what each credential came to. Value-free; his
+    /// election, never a check of the source. Key: id16 (restore batch).
+    SECRET_CUSTODY_RESTORE_RELEASE: VaultMeta b"secret_custody:restore_release:v1:" Named Engine
+        => crate::secret_custody::erase_pending_restore_actor_in_txn;
     /// The latest owner-signed custody transition this vault signed of one portable credential
     /// (OF-422): the record without its value, the value sealed to each machine mine here. Key:
     /// hex32(entity id).
@@ -157,7 +182,8 @@ side_tables! {
     SECRET_ROTATION_RECEIPT: VaultMeta b"secret_rotation_receipt:v1:" Raw;
     /// Points a diagnostic event id at the signed detector run that produced it. Key: id16
     /// Immutable replay evidence for centroid verdicts, keyed by digest hash32.
-    SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named;
+    SELF_HEAL_CENTROID_EVIDENCE: VaultMeta b"self_heal:centroid_evidence:v1:" Named
+        => crate::self_heal::erase_centroid_source_in_txn;
     /// When a host detector graded one telemetry window under one wording. Key: bytes32
     /// (blake3 of the tier, the detector policy and the window's run ids).
     SELF_HEAL_DETECTOR_WINDOW: VaultMeta b"self_heal:detector_window:v1:" Raw;
@@ -234,9 +260,6 @@ side_tables! {
     PLUGIN_SUGGESTIONS_ENABLED: VaultMeta b"settings:dreamer:v1:plugin_suggestions_enabled" Raw;
     /// Owner-controlled wake thresholds. Key: ().
     DREAMER_WAKE_POLICY: VaultMeta b"settings:dreamer:wake-policy:v1" LegacyJson;
-    /// Dial: distinct-receipt count K needed before the substitution miner acts on a cluster. Key:
-    /// ().
-    EDIT_DISTANCE_MINER_K: VaultMeta b"settings:edit_distance:v1:miner_k" Raw;
     /// Owner-set inbox review dial (exceptions-only vs review-all), house per-feature dial pattern.
     /// Key: ().
     INBOX_REVIEW_DIAL: VaultMeta b"settings:inbox:v1:review_dial" Raw;
@@ -305,9 +328,20 @@ side_tables! {
     SHARED_ACT_RECEIPT: VaultMeta b"shared-act:receipt:v1:" Raw;
     /// A pending shared act awaiting its members' objection window. Key: hex32 (act id).
     SHARED_ACT_RECORD: VaultMeta b"shared-act:record:v1:" Raw;
+    /// One holder's delivery of one export-first removal archive: the delivery version it was
+    /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
+    /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).
+    SHARED_ACT_REMOVAL_DELIVERY: VaultMeta b"shared-act:removal-delivery:v1:" Named;
+    /// The record ids an export-first removal's export counted, beside its
+    /// receipt (FIX 11886). Key: hex32 (receipt id).
+    SHARED_ACT_REMOVAL_EXPORT_RECORDS: VaultMeta b"shared-act:removal-export-records:v1:" Named;
     /// An export-first removal's archive, delivered to the removed Owner alone and kept for them
     /// until its term ends (FIX 1300). Key: hex32 (removed Owner) ":" hex32 (receipt id).
     SHARED_ACT_REMOVAL_EXPORT: VaultMeta b"shared-act:removal-export:v1:" Named;
+    /// One delivery of a removal archive a removed person's device took in: its digest, what
+    /// it holds and when, never the archive (FIX 11197). Key: hex32 (person) ":" hex32 (receipt
+    /// id) ":" decimal (delivery version).
+    SHARED_ACT_REMOVAL_IMPORT: VaultMeta b"shared-act:removal-import:v1:" Named;
     SHARED_VAULT_CREATION: VaultMeta b"shared-vault:creation:v1" LegacyJson;
     /// The executed delete-the-vault act and its backup retention deadline. Key: ().
     SHARED_VAULT_DELETION: VaultMeta b"shared-vault:deleted:v1" LegacyJson;
@@ -320,6 +354,15 @@ side_tables! {
     SHORT_ID_GRAMMAR_VERSION: VaultMeta b"short_id_grammar_version" Raw;
     /// Last short-id counter per entity type. Key: u8.
     SHORT_ID_COUNTER: VaultMeta b"sid_counter:" Raw;
+    /// One callable call frozen as a case for the helper gate: its arguments, the answer that passed
+    /// its contract, the caller, its source rows, the revision. Key: id16 (skill that ran) + u64be
+    /// at + u64be step seq + receipt string.
+    SKILL_CALLABLE_CASE: VaultMeta b"skill:callable_case:v1:" Named Authored
+        [refs: CALLABLE_CASE_REFS] => crate::skill::erase_callable_case_actor_in_txn;
+    /// The frozen callable cases by what they were made from, so an erase reads only the cases
+    /// naming its row (FIX 12180). Key: b'S' + source id16 + case key, or, when the sources are
+    /// unknown, b'R' + u16be receipt length + receipt string + case key. Value: empty.
+    SKILL_CALLABLE_CASE_INDEX: VaultMeta b"skill:callable_case_index:v1:" Raw;
     /// A callable helper's standing promotion verdict (Self-Harness splits, reliability check,
     /// the exact content hash it scored). Key: id16 (skill entity).
     SKILL_CALLABLE_GATE: VaultMeta b"skill:callable_gate:v1:" Named;
@@ -354,14 +397,39 @@ side_tables! {
     /// of the terminal pack receipt id) + u64be (evidence sequence).
     SKILL_ATTRIBUTION_CAUSE: VaultMeta b"skill_attribution:cause:v1:" Named Engine
         => crate::skill_attribution::erase_attribution_cause_entity_in_txn;
-    /// One run's matched-fork contribution checks for a skill and axis: the measured verdict and
-    /// the pair it was read from (both fork receipts and results, the anchor, the axis), and each
-    /// pair recorded unmatched, with why. Key: string (attempt receipt "\0" skill hex "\0" axis);
-    /// an erased skill's rows name no skill and move to an "erased:" digest in its place.
+    /// One run's matched-fork contribution checks for one experiment (its outcome, goal revision,
+    /// axis and target: a loaded skill or a used edge): the measured verdict and the pair it was
+    /// read from (both fork receipts and results, the anchor, the axis, the edge), and each pair
+    /// recorded unmatched, with why. Key: string (attempt receipt "\0" target hex "\0" identity
+    /// digest); a row naming an erased entity names it nil and moves to its attempt receipt
+    /// "\0" "erased:" a fresh ULID.
     SKILL_ATTRIBUTION_CONTRIBUTION_CHECK: VaultMeta b"skill_attribution:contribution_check:v1:" Named
         => crate::skill_attribution::erase_contribution_checks_in_txn;
+    /// Each sealed late-credit receipt's frozen credit_decay (FIX 10107) and its immutable
+    /// adjustments (FIX 3241, FIX 10108): the base receipt, the adjustment before it, the checks
+    /// and late landed uses the effective credit joins (each end nil once erased), its direct
+    /// subjects and shares with their used chains, and when. Key: string (the credit receipt id
+    /// "\0" "decay", or "\0" a zero-padded index); an erase moves an adjustment naming the erased
+    /// entity to "erased" "\0" a fresh ULID, and where the base receipt's run or outcome reference
+    /// spells it, also drops the adjustment's base links and the frozen decay.
+    SKILL_ATTRIBUTION_CREDIT_ADJUSTMENT: VaultMeta b"skill_attribution:credit_adjustment:v1:" Named Engine
+        => crate::skill_attribution::erase_credit_adjustments_in_txn;
     /// Highest evidence sequence (u64be) the attribution projector has already routed. Key: ().
     SKILL_ATTRIBUTION_CURSOR: VaultMeta b"skill_attribution:cursor:v1" Raw;
+    /// The receipts of the decisions that gave one attempt-lane judgment, in hunk order, kept once
+    /// beside it (FIX 11512); an erased entity's evidence pins go, and a row with a receipt decided
+    /// for it goes whole. Key: u64be (the judgment's evidence sequence).
+    SKILL_ATTRIBUTION_DECISION_RECEIPTS: VaultMeta b"skill_attribution:decision_receipts:v1:" Named
+        => crate::skill_attribution::erase_decision_receipts_entity_in_txn;
+    /// A leased run's derivation witnesses (FIX 3103): each exact DerivedFrom edge a write of the
+    /// run left stored, with its producer, whether the run's lease held as it landed and when
+    /// (each end nil once erased); beside them, each scope summary a run asked for, with its lease
+    /// owner. Key: "d" + id16 (run attempt) + u32be (lease generation) + hash32 (the edge pair),
+    /// or "r" + id16 (summary attempt) + id16 (asking run's attempt) + u32be (its generation).
+    /// An erase moves a scrubbed edge's row to a fresh ULID in place of the pair (or to "e" +
+    /// ULID once its run is erased) and drops a request that names the erased entity.
+    SKILL_ATTRIBUTION_DERIVATION_WITNESS: VaultMeta b"skill_attribution:derivation_witness:v1:" Named Engine
+        => crate::skill_attribution::erase_derivation_witness_in_txn;
     /// Replacement judge revision (UTF-8) marking one routed judgment as displaced. Key: u64be
     /// (evidence sequence).
     SKILL_ATTRIBUTION_DISPLACED_JUDGE: VaultMeta b"skill_attribution:displaced_judge:v1:" Raw;
@@ -380,8 +448,8 @@ side_tables! {
     /// sequence).
     SKILL_ATTRIBUTION_JUDGE_REVISION: VaultMeta b"skill_attribution:judge_revision:v1:" Raw;
     /// One durable attribution verdict routed from evidence, keyed by evidence sequence; one that
-    /// charges an erased skill goes, with the edit proposals naming it, and a lapse charging an
-    /// erased actor stays with its subject nil. Key: u64be.
+    /// charges an erased skill stays with its subject nil, the edit proposals naming it go, and a
+    /// lapse charging an erased actor stays with its subject nil. Key: u64be.
     SKILL_ATTRIBUTION_JUDGMENT: VaultMeta b"skill_attribution:judgment:v1:" Raw
         => crate::skill_attribution::erase_attribution_judgment_skill_in_txn;
     /// Frozen anchored pack outcome, eligible used lineage chains and shares; an erased entity's
@@ -394,6 +462,11 @@ side_tables! {
     /// one naming an erased skill or actor goes. Key: u64be (evidence sequence).
     SKILL_ATTRIBUTION_POSITIVE_PROPOSAL: VaultMeta b"skill_attribution:positive_proposal:v1:" Named
         => crate::skill_attribution::erase_positive_proposals_in_txn;
+    /// One skill's site knowledge a run's browser was shown (FIX 11436): the run, the scope and
+    /// seq of the observation, the skill, its revision, the BLAKE3 of the knowledge and when.
+    /// Key: id16 (run) + id16 (skill) + be64 (seq) + 8 (scope hash).
+    SKILL_ATTRIBUTION_SITE_EXPOSURE: VaultMeta b"skill_attribution:site_exposure:v1:" Named Engine
+        => crate::skill_attribution::erase_site_exposure_in_txn;
     /// Highest judgment sequence (u64be) the sweep has already applied to skill-reliability/actor-
     /// claim projections. Key: ().
     SKILL_ATTRIBUTION_SWEEP_APPLIED_CURSOR: VaultMeta b"skill_attribution:sweep_applied:v1" Raw;
@@ -427,6 +500,9 @@ side_tables! {
     /// Hub-import receipt for one entity, keyed by (entity, source hub id, hash of the source ref
     /// string). Key: id16 + id16 + hash32.
     SKILL_HUB_IMPORT_RECEIPT: VaultMeta b"skill_hub/import-receipt/v1\0" LegacyJson;
+    /// Owner switch (`0` off, `1` on) turning a dependency advisory hit into one owner ask on a
+    /// ready marketplace fit; an absent row is on. Key: ().
+    SKILL_HUB_MARKETPLACE_ADVISORY_ASK: VaultMeta b"skill_hub/marketplace-advisory-ask/v1" Raw;
     /// Owner blocking rule (`0` off, `1` on) on one canonical marketplace content hash. Key: hash32.
     SKILL_HUB_MARKETPLACE_BLOCKED_HASH: VaultMeta b"skill_hub/marketplace-blocked-hash/v1\0" Raw;
     /// Revision (u64be) of the owner's code auto-install switch, bound into each change's consent.
@@ -434,6 +510,9 @@ side_tables! {
     SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL_REVISION: VaultMeta b"skill_hub/marketplace-code-auto-install-revision/v1" Raw;
     /// Owner switch (`0` off, `1` on) for auto-installing code-bearing marketplace folders. Key: ().
     SKILL_HUB_MARKETPLACE_CODE_AUTO_INSTALL: VaultMeta b"skill_hub/marketplace-code-auto-install/v1" Raw;
+    /// Owner setting (`0` rule fit, `1` owner-asked fit) choosing the fit an ordinary skill install
+    /// runs; an absent row is the rule fit. Key: ().
+    SKILL_HUB_MARKETPLACE_SKILL_FIT: VaultMeta b"skill_hub/marketplace-skill-fit/v1" Raw;
     /// Origin marker for a hub-materialized skill (imported flag, optional forked-from parent id);
     /// survives deletion so it cannot be laundered by delete/recreate. Key: id16.
     SKILL_HUB_ORIGIN: VaultMeta b"skill_hub/origin/v1\0" Raw;
@@ -593,6 +672,10 @@ side_tables! {
     /// times and state, and no text. Key: blake3 (32) of the framed asker, parent and intent key.
     SPAWN_PLANNED_INTENT: VaultMeta b"spawn:planned_intent:v1:" Named
         => crate::agent_dispatch::AgentDispatcher::erase_planned_intent_actor_in_txn;
+    /// The erase selector of each asker a hard erase reached: value-free and permanent, one
+    /// marker per erased asker, so the intent fence still reaches a stale copy whose asker a
+    /// plain scrub already forgot. Never a name or count. Key: blake3 (32) asker erase key.
+    SPAWN_PLANNED_INTENT_ASKER_ERASED: VaultMeta b"spawn:planned_intent_asker_erased:v1:" Raw Engine;
     /// Durable handle for one named (agent, world) companion standing-context block. Key: hex64
     /// (blake3 of prefix+agent+world).
     STANDING_BLOCK: VaultMeta b"standing.block.v1:" LegacyJson;

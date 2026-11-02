@@ -1,5 +1,11 @@
 //! Credential-shape detection shared by write, serve, and export.
 
+mod blocklist_entries;
+// A recovery phrase's spans (FIX 1099).
+mod mnemonic_spans;
+mod phrase_run;
+pub(super) use mnemonic_spans::mnemonic_spans;
+
 use std::ops::Range;
 
 use sha2::{Digest, Sha256};
@@ -45,10 +51,7 @@ pub(super) fn blocklist_longest() -> usize {
 }
 
 fn blocklist() -> impl Iterator<Item = &'static str> {
-    BLOCKLIST
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+    blocklist_entries::ENTRIES.iter().copied()
 }
 
 /// BIP39 phrase lengths: 128 to 256 bits of entropy in 32-bit steps.
@@ -66,10 +69,10 @@ const MAX_LIST_WORD_LEN: usize = 8;
 /// run of list words inside a sentence is prose, a markdown list of short
 /// phrases is prose, and a run with a wrong checksum is no wallet.
 /// Seed-labelled fields are separately refused even when incomplete or
-/// misspelled.
+/// misspelled. Text without a phrase-long run of list words stops at once.
 pub(super) fn mnemonic(text: &str) -> bool {
     let mut stream = MnemonicStream::default();
-    stream.feed(text) || stream.finish()
+    phrase_run::holds_list_word_run(text) && (stream.feed(text) || stream.finish())
 }
 
 /// [`mnemonic`] over text read in parts, in order: it finds what one read of
@@ -488,8 +491,8 @@ fn placeholder(value: &str) -> bool {
 pub(super) const HANDLE_OPEN: &str = "[secret ";
 
 /// The handle a mask on write leaves where it lifted a secret into custody
-/// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or a value that
-/// starts with `[secret sc12]`. It names a custody record and holds no value.
+/// (ARCH-0069 #handles-in-fields): `sc12` as a whole value, or `[secret sc12]`
+/// as a whole value. It names a custody record and holds no value.
 fn custody_handle(value: &str) -> bool {
     let bare = |text: &str| {
         text.strip_prefix("sc").is_some_and(|digits| {
@@ -497,11 +500,13 @@ fn custody_handle(value: &str) -> bool {
         })
     };
     let value = trim_value(value);
+    // A bracket handle counts only as a whole value: trailing text past its
+    // closing bracket is no handle (FIX 8645).
     bare(value)
         || value
             .strip_prefix(HANDLE_OPEN)
             .and_then(|rest| rest.split_once(']'))
-            .is_some_and(|(handle, _)| bare(handle))
+            .is_some_and(|(handle, tail)| bare(handle) && tail.trim().is_empty())
 }
 
 /// Placeholder words a person writes in place of a secret.

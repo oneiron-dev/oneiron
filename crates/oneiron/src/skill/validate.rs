@@ -9,8 +9,7 @@ use crate::error::{Error, Result};
 
 use super::lifecycle::SkillLifecycle;
 use super::record::{
-    SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_MAX_DEPENDENCIES, SKILL_VERSION_MAX_BYTES,
-    SkillDependency, SkillRecord,
+    SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,
 };
 use super::role::SkillRole;
 use crate::error::ArtifactError;
@@ -115,12 +114,8 @@ fn validate_provenance(provenance: &Value) -> Result<()> {
     Ok(())
 }
 
+/// Every dependency is checked, with no count ceiling (FIX 10151).
 fn validate_dependencies(skill_id: &str, dependencies: &[SkillDependency]) -> Result<()> {
-    if dependencies.len() > SKILL_MAX_DEPENDENCIES {
-        return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
-            "dependencies must contain at most 64 entries",
-        )));
-    }
     let mut seen = HashSet::new();
     for dependency in dependencies {
         validate_text_field(

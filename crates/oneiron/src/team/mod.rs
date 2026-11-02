@@ -12,6 +12,7 @@
 //! before the work. Patterns are compared at equal budget, in Phase 2;
 //! nothing here adds a runtime task kind.
 
+mod choice_learning;
 mod door_reads;
 pub mod doors;
 pub mod market;
@@ -25,6 +26,7 @@ pub mod run_binding;
 mod spawn_intent;
 pub mod stack;
 
+pub(crate) use choice_learning::{ChoiceLearning, LearnedChoice};
 pub use doors::{
     BorrowedCellView, CoordinationPatternView, CriticAssociation, CriticObservation,
     FIXTURE_TREE_VERSION_MAX, LaunchedMember, LearningCellView, LearningEvidenceView,
@@ -50,9 +52,10 @@ pub use pattern::{
 };
 pub use payoff::{PatternCardEntry, PayoffRow, PlannerCard, payoff_table, planner_card};
 pub use receipt::{
-    Coverage, DecidedBy, PatternSkillRef, TeamOutcome, TeamReceipt, TeamShape, record_team_receipt,
-    settle_team_outcome, team_receipt, team_receipts,
+    Coverage, DecidedBy, PatternSkillRef, TeamCritic, TeamOutcome, TeamReceipt, TeamShape,
+    record_team_receipt, settle_team_outcome, team_receipt, team_receipts,
 };
+pub(crate) use receipt::{ReceiptScan, team_receipts_in_txn};
 pub use run::{
     SelfTeamCall, TeamCoverageInput, TeamDecisionInput, TeamMemberAnswer, TeamMemberInput,
     TeamRecordInput, TeamRunAnswer, TeamStartInput,
@@ -62,7 +65,7 @@ pub use run_binding::{
     team_run_binding_in_txn, team_spawn_context_for_attempt, team_spawn_context_for_attempt_in_txn,
 };
 pub use spawn_intent::{
-    FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView, PlannedLeaderLaunch,
-    PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,
+    ErasedPackSpan, FrozenPackFile, FrozenPatternPack, LeasedSpawnRequest, PlannedIntentView,
+    PlannedLeaderLaunch, PlannedSpawnHost, PlannedSpawnRequest, SpawnErasure, SpawnPhase,
 };
 pub use stack::{BranchResult, NodeComparison, compare_at_equal_budget};

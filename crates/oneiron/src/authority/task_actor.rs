@@ -70,8 +70,11 @@ pub(crate) struct RunnerLease<'a> {
 /// companion it names as member: what a host binds to that companion's
 /// surface (`Memory::with_task_grant`) so its task verbs prove it by
 /// [`TaskActorProof::Grant`], checked again on every verb. Only
-/// [`Vault::admit_ask_guest_grant`] builds one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// [`Vault::admit_ask_guest_grant`] builds one; a dispatch the guest's
+/// request queued keeps its serde form as its requester's standing (FIX
+/// 11688), which grants nothing: every read judges the grant again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AdmittedTaskGrant {
     grant: EntityId,
     member: EntityId,

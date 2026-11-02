@@ -264,7 +264,7 @@ async fn picked<T: Send + 'static>(
         Err(refusal) => return (Err(refusal), Vec::new()),
     };
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || match act(&server, &picker) {
+    super::clock_ingress::run_blocking(move || match act(&server, &picker) {
         Ok((answer, rows)) => (Ok(answer), rows),
         Err(error) => (Err(error), Vec::new()),
     })
@@ -329,6 +329,28 @@ pub(crate) async fn vault_skills_optimize_tradeoff_asks_pick(
                     sdk::skill_optimize_tradeoff_pick_by(server.vault(), by, &input)?
                 }
             };
+            let rows = answer.rows();
+            Ok((answer, rows))
+        },
+    )
+    .await
+}
+
+/// `vault.skills.optimize.tradeoff_asks.resolve` (FIX 9125): the owner's own
+/// tradeoff decision, under its proof only. Agents keep `tradeoff_asks` and
+/// its pick.
+pub(crate) async fn vault_skills_optimize_tradeoff_asks_resolve(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillOptimizeTradeoffResolveRequest,
+) -> Listed<oneiron::task_verb::sdk::SkillOptimizeResultView> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.optimize.tradeoff_asks.resolve",
+        move |server, owner| {
+            let answer =
+                sdk::skill_optimize_tradeoff_resolve_as_owner(server.vault(), owner, &input)?;
             let rows = answer.rows();
             Ok((answer, rows))
         },

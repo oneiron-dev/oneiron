@@ -112,7 +112,11 @@ pub(super) fn others_voice() -> Error {
 
 impl VoiceParty {
     /// Refuses a voice of `kind` this party may not act on: a real person's
-    /// voice takes that person's own proof.
+    /// voice takes that person's own proof. A managed vault's non-owner
+    /// consents on their own forwarded slip (FIX 8969, 5122) like any other
+    /// person: "own" is the voice the bank's record binds to the person that
+    /// proof names ([`Self::bind_in`]), never a voice the request claims, so
+    /// every other person's voice stays out of reach.
     pub(super) fn admits(self, kind: VoiceRefSubjectKind) -> Result<()> {
         if kind == VoiceRefSubjectKind::Person && !self.person {
             return Err(invalid(

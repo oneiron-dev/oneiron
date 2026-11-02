@@ -27,7 +27,7 @@ pub struct EscrowAdded {
 /// One escrow recipient retired after its secret was released, and the
 /// owner's receipt for it ([`Vault::retire_vault_key_escrow_as`]). Ids and
 /// times only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EscrowRetirement {
     pub receipt_id: String,

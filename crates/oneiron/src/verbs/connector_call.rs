@@ -34,7 +34,7 @@ use crate::memory::{
 };
 use crate::outbound_consent::{
     ConnectorAwaitingInput, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorQuestion, ConnectorToolSchema, UntrustedToolResult,
+    ConnectorQuestion, ConnectorResultAbsence, ConnectorToolSchema, UntrustedToolResult,
 };
 use crate::outbound_intent_ledger::IntentLedgerError;
 use crate::runtime_hooks::InvocationId;
@@ -43,6 +43,11 @@ use crate::runtime_hooks::InvocationId;
 /// it. The ledger never keeps a reply's bytes, and a call is never resent to
 /// rebuild one.
 pub const CONNECTOR_RESULT_NOT_RETAINED: &str = "result_not_retained";
+
+/// The reason a delivered reply carries when the send presented a custody
+/// record's value and the reply could not be cleared of it, so it was
+/// withheld (FIX 2823). The call was delivered; nothing is resent.
+pub const CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED: &str = "result_credential_clear_failed";
 
 /// The reason an `awaiting_input` reply carries when its questions are not
 /// in it: a replay or a status read from the call's row, which keeps the
@@ -64,6 +69,11 @@ pub enum ConnectorCallReply {
         result: Option<ConnectorToolResult>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         reasons: Vec<String>,
+        /// The 80%/95% budget messages this call's charge fired on its
+        /// connector key and catalog pool (FIX 3759): plan, then land, the
+        /// work it is part of. Absent when none fired.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        budget_steering: Vec<String>,
     },
     /// Held for consent or governance; nothing was sent. A code-mode run
     /// parks on `call_ref` until the hold settles. `approval_digest` (FIX
@@ -234,14 +244,32 @@ impl ConnectorCallReply {
         match outcome {
             ConnectorCallOutcome::Delivered {
                 result: Some(result),
+                budget_steering,
                 ..
             } => Self::Delivered {
                 result: Some(ConnectorToolResult::foreign(name, tool, result)),
                 reasons: Vec::new(),
+                budget_steering,
             },
-            ConnectorCallOutcome::Delivered { result: None, .. } => Self::Delivered {
+            ConnectorCallOutcome::Delivered {
                 result: None,
-                reasons: vec![CONNECTOR_RESULT_NOT_RETAINED.to_owned()],
+                result_absence,
+                budget_steering,
+                ..
+            } => Self::Delivered {
+                result: None,
+                reasons: vec![
+                    match result_absence {
+                        Some(ConnectorResultAbsence::CredentialClearFailed) => {
+                            CONNECTOR_RESULT_CREDENTIAL_CLEAR_FAILED
+                        }
+                        Some(ConnectorResultAbsence::NotRetained) | None => {
+                            CONNECTOR_RESULT_NOT_RETAINED
+                        }
+                    }
+                    .to_owned(),
+                ],
+                budget_steering,
             },
             ConnectorCallOutcome::Held {
                 call_ref,
@@ -380,7 +408,7 @@ pub fn connector_call_host_only(
     Err(MemoryError::new(
         MEMORY_CODE_MODEL_UNAVAILABLE,
         "connector.call sends through a server's installed connector transports; an embedded vault has none",
-        &[super::sdk_host::SERVED_CLIENT_HINT],
+        &[super::host::SERVED_CLIENT_HINT],
     ))
 }
 

@@ -3,8 +3,10 @@
 //! one, or passes one up its chain. List and answer are the calls
 //! `GET /v1/core/decisions/asks` and `POST /v1/core/decisions/asks/answer`
 //! make (`decision_role_asks`); the climb is new here. The owner's own doors
-//! stay under `/v1/owner/decisions/asks`. The generated facade handler and
-//! the MCP dispatcher both call these through `host_doors`.
+//! stay under `/v1/owner/decisions/asks`, but for his confirm of a grant his
+//! reason drafted (FIX 2975), which is here as the owner's door. The
+//! generated facade handler and the MCP dispatcher both call these through
+//! `host_doors`.
 //!
 //! Each acts as the caller: the slip's principal with its declared class,
 //! human or agent. No holder, role or kind comes from the request, and an
@@ -22,7 +24,9 @@ use std::sync::Arc;
 
 use oneiron::llm::decision::{DecisionAsk, ResolvedRole};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-use oneiron::receipt::{DecisionAskAnswerRequest, DecisionAskClimbRequest};
+use oneiron::receipt::{
+    DecisionAskAnswerRequest, DecisionAskClimbRequest, DecisionAskConfirmGrantRequest,
+};
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -44,7 +48,7 @@ async fn vault_decisions_asks_answer_answer(
     const VERB: &str = "vault.decisions.asks.answer";
     let holder = holder(auth, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<DecisionAsk> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<DecisionAsk> {
         Ok(server
             .decision_host()
             .asks()
@@ -78,7 +82,7 @@ async fn vault_decisions_asks_climb_answer(
     const VERB: &str = "vault.decisions.asks.climb";
     let climber = holder(auth, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Option<ResolvedRole>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Option<ResolvedRole>> {
         Ok(server
             .decision_host()
             .asks()
@@ -100,6 +104,44 @@ pub(crate) async fn vault_decisions_asks_climb(
     )
 }
 
+/// `vault.decisions.asks.confirm_grant`: the vault owner's confirm of the
+/// standing grant his reason drafted on one ask about a consent effect (FIX
+/// 2975), as `/v1/owner` takes his credential. Consent's reason door mints
+/// it with its rule row, the host's notice and its undo, and the ask's draft
+/// reads confirmed, in one write. Any other credential is refused.
+async fn vault_decisions_asks_confirm_grant_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DecisionAskConfirmGrantRequest,
+) -> MemoryResult<DecisionAsk> {
+    const VERB: &str = "vault.decisions.asks.confirm_grant";
+    let owner = super::owner_binding::facade_owner(server, auth, VERB)?;
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || -> MemoryResult<DecisionAsk> {
+        let (ask, _) =
+            server
+                .decision_host()
+                .asks()
+                .confirm_grant(&owner, input.seq, &input.notice)?;
+        Ok(ask)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// [`vault_decisions_asks_confirm_grant_answer`], listing the rows its ask
+/// stands on.
+pub(crate) async fn vault_decisions_asks_confirm_grant(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: DecisionAskConfirmGrantRequest,
+) -> Listed<DecisionAsk> {
+    naming(
+        vault_decisions_asks_confirm_grant_answer(server, auth, input).await,
+        |ask| ask_rows(ask).collect(),
+    )
+}
+
 /// `self.decisions.asks`: the open asks at a role the caller holds now,
 /// oldest first, as `GET /v1/core/decisions/asks` lists them.
 async fn self_decisions_asks_answer(
@@ -111,7 +153,7 @@ async fn self_decisions_asks_answer(
     let holder = holder(auth, VERB)?.entity_ref();
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<DecisionAsk>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<DecisionAsk>> {
         let asks = server.vault().decision_asks_held_by(holder)?;
         // FIX 8174: the asks the caller's own lane reads whole, as
         // `GET /v1/core/decisions/asks` lists them.

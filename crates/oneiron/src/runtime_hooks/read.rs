@@ -1,5 +1,9 @@
 //! The hook's scoped read (ARCH-0080 §6): every row a hook sees comes through
-//! the reader's `ScopedRead` lane, then the hook's own grant.
+//! the reader's `ScopedRead` lane, then the hook's own grant ([`grant_view`]).
+//! A read answers whole (FIX 9233): every row its request selects, however
+//! many and however large, with no cut of its own.
+
+pub(super) mod grant_view;
 
 use std::collections::HashSet;
 
@@ -9,20 +13,18 @@ use serde_json::{Value, json};
 use crate::claim::{ClaimBody, ClaimSubject, PointRead, ScopedRead};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::vault::{ReadMode, RevisionRef};
 use crate::{EdgeKind, EntityId, Result};
 
 use super::filter::glob_match;
 use super::grant::HookGrant;
+use super::source::FactEntry;
 use super::store::{HookReadPin, HookReadRow};
 
-/// Rows one `claims_about` read answers at most.
-const MAX_READ_ROWS: usize = 64;
-const DEFAULT_READ_ROWS: usize = 20;
-/// Bytes one read answers at most.
-const MAX_READ_BYTES: usize = 256 * 1024;
-/// Claims about a subject one read considers.
-const MAX_ABOUT_SCAN: usize = 512;
-const MAX_REQUEST_BYTES: usize = 4 * 1024;
+/// Claims about a subject one step of a `claims_about` read reads before it
+/// reads the next (CALLS, FIX 9233): how the walk is scheduled, never how
+/// much it answers. A read with a limit stops reading once it has its rows.
+const ABOUT_READ_STEP: usize = 256;
 
 /// The fact's entity as the hook's grant shows it.
 pub(super) struct SeenFact {
@@ -30,8 +32,50 @@ pub(super) struct SeenFact {
     pub(super) claim: Option<ClaimBody>,
     /// The claim in a hook's input shape, or null.
     pub(super) claim_json: Value,
-    /// BLAKE3 of the live body.
+    /// BLAKE3 of the selected body.
     pub(super) body_hash: [u8; 32],
+}
+
+/// Whether a saved dependency is shown, withheld by the current grant, or
+/// missing. An expected full body hash keeps a wrong revision from standing
+/// in for the saved bytes.
+pub(super) enum HistoryAdmission {
+    Shown,
+    Withheld,
+    Missing,
+}
+
+pub(super) fn history_admission(
+    lane: &ScopedRead<'_>,
+    grant: &HookGrant,
+    id: EntityId,
+    revision: Option<RevisionRef>,
+    expected_body_hash: Option<[u8; 32]>,
+) -> Result<HistoryAdmission> {
+    let point = match revision {
+        Some(revision) => PointRead::id(id).at(ReadMode::Pinned(revision)),
+        None => PointRead::id(id),
+    };
+    let Some(row) = lane
+        .read(&[point], None)?
+        .value
+        .into_iter()
+        .next()
+        .flatten()
+    else {
+        return Ok(HistoryAdmission::Missing);
+    };
+    let Some(body) = row.body.as_deref() else {
+        return Ok(HistoryAdmission::Missing);
+    };
+    if expected_body_hash.is_some_and(|expected| expected != *blake3::hash(body).as_bytes()) {
+        return Ok(HistoryAdmission::Missing);
+    }
+    if grant_view::shows_row(grant, &row)? {
+        Ok(HistoryAdmission::Shown)
+    } else {
+        Ok(HistoryAdmission::Withheld)
+    }
 }
 
 /// Reads the fact's entity under `lane` and `grant`. `None` is withheld or
@@ -39,10 +83,17 @@ pub(super) struct SeenFact {
 pub(super) fn fact_row(
     lane: &ScopedRead<'_>,
     grant: &HookGrant,
-    entity: EntityId,
+    entry: &FactEntry,
 ) -> Result<Option<SeenFact>> {
+    if entry.body_hash.is_some() && entry.revision.is_none() {
+        return Ok(None);
+    }
+    let point = match entry.revision {
+        Some(revision) => PointRead::id(entry.entity).at(ReadMode::Pinned(revision)),
+        None => PointRead::id(entry.entity),
+    };
     let Some(row) = lane
-        .read(&[PointRead::id(entity)], None)?
+        .read(&[point], None)?
         .value
         .into_iter()
         .next()
@@ -54,6 +105,12 @@ pub(super) fn fact_row(
         return Ok(None);
     };
     let body_hash = *blake3::hash(body).as_bytes();
+    if entry
+        .body_hash
+        .is_some_and(|expected| expected != body_hash)
+    {
+        return Ok(None);
+    }
     if row.entity_type != ENTITY_TYPE_CLAIM {
         return Ok(Some(SeenFact {
             claim: None,
@@ -66,7 +123,7 @@ pub(super) fn fact_row(
         return Ok(None);
     }
     Ok(Some(SeenFact {
-        claim_json: claim_json(entity, &claim),
+        claim_json: claim_json(entry.entity, &claim),
         claim: Some(claim),
         body_hash,
     }))
@@ -99,7 +156,9 @@ pub(super) fn answer(
 }
 
 /// [`answer`], serving only rows `cap` also reads: a verb hook reads under
-/// its caller's lane, narrowed to its grant's reader.
+/// its caller's lane, narrowed to its grant's reader. A `claims_about` with
+/// no limit answers every claim the lane, the cap and the grant show; one
+/// with a limit answers exactly that many at most, zero included.
 pub(super) fn answer_within(
     lane: &ScopedRead<'_>,
     cap: Option<&ScopedRead<'_>>,
@@ -107,9 +166,6 @@ pub(super) fn answer_within(
     request: &str,
     pins: &mut Vec<HookReadPin>,
 ) -> std::result::Result<String, String> {
-    if request.len() > MAX_REQUEST_BYTES {
-        return Err("read request is too large".to_owned());
-    }
     let parsed: ReadRequest =
         serde_json::from_str(request).map_err(|_| "read request does not parse".to_owned())?;
     let (response, rows) = match parsed {
@@ -118,14 +174,7 @@ pub(super) fn answer_within(
             claims_about,
             predicate,
             limit,
-        } => read_about(
-            lane,
-            cap,
-            grant,
-            &claims_about,
-            predicate.as_deref(),
-            limit.unwrap_or(DEFAULT_READ_ROWS).min(MAX_READ_ROWS),
-        ),
+        } => read_about(lane, cap, grant, &claims_about, predicate.as_deref(), limit),
     }
     .map_err(|error| error.to_string())?;
     pins.push(HookReadPin {
@@ -157,6 +206,7 @@ fn read_claim(
             served.push(HookReadRow {
                 id,
                 content_hash: row.content_hash,
+                body_hash: *blake3::hash(body).as_bytes(),
             });
         }
     }
@@ -169,7 +219,7 @@ fn read_about(
     grant: &HookGrant,
     subject: &str,
     predicate: Option<&str>,
-    limit: usize,
+    limit: Option<usize>,
 ) -> Result<(String, Vec<HookReadRow>)> {
     let subject = EntityId::from_hex(subject)?;
     // The claims about the subject in the content the lane reads: a room's
@@ -185,45 +235,41 @@ fn read_about(
             EdgeKind::ClaimOf,
             Some(ENTITY_TYPE_CLAIM),
         )?
-        .into_iter()
-        .take(MAX_ABOUT_SCAN)
-        .collect()
     };
-    let reads: Vec<PointRead<'_>> = ids.iter().map(|id| PointRead::id(*id)).collect();
-    let rows = lane.read(&reads, None)?.value;
-    let seen = visible_to(cap, &reads)?;
     let mut served = Vec::new();
     let mut values = Vec::new();
-    let mut bytes = 2_usize;
-    for row in rows.into_iter().flatten() {
-        if values.len() >= limit {
+    for step in ids.chunks(ABOUT_READ_STEP) {
+        if limit.is_some_and(|limit| values.len() >= limit) {
             break;
         }
-        if seen.as_ref().is_some_and(|seen| !seen.contains(&row.id)) {
-            continue;
+        let reads: Vec<PointRead<'_>> = step.iter().map(|id| PointRead::id(*id)).collect();
+        let rows = lane.read(&reads, None)?.value;
+        let seen = visible_to(cap, &reads)?;
+        for row in rows.into_iter().flatten() {
+            if limit.is_some_and(|limit| values.len() >= limit) {
+                break;
+            }
+            if seen.as_ref().is_some_and(|seen| !seen.contains(&row.id))
+                || row.entity_type != ENTITY_TYPE_CLAIM
+            {
+                continue;
+            }
+            let Some(body) = row.body.as_deref() else {
+                continue;
+            };
+            let claim = crate::claim::decode_claim_body(body, true)?;
+            if !grant.admits(&claim)
+                || predicate.is_some_and(|glob| !glob_match(glob, &claim.predicate))
+            {
+                continue;
+            }
+            values.push(claim_json(row.id, &claim));
+            served.push(HookReadRow {
+                id: row.id,
+                content_hash: row.content_hash,
+                body_hash: *blake3::hash(body).as_bytes(),
+            });
         }
-        let Some(body) = row.body.as_deref() else {
-            continue;
-        };
-        if row.entity_type != ENTITY_TYPE_CLAIM {
-            continue;
-        }
-        let claim = crate::claim::decode_claim_body(body, true)?;
-        if !grant.admits(&claim)
-            || predicate.is_some_and(|glob| !glob_match(glob, &claim.predicate))
-        {
-            continue;
-        }
-        let value = claim_json(row.id, &claim);
-        bytes = bytes.saturating_add(value.to_string().len() + 1);
-        if bytes > MAX_READ_BYTES {
-            break;
-        }
-        values.push(value);
-        served.push(HookReadRow {
-            id: row.id,
-            content_hash: row.content_hash,
-        });
     }
     Ok((Value::Array(values).to_string(), served))
 }

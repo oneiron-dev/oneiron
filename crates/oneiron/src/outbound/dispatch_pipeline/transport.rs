@@ -1,5 +1,5 @@
 //! Chokepoint OutboundTransport adapter: frozen-call guard, header/invite rehydration, sink execute.
-use super::retry_after::PROVIDER_RETRY_AFTER_FIELD;
+use super::retry_after::{PROVIDER_RETRY_AFTER_FIELD, provider_retry_after_secs};
 use crate::Vault;
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::{
@@ -71,6 +71,13 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         else {
             return invalid_frozen_call();
         };
+        // FIX 8791: the sink's own profile-read hold waits for the seat's
+        // daily reset, named on the request's clock.
+        let linkedin_sandbox_policy = self
+            .request
+            .linkedin_sandbox_policy
+            .clone()
+            .map(|policy| policy.with_caps_reset_after(self.request.occurred_at));
         let execution_request = OutboundExecutionRequest {
             intent_ref: &self.request.intent_ref,
             intent: &self.request.intent,
@@ -85,7 +92,7 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             verb_contract: self.verb_contract,
             channel_identity_ref: self.request.channel_identity_ref,
             counterparty_ref: self.request.counterparty_ref.as_deref(),
-            linkedin_sandbox_policy: self.request.linkedin_sandbox_policy.as_ref(),
+            linkedin_sandbox_policy: linkedin_sandbox_policy.as_ref(),
             hygiene_headers,
             apns_interruption_level: self.request.delivery_window_apns_interruption_level,
             calendar_invite,
@@ -104,6 +111,9 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
             OutboundExecutionOutcomeKind::DeliveredToChannel => {
                 crate::outbound_intent_ledger::OutboundSendOutcome::Acked
             }
+            OutboundExecutionOutcomeKind::Deferred => {
+                crate::outbound_intent_ledger::OutboundSendOutcome::Deferred
+            }
             OutboundExecutionOutcomeKind::Failed if execution.delivery_may_have_occurred => {
                 crate::outbound_intent_ledger::OutboundSendOutcome::Ambiguous
             }
@@ -121,6 +131,26 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         outcome
     }
 
+    fn remote_task(&self) -> Option<crate::outbound_intent_ledger::RemoteTaskHandle> {
+        self.execution
+            .as_ref()
+            .filter(|execution| execution.kind == OutboundExecutionOutcomeKind::Deferred)
+            .and_then(|execution| execution.remote_task.clone())
+    }
+
+    /// A definite non-delivery the sink marked as its provider's rate or
+    /// quota refusal, with the seconds that provider stated (FIX 8818).
+    fn provider_wait(&self) -> Option<crate::outbound_intent_ledger::ProviderWait> {
+        let execution = self.execution.as_ref().filter(|execution| {
+            execution.kind == OutboundExecutionOutcomeKind::Failed
+                && !execution.delivery_may_have_occurred
+        })?;
+        Some(crate::outbound_intent_ledger::ProviderWait {
+            kind: execution.provider_wait?,
+            retry_after_secs: provider_retry_after_secs(execution),
+        })
+    }
+
     fn admit_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -128,6 +158,17 @@ impl<S: OutboundExecutionSink> crate::outbound_chokepoint::OutboundTransport
         self.sink
             .admit_in(txn)
             .map_err(crate::outbound_intent_ledger::IntentLedgerError::from)
+    }
+
+    /// The sink's proof of non-delivery, for a call this transport would
+    /// send (FIX 9379).
+    fn known_non_delivery(&self, call: &crate::outbound_intent_ledger::FrozenOutboundCall) -> bool {
+        call.server() == self.request.intent.channel
+            && call.tool() == self.verb_contract.kind
+            && call.resolved_endpoint().is_none()
+            && self
+                .sink
+                .known_non_delivery(&self.request.intent_ref, call.idempotency_key())
     }
 }
 /// A frozen call the dispatch transport cannot honor verbatim.

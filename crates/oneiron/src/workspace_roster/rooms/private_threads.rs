@@ -95,6 +95,14 @@ impl Memory<'_> {
         });
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        // A whole-vault guest view a later pact narrowing reached past reads
+        // the room through its lane (FIX 9117).
+        let presented = presented.map(|(whole, lane)| {
+            let current = self
+                .presented_credential()
+                .is_none_or(|proof| vault.guest_view_current_in_txn(&txn, proof.claims()));
+            (whole && current, lane)
+        });
         // Its proof, read again in this snapshot (FIX 6502); one whose lane
         // did not build has its slip read again itself (FIX 6641).
         let live = match (&presented, self.presented_credential()) {

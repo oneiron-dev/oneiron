@@ -65,28 +65,28 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
                 agent_id = Some(text_value(
                     value,
                     AGENT_ID_MAX_BYTES,
-                    "agentId must be a non-empty UTF-8 string at most 256 bytes",
+                    "agentId must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_DESC => {
                 desc = Some(text_value(
                     value,
                     AGENT_DESC_MAX_BYTES,
-                    "desc must be a non-empty UTF-8 string at most 4096 bytes",
+                    "desc must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_VERSION => {
                 version = Some(text_value(
                     value,
                     AGENT_VERSION_MAX_BYTES,
-                    "version must be a non-empty UTF-8 string at most 128 bytes",
+                    "version must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_INSTRUCTIONS => {
                 instructions = Some(text_value(
                     value,
                     AGENT_INSTRUCTIONS_MAX_BYTES,
-                    "instructions must be a non-empty UTF-8 string at most 16384 bytes",
+                    "instructions must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_SKILLS => skills = Some(decode_skill_dependencies(value)?),
@@ -96,7 +96,7 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
                 let tier = text_value(
                     value,
                     AGENT_MODEL_TIER_MAX_BYTES,
-                    "modelTier must be a non-empty UTF-8 string at most 256 bytes",
+                    "modelTier must be a non-empty UTF-8 string",
                 )?;
                 model_tier = Some(ModelTierRef(tier));
             }
@@ -187,7 +187,7 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
                 logical_id = Some(text_value(
                     value,
                     AGENT_LOGICAL_ID_MAX_BYTES,
-                    "logicalId must be a non-empty UTF-8 string at most 256 bytes",
+                    "logicalId must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_ENABLED => {
@@ -202,7 +202,7 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
                 display_name = Some(text_value(
                     value,
                     AGENT_DISPLAY_NAME_MAX_BYTES,
-                    "displayName must be a non-empty UTF-8 string at most 256 bytes",
+                    "displayName must be a non-empty UTF-8 string",
                 )?);
             }
             KEY_MEMORY_PROFILE => memory_profile = Some(decode_memory_profile(value)?),
@@ -217,7 +217,7 @@ pub(super) fn decode_agent_definition_value(value: &Value) -> Result<AgentDefini
                 dreaming_model = Some(ModelTierRef(text_value(
                     value,
                     AGENT_MODEL_TIER_MAX_BYTES,
-                    "dreamingModel must be a non-empty UTF-8 string at most 256 bytes",
+                    "dreamingModel must be a non-empty UTF-8 string",
                 )?));
             }
             KEY_WAKE_CADENCE => wake_cadence = Some(decode_wake_cadence(value)?),

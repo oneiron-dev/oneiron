@@ -261,6 +261,10 @@ impl<'a> EngineNativeExecutor<'a> {
         // The last committed step was not part of the preceding request's
         // history. Synchronize it BEFORE the mint, even across a soft yield.
         self.sync_output_context(&record)?;
+        // FIX 3103: the mint is the run's own write outside any verb call, so
+        // it lands under the run's token.
+        let _run_writes =
+            crate::skill_attribution::enter_run_write_token(self.gated_write.run_write_token());
         let plan = match &self.storage {
             ExecutorStorage::Canonical(vault) => driver.integrate_with_coverage(
                 vault,
@@ -395,7 +399,8 @@ impl<'a> EngineNativeExecutor<'a> {
             .into());
         }
         self.verify_storage_dispatcher_binding()?;
-        Ok(Some(self.storage.witness_executor_utterance(
+        let assertions = self.gated_write.take_run_assertions();
+        let result = self.storage.witness_executor_utterance_sourced(
             self.gated_write.run_ref(),
             run_id,
             kind,
@@ -403,7 +408,12 @@ impl<'a> EngineNativeExecutor<'a> {
             occurred_at,
             order,
             self.gated_write.actor(),
-        )?))
+            assertions.clone(),
+        );
+        if result.is_err() {
+            self.gated_write.restore_run_assertions(assertions);
+        }
+        Ok(Some(result?))
     }
 
     /// A run's answer said as its typed result (FIX 365), under the same
@@ -423,7 +433,8 @@ impl<'a> EngineNativeExecutor<'a> {
             .into());
         }
         self.verify_storage_dispatcher_binding()?;
-        Ok(Some(self.storage.witness_executor_result(
+        let assertions = self.gated_write.take_run_assertions();
+        let result = self.storage.witness_executor_result_sourced(
             self.gated_write.run_ref(),
             run_id,
             attachment,
@@ -431,7 +442,12 @@ impl<'a> EngineNativeExecutor<'a> {
             occurred_at,
             order,
             self.gated_write.actor(),
-        )?))
+            assertions.clone(),
+        );
+        if result.is_err() {
+            self.gated_write.restore_run_assertions(assertions);
+        }
+        Ok(Some(result?))
     }
 
     /// Refuses a mismatched storage/dispatcher pair before ANY read or write.

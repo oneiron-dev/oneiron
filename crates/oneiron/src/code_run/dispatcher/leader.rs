@@ -204,9 +204,15 @@ impl HostSelfDispatcher<'_> {
             ask,
             context,
         };
-        let view = AgentDispatcher::new(vault).launch_planned_spawn_for_attempt(
+        // FIX 9180: each seat the plan and its launch resolve is noted as it
+        // resolves; an erased target's answer keeps no ask (its row scrubs
+        // it), whether or not a seat is left to note.
+        let capture = &self.spawn_capture;
+        let observe = move |seat| capture.observe(seat);
+        let dispatcher = AgentDispatcher::new(vault).observing_seats(&observe);
+        let view = dispatcher.launch_planned_spawn_for_attempt(
             &leased,
-            &self.actor.entity_ref(),
+            &self.actor,
             &request,
             &spawn_host,
             Some(runner),
@@ -277,7 +283,7 @@ impl HostSelfDispatcher<'_> {
         let decisions = host
             .zip(planner_clock.as_ref())
             .map(|(host, clock)| host.planner(clock));
-        let receipt = self.plan_agent_spawn(
+        let mut receipt = self.plan_agent_spawn(
             &LivePlanRequest {
                 need: ask.into_need(type_ref),
                 seats: &planner.seats,
@@ -287,7 +293,16 @@ impl HostSelfDispatcher<'_> {
             },
             at,
         )?;
-        narrow_budget(&mut context, receipt.asked.budget_cap_units.as_ref());
+        // FIX 9180: the plan's seat, noted before anything below can fail.
+        self.spawn_capture.observe(receipt.plan.agent_def);
+        // FIX 9181: the plan names the asker the host authenticated, so that
+        // asker's erase takes the ask it carries.
+        receipt.asker_ref = Some(self.actor.entity_ref());
+        narrow_budget(
+            &mut context,
+            receipt.asked.budget_cap_units.as_ref(),
+            Some(&receipt.plan),
+        );
         context.type_ref = Some(receipt.asked.type_ref.clone());
         let target = AgentDispatchTarget::Custom(receipt.plan.agent_def);
         context.plan = Some(receipt);
@@ -315,7 +330,7 @@ impl HostSelfDispatcher<'_> {
             .zip(clock.as_ref())
             .map(|(host, clock)| host.planner(clock));
         let answer = match call {
-            SelfLeaderCall::Advice { top } => self.leader_advice(
+            SelfLeaderCall::Advice { top } => serde_json::json!(self.leader_advice(
                 &planner.leader,
                 planner.skills.clone(),
                 planner.seats.clone(),
@@ -325,7 +340,7 @@ impl HostSelfDispatcher<'_> {
                     usize::try_from(top).unwrap_or(usize::MAX)
                 }),
                 at,
-            )?,
+            )?),
             SelfLeaderCall::Pattern { skill } => {
                 pattern_json(&self.reload_leader_pattern(skill, &planner.executor, at)?)
             }
@@ -418,7 +433,7 @@ impl HostSelfDispatcher<'_> {
         executor: &str,
         planner: &mut dyn LeaderTeamPlanner,
         at: u64,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<crate::agent_dispatch::LeaderAdvice> {
         let (vault, leased) = self.leader_attempt()?;
         AgentDispatcher::new(vault).leader_top_shapes(
             &leased,
@@ -470,7 +485,7 @@ impl HostSelfDispatcher<'_> {
         decisions: Option<&PlannerDecisions<'_>>,
         top: usize,
         at: u64,
-    ) -> Result<serde_json::Value> {
+    ) -> Result<crate::agent_dispatch::LeaderAdvice> {
         let (vault, leased) = self.leader_attempt()?;
         let dispatcher = AgentDispatcher::new(vault);
         let planner = VaultLeaderTeamPlanner::new(
@@ -570,14 +585,14 @@ impl HostSelfDispatcher<'_> {
         let slip = vault.mint_capability_slip(issuer, claims)?;
         let signed_at = slip.claims.issued_at;
         let version = ProjectProofVersion::V3;
-        let challenge = body
-            .authority_at(version)
-            .write_challenge(child, version, signed_at, None)?;
+        let challenge =
+            body.authority_at(version)
+                .write_challenge(child, version, signed_at, &[])?;
         Ok(ProjectWriteProof {
             slip_wire: slip.to_token()?,
             holder_signature: issuer.binding_proof(&slip, &challenge)?,
             signed_at,
-            anchor: None,
+            anchor: Vec::new(),
             version,
         })
     }
@@ -622,13 +637,17 @@ fn refused(reason: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidAgentDispatchInput(reason))
 }
 
-/// A budget the spawner set, seed or pin, narrows the child's hard carve; it
-/// never widens it.
+/// A budget the spawner set narrows the child's hard carve; it never
+/// widens it. A pin narrows by its value; a seed by the cap its plan was
+/// fitted under, or the seed itself where no plan states one (FIX 10539).
+/// The planned path passes its receipt's fitted plan; a direct spawn passes
+/// none, since it was never fitted and no learned spend is in reach there.
 pub(super) fn narrow_budget(
     context: &mut AgentSpawnContext,
     asked: Option<&crate::agent_dispatch::SpawnOverride<u64>>,
+    plan: Option<&crate::agent_dispatch::TeamPlan>,
 ) {
-    if let Some(asked) = asked.map(|cap| *cap.value()) {
+    if let Some(asked) = crate::agent_dispatch::resolved_budget_ask(asked, plan) {
         context.budget = Some(context.budget.map_or(asked, |carve| carve.min(asked)));
     }
 }

@@ -7,10 +7,17 @@
 //! and inconsistent revocation state are rejected.
 
 mod context;
+pub(crate) use context::principal_reach_ids_in;
 pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;
-pub use request::{AccessRequest, AccessRequestStatus};
+pub use request::{AccessRequest, AccessRequestResponder, AccessRequestStatus, AddressedAnswer};
 mod codec;
+mod companion_admission;
+pub use companion_admission::{
+    COMPANION_GRANT_EXCESS_PENDS, CompanionGrantBounds, CompanionGrantIssuer, CompanionGrantOutcome,
+};
+mod delegation;
+pub use delegation::{COMPANION_GRANT_OUTLIVES_ISSUER, COMPANION_PROFILE_SENSITIVITY};
 mod record;
 mod vault_doors;
 

@@ -1,10 +1,12 @@
 //! Transactional point-claim and retry lineage reads for ordered host composition.
 
 use super::AttemptQueue;
-use crate::attempt_queue::encoding::{decode_record, ready_at};
+use crate::attempt_queue::encoding::ready_at;
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
-use crate::attempt_queue::{AttemptId, AttemptRecord, ClaimAttempt, ClaimOutcome};
+use crate::attempt_queue::{
+    AttemptId, AttemptRecord, AttemptState, CancelMode, ClaimAttempt, ClaimOutcome,
+};
 use crate::error::Result;
 use crate::limit_ask::EngineLimit;
 
@@ -78,6 +80,8 @@ impl AttemptQueue<'_> {
     /// Finds a unique retry tip in the transaction that releases the next step.
     ///
     /// A row visited twice is a cycle and refuses; a long lineage does not.
+    /// Each superseded try must have settled as a lineage continues (FIX
+    /// 9577): failed, landed by its worker, or abandoned with its evidence.
     /// The whole lineage is read; past the `[limits]` `attempt_retry_tip_rows`
     /// row the finished walk asks whether everything is okay (Rule 5).
     pub(crate) fn retry_tip_in_txn(
@@ -89,24 +93,17 @@ impl AttemptQueue<'_> {
             .get_in_txn(txn, start)?
             .ok_or_else(|| invalid_transition("retry_tip", "missing"))?;
         let mut seen = std::collections::HashSet::new();
-        let mut children = std::collections::HashMap::new();
-        for entry in self.store.attempt_records.iter(txn)? {
-            let (key, bytes) = entry?;
-            let row = decode_record(&bytes, AttemptId::from_bytes(&key)?)?;
-            if let Some(parent) = row.retry_of {
-                children.entry(parent).or_insert_with(Vec::new).push(row);
-            }
-        }
         loop {
             if !seen.insert(current.id) {
                 return Err(invalid_transition("retry_tip", "cycle"));
             }
-            let Some(mut candidates) = children.remove(&current.id) else {
+            let mut candidates = self.retry_children_in_txn(txn, current.id)?;
+            if candidates.is_empty() {
                 self.store
                     .limit_watch
                     .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
                 return Ok(current);
-            };
+            }
             if candidates.len() != 1 {
                 return Err(invalid_transition("retry_tip", "forked_retry"));
             }
@@ -117,7 +114,7 @@ impl AttemptQueue<'_> {
                 || current.task_ref != next.task_ref
                 || current.dedupe_key != next.dedupe_key
                 || current.dedupe_actor_ref != next.dedupe_actor_ref
-                || current.state != crate::attempt_queue::AttemptState::Failed
+                || !current.continues_retry_lineage()
             {
                 return Err(invalid_transition("retry_tip", "lineage_mismatch"));
             }
@@ -136,28 +133,111 @@ impl AttemptQueue<'_> {
         txn: &heed::RoTxn<'_>,
         start: AttemptId,
     ) -> Result<Option<AttemptId>> {
-        let mut children = std::collections::HashMap::<AttemptId, Vec<AttemptId>>::new();
-        for entry in self.store.attempt_records.iter(txn)? {
-            let (key, bytes) = entry?;
-            let row = decode_record(&bytes, AttemptId::from_bytes(&key)?)?;
-            if let Some(parent) = row.retry_of {
-                children.entry(parent).or_default().push(row.id);
-            }
-        }
         let mut seen = std::collections::HashSet::from([start]);
         let mut current = start;
-        while let Some(next) = children.get(&current) {
-            let [next] = next.as_slice() else {
-                return Ok(None);
+        loop {
+            let next = self.retry_children_in_txn(txn, current)?;
+            let next = match next.as_slice() {
+                [] => break,
+                [next] => next.id,
+                _ => return Ok(None),
             };
-            if !seen.insert(*next) {
+            if !seen.insert(next) {
                 return Ok(None);
             }
-            current = *next;
+            current = next;
         }
         self.store
             .limit_watch
             .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
         Ok(Some(current))
+    }
+
+    /// The rows whose `retry_of` names `parent`, read by their keys from the
+    /// retry-child index (FIX 11318); an id whose row is gone or retries
+    /// another try is passed over.
+    fn retry_children_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: AttemptId,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut children = Vec::new();
+        for id in crate::attempt_queue::index::retry_child_ids_in_txn(self.store, txn, parent)? {
+            if let Some(row) = self.get_in_txn(txn, id)?
+                && row.retry_of == Some(parent)
+            {
+                children.push(row);
+            }
+        }
+        Ok(children)
+    }
+}
+
+impl AttemptRecord {
+    /// Whether this settled try may be superseded by its one retry in a
+    /// released lineage (FIX 9577): it failed; or it was cancelled by a
+    /// designed landing (never a forced stop); or it was abandoned with its
+    /// evidence, its result reference and its recorded exhaust. The retry tip
+    /// and the workflow context door read the same rule.
+    pub(crate) fn continues_retry_lineage(&self) -> bool {
+        match self.state {
+            AttemptState::Failed => true,
+            AttemptState::Cancelled => {
+                self.cancel_state
+                    .cancellation
+                    .as_ref()
+                    .is_some_and(|cancellation| {
+                        cancellation.mode == CancelMode::Landed && cancellation.grounds.is_none()
+                    })
+            }
+            AttemptState::Abandoned => {
+                self.result_ref.is_some()
+                    && self.last_error.is_some()
+                    && self.terminal_exhaust.is_some()
+            }
+            AttemptState::Queued
+            | AttemptState::Leased
+            | AttemptState::Paused
+            | AttemptState::Scheduled
+            | AttemptState::Landing
+            | AttemptState::Completed => false,
+        }
+    }
+}
+
+impl AttemptQueue<'_> {
+    /// Brings a waiting retry's instant forward to `now` (FIX 1112): the try a
+    /// failure ladder minted becomes ready at once instead of at its backoff.
+    /// Only a `Scheduled` retry still waiting on a later instant moves; any
+    /// other row is left as it is and reads `false`. Its tries and its ladder
+    /// are unchanged: only the wait is cut.
+    pub(crate) fn advance_retry_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: AttemptId,
+        now: u64,
+    ) -> Result<bool> {
+        let Some(mut record) = self.get_in_write_txn(txn, id)? else {
+            return Ok(false);
+        };
+        if record.state != AttemptState::Scheduled
+            || record.retry_of.is_none()
+            || ready_at(&record) <= now
+        {
+            return Ok(false);
+        }
+        self.delete_ready_entry_for_record(txn, &record)?;
+        record.scheduled_at = Some(now);
+        record.backoff_until = None;
+        let encoded = self.encode_in_txn(txn, &mut record)?;
+        self.store
+            .attempt_records
+            .put(txn, record.id.as_bytes(), &encoded)?;
+        self.store.attempt_ready.put(
+            txn,
+            &crate::attempt_queue::encoding::ready_key(now, record.id),
+            record.id.as_bytes(),
+        )?;
+        Ok(true)
     }
 }

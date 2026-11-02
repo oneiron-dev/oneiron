@@ -79,6 +79,7 @@ impl MirrorRunScope<'_, '_> {
             user: self.target.user.clone(),
             secret_ref: self.target.secret_ref.clone(),
             target_generation: self.target.target_generation,
+            audience: self.target.audience,
         }
     }
 }
@@ -182,10 +183,15 @@ impl Vault {
             created_at: self.now_recorded_at(),
         };
         plan.digest = plan_digest(&plan);
+        // Physical first: what the plan sends is kept until it settles, so
+        // no gc takes an object its resends need (`mirror_plan_pins`).
+        self.pin_mirror_plan_objects(scope, &plan);
         let mut txn = self.store.env.write_txn()?;
-        if !self.mirror_fence_in_txn(&txn, &plan)?
-            || !self.open_mirror_plan_in_txn(&mut txn, &plan, &pages, &batches)?
-        {
+        let opened = self.mirror_fence_in_txn(&txn, &plan)?
+            && self.open_mirror_plan_in_txn(&mut txn, &plan, &pages, &batches)?;
+        if !opened {
+            drop(txn);
+            self.release_mirror_plan_pins(scope.wire, scope.handle, &plan);
             return Ok(None);
         }
         txn.commit()?;
@@ -227,8 +233,8 @@ fn cut_batches(
     Ok(batches)
 }
 
-/// One digest over a plan's destination, strategy, refs, observations,
-/// batches, sections and held heads.
+/// One digest over a plan's destination (its audience included), strategy,
+/// refs, observations, batches, sections and held heads.
 fn plan_digest(plan: &MirrorPushPlan) -> String {
     let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_MIRROR_PLAN_DIGEST_CONTEXT);
     hasher.update(plan.repo_id.as_bytes());
@@ -238,6 +244,11 @@ fn plan_digest(plan: &MirrorPushPlan) -> String {
     field(&mut hasher, destination.secret_ref.as_bytes());
     let generation = destination.target_generation.map(|id| id.to_hex());
     field(&mut hasher, generation.unwrap_or_default().as_bytes());
+    field(
+        &mut hasher,
+        destination.audience.visibility.as_str().as_bytes(),
+    );
+    field(&mut hasher, destination.audience.role.as_str().as_bytes());
     field(&mut hasher, plan.strategy.as_str().as_bytes());
     hasher.update(&plan.strategy_revision.to_le_bytes());
     for plan_ref in &plan.refs {

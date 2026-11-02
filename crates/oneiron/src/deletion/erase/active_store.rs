@@ -48,13 +48,17 @@ impl Vault {
     /// Returns whether local state existed, plus the citing NOTE documents
     /// whose pins the erasure rewrote, for the caller's post-commit notice.
     /// `erase` is set for a hard reason: only an erase destroys a world's
-    /// keys; a soft delete's purge of headerless residue keeps them.
+    /// keys; a soft delete's purge of headerless residue keeps them. `act`
+    /// is the owner act an erase carries out, when its door bound one: the
+    /// custody revokes its actor sweep makes reach his other machines under
+    /// it (FIX 11883).
     pub(in crate::deletion) fn purge_entity_active_store_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         request_id: Option<&[u8; 16]>,
         erase: bool,
+        act: Option<&crate::secret_custody::EraseOwnerAct<'_>>,
     ) -> Result<(bool, Vec<EntityId>)> {
         // A held record keeps its bytes on every door that purges it, and a
         // held world keeps its pads (OF-470).
@@ -65,10 +69,11 @@ impl Vault {
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
         crate::task_authority::reject_fact_delete(&self.store, wtxn, id)?;
         crate::workspace_roster::reject_audience_edit_delete(&self.store, wtxn, id)?;
-        // An erased pack source halts the catalog routes bound to it (FIX 6034).
-        if erase {
-            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
-        }
+        // Its scope outlives the row, for the tombstone's export (FIX 10161).
+        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, request_id);
+        // A deleted or erased pack source halts the catalog routes bound to
+        // it (FIX 6034, 6086).
+        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased world takes its keys with it (fix 7); a deleted one
         // keeps them, so it restores from old bundles.
         if erase {
@@ -90,6 +95,29 @@ impl Vault {
             // the row's hard marker in this transaction, which the
             // finisher reads after the commit.
             crate::world_keys::stage_local_pad_row_erase_in_txn(&self.store, wtxn, id);
+            // An erased claim's decisions are redacted and their key retired
+            // here, before the tear, whose own redaction is a delete's (FIX
+            // 7955).
+            self.store.redact_gate_decisions_for_claim_in_txn(
+                wtxn,
+                id.as_bytes(),
+                self.store.clock.now_recorded_at(),
+                true,
+            )?;
+            crate::runtime_hooks::scrub_hook_source_in_txn(
+                self,
+                wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
+            // A privacy erase retires the owner's checkpoint payload
+            // leaves; every other delete keeps them (KS7-4).
+            crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                request_id,
+            )?;
         }
         // Capture before tear: a project's signed history outlives its row.
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -105,7 +133,11 @@ impl Vault {
         }
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
-        #[cfg(feature = "sync")]
+        // An erased row takes the space probes written from it, and leaves the
+        // targets of those it only answers (FIX 9829).
+        if erase {
+            crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
+        }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         // Saved tags read the turn's messages through their PartOf edges, so
@@ -129,7 +161,7 @@ impl Vault {
         // An erased actor's receipts and rows keep their times, not who acted (FIX 812).
         // A soft delete's headerless purge keeps them: delete restores, erase is one-way (FIX 6640).
         if erase {
-            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id)?;
+            crate::deletion::actor_fields::erase_actor_fields_in_txn(self, wtxn, id, act)?;
         }
         let had_refinement =
             crate::skill_hub::erase_claim_refinement_in_txn(&self.store, wtxn, id)?;
@@ -155,9 +187,18 @@ impl Vault {
         crate::codebase::delete_codebase_snapshot_in_txn(&self.store, wtxn, id)?;
         crate::note::delete_document_in_txn(&self.store, wtxn, id)?;
         let note_removed = crate::note::erase::purge(self, wtxn, id)?;
-        ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
-        if had_graph_mutation {
+        if erase {
+            // Engine 00:43 for parked L01: destructive erase removes the derived
+            // payloads, never just their freshness marker, and always advances
+            // the graph version once, even for an isolated row.
+            ppr::purge_ppr_for_erase_in_txn(&self.store, wtxn, id, &neighbors)?;
+            self.store.clear_ppr_community_cache_in_txn(wtxn)?;
             ppr::increment_graph_version(&self.store, wtxn)?;
+        } else {
+            ppr::invalidate_ppr_for_delete(&self.store, wtxn, id, &neighbors)?;
+            if had_graph_mutation {
+                ppr::increment_graph_version(&self.store, wtxn)?;
+            }
         }
         if had_vector {
             crate::hnsw::increment_vector_version(&self.store, wtxn)?;
@@ -193,12 +234,29 @@ impl Vault {
         crate::world_keys::reject_held_pad_world_in_txn(&self.store, wtxn, &[*id])?;
         crate::dreamer_runner::authority::guard_actor_delete(id)?;
         crate::workspace_roster::refuse_revision_delete(&self.store, wtxn, id)?;
-        // An erased pack source halts the catalog routes bound to it (FIX 6034).
+        // Its scope outlives the body (see the purge); its tombstone's capture binds it.
+        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
+        // A deleted or erased pack source halts the catalog routes bound to
+        // it (FIX 6034, 6086).
+        self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
         // An erased custody record is fenced before its body is scrubbed (KS-6
         // part 2).
         if erase {
-            self.halt_erased_pack_source_routes_in_txn(wtxn, id)?;
             self.fence_erased_credential_in_txn(wtxn, id)?;
+            crate::runtime_hooks::scrub_hook_source_in_txn(
+                self,
+                wtxn,
+                id,
+                self.store.clock.now_recorded_at(),
+            )?;
+            // An erase's scrub settles the owner's checkpoint payload leaves
+            // by the reason its door reserved (KS7-4).
+            crate::deletion::checkpoint_payload::settle_checkpoint_payloads_in_txn(
+                &self.store,
+                wtxn,
+                id,
+                None,
+            )?;
         }
         // Capture before the body is scrubbed (see the purge).
         self.capture_project_before_tear_in_txn(wtxn, *id)?;
@@ -217,7 +275,11 @@ impl Vault {
         self.record_invalid_participant_dispositions_for_delete_in_txn(wtxn, id)?;
         self.moot_identity_proposals_for_participant_in_txn(wtxn, id)?;
         crate::workspace_roster::retire_goal_for_delete(self, wtxn, *id)?;
-        #[cfg(feature = "sync")]
+        // An erase's scrub takes the space probes written from the row too
+        // (FIX 9829; see the purge); a delete keeps them for its restore.
+        if erase {
+            crate::embed::erase_probe_sources_in_txn(self, wtxn, id)?;
+        }
         crate::entity_doc::erase_in_txn(&self.store, wtxn, id)?;
         crate::provenance::erase_row_provenance_in_txn(&self.store, wtxn, id, erase)?;
         self.store.guard_pack_map_carrier_delete_in_txn(wtxn, id)?;
@@ -225,6 +287,7 @@ impl Vault {
             wtxn,
             id.as_bytes(),
             self.store.clock.now_recorded_at(),
+            erase,
         )?;
         let (room_had_vector, room_had_graph, room_neighbors) =
             crate::workspace_roster::deindex_project_room(&self.store, wtxn, id)?;

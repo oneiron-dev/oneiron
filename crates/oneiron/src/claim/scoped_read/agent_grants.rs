@@ -211,7 +211,20 @@ impl<'v> ScopedRead<'v> {
                 )?,
             }
         };
-        Ok(record.is_some_and(|record| grant.admits("read", &record, &Scope::top())))
+        // A NOTE in several worlds is judged at one world the read's own
+        // ceiling and the Grant both hold, base reality first (FIX-LIST 9433).
+        let ceiling = self.actor_key.world_ceiling();
+        Ok(record.is_some_and(|record| {
+            let record = crate::federation::record_scope::note_world::held_at(
+                &self.store_read(),
+                rtxn,
+                *id,
+                header.entity_type,
+                &record,
+                &[&ceiling.worlds, &grant.worlds],
+            );
+            grant.admits("read", &record, &Scope::top())
+        }))
     }
 }
 

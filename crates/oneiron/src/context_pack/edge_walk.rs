@@ -19,11 +19,6 @@ use crate::store::StoreRead;
 use super::validation::disclosure_admits_target;
 use super::world_partition::record_world_by_id;
 
-#[cfg(not(test))]
-pub(super) const MAX_EDGE_SCAN_RESULTS: usize = 100_000;
-#[cfg(test)]
-pub(super) const MAX_EDGE_SCAN_RESULTS: usize = 64;
-
 #[cfg(test)]
 thread_local! {
     pub(super) static EDGE_SCAN_COUNT: Cell<usize> = const { Cell::new(0) };
@@ -33,6 +28,9 @@ thread_local! {
 pub(super) struct EdgeWalkResult {
     pub(super) neighbor_ids: Vec<EntityId>,
     pub(super) scanned_edges: HashMap<EntityId, Vec<EdgeInfo>>,
+    /// The critical claims the walk admitted as candidates, and those its
+    /// budget left out (FIX 9760).
+    pub(super) critical: super::types::PackCriticalAccounting,
 }
 
 pub(super) fn load_entity_edges(
@@ -41,11 +39,12 @@ pub(super) fn load_entity_edges(
     id: &EntityId,
     edge_cache: Option<&HashMap<EntityId, Vec<EdgeInfo>>>,
     clamp: Option<&DisclosureContext>,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Vec<EdgeInfo>> {
     let edges = if let Some(edges) = edge_cache.and_then(|cache| cache.get(id)) {
         edges.clone()
     } else {
-        scan_edges_for_entity(store, rtxn, id)?
+        scan_edges_for_entity(store, rtxn, id, deadline)?
     };
     // ARCH-0052 P6: no off-record subtraction here. A base edge cannot name a
     // live overlay member — the K4 taint guard rejects that write — and a
@@ -53,6 +52,9 @@ pub(super) fn load_entity_edges(
     // The OF-365 clamp below is the only target filter this list needs.
     let mut kept = Vec::with_capacity(edges.len());
     for edge in edges {
+        if let Some(deadline) = deadline {
+            deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
+        }
         if !crate::note::ordinary_entity_visible(store, rtxn, &edge.target)?
             || !disclosure_admits_target(store, rtxn, clamp, &edge.target)?
         {
@@ -78,20 +80,27 @@ pub(super) fn scan_edges_for_entity(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
+    deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
 ) -> Result<Vec<EdgeInfo>> {
     #[cfg(test)]
     EDGE_SCAN_COUNT.with(|count| count.set(count.get().saturating_add(1)));
 
+    let scope = [&[crate::ports::EdgeDirection::Out as u8][..], id.as_bytes()].concat();
+    let mut count = crate::scan_check::ScanCount::start(
+        store,
+        rtxn,
+        crate::scan_check::EngineScan::EdgePeerRows,
+        &scope,
+    )?;
     let mut edges = Vec::new();
-
     for entry in store.port_edges(rtxn, id, crate::ports::EdgeDirection::Out, None, None)? {
-        let edge_row = entry?;
-        if edges.len() >= MAX_EDGE_SCAN_RESULTS {
-            return Err(Error::CorruptedIndex("edge scan exceeded bound"));
+        if let Some(deadline) = deadline {
+            deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
         }
-        edges.push(edge_row);
+        count.row();
+        edges.push(entry?);
     }
-
+    count.defer(store);
     Ok(edges)
 }
 
@@ -115,6 +124,15 @@ pub(super) struct EdgeWalkOptions<'a> {
     /// The same resolved type floor and explicit kind names as primary retrieval.
     pub(super) type_filter: &'a crate::gate::ResolvedRetrievalFilter,
     pub(super) named_types: Option<&'a [u8]>,
+    /// The caller's selected worlds, resolved as primary retrieval resolves
+    /// them: a row outside them is never admitted as a neighbor nor
+    /// traversed through, so no edge adds a world (FIX 9759).
+    pub(super) world_scope: &'a crate::pipeline::ResolvedWorldScope,
+    /// The manifest that names critical predicates, when the pack may hold
+    /// critical claims: they take the walk's budget first (FIX 9760).
+    pub(super) critical_policy: Option<&'a crate::gate::PolicyManifestResolution>,
+    /// Absolute answer deadline for the full adjacency scan and admitted walk.
+    pub(super) deadline: Option<&'a crate::retrieval_depth::RetrievalDeadline>,
 }
 
 /// Expands the seed set along its edges under `options`.
@@ -133,6 +151,9 @@ pub(super) fn walk_edges(
         device_local,
         type_filter,
         named_types,
+        world_scope,
+        critical_policy,
+        deadline,
     } = options;
     if hops == 0 || budget == 0 || seed_ids.is_empty() {
         return Ok(EdgeWalkResult::default());
@@ -143,23 +164,27 @@ pub(super) fn walk_edges(
     let mut frontier = seed_ids.to_vec();
     frontier.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
     let mut scanned_edges = HashMap::<EntityId, Vec<EdgeInfo>>::new();
+    let mut critical = super::types::PackCriticalAccounting::default();
 
     for _ in 0..hops {
         if frontier.is_empty() || visited.len() >= budget {
             break;
         }
 
-        let mut candidates = HashMap::<EntityId, f32>::new();
+        let mut candidates = HashMap::<EntityId, (f32, bool)>::new();
 
         for id in &frontier {
             if !scanned_edges.contains_key(id) {
-                scanned_edges.insert(*id, scan_edges_for_entity(store, rtxn, id)?);
+                scanned_edges.insert(*id, scan_edges_for_entity(store, rtxn, id, deadline)?);
             }
 
             let Some(edges) = scanned_edges.get(id) else {
                 continue;
             };
             for edge in edges {
+                if let Some(deadline) = deadline {
+                    deadline.answer_checkpoint(Error::IndexOverflow("context pack edge scan"))?;
+                }
                 // `child_of` / `assigned_to` / `blocked_by` are STRUCTURAL
                 // plumbing with no retrieval scoring (ARCH-0004 edgeKinds:
                 // lambda null, "Not traversed.") — never neighbor-expanded
@@ -207,6 +232,9 @@ pub(super) fn walk_edges(
                 {
                     continue;
                 }
+                if !world_scope.admits(store, rtxn, &edge.target)? {
+                    continue;
+                }
                 if let Some(flagged) = device_local
                     && crate::settings::device_local_keeps_among(
                         store,
@@ -232,14 +260,19 @@ pub(super) fn walk_edges(
                 {
                     continue;
                 }
-                candidates
-                    .entry(edge.target)
-                    .and_modify(|best_weight| {
+                match candidates.entry(edge.target) {
+                    std::collections::hash_map::Entry::Occupied(mut slot) => {
+                        let best_weight = &mut slot.get_mut().0;
                         if edge.weight.total_cmp(best_weight).is_gt() {
                             *best_weight = edge.weight;
                         }
-                    })
-                    .or_insert(edge.weight);
+                    }
+                    std::collections::hash_map::Entry::Vacant(slot) => {
+                        let is_critical =
+                            neighbor_is_critical(store, rtxn, critical_policy, &edge.target)?;
+                        slot.insert((edge.weight, is_critical));
+                    }
+                }
             }
         }
 
@@ -248,11 +281,25 @@ pub(super) fn walk_edges(
         }
 
         let remaining = budget.saturating_sub(visited.len());
-        let mut next_frontier: Vec<(EntityId, f32)> = candidates.into_iter().collect();
+        let mut next_frontier: Vec<(EntityId, (f32, bool))> = candidates.into_iter().collect();
+        // Critical claims take the budget first; each class keeps the walk's
+        // weight, then id, order.
         next_frontier.sort_unstable_by(|a, b| {
-            b.1.total_cmp(&a.1)
+            b.1.1
+                .cmp(&a.1.1)
+                .then_with(|| b.1.0.total_cmp(&a.1.0))
                 .then_with(|| a.0.as_bytes().cmp(b.0.as_bytes()))
         });
+        for (id, (_, is_critical)) in &next_frontier {
+            if *is_critical {
+                critical.eligible_ids.insert(*id);
+            }
+        }
+        for (id, (_, is_critical)) in next_frontier.iter().skip(remaining) {
+            if *is_critical {
+                critical.budget_omitted_ids.insert(*id);
+            }
+        }
         next_frontier.truncate(remaining);
 
         frontier = next_frontier
@@ -265,8 +312,38 @@ pub(super) fn walk_edges(
             .collect();
     }
 
+    critical
+        .budget_omitted_ids
+        .retain(|id| !visited.contains(id));
     Ok(EdgeWalkResult {
         neighbor_ids: ordered_neighbors,
         scanned_edges,
+        critical,
     })
+}
+
+/// Whether the walk's candidate `id` is a claim the read path may serve whose
+/// predicate `policy` names critical. With no policy, none is.
+fn neighbor_is_critical(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    policy: Option<&crate::gate::PolicyManifestResolution>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(policy) = policy else {
+        return Ok(false);
+    };
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_record(store, rtxn, id)? else {
+        return Ok(false);
+    };
+    if raw.entity_type != crate::registry::ENTITY_TYPE_CLAIM {
+        return Ok(false);
+    }
+    Ok(crate::claim::decode_claim_body(&raw.body, true)
+        .ok()
+        .is_some_and(|body| {
+            crate::claim::claim_surfaceable(&body)
+                && policy.criticality_for_predicate(&body.predicate)
+                    == crate::gate::PolicyCriticality::Critical
+        }))
 }

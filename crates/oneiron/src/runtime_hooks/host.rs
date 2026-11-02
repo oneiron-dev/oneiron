@@ -43,6 +43,7 @@ impl Vault {
             class: HookActorClass::System,
             scope: None,
             board_epoch: None,
+            turn: None,
             domain: VerbDomain::Write,
             // A host's own call reads as its actor.
             reader: None,

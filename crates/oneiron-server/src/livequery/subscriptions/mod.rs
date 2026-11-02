@@ -13,8 +13,9 @@ mod opening;
 
 pub(crate) const LIVEQUERY_RING_CAPACITY: usize = 1024;
 /// The local path every notification view follows: notification puts and
-/// marks commit to LMDB, so the refresh re-derives these views on its local
-/// cadence, as it does the owner feed.
+/// marks commit to LMDB, outside Observer B, so the refresh re-derives these
+/// views when the vault's committed-notification signal changes (FIX 3084),
+/// and on its local cadence for a writer that sends no signal.
 pub(crate) const NOTIFICATIONS_PATH: &str = "notifications";
 const MAX_RING_BYTES: usize = 8 * 1024 * 1024;
 
@@ -71,6 +72,17 @@ pub(crate) trait LiveQuerySource: Send + Sync {
     /// to a gap and a fresh scoped snapshot, on any destination.
     fn readmits(&self, _pushes: &[Push]) -> Result<bool, AppError> {
         Ok(true)
+    }
+    /// The rows of `rows`, a derivation's entity dependencies, that read for
+    /// this source's caller as it derives: the rows its result can carry,
+    /// which each delivery and a resume judge again (FIX 10500). A row that
+    /// did not read then lends the result nothing, so its later erase or
+    /// lost grant never retires the result.
+    fn readable_rows(
+        &self,
+        rows: Vec<oneiron::EntityId>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        Ok(rows)
     }
     /// Retained, authority-scoped pushes outside the delivery ring.
     fn replay(
@@ -153,6 +165,17 @@ fn derived_rows(dependencies: &BTreeSet<String>) -> Vec<oneiron::EntityId> {
         .filter_map(|path| path.strip_prefix("e:"))
         .filter_map(|id| oneiron::EntityId::from_hex(id).ok())
         .collect()
+}
+
+impl LiveQueries {
+    /// The rows a derivation with `dependencies` lends its result, as its
+    /// push carries them ([`LiveQuerySource::readable_rows`], FIX 10500).
+    fn lent_rows(
+        &self,
+        dependencies: &BTreeSet<String>,
+    ) -> Result<Vec<oneiron::EntityId>, AppError> {
+        self.source.readable_rows(derived_rows(dependencies))
+    }
 }
 
 impl Push {
@@ -270,6 +293,10 @@ pub(crate) struct LiveQueries {
     state: Mutex<State>,
     tracker: super::publication::PublicationTracker,
     last_owner_feed_poll: Mutex<Instant>,
+    /// The vault's committed-notification signal, subscribed before this
+    /// session's first derive (FIX 3084). `None` follows notifications on
+    /// the local cadence alone.
+    notification_wake: Mutex<Option<tokio::sync::watch::Receiver<u64>>>,
 }
 
 struct State {
@@ -336,7 +363,20 @@ impl LiveQueries {
             }),
             tracker: super::publication::PublicationTracker::with_limits(limits),
             last_owner_feed_poll: Mutex::new(Instant::now()),
+            notification_wake: Mutex::new(None),
         }
+    }
+
+    /// Follows the vault's committed-notification signal: each refresh after
+    /// it changes re-derives the notification views (FIX 3084). Take the
+    /// subscription before the session's first derive, so no commit between
+    /// the two is missed.
+    pub(super) fn following_notifications(
+        mut self,
+        wake: tokio::sync::watch::Receiver<u64>,
+    ) -> Self {
+        self.notification_wake = Mutex::new(Some(wake));
+        self
     }
 
     #[cfg(test)]

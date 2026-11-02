@@ -2,7 +2,8 @@
 //! (KS7-2). Each entity's compartment holds a fragment: the bundle with only
 //! the forks on that entity, naming no one, its path naming the entity and
 //! every fork in the bundle's order. The author and each fork's opener are
-//! actor parts.
+//! actor parts; the credential lineage the bundle froze rides whole in every
+//! fragment (FIX 10931).
 //!
 //! A restore merges each fragment into the bundle the owners restored before
 //! it hold, in the bundle's order, so the bundle comes back whole when every
@@ -72,6 +73,7 @@ fn split(out: &mut Captured, row: TypedRow<String, ProposalBundle>) -> Result<()
             author: row.value.author,
             forks,
             settled: row.value.settled,
+            opener_lineage: row.value.opener_lineage.clone(),
         };
         let mut actors = Vec::new();
         if let DocActor::Actor(id) = std::mem::replace(&mut fragment.author, DocActor::Erased) {
@@ -135,7 +137,10 @@ pub(super) fn join(
         .ok_or_else(rows::bad_part)?;
     let mut merged = match ENTITY_DOC_PROPOSAL_BUNDLE.get(dbs, view, &key)? {
         Some(mut earlier) => {
-            if earlier.proposal != fragment.proposal || earlier.settled != fragment.settled {
+            if earlier.proposal != fragment.proposal
+                || earlier.settled != fragment.settled
+                || earlier.opener_lineage != fragment.opener_lineage
+            {
                 return Err(rows::bad_part());
             }
             if earlier.author == DocActor::Erased {

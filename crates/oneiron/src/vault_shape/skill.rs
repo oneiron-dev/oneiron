@@ -64,9 +64,9 @@ impl Vault {
         };
         owner.revalidate(self)?;
         let imported = match source {
-            ShapeSkillSource::Library { subtree } => {
-                self.import_default_hub_skill_expecting(subtree, skill_id, version, occurred, now)
-            }
+            ShapeSkillSource::Library { subtree } => self.import_default_hub_skill_expecting(
+                owner, subtree, skill_id, version, occurred, now,
+            ),
             ShapeSkillSource::Hub {
                 hub,
                 folder,
@@ -120,7 +120,16 @@ impl Vault {
         owner: &AuthenticatedOwner,
         entity: EntityId,
         version: &str,
+        sources: &mut ShapeSources,
     ) -> Result<String> {
+        // The sync reads the skill's hub records through its provenance to
+        // refetch them; the tracked ref row it keys off them is named by
+        // its hub.
+        sources.list_read(self.skill_hub_sources(&entity).map(|refs| {
+            refs.iter()
+                .map(|hub_ref| hub_ref.hub_id)
+                .collect::<Vec<_>>()
+        }));
         match self.sync_skill_from_hub_ref_expecting(owner, &entity, version)? {
             HubSyncDisposition::Applied => {}
             HubSyncDisposition::Proposed { proposal_id, .. } => {

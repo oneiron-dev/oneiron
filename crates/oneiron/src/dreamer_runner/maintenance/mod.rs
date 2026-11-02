@@ -9,6 +9,7 @@ pub mod action_mode;
 pub mod agent_health;
 mod applied;
 pub mod attribution_audits;
+pub mod browser_programs;
 mod calibration_asks;
 pub mod coach;
 pub mod coach_diagnostic;
@@ -17,12 +18,14 @@ pub mod coach_learning;
 mod coach_repair;
 mod coach_research;
 mod coach_resolution;
+pub mod site_skills;
 pub use coach_research::ResearchGoalOracle;
 pub mod code_fix;
 pub mod compaction_check;
 pub use compaction_check::COMPACTION_CHECK_FACET;
 pub(crate) use compaction_check::declare_compaction_check_in_txn;
 mod contribution;
+pub(crate) use contribution::erase_contribution_cursor_in_txn;
 pub use contribution::{ContributionForks, ContributionReplayHost};
 mod curator;
 pub mod detectors;
@@ -62,6 +65,7 @@ use super::{
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
 use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
+pub(crate) use curator::PROPOSAL_PREDICATE as CURATOR_PROPOSAL_PREDICATE;
 pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;
 pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
@@ -275,7 +279,10 @@ pub(crate) fn execute(
         }
         _ => return Err(invalid()),
     }
-    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+    Ok(DreamerAttemptExecution::Completed {
+        completed_units: 0,
+        step_hashes: Vec::new(),
+    })
 }
 fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
     vault: &Vault,

@@ -18,7 +18,7 @@ use crate::claim::{
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::federation::{Scope, record_scope::scope_for_blob};
+use crate::federation::{Scope, record_scope::note_world};
 use crate::interlocutor::{InterlocutorSet, InterlocutorStamp};
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TURN,
@@ -428,7 +428,11 @@ impl DisclosureContext {
         let Some(raw) = store.port_entity_record(rtxn, id)?.map(|row| row.encode()) else {
             return Ok(false);
         };
-        let Some(record_scope) = scope_for_blob(store, rtxn, *id, &raw)? else {
+        // A NOTE sits at one world it is in that the clearance holds
+        // (FIX-LIST 9433).
+        let held = [&self.disclosable.clearance().worlds];
+        let Some(record_scope) = note_world::blob_scope_held_at(store, rtxn, *id, &raw, &held)?
+        else {
             return Ok(false);
         };
         Ok(self.disclosable.admits(&record_scope))

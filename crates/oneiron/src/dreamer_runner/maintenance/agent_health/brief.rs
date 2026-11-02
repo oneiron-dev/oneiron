@@ -17,7 +17,7 @@ use crate::{EntityId, Error, Result, Vault};
 /// The typed brief THIS REVIEW OBSERVED on a finding's TASK: its revision
 /// and digest when the review read it. It is not a launch snapshot, since the
 /// reviewed agent's dispatch captures no brief stamp, and it holds no text.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct HealthBriefPin {
     /// The TASK whose brief the review read.

@@ -6,6 +6,7 @@ use sha2::{Digest, Sha256};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Result;
 
+use super::enrollment_law::{VoiceEnrollmentLegalContext, VoicePrintLegalEvidence};
 use super::math_keys::{invalid_voice, require_non_empty};
 
 /// Ticket-owned default known-speaker acceptance threshold (cosine).
@@ -23,12 +24,11 @@ pub(super) const VOICE_IDENTITY_SCHEMA_VERSION: u64 = 1;
 /// Distinct language tags a centroid needs before it is `Calibrated`.
 pub(super) const VOICE_CALIBRATION_MIN_LANGUAGES: usize = 2;
 
-/// Upper bound on segments in one match request.
-///
-/// Residual clustering is quadratic in the residual count; this bound keeps a
-/// single request from turning into an unbounded local job. It is a
-/// ticket-owned dial, not a canon-frozen constant.
-pub(super) const VOICE_MAX_MATCH_SEGMENTS: usize = 1024;
+/// Whether a whole-file batch run rules for its session by default (FIX
+/// 1522, CALLS): it heard the whole recording, so a speaker it did not hear
+/// is not in it (a phantom an earlier diarization made), never a speaker
+/// gone quiet in a live window, which ruling (a) keeps.
+pub const WHOLE_RECORDING_RUN_AUTHORITATIVE: bool = true;
 
 /// Purpose a voice print may be used for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -379,6 +379,9 @@ pub struct VoiceEnrollmentRequest {
     pub space: VoiceEmbeddingSpaceV1,
     pub samples: Vec<VoiceEnrollmentSampleV1>,
     pub requested_at: u64,
+    /// The law the enrollment is made under, as the trusted host's
+    /// legal-policy seam resolved it (FIX 10218).
+    pub legal: VoiceEnrollmentLegalContext,
 }
 
 /// Request to resolve one voice session's diarized segments.
@@ -391,6 +394,60 @@ pub struct VoiceMatchRequest {
     pub invite_attendee_refs: Vec<EntityId>,
     pub policy: VoiceMatchPolicy,
     pub created_at: u64,
+    /// The purpose the match serves: only prints enrolled for it, under a
+    /// consent still standing for it, take part (FIX 10217).
+    pub purpose: VoicePrintPurpose,
+    /// How much of the session the run heard: whether it rules for the
+    /// session's roster (FIX 1522).
+    pub coverage: VoiceRunCoverage,
+}
+
+/// How much of its session one match run heard (FIX 1522).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceRunCoverage {
+    /// A live call's segments, or a partial run's. A speaker an earlier run
+    /// of the session heard and this one did not stays as last placed: no
+    /// silence removes anyone (OF-365 ruling a).
+    Partial,
+    /// A batch run over the whole recording. An authoritative one rules for
+    /// its session: the roster keeps only the speakers it heard.
+    WholeRecording { authoritative: bool },
+}
+
+impl VoiceRunCoverage {
+    /// A whole-file batch run, authoritative as
+    /// [`WHOLE_RECORDING_RUN_AUTHORITATIVE`] says.
+    #[must_use]
+    pub const fn whole_recording() -> Self {
+        Self::WholeRecording {
+            authoritative: WHOLE_RECORDING_RUN_AUTHORITATIVE,
+        }
+    }
+
+    /// Whether the run drops the placements of speakers it did not hear.
+    #[must_use]
+    pub const fn retires_unheard(self) -> bool {
+        matches!(
+            self,
+            Self::WholeRecording {
+                authoritative: true
+            }
+        )
+    }
+}
+
+/// What the owner's departure act for one speaker of a session did (FIX
+/// 1522).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoiceSpeakerDeparture {
+    pub voice_session_ref: String,
+    pub speaker_key: String,
+    /// The roster's revision after the act; `None` for a session with no
+    /// stored roster.
+    pub roster_revision: Option<u64>,
+    /// How many of the speaker's segments left the roster: none when the
+    /// roster held no placement of it, and nothing was written.
+    pub removed_segments: usize,
 }
 
 /// Request to withdraw consent and hard-delete a subject's biometric rows.
@@ -428,6 +485,14 @@ pub struct VoicePrintRecordV1 {
     pub contact_ref: Option<EntityId>,
     pub relationship_ref: Option<EntityId>,
     pub consent_event_ref: String,
+    /// The world the print sits in, resolved from where its sources sit,
+    /// never named by the caller; `None` is base reality (FIX 10215).
+    pub world_ref: Option<EntityId>,
+    /// The purposes its consent was enrolled for: the enrolled purpose
+    /// only, never every purpose the grant names (FIX 10217).
+    pub consented_purposes: Vec<VoicePrintPurpose>,
+    /// The law it was enrolled under (FIX 10218).
+    pub legal: VoicePrintLegalEvidence,
     pub space: VoiceEmbeddingSpaceV1,
     pub centroid: Vec<f32>,
     pub sample_ids: Vec<String>,

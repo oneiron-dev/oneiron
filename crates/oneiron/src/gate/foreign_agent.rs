@@ -69,6 +69,17 @@ pub(crate) fn resolve(
     let policy = resolve_policy_manifest(store, txn)?;
     resolve_chain(store, txn, actor, &policy, &mut Vec::new())
 }
+/// [`resolve`] for the actor a write is made as, when there is one.
+pub(crate) fn resolve_writing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: Option<WriteActor>,
+) -> Result<Option<PolicyApprovalCeiling>> {
+    Ok(actor
+        .map(|actor| resolve(store, txn, actor))
+        .transpose()?
+        .flatten())
+}
 fn resolve_chain(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -239,6 +250,7 @@ impl Vault {
                     grant_ref: Some(format!("foreign:{}", foreign.to_hex())),
                     diff_handle: vec![u8::from(requested == PolicyApprovalCeiling::Auto)],
                     read_frontier_hash: frontier,
+                    context: Default::default(),
                     redacted_at: None,
                 },
             )?;
@@ -409,6 +421,7 @@ impl Vault {
                 diff_handle,
                 read_frontier_hash: resolve_policy_manifest(&self.store, txn)?
                     .read_frontier_hash()?,
+                context: Default::default(),
                 redacted_at: None,
             };
             self.store

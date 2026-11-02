@@ -374,6 +374,17 @@ impl Vault {
                     landed: Vec::new(),
                     explainer: explainer.to_owned(),
                 };
+                // Its explainer is free text: admitted before anything is
+                // routed, landed or stored (FIX 2375).
+                let text = crate::batch::secret_scan::Part::Text(&mut bundle.explainer);
+                super::free_text::admit_free_text_in_txn(
+                    self,
+                    txn,
+                    bundle.id,
+                    "note.proposal.explainer",
+                    &mut [("text:explainer", text)],
+                    &mut crate::batch::secret_scan::Lifted::default(),
+                )?;
                 for id in forks {
                     let mut fork: NoteFork = NOTE_FORK
                         .get(&self.store, txn, id)?
@@ -499,10 +510,12 @@ impl Vault {
                         doc: fork_doc,
                     };
                     let mut rewrite = matches!(edit, NoteProgramEdit::Rewrite { .. });
+                    // The fork's commits name the actor's stamp token (FIX 10930).
+                    let stamp = crate::provenance::actor_stamp_in_txn(self, txn, actor)?;
                     if let Some(replacement) = fork.apply(
                         &self.store.clock,
                         edit,
-                        actor.entity_ref(),
+                        stamp,
                         self.store.clock.now_recorded_at(),
                     )? {
                         rewrite = true;
@@ -563,7 +576,7 @@ pub(super) fn land(
             .memory(actor.entity_ref(), actor.actor_class())
             .apply_note_operation_in_txn(txn, fork.note, &operation, None)
             .map_err(|_| invalid("canonical NOTE proposal admission failed"))?;
-        if matches!(receipt.outcome, super::NoteEditOutcome::Proposed(_)) {
+        if matches!(receipt.outcome, super::NoteScalarEditOutcome::Proposed(_)) {
             return Ok(None);
         }
     }

@@ -142,7 +142,7 @@ pub(super) fn held_revisions(state: &FoldState, out: &mut BTreeSet<AuthorityEntr
 /// revisions in the head's own past: what the act followed. Not every
 /// revision the act's parents carry: an act naming a concurrent removal
 /// never exempts it (Wonder P2 round 5, W1).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub(super) struct Mark {
     pub(super) entry: AuthorityEntryHash,
     pub(super) prior: Arc<BTreeSet<AuthorityEntryHash>>,

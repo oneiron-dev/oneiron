@@ -17,6 +17,9 @@ use std::collections::BTreeSet;
 use std::io::Read;
 use std::time::Duration;
 
+use serde::Deserialize;
+use zeroize::{Zeroize, Zeroizing};
+
 use super::normalize_connector_key;
 use super::qualification::{GroundingOracle, QualificationConnector, QualificationPlan};
 use super::record::ConnectorKeyStatus;
@@ -24,14 +27,20 @@ use super::txn::read_connector_key_in_txn;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::error::{Error, Result};
 use crate::skill_hub::pack_catalog::{
-    MAX_SETUP_PERMISSIONS, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
-    PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission, PackSetupSecret, PackSetupSession,
-    PackSetupView, live_custody_in_txn, pin_connection_custody_in_txn,
+    PackSetupActor, PackSetupAuth, PackSetupCheckRecord, PackSetupConnection,
+    PackSetupConnectionState, PackSetupGrantRef, PackSetupKeyRef, PackSetupPermission,
+    PackSetupSecret, PackSetupSession, PackSetupView, live_custody_in_txn,
+    pin_connection_custody_in_txn,
 };
 use crate::{EntityId, Vault};
 
+// An agent's `allow`, put to the owner as a decision ask.
+mod allow_ask;
+mod grants;
 // `self.use`'s own checks, cleared inside the door (FIX 7647).
 mod sent_check;
+
+pub use allow_ask::{PACK_SETUP_ALLOW_ASK_DOOR, PACK_SETUP_ALLOW_ASK_QUEUE, PackSetupOwnerAsk};
 
 /// The actor class every pack-connection grant is narrowed to.
 pub const PACK_CONNECTION_ACTOR_CLASS: &str = "pack-connection";
@@ -40,6 +49,8 @@ pub const SLACK_AUTH_TEST_CHECK: &str = "slack.auth_test";
 pub const LINE_BOT_INFO_CHECK: &str = "line.bot_info";
 pub const GMAIL_PROFILE_CHECK: &str = "gmail.profile";
 pub const LINKEDIN_SESSION_CHECK: &str = "linkedin.session";
+/// Telegram's `getMe` with the bot token: the bot it belongs to.
+pub const TELEGRAM_GET_ME_CHECK: &str = "telegram.get_me";
 /// Local readiness, not a provider call: the host's browser guest starts a
 /// session and closes it. Only a served host with a `[browser]` guest runs it.
 pub const BROWSER_SESSION_CHECK: &str = "browser.session";
@@ -47,6 +58,9 @@ pub const BROWSER_SESSION_CHECK: &str = "browser.session";
 /// server. Only a served host with a `[native_mail]` server runs it.
 pub const NATIVE_MAIL_JMAP_CHECK: &str = "native_mail.jmap";
 const LINKEDIN_ME_URL: &str = "https://www.linkedin.com/voyager/api/me";
+/// Google's OAuth token endpoint: where a stored Gmail refresh token is
+/// exchanged for the access token its check presents.
+const GOOGLE_TOKEN_URL: &str = "https://oauth2.googleapis.com/token";
 const MAX_CHECK_REPLY_BYTES: u64 = 64 * 1024;
 const MAX_CHECK_TEXT_BYTES: usize = 512;
 
@@ -91,586 +105,6 @@ pub trait PackConnectionVerifier {
     ) -> std::result::Result<PackConnectionEvidence, String>;
 }
 
-impl Vault {
-    /// The owner allowed exactly `allowed` of one connection's permissions.
-    /// Each newly allowed permission mints a standing consent grant with its
-    /// Gate receipt; one withdrawn since the last answer is revoked through
-    /// the owner's consent door, with its receipt.
-    pub(crate) fn allow_pack_connection(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        content_hash: Option<&str>,
-        connection: &str,
-        allowed: &[String],
-    ) -> Result<PackSetupView> {
-        let withdrawn = {
-            let principal = owner.principal_ref_for_read(self)?.to_owned();
-            let txn = self.store.env.read_txn()?;
-            let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
-            let session = self.require_pack_setup_in_txn(&txn, &binding)?;
-            check_allowed(
-                declared_connection(&binding.setup.connections, connection)?,
-                allowed,
-            )?;
-            let mut withdrawn = Vec::new();
-            for grant in &session.grants {
-                if grant.connection == connection
-                    && !allowed.contains(&grant.permission)
-                    && crate::consent::standing_grant_is_active_in_txn(
-                        &self.store,
-                        &txn,
-                        &grant.grant_ref,
-                    )?
-                {
-                    withdrawn.push(grant.grant_ref.clone());
-                }
-            }
-            withdrawn
-        };
-        for grant_ref in &withdrawn {
-            self.revoke_consent_grant(owner, grant_ref)?;
-        }
-        self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
-            let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
-            let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
-            let declared = declared_connection(&binding.setup.connections, connection)?;
-            check_allowed(declared, allowed)?;
-            session.grants.retain(|grant| {
-                grant.connection != declared.id || allowed.contains(&grant.permission)
-            });
-            let at = crate::unix_seconds_now();
-            for permission in &declared.permissions {
-                if !allowed.contains(&permission.id) {
-                    continue;
-                }
-                let bound = connection_bound(
-                    &binding.receipt.pack_name,
-                    &binding.receipt.content_hash,
-                    &declared.id,
-                    permission,
-                )?;
-                let grant_ref = bound.digest().to_hex();
-                let held = session.grants.iter().any(|grant| {
-                    grant.connection == declared.id
-                        && grant.permission == permission.id
-                        && grant.grant_ref == grant_ref
-                });
-                if held
-                    && crate::consent::standing_grant_is_active_in_txn(
-                        &self.store,
-                        txn,
-                        &grant_ref,
-                    )?
-                {
-                    continue;
-                }
-                let receipt = self.create_standing_grant_in_txn(txn, owner, bound)?;
-                session.grants.retain(|grant| {
-                    grant.connection != declared.id || grant.permission != permission.id
-                });
-                session.grants.push(PackSetupGrantRef {
-                    connection: declared.id.clone(),
-                    permission: permission.id.clone(),
-                    grant_ref: receipt.grant_ref().unwrap_or(grant_ref),
-                    decision_id: receipt.decision_id().to_hex(),
-                    granted_at: at,
-                });
-            }
-            self.put_pack_setup_in_txn(txn, &binding, &mut session)?;
-            self.pack_setup_view_in_txn(txn, &binding, &session)
-        })
-    }
-
-    /// Binds a registered connector key to a connection. The key must govern
-    /// the connection's declared connector, be usable, and hold custody the
-    /// connection names. Binding activates nothing: a Pending key still
-    /// needs its real qualification.
-    pub(crate) fn bind_pack_connection_key(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        content_hash: Option<&str>,
-        connection: &str,
-        key: &str,
-    ) -> Result<PackSetupView> {
-        let key_id = EntityId::from_hex(key)?;
-        self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
-            let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
-            let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
-            let declared = declared_connection(&binding.setup.connections, connection)?;
-            let connector = declared
-                .connector
-                .as_deref()
-                .ok_or_else(|| invalid("the connection governs no connector key"))?;
-            let record = read_connector_key_in_txn(&self.store, txn, &key_id)?
-                .ok_or(Error::EntityNotFound)?;
-            if record.connector != normalize_connector_key(connector) {
-                return Err(invalid("the key governs another connector"));
-            }
-            if matches!(
-                record.status,
-                ConnectorKeyStatus::Suspended | ConnectorKeyStatus::Revoked
-            ) {
-                return Err(invalid("the key is suspended or revoked"));
-            }
-            if let Some(secret_ref) = record.secret_ref.as_deref()
-                && !declared
-                    .secrets
-                    .iter()
-                    .any(|secret| secret.name == secret_ref)
-            {
-                return Err(invalid(
-                    "the key's custody is not a credential this connection names",
-                ));
-            }
-            session.keys.retain(|bound| bound.connection != declared.id);
-            session.keys.push(PackSetupKeyRef {
-                connection: declared.id.clone(),
-                key_id: key_id.to_hex(),
-            });
-            self.put_pack_setup_in_txn(txn, &binding, &mut session)?;
-            self.pack_setup_view_in_txn(txn, &binding, &session)
-        })
-    }
-
-    /// Checks one connection through the host's verifier and records the
-    /// result. The connection's credentials must be stored and its required
-    /// permissions allowed first; the provider's reported scopes must match
-    /// what the owner allowed, no more and no less. A built-in pack whose
-    /// every connection is then ready qualifies Active in the same flow.
-    pub fn verify_pack_connection(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        content_hash: Option<&str>,
-        connection: &str,
-        verifier: &dyn PackConnectionVerifier,
-    ) -> Result<PackSetupView> {
-        let (declared, basis, allowed_scopes) =
-            self.pack_connection_before_check(owner, pack, content_hash, connection)?;
-        let at = crate::unix_seconds_now();
-        let check = PackConnectionCheck {
-            pack,
-            connection: &declared.id,
-            check: &declared.verify,
-            auth: declared.auth,
-            secrets: &declared.secrets,
-            allowed_scopes: &allowed_scopes,
-        };
-        let record = match verifier.verify(self, &check) {
-            Ok(evidence) => judge_evidence(&declared, &allowed_scopes, evidence, basis, at),
-            Err(reason) => PackSetupCheckRecord {
-                connection: declared.id.clone(),
-                verified: false,
-                account: None,
-                provider_account: None,
-                evidence: None,
-                reason: Some(bounded(&reason)),
-                basis,
-                checked_at: at,
-            },
-        };
-        let view =
-            self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(owner, pack, view)
-    }
-
-    /// Checks a connection whose bound connector key is Pending through the
-    /// key's own qualification door: the real probe suite over the owner's
-    /// freshly stamped slate, which flips the key Active and appends
-    /// `gate.connector_key.qualify`. The setup records its report digest.
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "the setup frame plus the qualification door's own inputs"
-    )]
-    pub fn qualify_pack_connection(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        content_hash: Option<&str>,
-        connection: &str,
-        expected_revision: &str,
-        connector: &dyn QualificationConnector,
-        plan: &QualificationPlan,
-        oracle: &dyn GroundingOracle,
-    ) -> Result<PackSetupView> {
-        let (declared, basis, _) =
-            self.pack_connection_before_check(owner, pack, content_hash, connection)?;
-        let key = {
-            let principal = owner.principal_ref_for_read(self)?.to_owned();
-            let txn = self.store.env.read_txn()?;
-            let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
-            let session = self.require_pack_setup_in_txn(&txn, &binding)?;
-            let bound = session
-                .keys
-                .iter()
-                .find(|key| key.connection == declared.id)
-                .ok_or_else(|| invalid("bind a connector key to the connection first"))?;
-            EntityId::from_hex(&bound.key_id)?
-        };
-        let at = crate::unix_seconds_now();
-        let record = match self.qualify_connector_key(
-            &key,
-            expected_revision,
-            connector,
-            plan,
-            oracle,
-            at,
-        ) {
-            Ok((record, report)) => PackSetupCheckRecord {
-                connection: declared.id.clone(),
-                verified: true,
-                account: Some(bounded(&record.connector)),
-                provider_account: None,
-                evidence: Some(report.report_hash),
-                reason: None,
-                basis,
-                checked_at: at,
-            },
-            Err(error) => PackSetupCheckRecord {
-                connection: declared.id.clone(),
-                verified: false,
-                account: None,
-                provider_account: None,
-                evidence: None,
-                reason: Some(bounded(&error.to_string())),
-                basis,
-                checked_at: at,
-            },
-        };
-        let view =
-            self.record_pack_connection_check(owner, pack, content_hash, &declared, record)?;
-        self.qualify_checked_builtin(owner, pack, view)
-    }
-
-    /// A built-in pack qualifies on its checked setup (Engine ruling 10-17):
-    /// once every connection is ready, its Candidate turns Active in the same
-    /// flow and the view shows it. Any other pack's view returns unchanged.
-    fn qualify_checked_builtin(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        view: PackSetupView,
-    ) -> Result<PackSetupView> {
-        if !view.ready || !self.qualify_builtin_on_checked_setup(pack, &view.content_hash)? {
-            return Ok(view);
-        }
-        self.pack_setup(owner, pack, Some(&view.content_hash))
-    }
-
-    /// A connection of an Active pack runs only once checked: some owner's
-    /// session over the installed source holds a check that still matches
-    /// its grants, custody and key.
-    pub fn require_pack_connection_verified(&self, pack: &str, connection: &str) -> Result<()> {
-        let txn = self.store.env.read_txn()?;
-        let (declared, sessions) = {
-            let (setup, sessions) = self.installed_pack_setup_in_txn(&txn, pack)?;
-            let declared = declared_connection(&setup.connections, connection)?.clone();
-            (declared, sessions)
-        };
-        for session in &sessions {
-            if self
-                .connection_state_in_txn(&txn, &declared, session)?
-                .ready
-            {
-                return Ok(());
-            }
-        }
-        Err(invalid(
-            "the connection is not checked; run the pack's setup before using it",
-        ))
-    }
-
-    /// Whether every connection the installed `pack` declares is checked,
-    /// read as [`Self::require_pack_connection_verified`] reads one, in the
-    /// caller's snapshot: the built-in channel gate's test (OF-378). A pack
-    /// without setup has nothing to check.
-    pub(crate) fn pack_connections_checked_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        pack: &str,
-    ) -> Result<bool> {
-        let Some(receipt) = self.installed_pack_in_txn(txn, pack)? else {
-            return Ok(false);
-        };
-        let source = self
-            .pack_source_in_txn(txn, &EntityId::from_hex(&receipt.source_id)?)?
-            .ok_or_else(|| invalid("installed source unavailable"))?;
-        let Some(setup) = source.manifest().setup.as_ref() else {
-            return Ok(true);
-        };
-        let sessions = self.pack_setup_sessions_in_txn(txn, pack, &receipt.content_hash)?;
-        for connection in &setup.connections {
-            let mut ready = false;
-            for session in &sessions {
-                if self
-                    .connection_state_in_txn(txn, connection, session)?
-                    .ready
-                {
-                    ready = true;
-                    break;
-                }
-            }
-            if !ready {
-                return Ok(false);
-            }
-        }
-        Ok(true)
-    }
-
-    /// The same check over one exact source, Candidate or installed: a
-    /// built-in qualifies on it before it is Active. Some owner's session
-    /// over that source holds a check that still matches its live grants,
-    /// stored credentials and key; that check is returned.
-    pub fn require_candidate_pack_connection_verified(
-        &self,
-        pack: &str,
-        content_hash: &str,
-        connection: &str,
-    ) -> Result<PackSetupCheckRecord> {
-        let txn = self.store.env.read_txn()?;
-        let receipt = self.pack_setup_receipt_in_txn(&txn, pack, Some(content_hash))?;
-        let source = self
-            .pack_source_in_txn(&txn, &EntityId::from_hex(&receipt.source_id)?)?
-            .ok_or_else(|| invalid("the pack source is no longer live"))?;
-        if source.content_hash().to_hex() != receipt.content_hash {
-            return Err(invalid("the pack source is no longer live"));
-        }
-        let setup = source
-            .manifest()
-            .setup
-            .as_ref()
-            .ok_or_else(|| invalid("the pack declares no setup"))?;
-        let declared = declared_connection(&setup.connections, connection)?;
-        for session in self.pack_setup_sessions_in_txn(&txn, pack, &receipt.content_hash)? {
-            if self
-                .connection_state_in_txn(&txn, declared, &session)?
-                .ready
-                && let Some(check) = session
-                    .checks
-                    .into_iter()
-                    .find(|check| check.connection == declared.id)
-            {
-                return Ok(check);
-            }
-        }
-        Err(invalid(
-            "the connection is not checked; run the pack's setup before using it",
-        ))
-    }
-
-    /// The credential a checked connection presents to its provider: the
-    /// first one it declares. A served send reads its value only through the
-    /// credential door for the declared effector (OF-187).
-    pub fn verified_pack_connection_secret(
-        &self,
-        pack: &str,
-        connection: &str,
-    ) -> Result<PackSetupSecret> {
-        self.require_pack_connection_verified(pack, connection)?;
-        let txn = self.store.env.read_txn()?;
-        let (setup, _) = self.installed_pack_setup_in_txn(&txn, pack)?;
-        declared_connection(&setup.connections, connection)?
-            .secrets
-            .first()
-            .cloned()
-            .ok_or_else(|| invalid("the connection names no credential"))
-    }
-
-    /// Every grant a run asks for that a setup connection serves needs one
-    /// such connection checked. A pack without setup, and a grant no
-    /// connection serves, ask nothing more.
-    pub(crate) fn require_pack_grants_verified(&self, pack: &str, grants: &[&str]) -> Result<()> {
-        let txn = self.store.env.read_txn()?;
-        let Some(receipt) = self.installed_pack_in_txn(&txn, pack)? else {
-            return Ok(());
-        };
-        let source = self
-            .pack_source_in_txn(&txn, &EntityId::from_hex(&receipt.source_id)?)?
-            .ok_or_else(|| invalid("installed source unavailable"))?;
-        let Some(setup) = source.manifest().setup.as_ref() else {
-            return Ok(());
-        };
-        let sessions = self.pack_setup_sessions_in_txn(&txn, pack, &receipt.content_hash)?;
-        for grant in grants {
-            let mut serving = setup.connections_for_grant(grant).peekable();
-            if serving.peek().is_none() {
-                continue;
-            }
-            let mut ready = false;
-            'serving: for connection in serving {
-                for session in &sessions {
-                    if self
-                        .connection_state_in_txn(&txn, connection, session)?
-                        .ready
-                    {
-                        ready = true;
-                        break 'serving;
-                    }
-                }
-            }
-            if !ready {
-                return Err(invalid(
-                    "a connection this run needs is not checked; run the pack's setup",
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    /// What a check runs against: the allowed permissions' grant refs, each
-    /// credential's custody record and rotation generation, and the bound
-    /// key while it is usable.
-    pub(crate) fn pack_connection_basis_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        connection: &PackSetupConnection,
-        session: &PackSetupSession,
-    ) -> Result<String> {
-        let mut hasher = blake3::Hasher::new_derive_key("oneiron.pack-setup.check-basis.v1");
-        for permission in &connection.permissions {
-            if let Some(grant) = session.grants.iter().find(|grant| {
-                grant.connection == connection.id && grant.permission == permission.id
-            }) && crate::consent::standing_grant_is_active_in_txn(
-                &self.store,
-                txn,
-                &grant.grant_ref,
-            )? {
-                frame(&mut hasher, permission.id.as_bytes());
-                frame(&mut hasher, grant.grant_ref.as_bytes());
-            }
-        }
-        for secret in &connection.secrets {
-            frame(&mut hasher, secret.name.as_bytes());
-            match live_custody_in_txn(&self.store, txn, &secret.name)? {
-                Some((id, generation)) => {
-                    frame(&mut hasher, id.as_bytes());
-                    frame(&mut hasher, &generation.to_be_bytes());
-                }
-                None => frame(&mut hasher, b"absent"),
-            }
-        }
-        if let Some(bound) = session
-            .keys
-            .iter()
-            .find(|key| key.connection == connection.id)
-        {
-            let usable =
-                read_connector_key_in_txn(&self.store, txn, &EntityId::from_hex(&bound.key_id)?)?
-                    .is_some_and(|record| {
-                        matches!(
-                            record.status,
-                            ConnectorKeyStatus::Pending | ConnectorKeyStatus::Active
-                        )
-                    });
-            frame(&mut hasher, bound.key_id.as_bytes());
-            let state: &[u8] = if usable { b"usable" } else { b"unusable" };
-            frame(&mut hasher, state);
-        }
-        Ok(hasher.finalize().to_hex().to_string())
-    }
-
-    fn installed_pack_setup_in_txn(
-        &self,
-        txn: &heed::RoTxn<'_>,
-        pack: &str,
-    ) -> Result<(
-        crate::skill_hub::pack_catalog::PackSetup,
-        Vec<PackSetupSession>,
-    )> {
-        let receipt = self
-            .installed_pack_in_txn(txn, pack)?
-            .ok_or_else(|| invalid("the pack is not installed"))?;
-        let source = self
-            .pack_source_in_txn(txn, &EntityId::from_hex(&receipt.source_id)?)?
-            .ok_or_else(|| invalid("installed source unavailable"))?;
-        let setup = source
-            .manifest()
-            .setup
-            .clone()
-            .ok_or_else(|| invalid("the pack declares no setup"))?;
-        let sessions = self.pack_setup_sessions_in_txn(txn, pack, &receipt.content_hash)?;
-        Ok((setup, sessions))
-    }
-
-    /// The connection, its basis and its allowed scopes, refusing a check
-    /// before its credentials are stored and its required permissions
-    /// allowed.
-    fn pack_connection_before_check(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        content_hash: Option<&str>,
-        connection: &str,
-    ) -> Result<(PackSetupConnection, String, Vec<String>)> {
-        let principal = owner.principal_ref_for_read(self)?.to_owned();
-        let txn = self.store.env.read_txn()?;
-        let binding = self.bind_pack_setup_in_txn(&txn, &principal, pack, content_hash)?;
-        let session = self.require_pack_setup_in_txn(&txn, &binding)?;
-        let declared = declared_connection(&binding.setup.connections, connection)?.clone();
-        let state = self.connection_state_in_txn(&txn, &declared, &session)?;
-        if !state.secrets.iter().all(|secret| secret.stored) {
-            return Err(invalid(
-                "store the connection's credentials through the owner secrets door first",
-            ));
-        }
-        let granted = |id: &str| {
-            state
-                .permissions
-                .iter()
-                .any(|permission| permission.id == id && permission.granted)
-        };
-        if declared
-            .required()
-            .any(|permission| !granted(&permission.id))
-        {
-            return Err(invalid(
-                "allow the connection's required permissions before checking it",
-            ));
-        }
-        let allowed_scopes = declared
-            .permissions
-            .iter()
-            .filter(|permission| granted(&permission.id))
-            .filter_map(|permission| permission.scope.clone())
-            .collect();
-        let basis = self.pack_connection_basis_in_txn(&txn, &declared, &session)?;
-        Ok((declared, basis, allowed_scopes))
-    }
-
-    fn record_pack_connection_check(
-        &self,
-        owner: &AuthenticatedOwner,
-        pack: &str,
-        content_hash: Option<&str>,
-        declared: &PackSetupConnection,
-        record: PackSetupCheckRecord,
-    ) -> Result<PackSetupView> {
-        self.with_write_txn_grouped(|txn| {
-            let principal = owner.principal_ref_in_txn(self, txn)?.to_owned();
-            let binding = self.bind_pack_setup_in_txn(txn, &principal, pack, content_hash)?;
-            let mut session = self.require_pack_setup_in_txn(txn, &binding)?;
-            // A grant, credential or key that moved while the check ran makes
-            // its answer about something else.
-            if self.pack_connection_basis_in_txn(txn, declared, &session)? != record.basis {
-                return Err(invalid(
-                    "the connection changed while it was checked; check it again",
-                ));
-            }
-            pin_connection_custody_in_txn(&self.store, txn, declared, &mut session)?;
-            session
-                .checks
-                .retain(|check| check.connection != declared.id);
-            session.checks.push(record);
-            self.put_pack_setup_in_txn(txn, &binding, &mut session)?;
-            self.pack_setup_view_in_txn(txn, &binding, &session)
-        })
-    }
-}
-
 /// The read-only provider checks the engine ships for its built-in packs.
 /// Each check name maps to one fixed provider endpoint; the credential is
 /// read through the credential door for the declared effector and goes
@@ -681,11 +115,12 @@ pub struct ProviderConnectionChecks {
 
 impl ProviderConnectionChecks {
     /// Every check name this verifier answers.
-    pub const CHECKS: [&'static str; 4] = [
+    pub const CHECKS: [&'static str; 5] = [
         SLACK_AUTH_TEST_CHECK,
         LINE_BOT_INFO_CHECK,
         GMAIL_PROFILE_CHECK,
         LINKEDIN_SESSION_CHECK,
+        TELEGRAM_GET_ME_CHECK,
     ];
 
     /// A bounded HTTPS client: no proxy, no redirects, short timeouts.
@@ -714,9 +149,19 @@ impl ProviderConnectionChecks {
     ) -> Result<CheckReply> {
         let credential =
             std::str::from_utf8(value).map_err(|_| invalid("the stored credential is not text"))?;
-        let request = self.client.request(method.clone(), url);
+        // Telegram takes its bot token in the method's path, never a header.
+        let request = if check == TELEGRAM_GET_ME_CHECK {
+            self.client.request(
+                method.clone(),
+                format!("{url}/bot{}/getMe", credential.trim()),
+            )
+        } else {
+            self.client.request(method.clone(), url)
+        };
         let request = if check == LINKEDIN_SESSION_CHECK {
             linkedin_session(request, credential)
+        } else if check == TELEGRAM_GET_ME_CHECK {
+            request
         } else {
             request.bearer_auth(credential.trim())
         };
@@ -746,6 +191,144 @@ impl ProviderConnectionChecks {
             body,
         })
     }
+
+    /// The Gmail profile read with the stored grant. A grant that carries a
+    /// refresh token and the OAuth client it was issued to (the shape
+    /// Google's own tools store) is first exchanged at Google's token
+    /// endpoint, here inside the credential door, and the scopes Google's
+    /// reply names stand as the scopes the credential holds. A grant that
+    /// carries only an access token presents it, and bare text is the access
+    /// token. An exchanged access token is presented once and never kept.
+    fn send_gmail_profile(
+        &self,
+        method: &reqwest::Method,
+        url: &str,
+        value: &[u8],
+    ) -> Result<CheckReply> {
+        let text = std::str::from_utf8(value)
+            .map_err(|_| invalid("the stored credential is not text"))?
+            .trim();
+        if !text.starts_with('{') {
+            return self.send(GMAIL_PROFILE_CHECK, method, url, value);
+        }
+        let grant: StoredGoogleGrant = serde_json::from_str(text)
+            .map_err(|_| invalid("the stored Gmail grant is not JSON"))?;
+        if let (Some(refresh_token), Some(client_id)) =
+            (present(&grant.refresh_token), present(&grant.client_id))
+        {
+            let (access_token, granted) = self.exchange_google_refresh(
+                refresh_token,
+                client_id,
+                present(&grant.client_secret),
+            )?;
+            let mut reply = self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())?;
+            reply.scopes = granted.or(reply.scopes);
+            return Ok(reply);
+        }
+        let access_token = present(&grant.access_token).ok_or_else(|| {
+            invalid(
+                "the stored Gmail grant holds neither an access token nor a refresh token with its OAuth client",
+            )
+        })?;
+        self.send(GMAIL_PROFILE_CHECK, method, url, access_token.as_bytes())
+    }
+
+    /// Exchanges a stored refresh token for a fresh access token at Google's
+    /// token endpoint: the token, held only for the call that presents it,
+    /// and the scopes Google granted it, as its reply names them.
+    fn exchange_google_refresh(
+        &self,
+        refresh_token: &str,
+        client_id: &str,
+        client_secret: Option<&str>,
+    ) -> Result<(Zeroizing<String>, Option<String>)> {
+        let mut form = vec![
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_id", client_id),
+        ];
+        if let Some(secret) = client_secret {
+            form.push(("client_secret", secret));
+        }
+        let response = self
+            .client
+            .post(GOOGLE_TOKEN_URL)
+            .form(&form)
+            .send()
+            .map_err(|error| {
+                Error::InvalidConfig(format!(
+                    "connection check could not reach Google's token endpoint: {}",
+                    error.without_url()
+                ))
+            })?;
+        let status = response.status().as_u16();
+        let mut body = Zeroizing::new(Vec::new());
+        response
+            .take(MAX_CHECK_REPLY_BYTES + 1)
+            .read_to_end(&mut body)
+            .map_err(|_| invalid("Google's token reply is unreadable"))?;
+        if body.len() as u64 > MAX_CHECK_REPLY_BYTES {
+            return Err(invalid("Google's token reply exceeds its bound"));
+        }
+        let mut reply: GoogleTokenReply = serde_json::from_slice(&body)
+            .map_err(|_| invalid("Google's token reply is not JSON"))?;
+        match reply.access_token.take().map(Zeroizing::new) {
+            Some(token) if (200..300).contains(&status) && !token.trim().is_empty() => {
+                Ok((token, reply.scope.take()))
+            }
+            _ => Err(Error::InvalidConfig(format!(
+                "pack setup: Google refused the stored refresh token (HTTP {status}): {}",
+                bounded(reply.error.as_deref().unwrap_or("no reason given"))
+            ))),
+        }
+    }
+}
+
+/// A stored Google grant, read inside the credential door and wiped on drop.
+#[derive(Deserialize)]
+struct StoredGoogleGrant {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    refresh_token: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    client_secret: Option<String>,
+}
+
+impl Drop for StoredGoogleGrant {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+        self.refresh_token.zeroize();
+        self.client_secret.zeroize();
+    }
+}
+
+/// Google's token reply: the fresh access token, wiped on drop, and the
+/// space-separated scopes it holds.
+#[derive(Deserialize)]
+struct GoogleTokenReply {
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    error: Option<String>,
+}
+
+impl Drop for GoogleTokenReply {
+    fn drop(&mut self) {
+        self.access_token.zeroize();
+    }
+}
+
+/// A stored field's value, trimmed, when it holds one.
+fn present(field: &Option<String>) -> Option<&str> {
+    field
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
 }
 
 impl PackConnectionVerifier for ProviderConnectionChecks {
@@ -762,7 +345,11 @@ impl PackConnectionVerifier for ProviderConnectionChecks {
         let mut reply = None;
         vault
             .inject_secret_at_door(&secret.name, &secret.effector, &mut |value: &[u8]| {
-                reply = Some(self.send(check.check, &method, url, value)?);
+                reply = Some(if check.check == GMAIL_PROFILE_CHECK {
+                    self.send_gmail_profile(&method, url, value)?
+                } else {
+                    self.send(check.check, &method, url, value)?
+                });
                 Ok(())
             })
             .map_err(|error| error.to_string())?;
@@ -789,6 +376,7 @@ fn provider_call(check: &str) -> std::result::Result<(reqwest::Method, &'static 
             "https://gmail.googleapis.com/gmail/v1/users/me/profile",
         ),
         LINKEDIN_SESSION_CHECK => (reqwest::Method::GET, LINKEDIN_ME_URL),
+        TELEGRAM_GET_ME_CHECK => (reqwest::Method::GET, "https://api.telegram.org"),
         BROWSER_SESSION_CHECK => {
             return Err(
                 "this host runs no browser guest; a served host with a [browser] guest checks it"
@@ -844,6 +432,17 @@ fn evidence_of(
             field("displayName").unwrap_or("Official Account"),
             field("basicId").unwrap_or("unknown")
         ),
+        TELEGRAM_GET_ME_CHECK => {
+            let bot = reply
+                .get("result")
+                .filter(|_| reply.get("ok").and_then(serde_json::Value::as_bool) == Some(true))
+                .ok_or_else(|| "Telegram refused the bot token".to_owned())?;
+            format!(
+                "{} (@{})",
+                reply_field(bot, "first_name").unwrap_or("bot"),
+                reply_field(bot, "username").unwrap_or("unknown")
+            )
+        }
         LINKEDIN_SESSION_CHECK => {
             let profile = |name| {
                 reply
@@ -868,7 +467,13 @@ fn evidence_of(
     };
     // The provider's stable id a served host binds inbound events to:
     // the workspace a Slack event names, the bot a LINE webhook is for.
+    // The bot's numeric id, the one a Telegram update's bot is named by.
+    let telegram_bot = reply
+        .pointer("/result/id")
+        .and_then(serde_json::Value::as_i64)
+        .map(|id| id.to_string());
     let provider_account = match check {
+        TELEGRAM_GET_ME_CHECK => telegram_bot.as_deref(),
         SLACK_AUTH_TEST_CHECK => field("team_id"),
         LINE_BOT_INFO_CHECK => field("userId"),
         LINKEDIN_SESSION_CHECK => reply
@@ -880,11 +485,12 @@ fn evidence_of(
     Ok(PackConnectionEvidence {
         account,
         provider_account,
+        // A header lists scopes comma-separated; an OAuth token reply,
+        // space-separated.
         scopes: scopes
             .map(|header| {
                 header
-                    .split(',')
-                    .map(str::trim)
+                    .split(|separator: char| separator == ',' || separator.is_whitespace())
                     .filter(|scope| !scope.is_empty())
                     .map(str::to_owned)
                     .collect()
@@ -1021,9 +627,7 @@ fn declared_connection<'a>(
 }
 
 fn check_allowed(connection: &PackSetupConnection, allowed: &[String]) -> Result<()> {
-    if allowed.len() > MAX_SETUP_PERMISSIONS
-        || allowed.iter().any(|id| connection.permission(id).is_none())
-    {
+    if allowed.iter().any(|id| connection.permission(id).is_none()) {
         return Err(invalid("the connection asks for no such permission"));
     }
     if connection

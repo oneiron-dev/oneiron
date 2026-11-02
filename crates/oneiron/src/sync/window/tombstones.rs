@@ -178,6 +178,17 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
     // origin for it (FIX 4550).
     crate::sync::row_birth::remove_birth_carrier(doc, id)?;
     crate::sync::ingest::forget_stale_peer_origins(doc, [*id])?;
+    // FIX 7608 (KEY STORE = A, FIX 10799): a masked copy row a peer sent
+    // under the item's derived copy id goes with it. Only a carrier present
+    // under that exact key is touched.
+    let copy = crate::origin::secret_projection::copy_id::copy_id(id).ok();
+    if let Some(copy) = copy
+        && entities.get(&copy.to_hex()).is_some()
+    {
+        map_delete(&entities, &copy.to_hex())?;
+        crate::sync::row_birth::remove_birth_carrier(doc, &copy)?;
+        crate::sync::ingest::forget_stale_peer_origins(doc, [copy])?;
+    }
 
     // Edge keys are swept on the EFFECTIVE hardness, not just the incoming
     // value's: a REJECTED soft arriving over an effective hard tombstone
@@ -189,7 +200,7 @@ pub(in crate::sync) fn apply_tombstone_to_indexed_window_doc(
         let mut doomed = Vec::new();
         map_for_each_bytes(&edges, |key, _| {
             if let Some((src, _, tgt)) = bridge::parse_edge_key(key)
-                && (src == *id || tgt == *id)
+                && (src == *id || tgt == *id || copy.is_some_and(|c| src == c || tgt == c))
             {
                 doomed.push(key.to_owned());
             }
@@ -287,7 +298,11 @@ pub fn replay_pending_tombstones(
     // doc so the full snapshot below subsumes it, and remember which `u:`
     // rows it covered (only those may be scrubbed).
     let merged_update_keys = merge_persisted_state_into_doc(vault, doc, window_key)?;
-    replay_tombstone_markers(vault, doc, window_key, &markers, &merged_update_keys, false)
+    let replayed =
+        replay_tombstone_markers(vault, doc, window_key, &markers, &merged_update_keys, false)?;
+    // A deleted NOTE's attachments leave the other live windows too (FIX 8878).
+    crate::sync::note::deleted_elsewhere(vault, window_key.as_str(), marker_ids(&markers));
+    Ok(replayed)
 }
 
 /// [`replay_pending_tombstones`] now rather than at the window's next load,
@@ -302,30 +317,42 @@ pub(crate) fn publish_pending_tombstones(vault: &Vault, window_key: &WindowKey) 
     if markers.is_empty() {
         return Ok(0);
     }
-    if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
+    let replayed = if let Some((window, materializer, _manager)) = vault.live_window(window_key) {
         // Merged outside the materializer lock: an import into an observed
         // doc fires Observer B, which takes the lock itself. The commit runs
         // under it, and Observer A persists and routes the delta as usual.
         let merged_update_keys = merge_persisted_state_into_doc(vault, &window.doc, window_key)?;
         let _guard = materializer.lock();
-        return replay_tombstone_markers(
+        replay_tombstone_markers(
             vault,
             &window.doc,
             window_key,
             &markers,
             &merged_update_keys,
             false,
-        );
-    }
-    let doc = match load_window_from_state(vault, "local", window_key) {
-        Ok(doc) => doc,
-        Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
-            create_window_doc("local", window_key)
-        }
-        Err(err) => return Err(err),
+        )?
+    } else {
+        let doc = match load_window_from_state(vault, "local", window_key) {
+            Ok(doc) => doc,
+            Err(Error::Sync(SyncError::WindowNotFound { .. })) => {
+                create_window_doc("local", window_key)
+            }
+            Err(err) => return Err(err),
+        };
+        let merged_update_keys = merge_persisted_state_into_doc(vault, &doc, window_key)?;
+        replay_tombstone_markers(vault, &doc, window_key, &markers, &merged_update_keys, true)?
     };
-    let merged_update_keys = merge_persisted_state_into_doc(vault, &doc, window_key)?;
-    replay_tombstone_markers(vault, &doc, window_key, &markers, &merged_update_keys, true)
+    // Once the lock is down, a deleted NOTE's attachments leave the other
+    // live windows too (FIX 8878).
+    crate::sync::note::deleted_elsewhere(vault, window_key.as_str(), marker_ids(&markers));
+    Ok(replayed)
+}
+
+/// The ids `markers` tombstone.
+fn marker_ids(
+    markers: &[(crate::sync::window_rows::WindowEntityHexKey, Vec<u8>)],
+) -> Vec<EntityId> {
+    markers.iter().map(|(key, _)| key.id).collect()
 }
 
 /// The `pt:` markers staged in `window_key`. A malformed marker key is left
@@ -444,6 +471,9 @@ fn replay_tombstone_markers(
                     tombstone.is_hard(),
                 )?;
             }
+            crate::deletion::tombstone_scope::capture_received_scope_in_txn(
+                vault, wtxn, &key.id, value,
+            );
             PENDING_TOMBSTONE.delete(&vault.store, wtxn, key)?;
         }
         // svf LAST (ONE-1151): the hard branch scrubbed the merged u:w:

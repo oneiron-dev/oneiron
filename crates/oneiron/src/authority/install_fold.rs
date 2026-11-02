@@ -524,8 +524,9 @@ fn after_handoffs(
     after
 }
 
-/// The machine revisions, world edits, grant travel choices and owner and
-/// person choices `state` holds back on this install.
+/// The machine revisions, world edits, grant travel choices, owner and
+/// person choices, setting acts and refused export acts `state` holds back
+/// on this install.
 pub(super) fn held_back(
     state: &FoldState,
     pin: Option<&PinnedRoot>,
@@ -557,6 +558,14 @@ pub(super) fn held_back(
         counted,
         &mut held_back,
     );
+    super::owner_choice::held_owner_choices(
+        state,
+        &state.policy_settings,
+        pin,
+        counted,
+        &mut held_back,
+    );
+    held_back.extend(state.refused_export_acts.iter().copied());
     InstallBound {
         held_back,
         no_vouch_deadline: None,

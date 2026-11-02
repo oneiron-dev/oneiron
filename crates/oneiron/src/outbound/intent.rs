@@ -1,3 +1,7 @@
+//! Outbound intent wire vocabulary.
+//! Entry: `OutboundIntent`.
+//! Defines its own items.
+
 use serde::{Deserialize, Serialize};
 
 pub use crate::dreamer_runner::maintenance::identity::MentionProvenance;
@@ -138,6 +142,8 @@ pub enum OutboundIntentSource {
     AgentImmediate,
     /// A durable record transition, such as an e-sign terminal notice.
     RecordTransition,
+    /// A campaign program step's send (FIX 11513).
+    Campaign,
 }
 
 impl OutboundIntentSource {
@@ -148,6 +154,7 @@ impl OutboundIntentSource {
             Self::GapQueue => "gap_queue",
             Self::AgentImmediate => "agent_immediate",
             Self::RecordTransition => "record_transition",
+            Self::Campaign => "campaign",
         }
     }
 
@@ -158,6 +165,7 @@ impl OutboundIntentSource {
             "gap_queue" => Some(Self::GapQueue),
             "agent_immediate" => Some(Self::AgentImmediate),
             "record_transition" => Some(Self::RecordTransition),
+            "campaign" => Some(Self::Campaign),
             _ => None,
         }
     }
@@ -202,6 +210,15 @@ impl OutboundIntentTrigger {
     pub fn record_transition(trigger_ref: impl Into<String>) -> Self {
         Self {
             source: OutboundIntentSource::RecordTransition,
+            trigger_ref: trigger_ref.into(),
+            job_ref: None,
+        }
+    }
+
+    #[must_use]
+    pub fn campaign(trigger_ref: impl Into<String>) -> Self {
+        Self {
+            source: OutboundIntentSource::Campaign,
             trigger_ref: trigger_ref.into(),
             job_ref: None,
         }

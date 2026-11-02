@@ -2,22 +2,44 @@
 //! vault's priced catalog row for that exact model, read once when the call
 //! is admitted and frozen on it. A settlement is never repriced, and a catalog
 //! edit reaches the next admitted call. The price is the catalog's top-level
-//! model list price, the one the training offer drafts from; never a backend
+//! model list price, the one the training offer drafts from, in the currency
+//! the catalog names for it or in none it names (FIX 9534); never a backend
 //! pin's price, a selling price, tax or an exchange rate.
 use std::sync::Arc;
 
 use oneiron::llm::LlmCatalogCost;
-use oneiron::llm::run_admission::PermitFacts;
+use oneiron::llm::run_admission::{Payer, PermitFacts};
 use oneiron::{EntityId, ModelId};
 
 use crate::usage::{UsageCostRates, catalog_cost_rates};
 
-/// The catalog's per-million list prices carry no currency; they are read as
-/// this one, as the training offer and the launch quote read them. No
-/// currency is inferred from a provider or a payer.
-const CATALOG_CURRENCY: &str = "USD";
 /// Domain tag of the price-table snapshot digest.
 const SNAPSHOT_DOMAIN: &[u8] = b"oneiron.usage.catalog-list-price.v1";
+
+/// The provider API origins whose own list prices a catalog quotes: a call
+/// on the owner's own key to any other origin is a custom endpoint (FIX
+/// 7765).
+const PROVIDER_API_ORIGINS: [&str; 4] = [
+    "https://api.anthropic.com",
+    "https://api.openai.com",
+    "https://api.x.ai",
+    "https://generativelanguage.googleapis.com",
+];
+
+/// Whether `facts` is a call on the owner's own key to a custom endpoint,
+/// one whose route goes to no provider API origin a catalog price is
+/// quoted for: it logs token counts only, whatever price its model id has
+/// (owner, 2026-10-10; ARCH-0011 `#byok-usage`, FIX 7765). Read from the
+/// route the run admitted, never from the request. A route that names no
+/// web origin (an injected backend's opaque `host`) names no endpoint, so
+/// its call keeps the catalog price it had.
+pub(super) fn custom_endpoint(facts: &PermitFacts) -> bool {
+    facts.payer == Payer::CustomerKey
+        && facts.route.split_once('@').is_some_and(|(_, origin)| {
+            (origin.starts_with("https://") || origin.starts_with("http://"))
+                && !PROVIDER_API_ORIGINS.contains(&origin)
+        })
+}
 
 /// The vault registry whose list prices meter its admitted model calls.
 pub(super) struct CatalogPrices {
@@ -55,18 +77,20 @@ impl CatalogPrices {
                 return (None, None);
             }
         };
-        let rates = row.catalog.cost.as_ref().and_then(|cost| {
-            catalog_cost_rates(cost, CATALOG_CURRENCY, snapshot_id(facts, model, cost))
-        });
+        let rates = row
+            .catalog
+            .cost
+            .as_ref()
+            .and_then(|cost| catalog_cost_rates(cost, snapshot_id(facts, model, cost)));
         (rates, row.source_rows)
     }
 }
 
 /// The price-table snapshot id: a BLAKE3 digest over the admitted offer,
 /// model, route and catalog revision, the four rates as the catalog spells
-/// them (an unquoted one included) and the currency they are read in. Each
-/// field is length-prefixed, an absent one marked, so a price-only catalog
-/// edit changes the id.
+/// them (an unquoted one included) and the currency it names them in, or
+/// none. Each field is length-prefixed, an absent one marked, so a price- or
+/// currency-only catalog edit changes the id.
 fn snapshot_id(facts: &PermitFacts, model: &ModelId, cost: &LlmCatalogCost) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(SNAPSHOT_DOMAIN);
@@ -79,7 +103,7 @@ fn snapshot_id(facts: &PermitFacts, model: &ModelId, cost: &LlmCatalogCost) -> S
         Some(cost.output_per_million.as_str()),
         cost.cache_read_per_million.as_deref(),
         cost.cache_write_per_million.as_deref(),
-        Some(CATALOG_CURRENCY),
+        cost.currency.as_deref(),
     ] {
         match field {
             Some(text) => {

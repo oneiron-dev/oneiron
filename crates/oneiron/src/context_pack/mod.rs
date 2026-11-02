@@ -25,7 +25,9 @@ mod world_partition;
 #[cfg(test)]
 mod tests;
 
-pub use builder::{ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack};
+pub use builder::{
+    ContextPackBuilder, SerializedContextPack, UnfinalizedContextPack, select_critical_pack_rows,
+};
 pub use empty_pack::{EmptyContext, EmptyReason, refresh_projected_empty_context};
 pub(crate) use l2_base::L2BaseCache;
 pub use l2_base::L2BaseSummary;
@@ -40,6 +42,9 @@ pub use types::{
     PackItemAccounting, PackItemAccountingReason, PackItemTokenStats, PackSectionTokenStats,
     PackStats, PackTokenStats, TokenAllocation,
 };
+pub(crate) use types::{PackCriticalAccounting, PackWorldShare};
 pub use world_partition::WORLD_STALE_FIELD;
+
+pub(crate) use validation::disclosure_admits_target;
 
 pub(crate) use hydration::{context_entity_matches_read_snapshot, same_claim_body};

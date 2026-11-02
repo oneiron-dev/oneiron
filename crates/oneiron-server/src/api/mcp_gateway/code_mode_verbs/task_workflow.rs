@@ -23,7 +23,7 @@ use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::AgentVerb;
 use oneiron_browser::{
-    BatchStopCause, LibraryRunInput, LibraryRunMode, LibraryRunOutput, SubgoalStatus,
+    BatchStopCause, LibraryRunInput, LibraryRunMode, LibraryRunOutput, SecretArg, SubgoalStatus,
 };
 
 use crate::mcp::EngineRunError;
@@ -82,6 +82,7 @@ pub(crate) fn preflight_task_workflow(
     door: &dyn AgentVerbDoor,
     workflow: EntityId,
     args: &BTreeMap<String, String>,
+    secret_args: &BTreeMap<String, SecretArg>,
     origin: &HostWriteOrigin,
     invocation: InvocationId,
 ) -> Result<WorkflowPreflight, EngineRunError> {
@@ -90,7 +91,7 @@ pub(crate) fn preflight_task_workflow(
         args: args.clone(),
         base: None,
         mode: Some(LibraryRunMode::Strict),
-        secret_args: BTreeMap::new(),
+        secret_args: secret_args.clone(),
     };
     let input = match serde_json::to_value(input) {
         Ok(input) => input,

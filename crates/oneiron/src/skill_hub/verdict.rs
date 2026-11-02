@@ -1,3 +1,7 @@
+//! Skill scan verdict admission.
+//! Entry: `PREDICATE_SKILL_SCAN_VERDICT`.
+//! Defines its own items.
+
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use rmpv::Value;
@@ -402,7 +406,7 @@ impl Vault {
         Ok(())
     }
 
-    /// One bounded static pass per exact pack tree, knowledge-only facets
+    /// One whole-source static pass per exact pack tree, knowledge-only facets
     /// included. A refetch of identical bytes reuses the existing provider row;
     /// a new hash starts with no evidence carried over from any older tree.
     pub(super) fn scan_and_ingest_pack_source_in_txn(
@@ -643,19 +647,13 @@ pub(crate) fn skill_scan_verdict_heads_for_content_hash_in_store(
     let anchor = skill_content_anchor_entity_id(content_hash)?;
 
     let mut rows = Vec::new();
-    for (scanned, entry) in store
-        .port_edges(
-            rtxn,
-            &anchor,
-            crate::ports::EdgeDirection::In,
-            Some(crate::edge::EdgeKind::ClaimOf),
-            None,
-        )?
-        .enumerate()
-    {
-        if scanned >= crate::vault::MAX_EDGE_QUERY_RESULTS {
-            return Err(Error::IndexOverflow("skill scan verdicts for content hash"));
-        }
+    for entry in store.port_edges(
+        rtxn,
+        &anchor,
+        crate::ports::EdgeDirection::In,
+        Some(crate::edge::EdgeKind::ClaimOf),
+        None,
+    )? {
         let edge_row = entry?;
         let claim_id = edge_row.target;
         let Some(raw) = store.port_entity_record(rtxn, &claim_id)? else {

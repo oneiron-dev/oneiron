@@ -16,26 +16,52 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
-use axum::routing::get;
+use axum::routing::{get, post};
 use oneiron::recovery::checkpoint::CustodyAnchorRoot;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, host, owner, owner_error};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, host, owner, owner_error};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
 use crate::owner::recovery_kit::{self as view, KitStatusView};
 use crate::owner::{OwnerError, OwnerResult};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/recovery-kit", get(status))
-        .route("/custody-anchor", get(read_anchor).post(advance_anchor))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/recovery-kit",
+                summary: "The kits this vault issued, the current one, and each private world's no-kit state here.",
+                row: None,
+            },
+            get(status),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/custody-anchor",
+                summary: "One custody lineage's current anchor record in this server's custody anchor root (query `vault`, 64 hex, and `namespace`, 32 hex): a position and a tag, never a key; `record` is null while it has none.",
+                row: None,
+            },
+            get(read_anchor),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/custody-anchor",
+                summary: "Makes `record` (hex) its lineage's current anchor record while the current one is still the one whose BLAKE3 is `expected` (64 hex; null when none): `advanced` is false when another writer moved it first, and an advance that does not extend the anchored position is refused.",
+                row: None,
+            },
+            post(advance_anchor),
+        ),
+    ]
 }
 
 /// `GET /v1/owner/recovery-kit`: the kits this vault issued, the current
@@ -59,7 +85,7 @@ struct AnchorLineage {
 
 /// A compare-and-swap advance: the BLAKE3 (64 hex) of the record the caller
 /// read, `null` when it read none, and the record (hex) to make current.
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnchorAdvanceRequest {
     expected: Option<String>,
@@ -72,10 +98,22 @@ struct AnchorRecordView {
     record: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct AnchorAdvanceView {
     /// `false` when another writer moved the record first: nothing changed.
     advanced: bool,
+}
+
+/// The OpenAPI schema of `POST /v1/owner/custody-anchor`'s body (FIX 11103):
+/// [`AnchorAdvanceRequest`].
+pub(crate) fn anchor_advance_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorAdvanceRequest>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/custody-anchor`'s answer (FIX 11103):
+/// [`AnchorAdvanceView`].
+pub(crate) fn anchor_advance_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnchorAdvanceView>()
 }
 
 /// This server's custody anchor root, refused while none is set up.
@@ -141,10 +179,10 @@ async fn read_anchor(
 async fn advance_anchor(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnchorAdvanceRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AnchorAdvanceRequest>,
 ) -> OwnerReply<AnchorAdvanceView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let anchor = anchor_root(&server)?;
     let advanced = blocking(move || -> OwnerResult<bool> {
         owner.revalidate_person(server.vault())?;

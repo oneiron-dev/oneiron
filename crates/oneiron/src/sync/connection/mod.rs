@@ -22,9 +22,9 @@
 //!   converges (ONE-1135: only the CONFIRMED clear removes them + their
 //!   `d:` markers).
 //! - After `MAX_CONVERGENCE_ROUNDS` (5) unconfirmed rounds: force
-//!   re-bootstrap — drop in-memory Docs + clear the queue (`q:`/`e:` rows
-//!   only; `h:`/`m:`/`x:` families and delete-bearing rows + `d:` markers
-//!   are preserved) and re-run the Phase 1-3
+//!   re-bootstrap — drop in-memory Docs + clear the queue (`q:` rows
+//!   only; `h:`/`m:`/`x:`/`e:` families and delete-bearing rows + `d:`
+//!   markers are preserved) and re-run the Phase 1-3
 //!   initial sync on the live connection (without the per-connection hello).
 //! - Queue overflow (`SyncQueue::is_full`) triggers the same re-bootstrap:
 //!   docs dropped + queue cleared between reconnect attempts, so the next
@@ -37,6 +37,8 @@ mod home_handoff;
 mod home_search;
 mod node_batch;
 mod note_reads;
+mod residence_mode;
+mod server_close;
 mod session;
 mod steady;
 mod topology;
@@ -50,7 +52,7 @@ pub use crate::sync::types::LocalUpdate;
 use crate::sync::types::parse_window_key_str;
 pub(crate) use home_search::HomeSearchSlot;
 pub use home_search::{DeviceResidence, HomeSearch};
-pub use topology::HomeNodeTopology;
+pub use topology::{HomeNodeTopology, HomeRoute};
 
 /// Configuration for the connection manager.
 #[derive(Debug, Clone)]
@@ -132,6 +134,7 @@ impl SyncConnection {
             )?
         };
         let left = crate::sync::shared_leave::has_left(manager.vault())?;
+        crate::sync::shared_leave::collect_left_env_bodies_at_open(manager.vault());
         // The topology moves residence reads to the elected home when the
         // host names the candidates' endpoints.
         if config.client_config.home_node_topology.is_some()
@@ -240,7 +243,13 @@ impl SyncConnection {
             .iter()
             .map(|head| crate::entity_id::bytes_to_hex_lower(head))
             .collect();
-        let mut request = reqwest::Client::new()
+        // FIX 6969: a redirect is answered, never followed with the slip
+        // headers; the status check below refuses a redirect answer.
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|e| TransportError::Storage(format!("leave notice client failed: {e}")))?;
+        let mut request = client
             .post(url)
             .json(&serde_json::json!({ "authority_heads": heads }));
         for (name, value) in headers {
@@ -663,6 +672,13 @@ enum LoopExit {
     Shutdown,
     /// WebSocket disconnected (with error description).
     Disconnected(String),
+    /// The server closed the socket with a close frame, read by its code
+    /// (FIX 5927): a server fault takes the retry path, a refusal is
+    /// reported as one.
+    Closed(server_close::ServerClose),
+    /// The residence mode changed (FIX 8869): what was buffered is queued,
+    /// and the next connect sends the new mode's hello.
+    Renegotiate,
 }
 
 #[cfg(test)]

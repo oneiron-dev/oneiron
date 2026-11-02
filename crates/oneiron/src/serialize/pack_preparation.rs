@@ -60,6 +60,8 @@ fn prepare_pack_with_l2(
         };
         stats.items_dropped.count = stats.items_dropped.count.saturating_add(1);
     }
+    // Counts the critical rows preparation sees, to judge its own cuts; the
+    // pack's pre-cut count and overflow warning are restored after (FIX 9760).
     stats.critical_count = 0;
     let tokenizer = DEFAULT_CONTEXT_PACK_TOKENIZER;
 
@@ -172,6 +174,7 @@ fn prepare_pack_with_l2(
     if kept_critical < prepared.stats.critical_count {
         prepared.stats.critical_over_budget = true;
     }
+    prepared.stats.critical_count = prepared.stats.critical_count.max(pack.stats.critical_count);
     finalize_pack_token_stats(
         pack,
         config,

@@ -15,6 +15,7 @@
 mod events;
 mod notice;
 mod pending;
+mod settlement;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, PoisonError};
@@ -29,6 +30,9 @@ pub(crate) use pending::{
     pending_erase_in_txn, put_pending_erase_in_txn, set_pending_veto_act_in_txn,
     use_limit_pending_privacy_in_txn,
 };
+pub(crate) use settlement::RefusalBatch;
+#[cfg(feature = "sync")]
+pub(crate) use settlement::is_hold_refusal;
 
 use crate::deletion::{
     LEGAL_HOLD_LOG_RETENTION_MONTHS, LegalHold, LegalHoldActorKind, LegalHoldEventKind,
@@ -151,9 +155,9 @@ impl RefusalNote {
     }
 }
 
-/// Refusals not yet in a hold log. The refusing transaction rolls back, so
-/// the door that owns it logs them in a short write of its own once that
-/// writer has ended, before it returns
+/// Refusals not yet in a hold log, outside any door's own attempt
+/// (`settlement`). The refusing transaction rolls back, so the door that owns
+/// it logs them once that writer has ended, before it returns
 /// ([`Store::flush_legal_hold_refusals_settled`]). A note a failed log write
 /// put back waits here for the next flush. Never persisted.
 #[derive(Debug, Default)]
@@ -271,25 +275,6 @@ pub(crate) fn partition_held_in_txn(
     Ok(!standing_on_in_txn(dbs, txn, &key)?.is_empty())
 }
 
-/// Whether any hold, customer or host-order, stands here: the first row of
-/// each target index. A standing hold indexes every target it names and a
-/// hold names at least one; a lifted hold indexes none. Gated with its only
-/// caller, a left shared vault's purge (`sync`-only).
-#[cfg(feature = "sync")]
-pub(crate) fn any_standing_in_txn(dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<bool> {
-    for targets in [TARGETS, HOST_TARGETS] {
-        if targets
-            .iter_raw_from(dbs, txn, &[])?
-            .next()
-            .transpose()?
-            .is_some()
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Writes `hold`, keeping its target index exact: a standing hold indexes
 /// every target it names, a lifted one none.
 pub(crate) fn put_hold_in_txn(
@@ -376,14 +361,14 @@ impl Store {
                     actor: actor.clone(),
                     at: now,
                 };
-                self.legal_hold_refusals.note(note);
+                settlement::note(self, note);
             }
         }
         Err(notice::held_refusal(&rows, now))
     }
 
     /// Writes the queued refusals to their hold logs in one raw write of its
-    /// own, never through the group commit (whose return flushes here). Only
+    /// own, never through the group commit (whose writer logs its own). Only
     /// on a thread that holds no writer. A failed write puts them back.
     /// Returns how many were written.
     pub(crate) fn flush_legal_hold_refusals_now(&self) -> Result<u64> {
@@ -434,9 +419,10 @@ fn hosts_bytes(store: &Store) -> bool {
 /// the held record for that legal reason only: where Oneiron hosts the bytes
 /// it gets a use limit under every standing hold, a customer hold or a host
 /// order whatever its own terms say (C5, C6, WILL-PLAN L01 row 03, FIX
-/// 8849). Returns how many were written.
+/// 8849), and the PEOPLE `about` lines of a fact it kept hide (FIX 3196).
+/// Returns how many were written.
 pub(crate) fn flush_refusals_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     notes: &[RefusalNote],
     hosted: bool,
@@ -444,7 +430,7 @@ pub(crate) fn flush_refusals_in_txn(
     let mut written = 0_u64;
     for note in notes {
         // A hold its retention already dropped has no log left.
-        let Some(hold) = hold_in_txn(dbs, txn, &note.hold)? else {
+        let Some(hold) = hold_in_txn(store, txn, &note.hold)? else {
             continue;
         };
         let reason = if note.actor.privacy_erase {
@@ -453,7 +439,7 @@ pub(crate) fn flush_refusals_in_txn(
             LegalHoldReason::HeldRecord
         };
         log_in_txn(
-            dbs,
+            store,
             txn,
             &hold,
             LegalHoldEventKind::DeleteRefused,
@@ -468,7 +454,7 @@ pub(crate) fn flush_refusals_in_txn(
             && hosted
             && notice::restricts_use(&hold)
         {
-            keep_use_limited_in_txn(dbs, txn, record, note.at)?;
+            keep_use_limited_in_txn(store, txn, record, note.at)?;
         }
         written = written.saturating_add(1);
     }
@@ -476,16 +462,18 @@ pub(crate) fn flush_refusals_in_txn(
 }
 
 fn keep_use_limited_in_txn(
-    dbs: &impl SideTableDbs,
+    store: &Store,
     txn: &mut RwTxn<'_>,
     record: EntityId,
     at: u64,
 ) -> Result<()> {
-    if USE_LIMITS.contains(dbs, txn, &record)? {
+    if USE_LIMITS.contains(store, txn, &record)? {
         return Ok(());
     }
+    // A use-limited fact no longer reads: its `about` lines hide (FIX 3196).
+    crate::dreamer_consolidation::mark_person_about_dropped_in_txn(store, txn, &record)?;
     USE_LIMITS.put(
-        dbs,
+        store,
         txn,
         &record,
         &LegalHoldUseLimit {

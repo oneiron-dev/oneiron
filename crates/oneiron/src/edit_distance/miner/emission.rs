@@ -5,16 +5,18 @@ use rmpv::Value;
 use super::config::{
     GATE_OUTCOME_REJECTED, MARK_KIND_PREFERENCE, MARK_KIND_SKILL_EDIT, MINED_EVIDENCE_RECEIPTS_KEY,
     MINED_EVIDENCE_ROW_LABEL, MINER_CLUSTER_HASH_DOMAIN, MINER_EVIDENCE_RECORD_ID_DOMAIN,
-    MINER_PREFERENCE_CONFIDENCE, MINER_REJECTION_COOLDOWN_SECS, MINT_MARK_ROW_LABEL,
-    PREDICATE_PREFERENCE_PHRASING, PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM,
-    PREFERENCE_VALUE_KEY_RATIONALE, PREFERENCE_VALUE_KEY_TO, PROVENANCE_KEY_CLUSTER,
-    PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE, ROW_VERSION,
+    MINER_PREFERENCE_CONFIDENCE, MINT_MARK_ROW_LABEL, PREDICATE_PREFERENCE_PHRASING,
+    PREFERENCE_VALUE_KEY_CLASS, PREFERENCE_VALUE_KEY_FROM, PREFERENCE_VALUE_KEY_RATIONALE,
+    PREFERENCE_VALUE_KEY_TO, PREFERENCE_VALUE_KEY_UNATTRIBUTED, PROVENANCE_KEY_CLUSTER,
+    PROVENANCE_KEY_RUN, PROVENANCE_KEY_SESSION, PROVENANCE_KEY_SURFACE,
+    PROVENANCE_KEY_UNATTRIBUTED, ROW_VERSION,
 };
 use super::mining::classify_substitution;
 use super::model::{
     MinedOutcome, MinedSkillEditVerdict, MinerRun, StoredMinedEvidence, StoredMintMark,
     StoredSkillEdit, SubstitutionClass, SubstitutionCluster,
 };
+use super::observed::observed_support_in_txn;
 use super::store::{SKILL_EDIT, decode_row, encode_row, mined_skill_edit_in_txn};
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
@@ -82,7 +84,8 @@ pub(super) fn emit_cluster(
 }
 
 /// Whether a cluster may propose: no mark, a mark whose proposal no longer
-/// stands, or a rejection past its cooldown.
+/// stands, or a rejection past the manifest's `miner_rejection_wait_seconds`
+/// row (FIX 9809), read in the same transaction.
 ///
 /// Takes the CALLER's transaction, and the caller is the emission's own write
 /// transaction. Reading the marks in a transaction of its own would leave a
@@ -100,9 +103,14 @@ pub(super) fn cluster_is_eligible(
     };
     let reference = EntityId::from_hex(&mark.reference)
         .map_err(|_| Error::CorruptedIndex(MINT_MARK_ROW_LABEL))?;
+    let wait = crate::gate::edit_distance_thresholds::edit_distance_threshold_in_txn(
+        &vault.store,
+        txn,
+        crate::gate::edit_distance_thresholds::EditDistanceThreshold::RejectionWaitSeconds,
+    )?;
     match mark.kind.as_str() {
-        MARK_KIND_SKILL_EDIT => skill_edit_is_stale(vault, txn, &reference, now),
-        MARK_KIND_PREFERENCE => preference_is_stale(vault, txn, &reference, now),
+        MARK_KIND_SKILL_EDIT => skill_edit_is_stale(vault, txn, &reference, now, wait),
+        MARK_KIND_PREFERENCE => preference_is_stale(vault, txn, &reference, now, wait),
         _ => Err(Error::CorruptedIndex(MINT_MARK_ROW_LABEL)),
     }
 }
@@ -126,6 +134,7 @@ fn skill_edit_is_stale(
     txn: &heed::RoTxn<'_>,
     proposal_id: &EntityId,
     now: u64,
+    wait: u64,
 ) -> Result<bool> {
     let Some(proposal) = mined_skill_edit_in_txn(vault, txn, proposal_id)? else {
         return Ok(true);
@@ -137,9 +146,7 @@ fn skill_edit_is_stale(
     match decision.verdict {
         // Applied. Re-proposing an edit the skill already carries is nagging.
         MinedSkillEditVerdict::Accepted => Ok(false),
-        MinedSkillEditVerdict::Rejected => {
-            Ok(now >= decision.at.saturating_add(MINER_REJECTION_COOLDOWN_SECS))
-        }
+        MinedSkillEditVerdict::Rejected => Ok(now >= decision.at.saturating_add(wait)),
     }
 }
 
@@ -166,6 +173,7 @@ fn preference_is_stale(
     txn: &heed::RoTxn<'_>,
     claim_id: &EntityId,
     now: u64,
+    wait: u64,
 ) -> Result<bool> {
     let Some(body) = vault.get_claim_in_txn(txn, claim_id)? else {
         return Ok(true);
@@ -200,7 +208,7 @@ fn preference_is_stale(
         .filter(|decision| decision.outcome == GATE_OUTCOME_REJECTED)
         .map(|decision| decision.created_at)
         .max();
-    Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(MINER_REJECTION_COOLDOWN_SECS)))
+    Ok(rejected_at.is_some_and(|at| now >= at.saturating_add(wait)))
 }
 
 /// Lands a mined preference claim through the write gate, with its mint-mark,
@@ -234,18 +242,27 @@ fn emit_preference_claim(
         .predicate()
         .unwrap_or(PREDICATE_PREFERENCE_PHRASING);
     let value = match cluster.target.text() {
-        Some(text) => Value::Map(vec![
-            (Value::from("text"), Value::from(text)),
-            (
-                Value::from("target_predicate"),
-                Value::from(match &cluster.target {
-                    super::target::CompilationTarget::StyleRule(_) => {
-                        crate::claim::PREDICATE_COMPANION_EXPRESSION_STYLE
-                    }
-                    _ => predicate,
-                }),
-            ),
-        ]),
+        Some(text) => {
+            let mut entries = vec![
+                (Value::from("text"), Value::from(text)),
+                (
+                    Value::from("target_predicate"),
+                    Value::from(match &cluster.target {
+                        super::target::CompilationTarget::StyleRule(_) => {
+                            crate::claim::PREDICATE_COMPANION_EXPRESSION_STYLE
+                        }
+                        _ => predicate,
+                    }),
+                ),
+            ];
+            if cluster.unattributed {
+                entries.push((
+                    Value::from(PREFERENCE_VALUE_KEY_UNATTRIBUTED),
+                    Value::from(true),
+                ));
+            }
+            Value::Map(entries)
+        }
         None => preference_value(cluster, SubstitutionClass::Lexical),
     };
     emit_preference_value(vault, run, cluster, handle, now, predicate, value)
@@ -265,7 +282,6 @@ pub(super) fn emit_preference_value(
     };
     let claim_id = vault.store.clock.entity_id()?;
     let class = classify_substitution(&cluster.from, &cluster.to);
-    let envelope = miner_envelope(run, handle)?;
     let evidence_id = mined_evidence_record_id(handle)?;
     let evidence_record = encode_row(
         &StoredMinedEvidence::new(cluster, class),
@@ -286,7 +302,9 @@ pub(super) fn emit_preference_value(
         end: cluster.at,
     };
     vault.with_write_txn_grouped(|wtxn| {
-        if !cluster_is_eligible(vault, wtxn, handle, now)? {
+        if !cluster_is_eligible(vault, wtxn, handle, now)?
+            || !super::erase::receipts_stand_in_txn(vault, wtxn, cluster)?
+        {
             return Ok(None);
         }
         // FIRST, and in this transaction: the door validates the candidate
@@ -302,7 +320,16 @@ pub(super) fn emit_preference_value(
                 &evidence_record,
             )
             .apply(wtxn)?;
-        let mut envelope = envelope.clone();
+        // Observed only on ARCH-0003's bar, joined in this writer; below it
+        // the claim keeps its Generated stamp (FIX 3083).
+        let observed = crate::claim::is_observed_preference(Some(ClaimSource::Observed), predicate)
+            && observed_support_in_txn(vault, wtxn, cluster)?;
+        let source = if observed {
+            ClaimSource::Observed
+        } else {
+            ClaimSource::Generated
+        };
+        let mut envelope = miner_envelope(run, handle, cluster.unattributed, source)?;
         vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
         vault
             .batch_in()
@@ -384,6 +411,7 @@ fn emit_skill_edit(
     let row = StoredSkillEdit {
         principal: cluster.principal,
         v: ROW_VERSION,
+        unattributed: cluster.unattributed,
         skill: skill.to_hex(),
         scope: cluster.scope.clone(),
         from: cluster.from.clone(),
@@ -395,7 +423,9 @@ fn emit_skill_edit(
     };
     let mark = StoredMintMark::new(MARK_KIND_SKILL_EDIT, &proposal_id);
     vault.with_write_txn_grouped(|wtxn| {
-        if !cluster_is_eligible(vault, wtxn, handle, now)? {
+        if !cluster_is_eligible(vault, wtxn, handle, now)?
+            || !super::erase::receipts_stand_in_txn(vault, wtxn, cluster)?
+        {
             return Ok(None);
         }
         // Inside the transaction with the row it proposes to edit: a proposal
@@ -407,16 +437,19 @@ fn emit_skill_edit(
     })
 }
 
-/// The miner's write envelope: the caller's Agent actor, `Generated` source,
-/// `Proposed` ceiling.
+/// The miner's write envelope: the caller's Agent actor, `source`, `Proposed`
+/// ceiling.
 ///
-/// `Generated` because a mined preference is derived, never stated — which is
-/// also what makes GATE-007 refuse to let it supersede anything the owner said.
+/// `source` is `Generated` because a mined preference is derived, never
+/// stated — which is also what makes GATE-007 refuse to let it supersede
+/// anything the owner said — unless the cluster cleared `observed.rs`'s bar:
+/// then it is `Observed`, held beside a stated preference and never over it
+/// (ARCH-0003).
 /// The provenance is the shape `gate.rs::dreamer_run_id_from_provenance` parses
 /// (`dreamer_promotion`'s precedent, verbatim on the two keys that matter), so
 /// the pending row lands in the run's INBOX GROUP and the decider can answer it.
-/// The extra `session` and `cluster` keys are this module's trace: a landed
-/// claim resolves back to the exact bucket that earned it.
+/// The extra `session`, `cluster` and `unattributed` keys are this module's
+/// trace: a landed claim resolves back to the exact bucket that earned it.
 ///
 /// **No `session_tag`.** It looks like free review bundling and is in fact a
 /// trap: a `sess`-carrying body may only be written by the envelope actor that
@@ -424,7 +457,12 @@ fn emit_skill_edit(
 /// door re-puts the reviewed body RAW — so the tag would make the mined claim
 /// impossible to accept. The run group already bundles the pass's proposals,
 /// which is the job the tag would have done.
-pub(super) fn miner_envelope(run: &MinerRun, handle: &[u8; 32]) -> Result<WriteEnvelope> {
+pub(super) fn miner_envelope(
+    run: &MinerRun,
+    handle: &[u8; 32],
+    unattributed: bool,
+    source: ClaimSource,
+) -> Result<WriteEnvelope> {
     let provenance = WriteProvenance::new(Value::Map(vec![
         (
             Value::from(PROVENANCE_KEY_SURFACE),
@@ -442,10 +480,14 @@ pub(super) fn miner_envelope(run: &MinerRun, handle: &[u8; 32]) -> Result<WriteE
             Value::from(PROVENANCE_KEY_CLUSTER),
             Value::from(bytes_to_hex_lower(handle)),
         ),
+        (
+            Value::from(PROVENANCE_KEY_UNATTRIBUTED),
+            Value::from(unattributed),
+        ),
     ]))?;
     Ok(WriteEnvelope::new(
         run.agent,
-        ClaimSource::Generated,
+        source,
         provenance,
         ClaimApprovalStatus::Proposed,
     ))
@@ -474,10 +516,14 @@ pub(super) fn preference_value(cluster: &SubstitutionCluster, class: Substitutio
             Value::from(PREFERENCE_VALUE_KEY_RATIONALE),
             Value::from(class.rationale()),
         ),
+        (
+            Value::from(PREFERENCE_VALUE_KEY_UNATTRIBUTED),
+            Value::from(cluster.unattributed),
+        ),
     ])
 }
 
-/// The citation array — trace-or-derivation, in the `skill.edit_cost` shape.
+/// The citation array — trace-or-derivation, the receipts a mined row rests on.
 pub(super) fn receipt_citations(cluster: &SubstitutionCluster) -> Value {
     Value::Array(
         cluster

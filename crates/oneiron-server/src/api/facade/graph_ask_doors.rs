@@ -10,7 +10,10 @@
 //! reads every unit under the credential's own lane, so a narrowed slip asks
 //! inside its narrowing. The standing-question rows store a principal, with
 //! the class it authenticated as (FIX 1588), that the pump answers for later,
-//! so they refuse a narrowed record scope.
+//! and the caller's own lane, frozen (OF-506, FIX 1857): create and edit save
+//! the version under it, so a narrowed credential's question reads inside its
+//! narrowing. The rows that read around that lane still refuse a narrowed
+//! record scope.
 //!
 //! Beside its answer, each door lists the rows that answer names
 //! (`host_door_lists`): an answer's claim, its unit, every source its
@@ -21,15 +24,17 @@
 use std::sync::Arc;
 
 mod question_answers;
+mod saved_lane;
 
 pub(crate) use self::question_answers::vault_questions_answers;
 
 use oneiron::llm::decision::questions::{
-    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext, QuestionRecord,
-    QuestionScheduleHead, ScheduledBackfill, calibration_pairs, create_question, edit_question,
-    outcome_labels, pause_question, project_bound_outcomes, question_call_budget, read_question,
-    read_question_schedule, refresh_artifact_question_now, refresh_standing_question_with,
-    run_graph_ask_receipted, schedule_backfill, select_graph_units_by_type, standing_ask_route,
+    AnswerRecord, GraphAnswerer, GraphDecision, GraphPrediction, GraphUnitContext,
+    OutcomeWindowClose, QuestionRecord, QuestionScheduleHead, ScheduledBackfill, calibration_pairs,
+    closed_outcome_windows, outcome_labels, pause_question, project_bound_outcomes,
+    question_call_budget, read_question, read_question_schedule, refresh_artifact_question_now,
+    refresh_standing_question_with, run_graph_ask_receipted, schedule_backfill,
+    select_graph_units_by_type, standing_ask_route,
 };
 use oneiron::llm::decision::{
     DecisionAudio, DecisionDial, DecisionImage, DecisionQuestion, DecisionRung, TypedDecision,
@@ -37,9 +42,10 @@ use oneiron::llm::decision::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::receipt::{
     GraphAdmitRequest, GraphAskOutcome, GraphAskRequest, QuestionAnswer, QuestionBackfillRequest,
-    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomes, QuestionOutcomesProjectRequest,
-    QuestionOutcomesProjected, QuestionOutcomesRequest, QuestionPauseRequest, QuestionPaused,
-    QuestionReadRequest, QuestionRefreshRequest, QuestionScheduleRequest,
+    QuestionCreateRequest, QuestionEditRequest, QuestionOutcomeWindowsRequest, QuestionOutcomes,
+    QuestionOutcomesProjectRequest, QuestionOutcomesProjected, QuestionOutcomesRequest,
+    QuestionPauseRequest, QuestionPaused, QuestionReadRequest, QuestionRefreshRequest,
+    QuestionScheduleRequest,
 };
 use oneiron::{EdgeActorClass, EntityId, WriteActor};
 
@@ -81,7 +87,7 @@ async fn vault_graph_ask_answer(
     input.validate()?;
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<GraphAskOutcome> {
         let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
         let units = match input.select {
             Some(select) => select_graph_units_by_type(&lane, select.entity_type, select.limit)?,
@@ -141,7 +147,7 @@ async fn vault_graph_admit_answer(
     input.validate()?;
     let server = Arc::clone(server);
     let auth = auth.clone();
-    tokio::task::spawn_blocking(move || -> MemoryResult<GraphAskOutcome> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<GraphAskOutcome> {
         let lane = asker_lane(server.vault(), &auth, asker.entity_ref(), VERB)?;
         let mut answerer = AdmittedAnswerer {
             decision: Some(input.decision),
@@ -220,13 +226,9 @@ async fn vault_questions_create_answer(
     let mut definition = input.definition;
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
-        Ok(create_question(
-            server.vault(),
-            asker,
-            definition,
-            oneiron_vault_contract::now_ts(),
-        )?)
+    let auth = auth.clone();
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionRecord> {
+        saved_lane::create_under_caller_lane(&server, &auth, asker, definition, VERB)
     })
     .await
     .map_err(|_| internal(VERB))?
@@ -258,15 +260,17 @@ async fn vault_questions_edit_answer(
     let mut definition = input.definition;
     definition.dial = inside_host_dial(server, definition.dial, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionRecord> {
-        Ok(edit_question(
-            server.vault(),
+    let auth = auth.clone();
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionRecord> {
+        saved_lane::edit_under_caller_lane(
+            &server,
+            &auth,
             asker,
             input.id,
             input.expected_version,
             definition,
-            oneiron_vault_contract::now_ts(),
-        )?)
+            VERB,
+        )
     })
     .await
     .map_err(|_| internal(VERB))?
@@ -294,7 +298,7 @@ async fn vault_questions_pause_answer(
     const VERB: &str = "vault.questions.pause";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionPaused> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionPaused> {
         pause_question(server.vault(), principal, input.id, input.paused)?;
         Ok(QuestionPaused {
             id: input.id,
@@ -329,7 +333,7 @@ async fn vault_questions_backfill_answer(
     const VERB: &str = "vault.questions.backfill";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<ScheduledBackfill> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<ScheduledBackfill> {
         let now = oneiron_vault_contract::now_ts();
         Ok(schedule_backfill(
             server.vault(),
@@ -337,6 +341,7 @@ async fn vault_questions_backfill_answer(
             input.id,
             input.expected_version,
             input.at.unwrap_or(now),
+            input.joins,
         )?)
     })
     .await
@@ -367,13 +372,42 @@ async fn vault_questions_read_answer(
     const VERB: &str = "vault.questions.read";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Option<QuestionRecord>> {
         Ok(read_question(
             server.vault(),
             principal,
             input.id,
             input.version,
         )?)
+    })
+    .await
+    .map_err(|_| internal(VERB))?
+}
+
+/// `vault.questions.outcome_windows`: the caller's standing question's closed
+/// outcome windows, across its versions; none when the question is not theirs.
+/// Beside it, no row: the windows live in a side table.
+pub(crate) async fn vault_questions_outcome_windows(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomeWindowsRequest,
+) -> Listed<Vec<OutcomeWindowClose>> {
+    naming(
+        vault_questions_outcome_windows_answer(server, auth, input).await,
+        |_| Vec::new(),
+    )
+}
+
+async fn vault_questions_outcome_windows_answer(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: QuestionOutcomeWindowsRequest,
+) -> MemoryResult<Vec<OutcomeWindowClose>> {
+    const VERB: &str = "vault.questions.outcome_windows";
+    let principal = asker(auth, server, VERB)?.entity_ref();
+    let server = Arc::clone(server);
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<OutcomeWindowClose>> {
+        Ok(closed_outcome_windows(server.vault(), principal, input.id)?)
     })
     .await
     .map_err(|_| internal(VERB))?
@@ -411,7 +445,7 @@ async fn vault_questions_refresh_answer(
     const VERB: &str = "vault.questions.refresh";
     let asker = asker(auth, server, VERB)?;
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Vec<QuestionAnswer>> {
         let vault = server.vault();
         let now = oneiron_vault_contract::now_ts();
         let bands = server.decision_host().bands();
@@ -498,7 +532,7 @@ async fn vault_questions_outcomes_answer(
     // (mesh PR2b).
     let destination = auth.destination();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomes> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomes> {
         let vault = server.vault();
         Ok(QuestionOutcomes {
             labels: outcome_labels(vault, principal, input.id, &destination)?,
@@ -534,7 +568,7 @@ async fn vault_questions_outcomes_project_answer(
     const VERB: &str = "vault.questions.outcomes.project";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<QuestionOutcomesProjected> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<QuestionOutcomesProjected> {
         Ok(QuestionOutcomesProjected {
             id: input.id,
             projected: project_bound_outcomes(server.vault(), principal, input.id)?,
@@ -568,7 +602,7 @@ async fn vault_questions_schedule_answer(
     const VERB: &str = "vault.questions.schedule";
     let principal = asker(auth, server, VERB)?.entity_ref();
     let server = Arc::clone(server);
-    tokio::task::spawn_blocking(move || -> MemoryResult<Option<QuestionScheduleHead>> {
+    super::clock_ingress::run_blocking(move || -> MemoryResult<Option<QuestionScheduleHead>> {
         Ok(read_question_schedule(server.vault(), principal, input.id)?)
     })
     .await
@@ -710,16 +744,19 @@ fn asker_lane<'a>(
 }
 
 /// A standing question's dial, checked inside the host's own: the dial the
-/// host's other decisions take, from its first filled rung up to `big`
-/// (`DecisionHost::dial`). A dial that starts below that rung, climbs past
-/// `big` or sets a band that is not a valid band inside the host's is
-/// refused, never stored.
+/// host's other decisions take, from its first filled rung up to the
+/// question's own ceiling past `big` (`DecisionHost::dial`), so a `human`
+/// ceiling stays human and asks the next authorised role (FIX 11232). A dial
+/// that starts below that rung or sets a band that is not a valid band
+/// inside the host's is refused, never stored.
 fn inside_host_dial(
     server: &SyncServer,
     dial: DecisionDial,
     verb: &str,
 ) -> MemoryResult<DecisionDial> {
-    let host = server.decision_host().dial(DecisionRung::Big);
+    let host = server
+        .decision_host()
+        .dial(dial.ceiling.max(DecisionRung::Big));
     host.narrow(dial).map_err(|_| {
         let first = serde_json::to_value(host.first)
             .ok()
@@ -727,11 +764,11 @@ fn inside_host_dial(
             .unwrap_or_default();
         MemoryError::bad_request_with(
             format!(
-                "{verb}'s dial widens the host's: start at or above {first}, end at big or below, \
+                "{verb}'s dial widens the host's: start at or above {first}, end at human or below, \
                  and set a band with low below high inside {}..{}",
                 host.band.low, host.band.high
             ),
-            &["Start the dial at or above the host's first rung, end it at big or below, and keep its band inside the host's."],
+            &["Start the dial at or above the host's first rung, end it at human or below, and keep its band inside the host's."],
         )
     })
 }

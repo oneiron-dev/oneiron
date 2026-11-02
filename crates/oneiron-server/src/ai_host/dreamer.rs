@@ -28,9 +28,9 @@ use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
-    BudgetLease, DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
-    DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, LlmCapability,
-    LlmGenerateFuture, LlmRequest, LlmStreamResult, Vault, WakeAttemptContext, WriteActor,
+    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
+    DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, Vault, WakeAttemptContext,
+    WriteActor,
 };
 use oneiron_driver::{
     AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
@@ -45,13 +45,17 @@ use super::policy::{DreamerRoute, dreamer_role_purpose, dreamer_route, extractio
 mod claim_authoring;
 mod compaction_check;
 mod free_time;
+mod pause;
+mod request_sources;
 mod run_log;
 mod urgent_digest;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
 use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
-use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, RunBackend, Seat};
+use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
+use crate::runtime::wall_clock_ms as now_ms;
+use request_sources::{ServedRealization, SourcedRunBackend};
 
 /// Stamped on every admission and park this server makes.
 pub(super) const LEASE_OWNER: &str = "oneiron-server-dreamer";
@@ -119,6 +123,11 @@ pub(crate) struct DreamerControl {
     /// The freeze's current epoch: `true` once frozen, and kept `true` by
     /// that epoch after a thaw, which starts the next and closes it.
     pub(crate) pause: Arc<dyn Fn() -> tokio::sync::watch::Receiver<bool> + Send + Sync>,
+    /// Sets the owner's own pause cause (`POST /dreamer/pause`): no new
+    /// pass starts, and the running attempt parks at its next boundary.
+    pub(crate) set_owner_pause: Arc<dyn Fn(bool) + Send + Sync>,
+    /// Reads the owner's own pause cause (not the managed freeze).
+    pub(crate) read_owner_pause: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 /// The host's control over each Dreamer pass, its home-timer pump and its
@@ -296,7 +305,7 @@ async fn supervise(
     tokio::spawn(super::stewardship::draft_loop(
         Arc::clone(&vault),
         Arc::clone(&runtime),
-        settings.pass_budget_units,
+        super::stewardship::Drafter::of(&settings),
         admission.clone(),
     ));
     // So do the urgent digest's harm questions (OF-194): each queues on the
@@ -357,7 +366,7 @@ async fn supervise(
             Arc::new(now_ms),
         )?;
         let (push, _wake, hints) =
-            PushTick::channel(settings.idle_floor_secs.saturating_mul(1_000));
+            PushTick::channel(lifecycle.idle_floor_secs()?.saturating_mul(1_000));
         // The wake policy (ARCH-0026 #wake) reads its rows on each tick and
         // arms one quiet timer; a due recipe lands as a durable receipt the
         // deadline lane then drives.
@@ -419,14 +428,6 @@ fn claim_home_node(vault: &Vault, device: bool) -> oneiron::Result<u64> {
         store.elect_home_node(&[candidate], now_ms() / 1_000)?;
     }
     Ok(node_id)
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// The run a Dreamer pass's model calls are admitted under.
@@ -586,15 +587,20 @@ impl ObservedFactory {
                 line.clone(),
             );
             runs.insert(*role, (Arc::clone(&route.ladder), run.clone()));
+            // Each call the engine knows the rows of sends under them, on
+            // this same run (FIX 6998).
+            let backend = Arc::new(SourcedRunBackend::new(Arc::clone(&route.ladder), run));
             roles = roles.with(
                 *role,
                 RoleBackend {
-                    backend: Arc::new(RunBackend::new(Arc::clone(&route.ladder), run)),
+                    backend: Arc::clone(&backend) as Arc<dyn LlmBackend>,
                     model: route.model.clone(),
                     binding: HostInferenceBinding::Advertised {
                         model: route.model.clone(),
                         locality: route.locality,
+                        keyless: route.ladder.all_keyless_own_server(),
                     },
+                    sourced: Some(backend),
                 },
             );
         }
@@ -647,7 +653,10 @@ impl ObservedFactory {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
         if let Some(host) = host {
-            factory = factory.with_decisions(host.consolidation_decisions()?);
+            factory = factory.with_decisions(
+                host.consolidation_decisions()?
+                    .with_checker(host.auto_checker().cloned()),
+            );
         }
         // A subscribed Slack or LINE message wakes the agent it addressed,
         // which answers on the chat seat through the served sink (OF-519).
@@ -802,6 +811,22 @@ impl PassExecutorFactory for ObservedFactory {
 
     fn actor(&self) -> Option<WriteActor> {
         Some(self.actor)
+    }
+
+    /// A driver wave cut's fan-out AUTO ruling on this server's decision host
+    /// (FIX 8599), on the ruling budget its served waves use; none until the
+    /// server staffs it.
+    fn wave_fanout_decisions<R, G>(&self, principal: oneiron::EntityId, rule: G) -> R
+    where
+        G: FnOnce(Option<&oneiron::fanout_auto::FanoutDecisions<'_>>) -> R,
+    {
+        let Some(host) = self.decisions.get() else {
+            return rule(None);
+        };
+        let deadline = oneiron::retrieval_depth::RetrievalDeadline::after(
+            crate::decision_host::WAVE_FANOUT_BUDGET,
+        );
+        rule(Some(&host.wave_fanout_decisions(principal, &deadline)))
     }
 
     /// The Coach's skill optimizer (OF-214), once serve has bound the server
@@ -1029,11 +1054,7 @@ impl TaskLend<'_> {
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
         let (ladder, run) = self.sends;
-        let backend = ServedRealization {
-            ladder: Arc::clone(ladder),
-            run: run.clone(),
-            served: std::sync::Mutex::new(None),
-        };
+        let backend = ServedRealization::new(Arc::clone(ladder), run.clone());
         let realized = run_task_realize(
             attempt,
             ctx,
@@ -1049,6 +1070,7 @@ impl TaskLend<'_> {
                 actor: self.actor,
                 instruction: self.instruction,
                 confession: self.confession,
+                sourced: Some(&backend),
             },
         )
         .await?;
@@ -1058,10 +1080,7 @@ impl TaskLend<'_> {
         // not failed.
         let record = &attempt.status.attempt;
         if matches!(realized, DreamerAttemptExecution::Completed { .. })
-            && let Some(served) = backend
-                .served
-                .into_inner()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
+            && let Some(served) = backend.served()
             && let Some(owner) = record.lease_owner.as_deref()
             && let Err(error) = AttemptQueue::new(ctx.vault).set_executor_model(
                 record.id,
@@ -1085,7 +1104,7 @@ impl TaskLend<'_> {
         let egress = self
             .egress
             .then(|| extraction_egress(BTreeSet::from([self.route.model.clone()])));
-        run_weave_lens(
+        let rendered = run_weave_lens(
             attempt,
             ctx,
             WeaveLensModel {
@@ -1098,43 +1117,28 @@ impl TaskLend<'_> {
                 },
                 role: self.role,
                 actor: self.actor,
+                sourced: self.route.sourced.as_deref(),
             },
         )
-        .await
+        .await?;
+        // The weave-report pack it loaded closes attributed (FIX 1875), bound
+        // while its lease holds. A bind that fails leaves the receipt
+        // unattributed; the render stands.
+        let record = &attempt.status.attempt;
+        if matches!(rendered, DreamerAttemptExecution::Completed { .. })
+            && let Some(owner) = record.lease_owner.as_deref()
+            && let Err(error) = oneiron::skill_attribution::bind_dreamer_weave_attribution(
+                ctx.vault, record.id, owner, None,
+            )
+        {
+            tracing::warn!(kind = ?error.kind(), "a weave lens render's pack attribution did not bind");
+        }
+        Ok(rendered)
     }
 }
 
 /// The ladder a role's backend sends on, and the run it sends under.
 type RoleSends = (Arc<OfferLadder>, RunAdmission);
-
-/// A TASK realization's backend: the task route's ladder on its role's run,
-/// sending as the route's own backend does, and keeping the model of the
-/// rung that answered, fallback included.
-struct ServedRealization {
-    ladder: Arc<OfferLadder>,
-    run: RunAdmission,
-    served: std::sync::Mutex<Option<ModelId>>,
-}
-
-impl LlmBackend for ServedRealization {
-    fn supports(&self, model: &ModelId, capability: LlmCapability) -> bool {
-        self.ladder.supports(model, &capability)
-    }
-
-    fn generate<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmGenerateFuture<'a> {
-        Box::pin(async move {
-            let generated = self.ladder.generate_served(&self.run, request, None).await;
-            generated.map(|(response, served)| {
-                *self.served.lock().expect("served model mutex poisoned") = Some(served);
-                response
-            })
-        })
-    }
-
-    fn stream<'a>(&'a self, request: LlmRequest, _: &'a BudgetLease) -> LlmStreamResult<'a> {
-        self.ladder.stream(&self.run, request, None)
-    }
-}
 
 /// A resident's own dreaming model as this server serves it.
 pub(super) type OwnModel = (
@@ -1189,7 +1193,8 @@ impl ResidentLend<'_> {
                 oneiron::BudgetExhaustionPolicy::Suspend,
                 WriteActor::new(resident, oneiron::EdgeActorClass::Agent),
             )?;
-            let backend = RunBackend::new(
+            let keyless = ladder.all_keyless_own_server();
+            let backend = SourcedRunBackend::new(
                 ladder,
                 self.runtime.undeclared_run(
                     format!("{DREAMER_PASS_RUN}/resident/{}", resident.to_hex()),
@@ -1218,12 +1223,17 @@ impl ResidentLend<'_> {
                     guard: &step,
                     model: model.clone(),
                     inference: HostInferenceContext {
-                        binding: HostInferenceBinding::Advertised { model, locality },
+                        binding: HostInferenceBinding::Advertised {
+                            model,
+                            locality,
+                            keyless,
+                        },
                         extraction_egress: egress.as_deref(),
                     },
                     role: None,
                     instruction: self.instruction,
                     window_tokens,
+                    sourced: Some(&backend),
                 },
             )
             .await;
@@ -1252,6 +1262,7 @@ impl ResidentLend<'_> {
                 role: Some(DREAMER_NARRATIVE_ROLE),
                 instruction: self.instruction,
                 window_tokens: self.windows.get(&self.weaver.model).copied(),
+                sourced: self.weaver.sourced.as_deref(),
             },
         )
         .await
@@ -1351,7 +1362,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 // Without the host's instruction no resident dreams tonight.
                 None => {
                     unserved = Some(oneiron::dreamer_runner::DREAMER_RESIDENT_DREAM_ATTEMPT_KIND);
-                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    Ok(DreamerAttemptExecution::Completed {
+                        completed_units: 0,
+                        step_hashes: Vec::new(),
+                    })
                 }
             }
         } else if attempt.status.payload.attempt_type
@@ -1365,7 +1379,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 None => {
                     unserved =
                         Some(oneiron::dreamer_runner::DREAMER_FREE_TIME_FOR_HUMAN_ATTEMPT_KIND);
-                    Ok(DreamerAttemptExecution::Completed { completed_units: 0 })
+                    Ok(DreamerAttemptExecution::Completed {
+                        completed_units: 0,
+                        step_hashes: Vec::new(),
+                    })
                 }
             }
         } else if attempt.status.payload.attempt_type
@@ -1414,8 +1431,10 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for ObservedExecutor<'_, 
                 "a resident's attempt ended unserved: the host lends no resident instruction"
             );
         }
+        let one_writer_reads = ctx.vault.dreamer_one_writer_reads();
         self.status.update(|status| {
             status.dreamer.state = WorkState::Waiting;
+            status.dreamer_one_writer_reads = one_writer_reads;
             match &outcome {
                 Ok(DreamerAttemptExecution::Completed { .. }) => match unserved {
                     Some(kind) => {

@@ -13,9 +13,9 @@ use super::BridgeLimits;
 use super::codec::{self, Frame, Request, Response};
 use crate::Vault;
 use crate::speculative::SpeculativeFireDecision;
+use crate::voice_cascade::spilled_audio::AudioSpool;
 use crate::voice_cascade::{PartialEnricher, SpeculativeRetrievalBridge, UtteranceHandle};
 
-const MAX_ERRORS: usize = 8;
 const IO_TICK: Duration = Duration::from_millis(200);
 
 /// Shared stop signal. Each socket checks it at bounded read intervals.
@@ -49,8 +49,10 @@ impl Connection {
     }
 
     /// Requires actual host enrichment. No default or fake production enricher
-    /// exists. Returns on EOF, shutdown, framing failure or repeated errors;
-    /// valid requests are served for as long as the connection lasts.
+    /// exists. Returns on EOF, shutdown or a framing failure. Each request is
+    /// answered, an error alone for one that fails; no count of errors ends
+    /// the connection, so its open utterance and retries carry on for as
+    /// long as it lasts (FIX 10214).
     /// Dropping the local bridge releases every open utterance on every exit,
     /// including I/O errors and unwinding. This does not dispatch audio stops.
     pub fn serve(
@@ -66,10 +68,17 @@ impl Connection {
             .set_write_timeout(Some(Duration::from_secs(1)))?;
         let mut reader = BufReader::with_capacity(1024, &self.stream);
         let mut writer = &self.stream;
+        // Inbound frames spill past the inline bound (FIX 3728); a body
+        // directory that would not open leaves them in memory, served.
+        let spool = AudioSpool::new(&vault).unwrap_or_else(|error| {
+            tracing::warn!(%error, "voice frames held in memory; their spill directory did not open");
+            AudioSpool::unspilled(&vault)
+        });
+        let spool_vault = Arc::clone(&vault);
         let mut session = WireSession::new(vault, limits);
-        let mut errors = 0;
         loop {
-            let bytes = match codec::read_frame(&mut reader, &self.shutdown)? {
+            let bytes = match codec::read_frame(&mut reader, &self.shutdown, &spool, &spool_vault)?
+            {
                 Frame::Data(bytes) => bytes,
                 Frame::End => break,
                 Frame::Fatal(code) => {
@@ -84,13 +93,7 @@ impl Connection {
                 Ok(request) => session.handle(request, enricher),
                 Err(_) => Response::error("invalid_request"),
             };
-            if matches!(&response, Response::Error { .. }) {
-                errors += 1;
-            }
             codec::write_response(&mut writer, &response)?;
-            if errors >= MAX_ERRORS {
-                break;
-            }
         }
         Ok(())
     }

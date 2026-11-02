@@ -117,6 +117,54 @@ pub struct DecisionCall<'a> {
     pub deadline: &'a RetrievalDeadline,
 }
 
+impl DecisionCall<'_> {
+    /// The caller's score levels this call carries ([`score_levels_in`]).
+    #[must_use]
+    pub fn score_levels(&self) -> Option<Vec<String>> {
+        score_levels_in(self.question, self.state)
+    }
+}
+
+/// The state field a caller names a score question's levels in (FIX 3269), as its criteria
+/// ride in `criteria`: labels in ascending order, at least two.
+pub const SCORE_LEVELS_FIELD: &str = "score_levels";
+
+/// The most bytes one score level's label holds, as a seat request takes it.
+pub const MAX_SCORE_LEVEL_BYTES: usize = 256;
+
+/// The caller's levels for `question` over `state`, so a rung that reads a score as levels
+/// (System One, the house label read) takes it: `None` for a question that is no score, or a
+/// state whose `score_levels` is not at least two nonempty labels of at most
+/// [`MAX_SCORE_LEVEL_BYTES`]. Such a rung abstains on a score with none.
+#[must_use]
+pub fn score_levels_in(question: &DecisionQuestion, state: &Value) -> Option<Vec<String>> {
+    if !matches!(question.contract, AnswerContract::Score { .. }) {
+        return None;
+    }
+    let levels: Vec<String> =
+        serde_json::from_value(state.get(SCORE_LEVELS_FIELD)?.clone()).ok()?;
+    (levels.len() >= 2
+        && levels
+            .iter()
+            .all(|level| !level.trim().is_empty() && level.len() <= MAX_SCORE_LEVEL_BYTES))
+    .then_some(levels)
+}
+
+/// The score level `index` of `count` stands for on a `min`..`max` scale: the ends exact,
+/// the levels between evenly spaced.
+#[must_use]
+pub fn level_score(min: f64, max: f64, index: usize, count: usize) -> f64 {
+    let ceiling = count.saturating_sub(1).max(1) as f64;
+    let t = index as f64 / ceiling;
+    if t <= 0.0 {
+        min
+    } else if t >= 1.0 {
+        max
+    } else {
+        ((1.0 - t) * min + t * max).clamp(min, max)
+    }
+}
+
 /// Several typed questions asked as one request over one state. Each question carries its
 /// own text (its description) and its own contract; the state is their shared prefix.
 #[derive(Clone, Copy)]
@@ -147,7 +195,9 @@ impl<'a> DecisionPack<'a> {
 /// as it skips an empty slot; it never trims a question to fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderCapability {
-    /// The most options one choice question may offer (the engine's contract allows 64).
+    /// The most options one choice question may offer it. A choice's contract sets no
+    /// count: a wider one is never cut to fit (FIX 9908); it is read in chunks within this
+    /// bound and a final read among their winners (FIX 11235).
     pub max_options: usize,
     /// Whether it answers score questions.
     pub score: bool,
@@ -205,6 +255,12 @@ pub trait DecisionProvider: Send + Sync {
     /// posture keeps the text local.
     fn leaves_host(&self) -> bool {
         false
+    }
+    /// What it costs per thousand units at its rung, as its host knows it (its registered
+    /// price over the units it reads); none when the host knows none. The receipt of an
+    /// answer it gives carries it (ARCH-0076, "Cost").
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// The pack as one request, one answer per question in order. The default asks each
@@ -297,6 +353,10 @@ pub trait DecisionModel: Send + Sync {
     fn leaves_host(&self) -> bool {
         false
     }
+    /// See [`DecisionProvider::cost_per_thousand`].
+    fn cost_per_thousand(&self) -> Option<f64> {
+        None
+    }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision>;
     /// See [`DecisionProvider::decide_pack`].
     fn decide_pack(&self, pack: &DecisionPack<'_>) -> Result<Vec<ProviderDecision>> {
@@ -343,6 +403,9 @@ impl DecisionProvider for ModelDecisionProvider {
     }
     fn leaves_host(&self) -> bool {
         self.model.leaves_host()
+    }
+    fn cost_per_thousand(&self) -> Option<f64> {
+        self.model.cost_per_thousand()
     }
     fn decide(&self, call: &DecisionCall<'_>) -> Result<ProviderDecision> {
         self.model.decide(call)

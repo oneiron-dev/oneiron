@@ -8,6 +8,7 @@ mod prompt;
 mod readers;
 mod receipts;
 mod results;
+mod type_feedback;
 
 use super::cancel::StepCancellation;
 use super::program_entry::{InjectedAnswer, PROGRAM_RESUME_HELD, ProgramInjection};
@@ -19,8 +20,9 @@ use super::store::{
     write_json,
 };
 use super::types::{
-    EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime, JsCodeModeStream,
-    JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse, StoreReceiptInput,
+    CallableProgram, EngineExecutorResult, ExecutorLegibility, JsCodeModeHost, JsCodeModeRuntime,
+    JsCodeModeStream, JsResultCall, JsResultRef, JsResultTarget, SelfDispatchResponse,
+    StoreReceiptInput,
 };
 use crate::code_run::{
     CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
@@ -50,6 +52,7 @@ use serde_json::json;
 pub(super) use self::boundary::executor_boundary_contract;
 pub(super) use self::prompt::{executor_system_prompt, executor_turn_instruction};
 use self::results::recorded_output;
+pub(super) use self::type_feedback::{CallableChecks, PINNED_PROGRAM_STEP};
 
 pub(super) struct RecordingJsHost<'a, 's> {
     gated_write: &'a GatedActorWrite<'a>,
@@ -59,6 +62,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     determinism: CodeRunDeterminism,
     legibility: Option<ExecutorLegibility<'a>>,
     storage: Option<&'s ExecutorStorage<'a>>,
+    /// The run's share of the result-memory pool, which a callable skill's
+    /// answer check holds its buffers on (FIX 10149).
+    result_share: Option<&'s crate::result_memory::ResultShare>,
     recoverable: Vec<(u64, CodeRunRawOutput, OutputRef)>,
     /// The step's result as the guest streams it, written into the run's
     /// body store frame by frame.
@@ -111,6 +117,9 @@ pub(super) struct RecordingJsHost<'a, 's> {
     /// A turn program's pinned entry only (DOOR-141 PR3b): the calls an
     /// earlier entry settled, answered in their place instead of issued.
     pub(super) injection: Option<ProgramInjection>,
+    /// The type checks of the callable skills this host's calls run (FIX
+    /// 10389): none attached until the run lends its service.
+    callable_checks: CallableChecks<'s>,
 }
 
 /// Whether the gate an act takes over the run's results (a store, a fold, a
@@ -153,6 +162,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             determinism,
             legibility,
             storage: None,
+            result_share: None,
             recoverable: Vec::new(),
             streamed: StreamedOutputs::default(),
             results: Vec::new(),
@@ -171,6 +181,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             admitted_skill_seq: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
+            callable_checks: CallableChecks::default(),
         }
     }
 
@@ -178,6 +189,23 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
     /// are credited to (OF-353).
     pub(super) fn with_skill_executor(mut self, executor: &crate::ModelId) -> Self {
         self.skill_executor = Some(executor.as_str().to_owned());
+        self
+    }
+
+    /// Lends the run's share of the result-memory pool to the callable
+    /// skills its program calls (FIX 10149).
+    pub(super) fn with_result_share(
+        mut self,
+        share: &'s crate::result_memory::ResultShare,
+    ) -> Self {
+        self.result_share = Some(share);
+        self
+    }
+
+    /// Lends the run's type-feedback service to the callable skills its
+    /// calls run, each checked once under its own identity (FIX 10389).
+    pub(super) fn with_callable_checks(mut self, checks: CallableChecks<'s>) -> Self {
+        self.callable_checks = checks;
         self
     }
 
@@ -218,6 +246,10 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
         }
         self.bindings = record.bindings.clone();
         self.recorded_rows = record.agent_verb_rows();
+        // The skills and other runs' result rows its earlier steps' callables
+        // answered from, so this step judges its results with them too
+        // (FIX 5763).
+        self.callable_rows.1 = record.callable_rows.clone();
         self.storage = Some(storage);
         Ok(self)
     }
@@ -252,6 +284,14 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
 }
 
 impl JsCodeModeHost for RecordingJsHost<'_, '_> {
+    fn start_callable_check(&mut self, seq: u64, program: CallableProgram<'_>) {
+        self.start_callable_check_at(seq, program);
+    }
+
+    fn caller_entity(&self) -> Option<EntityId> {
+        Some(self.gated_write.actor().entity_ref())
+    }
+
     fn write_output(&mut self, stream: JsCodeModeStream<'_>, frame: &[u8]) -> Result<bool> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),

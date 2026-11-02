@@ -293,6 +293,9 @@ pub struct AttributionSplit {
     /// [`AttributionVerdict::ALL`] order.
     pub shares: Vec<AttributionShare>,
     pub unclear: Vec<UnclearNote>,
+    /// The label each region stands at after the floor, one per region in
+    /// hunk order: `unclear` where the answer was held (FIX 9808).
+    pub hunks: Vec<AttributionVerdict>,
 }
 
 impl AttributionSplit {
@@ -462,6 +465,10 @@ impl OutcomeEvidence {
 pub struct AttributionJudgment {
     /// Monotonic id: the evidence sequence this judgment was routed from.
     pub sequence: u64,
+    /// The row's own id (FIX 12088), minted when it is written: the witness a
+    /// sourced read names for it. The key is the evidence sequence, which is
+    /// not an `EntityId`, so the row carries one.
+    pub row_id: EntityId,
     pub verdict: AttributionVerdict,
     /// SKILL entity for `SkillDefect`/`Discovery`, ACTOR entity for
     /// `ExecutionLapse` — the routing decision, made concrete. `None` once
@@ -484,6 +491,10 @@ pub struct SkillEditProposal {
     /// An amendment's proposal carries the sequence drawn for it, which its
     /// judgment row records; its evidence cites the amendment receipt.
     pub judgment_sequence: u64,
+    /// The row's own id (FIX 12088), minted when it is written: the witness a
+    /// sourced read names for it. A re-judged amendment re-mints under its
+    /// held sequence and keeps the row's id.
+    pub row_id: EntityId,
     /// The SKILL entity whose content the attempt found missing.
     pub skill: EntityId,
     /// RS1 receipt ids the originating judgment rested on.

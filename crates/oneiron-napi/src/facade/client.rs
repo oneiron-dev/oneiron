@@ -5,15 +5,17 @@ use napi_derive::napi;
 
 use super::boundary::{boundary_error, facade_error};
 use super::convert::{
-    commit_receipt_from_engine, gate_receipt_from_engine, memory_pack_from_engine,
-    query_affect_to_engine, recall_media_to_engine, recall_scope_to_engine,
-    witness_receipt_from_engine, witness_turn_to_engine,
+    commit_receipt_from_engine, memory_pack_from_engine, query_affect_to_engine,
+    recall_media_to_engine, recall_scope_to_engine, witness_receipt_from_engine,
+    witness_turn_to_engine,
 };
 use super::dtos::{
-    NapiClaimInput, NapiCommitReceipt, NapiGateReceipt, NapiMemoryPack, NapiQueryAffect,
-    NapiRecallMedia, NapiRecallScope, NapiWitnessMessage, NapiWitnessReceipt, NapiWitnessTurn,
+    NapiClaimInput, NapiCommitReceipt, NapiMemoryPack, NapiQueryAffect, NapiRecallMedia,
+    NapiRecallScope, NapiWitnessAssertions, NapiWitnessMessage, NapiWitnessReceipt,
+    NapiWitnessTurn,
 };
 use super::input_error::witness_input_error;
+use super::js_json::js_json;
 use super::numeric::{claim_input_to_engine, dimensions_to_engine, limit_to_engine};
 use super::pairing::{NapiCheckpointPin, pin_from_engine};
 use crate::boundary::host_device_class;
@@ -52,6 +54,9 @@ pub struct NapiWitnessTurnInput {
     /// AGENT_DEF ids), edited later through `vault.rooms.thread_audience`;
     /// omitted ⇒ it reads as its room does.
     pub thread_audience: Option<Vec<String>>,
+    /// The records this reply names as cited or created (OF-063), judged by
+    /// the engine under the writer's own read; omitted ⇒ it asserts nothing.
+    pub assertions: Option<NapiWitnessAssertions>,
 }
 
 impl NapiWitnessTurnInput {
@@ -67,6 +72,7 @@ impl NapiWitnessTurnInput {
             messages: self.messages,
             occurred_at,
             thread_audience: self.thread_audience,
+            assertions: self.assertions,
         })
         .map_err(witness_input_error)
     }
@@ -104,6 +110,20 @@ pub struct NapiHostRootProfile {
 #[napi]
 pub struct NativeClient {
     inner: oneiron_remote::OneironClient,
+    /// What keeps this handle's engine serving while the handle lives: the
+    /// in-process engine a local attach came from (FIX 4895), handed on to
+    /// every handle rebound from it; `None` on every other handle.
+    keep: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl NativeClient {
+    /// A handle rebound from this one, keeping what this one keeps.
+    fn rebound(&self, inner: oneiron_remote::OneironClient) -> Self {
+        Self {
+            inner,
+            keep: self.keep.clone(),
+        }
+    }
 }
 
 #[napi]
@@ -118,11 +138,11 @@ impl NativeClient {
         device_class: Option<String>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = open_options(dimensions, device_class)?;
+        let options = open_options(dimensions, device_class, None)?;
         let path = path.map(std::path::PathBuf::from);
         let inner =
             oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// `open`, then this install's own machine profile from the vault's
@@ -130,16 +150,19 @@ impl NativeClient {
     /// `open_with_host_root`. `hostRootSecret` is the secret's exact bytes,
     /// borrowed from JavaScript memory for this call only; the caller keeps
     /// them and clears them. `hostRootProfile` says what it did.
-    /// `deviceClass` is `open`'s (FIX 5560).
+    /// `deviceClass` is `open`'s (FIX 5560). `holdCheckpointRootSigner`
+    /// holds this install's host root as the vault's checkpoint signer for
+    /// the handle's life (FIX 5343); omitted is `false`.
     #[napi(factory)]
     pub fn open_with_host_root(
         path: Option<String>,
         dimensions: Option<f64>,
         host_root_secret: Buffer,
         device_class: Option<String>,
+        hold_checkpoint_root_signer: Option<bool>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = open_options(dimensions, device_class)?;
+        let options = open_options(dimensions, device_class, hold_checkpoint_root_signer)?;
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open_with_host_root(
             path.as_deref(),
@@ -147,7 +170,7 @@ impl NativeClient {
             host_root_secret.as_ref(),
         )
         .map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// What `openWithHostRoot` did with its root, on the handle it returned;
@@ -168,7 +191,7 @@ impl NativeClient {
     #[napi(factory)]
     pub fn connect(url: String, key: String) -> napi::Result<Self> {
         let inner = oneiron_remote::OneironClient::connect(&url, &key).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(Self { inner, keep: None })
     }
 
     /// Redeems a pairing link once; returns the origin, the credential, the
@@ -189,14 +212,14 @@ impl NativeClient {
     #[napi]
     pub fn as_actor(&self, actor_key: String) -> napi::Result<Self> {
         let inner = self.inner.as_actor(&actor_key).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// Returns a NEW handle whose every verb runs as a turn in `room_ref`.
     #[napi]
     pub fn in_room_turn(&self, room_ref: String) -> napi::Result<Self> {
         let inner = self.inner.in_room_turn(&room_ref).map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// Returns a NEW handle whose every verb runs inside the off-record
@@ -208,7 +231,7 @@ impl NativeClient {
             .inner
             .in_off_record_session(&session_ref)
             .map_err(facade_error)?;
-        Ok(Self { inner })
+        Ok(self.rebound(inner))
     }
 
     /// The lasting call receipt the last verb's reply stated, as
@@ -251,8 +274,9 @@ impl NativeClient {
 
     /// Sends one event on a lens card the connected server rendered
     /// (OF-181): `request` is the route's `{event, idempotencyKey}` body, and
-    /// the reply is its wire JSON, `{$state}` or `{outcome, readReceipt}`.
-    /// The route, the credential and the embedded refusal all stay in
+    /// the reply is its wire JSON, `{$state}` (beside the card's refinement
+    /// for a patch-profile caller) or `{outcome, readReceipt}`. The route,
+    /// the credential and the embedded refusal all stay in
     /// `oneiron_remote::OneironClient::lens_frame_event`.
     #[napi]
     pub fn lens_frame_event(
@@ -286,13 +310,41 @@ impl NativeClient {
             .map_err(facade_error)?;
         serde_json::to_value(reply).map_err(lens_frame_unencoded)
     }
+
+    /// Exports the whole vault into the file at `path`, owner only, as
+    /// `vault.export` does: `format` is `archive` (the default) or `okf`.
+    /// The file is created or truncated; the answer is the archive's
+    /// format, length and BLAKE3. Over a server the archive streams
+    /// through a kept transfer, so no ceiling on a reply applies to it.
+    #[napi]
+    pub fn export_to(
+        &self,
+        path: String,
+        format: Option<String>,
+    ) -> napi::Result<serde_json::Value> {
+        let file = std::fs::File::create(&path).map_err(|error| {
+            facade_error(oneiron::MemoryError::new(
+                oneiron::memory::MEMORY_CODE_BAD_REQUEST,
+                format!("could not create the export file {path:?}: {error}"),
+                &["Check that the export path's parent directory exists and is writable."],
+            ))
+        })?;
+        let receipt = self
+            .inner
+            .vault_export_to(format.as_deref(), file)
+            .map_err(facade_error)?;
+        serde_json::to_value(receipt).map_err(export_unencoded)
+    }
 }
 
 /// What an embedded open takes from JavaScript. The device class is the one
 /// its host declares ([`host_device_class`]), `None` when it gave none.
+/// `hold_checkpoint_root_signer` is `open_with_host_root`'s only (FIX 5343);
+/// `open` passes `None`.
 fn open_options(
     dimensions: Option<f64>,
     device_class: Option<String>,
+    hold_checkpoint_root_signer: Option<bool>,
 ) -> napi::Result<oneiron_remote::OpenOptions> {
     let dimensions = dimensions
         .map(dimensions_to_engine)
@@ -312,6 +364,7 @@ fn open_options(
     Ok(oneiron_remote::OpenOptions {
         dimensions,
         device_class,
+        hold_checkpoint_root_signer: hold_checkpoint_root_signer.unwrap_or(false),
     })
 }
 
@@ -320,49 +373,9 @@ fn lens_frame_unencoded(error: serde_json::Error) -> napi::Error {
     boundary_error(format!("could not encode the lens frame reply: {error}"))
 }
 
-/// JavaScript's `Number.MAX_SAFE_INTEGER`, the largest whole number a JS
-/// number holds exactly.
-const JS_MAX_SAFE_INTEGER: f64 = 9_007_199_254_740_991.0;
-
-/// One JSON value from JavaScript, as the typed decode behind it reads it
-/// (FIX 2884). napi hands a whole JS number past the 32-bit range over as a
-/// float, which an integer field refuses; every whole number within the safe
-/// range reads back as the integer it is, at any depth, so a millisecond
-/// `u64` reads. A fractional number stays a float, and a whole number past
-/// the safe range stays the float it is, which an integer field refuses: its
-/// exact value is already lost. Every JSON-valued N-API method (the generated
-/// rows, `retry`, `lensFrameEvent`) reads its argument through this.
-fn js_json(mut value: serde_json::Value) -> serde_json::Value {
-    js_integers(&mut value);
-    value
-}
-
-fn js_integers(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Number(number) => {
-            if let Some(whole) = js_safe_integer(number) {
-                *number = whole;
-            }
-        }
-        serde_json::Value::Array(items) => items.iter_mut().for_each(js_integers),
-        serde_json::Value::Object(fields) => fields.values_mut().for_each(js_integers),
-        serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::String(_) => {}
-    }
-}
-
-/// A float that holds a safe whole number, as that integer; `None` for an
-/// integer already, a fraction, a non-finite value or an unsafe whole number.
-fn js_safe_integer(number: &serde_json::Number) -> Option<serde_json::Number> {
-    if !number.is_f64() {
-        return None;
-    }
-    let float = number.as_f64()?;
-    if !float.is_finite() || float.fract() != 0.0 || float.abs() > JS_MAX_SAFE_INTEGER {
-        return None;
-    }
-    // A whole number within ±(2^53 - 1) converts to i64 exactly.
-    let whole = float as i64;
-    Some(u64::try_from(whole).map_or_else(|_| whole.into(), serde_json::Number::from))
+/// An export receipt that would not encode back to its wire JSON.
+fn export_unencoded(error: serde_json::Error) -> napi::Error {
+    boundary_error(format!("could not encode the export receipt: {error}"))
 }
 
 #[path = "client/generated/agent_verbs.rs"]

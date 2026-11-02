@@ -51,7 +51,9 @@ impl Vault {
         &self,
         source: R,
     ) -> Result<WholeVaultDocument> {
-        let scratch = self.store.archive_scratch_env()?;
+        let scratch = self
+            .store
+            .archive_scratch_env(self.config.page_seal.as_ref())?;
         let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
         archive.validate(self)?;
         archive.document()
@@ -119,7 +121,9 @@ impl Vault {
         source: R,
         actor: Option<&WriteActor>,
     ) -> Result<WholeVaultImportReceipt> {
-        let scratch = self.store.archive_scratch_env()?;
+        let scratch = self
+            .store
+            .archive_scratch_env(self.config.page_seal.as_ref())?;
         let mut archive = super::read_vault_archive_indexed(self, &scratch, source)?;
         archive.validate(self)?;
         if actor.is_none() && archive.expressions {
@@ -345,6 +349,11 @@ impl Vault {
         // they index are in: each family's records, then indexes, then heads.
         let (restored_side_rows, unchanged_side_rows) =
             super::archive_side_tables::restore_side_rows_in_txn(&self.store, &mut wtxn, &archive)?;
+        // FIX 1162: every imported agent gets its model PERSON in this same
+        // writer, once the bundle's own PERSON and anchor rows are in.
+        super::agent_person_import::ensure_imported_agent_persons_in_txn(
+            self, &mut wtxn, &archive,
+        )?;
         let (imported_results, withheld_results) =
             put_run_results_in_txn(self, &mut wtxn, &mut archive, known)?;
         let (restored_secrets, unchanged_secrets, skipped_revoked_secrets, missing_secrets) =
@@ -464,6 +473,14 @@ fn insert_ready_row<R: Read + Seek>(
     match row.entity_type {
         ENTITY_TYPE_CLAIM => {
             let claim = decode_import_claim(&body)?;
+            if crate::learning::is_learning_predicate(&claim.predicate) {
+                // Option B (FIX 11626): the row stays archive data; its cells
+                // rebuild from receipts. Mark it omitted so the edge pass
+                // skips its links and the receipt counts it with the rest.
+                archive.index.put(Tag::Omitted, id.as_bytes(), &[])?;
+                archive.index.remove(Tag::Inserted, id.as_bytes())?;
+                return Ok(());
+            }
             if crate::subject_model::is_subject_model_predicate(&claim.predicate) {
                 vault.restore_subject_claim_in_txn(wtxn, &id, &claim, occurred, row.learned_at)
             } else if crate::actor_claims::is_actor_claim_predicate(&claim.predicate) {
@@ -481,7 +498,7 @@ fn insert_ready_row<R: Read + Seek>(
             if at.section != Section::Skill {
                 return Err(Error::InvariantViolation("skill bundle missing"));
             }
-            let bundle: ExportSkillBundle = archive.hydrated(ArchiveRecordKind::Skill, at.loc)?;
+            let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
             if let Some(tree) = &bundle.source_tree {
                 vault.import_archived_skill_in_txn(
                     wtxn,
@@ -491,7 +508,7 @@ fn insert_ready_row<R: Read + Seek>(
                         bundle
                             .source_format
                             .ok_or_else(|| invalid("skill source format missing"))?,
-                        tree.import_files()?,
+                        tree.import_files_in(&archive.files)?,
                     ),
                     occurred,
                     row.learned_at,
@@ -755,9 +772,9 @@ fn validate_existing_source<R: Read + Seek>(
     if at.section != Section::Skill {
         return Ok(());
     }
-    let bundle: ExportSkillBundle = archive.hydrated(ArchiveRecordKind::Skill, at.loc)?;
+    let bundle: ExportSkillBundle = archive.hydrated(at.loc)?;
     if let Some(tree) = &bundle.source_tree {
-        let files = tree.import_files()?;
+        let files = tree.import_files_in(&archive.files)?;
         let stored = vault
             .export_hub_package_in_txn(txn, &parse_id(&row.id)?)?
             .ok_or_else(|| invalid("existing skill has no matching stored source package"))?;
@@ -1271,6 +1288,13 @@ fn decode_import_claim(bytes: &[u8]) -> Result<crate::claim::ClaimBody> {
         crate::skill_reliability::imported_reliability_body(&body)
     } else if body.predicate == crate::claim::PREDICATE_SKILL_EDIT_COST {
         crate::edit_distance::attribution::imported_skill_cost_body(&body)
+    } else if crate::learning::is_learning_predicate(&body.predicate) {
+        // No archive format (FIX 11626 option B): a learning cell is a
+        // projector-only view rebuilt from its receipts after import. The row
+        // stays archive data under the `learning.*` omission, which the import
+        // report names; decoding succeeds so the callers route it there
+        // instead of the strict door refusing the namespace.
+        Ok(body)
     } else {
         decode_claim_body(bytes, false)
     }

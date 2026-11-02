@@ -115,6 +115,10 @@ pub struct RestoreReportWire {
     /// none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub credential_notes: Vec<String>,
+    /// What the restore did not carry of its source's current pad objects
+    /// (PAD-1), each as the engine words it. Absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pad_object_notes: Vec<String>,
 }
 
 /// Everything the restore verified, beside what the plan expected.
@@ -156,10 +160,18 @@ pub struct VerifiedSourceWire {
     /// The pinned signer that signed it.
     #[serde(with = "super::hex::array")]
     pub signer_install: [u8; 16],
-    /// BLAKE3 over the canonical external pin set the signature was checked
-    /// against.
+    /// BLAKE3 over the canonical external pin set the plan pinned.
     #[serde(with = "super::hex::array")]
     pub pin_set_digest: [u8; 32],
+    /// The digest of the vault's external mode-root policy, present only
+    /// where a delegation from its roots, not a pin, admitted the signer
+    /// (FIX 968).
+    #[serde(
+        default,
+        with = "super::hex::option_array",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub mode_root_policy_digest: Option<[u8; 32]>,
     /// The artifact carried a registry binding, and it is the plan's;
     /// `false` where it carried none.
     pub registry_bound: bool,

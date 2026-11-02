@@ -7,10 +7,11 @@
 //!   [`SEALED_BUNDLE_PAD_STEP_BYTES`], and the digest of its bytes. No world, key,
 //!   window, tag, pad, per-world length or reader is in the clear.
 //! - Each upload draws a fresh outer key. Hybrid capsules seal it to every machine
-//!   mine here and to the pinned recovery root, in anonymous slots padded with
-//!   blanks to a multiple of 16. The outer body rides E0 envelopes under that key
-//!   (purpose `SealedVaultBundle`), sized so the whole frame lands on the size
-//!   step; the padding is inside the ciphertext.
+//!   mine here and to the pinned recovery root, and grant it to an asked executor
+//!   not mine here for its request (`publication_grant`, FIX 4785), in anonymous
+//!   slots padded with blanks to a multiple of 16. The outer body rides E0
+//!   envelopes under that key (purpose `SealedVaultBundle`), sized so the whole
+//!   frame lands on the size step; the padding is inside the ciphertext.
 //! - Inside: the publishing machine and its signature, the base section, then the
 //!   catalog of world sections, the world capsules and, last, the owner work
 //!   request it published for, if any (`publication`). Each section is sealed
@@ -53,7 +54,9 @@ mod carrier;
 mod holder_policy;
 mod key_erase;
 mod pad_objects;
+mod plan;
 mod publication;
+mod publication_grant;
 mod retirement;
 mod sections;
 
@@ -83,8 +86,9 @@ use crate::store::Store;
 #[cfg(feature = "sync")]
 pub use self::admission::{PadAdmissionTarget, SealedPadAdmissionGrant};
 pub(crate) use self::authority::{BundleCarry, SealedWorldAuthority};
-pub use self::carrier::SealedVaultUpload;
+pub use self::carrier::{SealedVaultUpload, WorldCapsuleImport};
 pub(crate) use self::key_erase::{PadEraseSubject, stage_retained_pad_key_erase_in_txn};
+use self::plan::{SealPlan, seal_object};
 pub(crate) use self::publication::bundle_publish_executor;
 pub use self::retirement::{
     SEALED_BUNDLE_KEEP, SEALED_BUNDLE_PAD_STEP_BYTES, SEALED_BUNDLE_UPLOAD_INTERVAL_SECS,
@@ -119,8 +123,6 @@ const SYMMETRIC: &[WrapType] = &[WrapType::SymmetricKek];
 const HYBRID: &[WrapType] = &[WrapType::HybridCapsule];
 /// The most body one envelope carries, under E0's 16 MiB plaintext bound.
 const CHUNK: usize = 8 * 1024 * 1024;
-/// The most envelopes one world section holds: a 1 GiB section.
-const MAX_SECTION_PARTS: usize = 128;
 /// The smallest padded section body.
 const SECTION_PAD_FLOOR: usize = 4096;
 const GENERATION_LEN: usize = 24;
@@ -260,71 +262,6 @@ pub struct SealedBundleSection {
     parts: Vec<Envelope>,
 }
 
-impl SealedBundleSection {
-    fn seal(vault_id: &[u8; 32], key: &WorldKey, payload: &[u8]) -> Result<Self> {
-        let body = encode_section_body(vault_id, key.id(), payload);
-        let count = body.len().div_ceil(CHUNK);
-        if count > MAX_SECTION_PARTS {
-            return Err(refused("the world is too large for one bundle section"));
-        }
-        let tag = section_digest(SECTION_TAG_CONTEXT, vault_id, key);
-        let params = seal_params(BUNDLE.purpose, vault_id, &tag, SECTION_RECIPIENT);
-        let kek = section_kek(vault_id, key);
-        let mut parts = Vec::with_capacity(count);
-        seal_parts(
-            &params,
-            &kek,
-            &body,
-            &even_sizes(body.len(), count),
-            |part| {
-                parts.push(part);
-                Ok(())
-            },
-        )?;
-        Ok(Self { tag, parts })
-    }
-
-    fn open(&self, vault_id: &[u8; 32], key: &WorldKey) -> Result<OpenedBundleSection> {
-        let policy = symmetric_policy(BUNDLE.purpose, vault_id, &self.tag, SECTION_RECIPIENT);
-        let kek = section_kek(vault_id, key);
-        let body = open_parts(&policy, &kek, &self.parts)?;
-        decode_section_body(vault_id, key.id(), &body)
-    }
-
-    /// tag (32) ‖ count (2) ‖ each part `u32`-length-prefixed.
-    fn encode(&self, out: &mut Vec<u8>) -> Result<()> {
-        out.extend_from_slice(&self.tag);
-        let count = u16::try_from(self.parts.len()).map_err(|_| refused("too many parts"))?;
-        out.extend_from_slice(&count.to_be_bytes());
-        for part in &self.parts {
-            put_counted(out, &part.to_bytes())?;
-        }
-        Ok(())
-    }
-
-    fn parse(cursor: &mut Cursor<'_>, vault_id: &[u8; 32]) -> Result<Self> {
-        let malformed = || refused("malformed bundle section");
-        let tag: [u8; 32] = cursor.array().ok_or_else(malformed)?;
-        let count = usize::from(u16::from_be_bytes(cursor.array().ok_or_else(malformed)?));
-        if count == 0 || count > MAX_SECTION_PARTS {
-            return Err(malformed());
-        }
-        let mut vault = Some(vault_id.to_vec());
-        let mut parts = Vec::with_capacity(count);
-        for _ in 0..count {
-            parts.push(parse_envelope(
-                cursor,
-                BUNDLE.purpose,
-                WrapType::SymmetricKek,
-                &tag,
-                SECTION_RECIPIENT,
-                &mut vault,
-            )?);
-        }
-        Ok(Self { tag, parts })
-    }
-}
-
 /// A bundle's outer layer, opened: who sealed it, the base section, and the
 /// catalog of world sections.
 pub struct OpenedVaultBundle {
@@ -364,136 +301,6 @@ impl OpenedKeyPads {
             .iter()
             .find(|(id, _, _)| id == key)
             .map(|(_, pad, _)| WorldKeyPad::from_bytes(Zeroizing::new(**pad)))
-    }
-}
-
-/// What one seal reads from the vault, in one snapshot.
-struct SealPlan {
-    vault_id: [u8; 32],
-    signing: SigningKey,
-    publisher: EntityId,
-    /// The owner work request this upload publishes for.
-    request: Option<AuthorityEntryHash>,
-    readers: Vec<HybridPublicKey>,
-    /// Each fresh world capsule's readers: the machines mine here that may read
-    /// the world, and the root.
-    authority_readers: Vec<(EntityId, Vec<HybridPublicKey>)>,
-    kit_root: Option<RecoveryRootId>,
-    /// Each pad, with the time its row was learned (FIX 3790).
-    pads: Vec<(WorldKeyId, Zeroizing<[u8; 32]>, u64)>,
-}
-
-impl Vault {
-    fn seal_plan(
-        &self,
-        secret: &MachineSecret,
-        holder: Destination,
-        keys: &[(Arc<WorldKey>, &[u8])],
-        carry: &BundleCarry<'_>,
-    ) -> Result<SealPlan> {
-        let txn = self.store.env.read_txn()?;
-        let signing = self.door_signing_key_in_txn(&txn, secret.machine)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
-        let vault_id = fold
-            .vault_id
-            .ok_or_else(|| refused("the vault has no authority genesis yet"))?;
-        let mine = fold.trusted_machine(secret.machine).is_some_and(|trusted| {
-            trusted.profile.machine_key == signing.verifying_key().to_bytes()
-        });
-        // The install his counted request asked to publish to `holder`, in any
-        // role (WILL L04 row 03), seals too: it still opens only the keys it
-        // holds as an eligible reader.
-        let asked = carry.request.is_some_and(|request| {
-            publication::asks(&fold, &request, secret.machine, Some(holder))
-        });
-        // The owner's recipient choice: only a machine he marked "yours"
-        // opens a world's key to seal it, never a rule on who decides.
-        if !mine && !asked {
-            return Err(refused(
-                "the owner-selected world read policy excludes this destination; use an allowed \
-                 holder",
-            ));
-        }
-        for (key, _) in keys {
-            let world = key.id().world;
-            if !bundle_carries(&fold, world, holder) {
-                return Err(refused(
-                    "the world's sealed copies may not rest on the holder",
-                ));
-            }
-            if fold
-                .current_world_key(world)
-                .is_none_or(|current| current.id != *key.id())
-            {
-                return Err(refused(
-                    "the world's key changed while its section was sealed",
-                ));
-            }
-        }
-        let root = self.pinned_root_recipient_in_txn(&txn, &fold)?;
-        let kit_root = root.as_ref().map(|root| root.id);
-        let mut authority_readers = Vec::with_capacity(carry.fresh_authority.len());
-        for &(world, _) in &carry.fresh_authority {
-            if !bundle_carries(&fold, world, holder) {
-                return Err(refused(
-                    "the world's sealed copies may not rest on the holder",
-                ));
-            }
-            let readers: Vec<HybridPublicKey> = recipients(&fold, world, root.clone())
-                .into_iter()
-                .map(|(_, public)| public)
-                .collect();
-            authority_readers.push((world, readers));
-        }
-        // Base reality reads on every machine mine here: its recipients are the
-        // vault's own readers, and the root.
-        let readers: Vec<HybridPublicKey> = recipients(&fold, base_world(), root)
-            .into_iter()
-            .map(|(_, public)| public)
-            .collect();
-        if readers.is_empty() {
-            return Err(refused("no machine and no kit could open the bundle"));
-        }
-        let mut pads = Vec::new();
-        for key in fold.all_world_keys() {
-            if bundle_carries(&fold, key.id.world, holder)
-                && new_pads_hold(&self.store, &txn, key.id.world)?
-                && let Some((pad, learned_at)) = pad_row_in_txn(&self.store, &txn, &key.id)?
-            {
-                pads.push((key.id, Zeroizing::new(*pad.bytes()), learned_at));
-            }
-        }
-        // A carried section's key keeps the pad the latest generation held for
-        // it, unless the bundle no longer carries its world for this holder, or
-        // the world was deleted or its keys destroyed here. A world whose
-        // settings are not folded here yet rides blind with its section and
-        // capsule: unknown is not ineligible (FIX 4211).
-        for (key, pad, learned_at) in carry.latest.map_or(&[][..], |latest| &latest.entries[..]) {
-            if (!fold.worlds.contains_key(&key.world) || bundle_carries(&fold, key.world, holder))
-                && !pads.iter().any(|(held, _, _)| held == key)
-                && !world_keys_destroyed_in_txn(&self.store, &txn, key.world)?
-                && new_pads_hold(&self.store, &txn, key.world)?
-            {
-                pads.push((*key, Zeroizing::new(**pad), *learned_at));
-            }
-        }
-        Ok(SealPlan {
-            vault_id,
-            signing,
-            publisher: secret.machine,
-            request: carry.request,
-            readers,
-            authority_readers,
-            kit_root,
-            pads,
-        })
-    }
-
-    fn bundle_vault_id(&self) -> Result<[u8; 32]> {
-        let txn = self.store.env.read_txn()?;
-        self.authority_view_readonly_in_txn(&txn)?
-            .vault_id
-            .ok_or_else(|| refused("the vault has no authority genesis yet"))
     }
 }
 
@@ -538,21 +345,6 @@ fn open_sections(
         }
     }
     Ok(out)
-}
-
-/// A fresh outer key, its capsules to the plan's readers, and `body` framed under
-/// it.
-fn seal_object(
-    kind: Kind,
-    plan: &SealPlan,
-    generation: SealedBundleGeneration,
-    body: Zeroizing<Vec<u8>>,
-) -> Result<SealedObject> {
-    let mut outer = Zeroizing::new([0u8; 32]);
-    os_fill(&mut outer[..])?;
-    let slots = seal_slots(kind, &plan.vault_id, generation, &outer, &plan.readers)?;
-    let bytes = seal_outer(kind, &plan.vault_id, generation, &outer, &slots, body, None)?;
-    Ok(SealedObject { generation, bytes })
 }
 
 /// The outer key in one anonymous capsule per reader, then blanks to a whole

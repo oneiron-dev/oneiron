@@ -64,6 +64,9 @@ pub(super) struct Saved {
     pub(super) unresolved_context_links: usize,
     /// Speaker links that named no one person.
     pub(super) unresolved_speaker_links: usize,
+    /// Whether this save replaced the turn's set: `false` when the set it
+    /// held already carried this answer's envelope and was kept.
+    pub(super) retagged: bool,
 }
 
 /// The envelope of a tag set read from `content_hash` by `made_by`, of the
@@ -90,6 +93,7 @@ pub(super) fn envelope(
         content_hash: content_hash.to_owned(),
         model_id: format!("{made_by}@{}", config.checkpoint),
         stack: stack.map(str::to_owned),
+        text_hash: None,
         version: SAVE_VERSION.to_owned(),
         params_hash: format!("{:x}", hash.finalize()),
     }
@@ -137,6 +141,7 @@ pub(super) fn save_in_txn(
                 .count()
         };
         return Ok(Saved {
+            retagged: false,
             linked: held
                 .mentions
                 .iter()
@@ -261,13 +266,25 @@ pub(super) fn save_in_txn(
             link_confidence,
         });
     }
+    // A turn read in windows has no measured mood of the whole of it: the
+    // mood it held stays, marked carried, beside the windows' own (FIX 9518).
+    let (mood, mood_carried) = match output.vad {
+        Some(vad) => (Some(vad), false),
+        None if !output.mood_parts.is_empty() => {
+            let prior = held.as_ref().and_then(|held| held.mood);
+            (prior, prior.is_some())
+        }
+        None => (None, false),
+    };
     let mut tags = TurnTags {
         turn,
         envelope,
         messages,
         mentions,
         merge_evidence,
-        mood: output.vad,
+        mood,
+        mood_carried,
+        mood_parts: output.mood_parts.clone(),
         saved_at: now,
         surprise: None,
     };
@@ -275,6 +292,13 @@ pub(super) fn save_in_txn(
     // replaces, so the reader of the tags finds the delta's surprise with
     // them and no model is called to measure it.
     tags.surprise = held.as_ref().map(|held| tags.surprise_since(held));
+    // A re-mention restores its archived entity, keeping its id, as the
+    // ingest resolver does; the candidate listing still sees the archive.
+    for entity in tags.entities() {
+        if vault.archive_tombstone_in_txn(txn, &entity)?.is_some() {
+            vault.restore_archived_in_txn(txn, &entity)?;
+        }
+    }
     let saved = Saved {
         linked: tags
             .mentions
@@ -285,6 +309,7 @@ pub(super) fn save_in_txn(
         surprise: tags.surprise,
         unresolved_context_links,
         unresolved_speaker_links,
+        retagged: true,
     };
     replace_in_txn(vault, txn, &turn, Some(&tags))?;
     Ok(saved)

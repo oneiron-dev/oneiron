@@ -12,6 +12,8 @@ use crate::receipt::ReceiptRecord;
 use crate::skill_attribution::{AttributionJudgment, AttributionVerdict, attribution_judgments};
 use crate::temporal::TimeRange;
 
+use super::amended::amended_receipt_shares_in_txn;
+use super::anchored_amendment::{AnchoredEffect, anchored_rows_in_txn, effective_evidence_in_txn};
 use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
 use super::ledger::{
@@ -61,6 +63,8 @@ pub(super) fn receipt_query(receipt: &ReceiptRecord) -> Result<SkillReliabilityQ
             .cloned()
             .unwrap_or_else(|| SKILL_OUTCOME_AXIS.to_owned()),
         type_parents,
+        // The run's project as the terminal receipt froze it (FIX 6038).
+        project: receipt.task_project()?,
     };
     query.validate()?;
     Ok(query)
@@ -251,12 +255,38 @@ pub(super) fn project_in_txn(
             }
         }
     }
+    // The anchored-amendment join (FIX 10148, FIX 11673, FIX 11674): an
+    // attempt with a native anchored pack outcome keeps that stable
+    // observation as its one effective run, restated here under its
+    // amendment's defect share. The scan covers every redirect-equivalent
+    // subject, and the share reads across every arm.
+    let amended = amended_receipt_shares_in_txn(vault, txn, skill)?;
+    let anchored = anchored_rows_in_txn(vault, txn, &subjects, executor)?;
+    let native_attempts: BTreeSet<&str> =
+        anchored.iter().map(|held| held.attempt.as_str()).collect();
+    let mut anchored_writes = Vec::new();
+    let mut anchored_withdrawals = Vec::new();
+    for held in &anchored {
+        match effective_evidence_in_txn(vault, txn, held, &amended)? {
+            AnchoredEffect::Stand => {}
+            AnchoredEffect::Record(evidence) => {
+                anchored_writes.push((held.cell.clone(), evidence));
+            }
+            AnchoredEffect::Withdraw => {
+                anchored_withdrawals.push((held.cell.clone(), held.receipt.clone()));
+            }
+        }
+    }
     let mut desired: BTreeMap<LearningCell, (SkillReliabilityQuery, Vec<LearningEvidence>)> =
         BTreeMap::new();
     for (receipt_ref, outcome) in &outcomes {
         let Some(outcome) = outcome else {
             continue;
         };
+        // Its native anchored observation above is this attempt's one run.
+        if native_attempts.contains(receipt_ref.as_str()) {
+            continue;
+        }
         let receipt = crate::receipt::attempt_pack_receipt_in_txn(&vault.store, txn, receipt_ref)?
             .ok_or(invalid("skill reliability receipt disappeared"))?;
         let query = receipt_query(&receipt)?;
@@ -329,6 +359,16 @@ pub(super) fn project_in_txn(
         for row in evidence {
             crate::learning::record_evidence_in_txn(vault, txn, &cell, &row, at)?;
         }
+        changed.remove(&cell.digest());
+    }
+    // The anchored writes land in cells the credit recording already kept a
+    // prior for; the stable key replaces the row in place.
+    for (cell, evidence) in anchored_writes {
+        crate::learning::record_evidence_in_txn(vault, txn, &cell, &evidence, at)?;
+        changed.remove(&cell.digest());
+    }
+    for (cell, receipt) in anchored_withdrawals {
+        crate::learning::evidence::withdraw_evidence_in_txn(vault, txn, &cell, &receipt, at)?;
         changed.remove(&cell.digest());
     }
     for digest in changed {

@@ -1,10 +1,18 @@
-use std::collections::{BTreeMap, BTreeSet};
+//! Partition executor: runs one prepared consolidation partition end to end.
+//! Entry: `ConsolidationExecutor`, the consolidation attempt executor.
+//! Definitions live here and in the executor's private children.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::ControlFlow;
+
+mod conflicts;
 mod decisions;
 pub(super) mod extraction;
 mod failure;
 mod merge_resolution;
+mod partition_run;
 
+use conflicts::{ConflictInput, ResolvedSets};
 pub use decisions::ConsolidationDecisions;
 pub(super) use decisions::{Decider, ScopedRead};
 use merge_resolution::MergeResolution;
@@ -14,6 +22,7 @@ use super::evidence::{
 };
 use super::resources::BranchResources;
 use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
+use super::stage_log::PartitionStages;
 use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
@@ -138,7 +147,8 @@ impl ConsolidationExecutor<'_> {
     /// `ContradictionLeftStanding`; contradictions never land silently).
     /// A pack whose question went up the role chain and waits holds its set
     /// out of the pass, and the attempt comes back for the answer. Every
-    /// output keeps the decisions that shaped it.
+    /// output keeps the decisions that shaped it. `stages` takes the wall ms
+    /// of the gap upsert.
     pub(super) async fn resolve_conflicts(
         &mut self,
         candidates: Vec<ExtractedCandidate>,
@@ -146,6 +156,7 @@ impl ConsolidationExecutor<'_> {
         ctx: &WakeAttemptContext<'_>,
         step_identity: (crate::attempt_queue::AttemptId, Option<String>),
         charges: &mut StepChargeTally,
+        stages: &mut PartitionStages,
     ) -> DurableStepResult<PartitionRun> {
         let assembled =
             super::assembly::assemble_extracted(ctx.vault, resources, candidates, ctx.now_ms)?;
@@ -167,235 +178,41 @@ impl ConsolidationExecutor<'_> {
             });
         }
 
-        let mut dropped: BTreeSet<usize> = BTreeSet::new();
-        let mut merged: Vec<VerifiedCandidate> = Vec::new();
-        let mut escalated: Vec<(ReflectionGap, VerifiedEvidenceSet)> = Vec::new();
-        // An accumulated member keeps the pack that kept it, and the first
-        // try's open marker its conflict answers (FIX 7325).
-        let mut kept_by: BTreeMap<usize, Vec<KeptDecision>> = BTreeMap::new();
-        let mut answered: BTreeMap<usize, Vec<ResolvedConflictOutput>> = BTreeMap::new();
-        let mut waiting = false;
-
-        for conflict in &conflicts {
-            let members: Vec<&VerifiedCandidate> = conflict
-                .candidate_indexes
-                .iter()
-                .map(|index| &candidates[*index])
-                .collect();
-            let prior = conflict
-                .prior_head
-                .map(|id| resources.prior(id))
-                .transpose()?;
-            let member_data: Vec<_> = members.iter().map(|member| &member.proposal).collect();
-            if super::judge_context::fast_path(&policy, conflict, &member_data, prior)
-                || super::judge_context::bound_correction(
-                    &corrections,
-                    conflict,
-                    &member_data,
-                    prior,
-                )
-            {
-                let mut candidate = (*members[0]).clone();
-                candidate.proposal.supersedes = conflict.prior_head;
-                for member in &members[1..] {
-                    join_decisions(&mut candidate.proposal.decisions, &member.decisions);
-                }
-                let answer = ResolvedConflictOutput::of_first_try(
-                    ctx.vault,
-                    conflict,
-                    step_identity.0,
-                    vec![candidate.claim_id],
-                    "fast_path",
-                );
-                candidate.answers.extend(answer);
-                dropped.extend(conflict.candidate_indexes.iter().copied());
-                merged.push(candidate);
-                continue;
-            }
-            let prior_heads = conflict
-                .prior_heads
-                .iter()
-                .map(|id| resources.prior(*id).cloned())
-                .collect::<Result<Vec<_>>>()?;
-            let step_ctx = DurableStepContext {
-                vault: ctx.vault,
-                attempt_id: step_identity.0,
-                run_id: step_identity.1.clone(),
-                envelope_actor: self.actor,
-                subject: conflict.identity.subject,
-                deadline: Some(ctx.deadline),
-                now_ms: ctx.now_ms,
-            };
-            // Suspended mid-merge, the attempt is parked: STOP and surface the
-            // trap. Writing a contradiction gap here would fabricate a
-            // `ContradictionLeftStanding` for a merge that never decided
-            // (#485-2); accepting partial survivors would drop the rest as done.
-            // On resume the memoized steps replay and this merge re-runs to a
-            // real resolution.
-            let answers = match self
-                .decide_conflict(
-                    &step_ctx,
-                    ctx.deadline,
-                    conflict,
-                    &member_data,
-                    &prior_heads,
-                    resources,
-                    charges,
-                )
-                .await
-            {
-                Ok(Some(answers)) => answers,
-                Ok(None) => return Ok(PartitionRun::Trapped),
-                Err(error) => {
-                    return self.conflict_failed(
-                        error,
-                        conflict,
-                        &members,
-                        resources,
-                        ctx,
-                        step_identity.0,
-                        charges,
-                    );
-                }
-            };
-            if ctx.deadline.expired() {
-                return Ok(PartitionRun::Checkpoint);
-            }
-            // Asked up and not answered yet: neither resolved nor left
-            // standing. Its members wait out the pass with it.
-            if answers.waiting() {
-                dropped.extend(conflict.candidate_indexes.iter().copied());
-                waiting = true;
-                continue;
-            }
-            let mut decisions = answers.decisions.clone();
-            for member in &members {
-                join_decisions(&mut decisions, &member.decisions);
-            }
-            let resolution = match answers.resolution.as_deref() {
-                Some(label @ ("merge" | "supersede")) => {
-                    match self
-                        .merged_value(
-                            &step_ctx,
-                            label,
-                            answers.identity,
-                            conflict,
-                            &member_data,
-                            &prior_heads,
-                            resources.scope(),
-                            charges,
-                        )
-                        .await
-                    {
-                        Ok(Some(resolution)) => resolution,
-                        Ok(None) => return Ok(PartitionRun::Trapped),
-                        Err(error) => {
-                            return self.conflict_failed(
-                                error,
-                                conflict,
-                                &members,
-                                resources,
-                                ctx,
-                                step_identity.0,
-                                charges,
-                            );
-                        }
-                    }
-                }
-                Some("accumulate") => MergeResolution::Accumulate,
-                // An escalation, or no answer: the contradiction stays standing.
-                _ => MergeResolution::Escalate,
-            };
-            if ctx.deadline.expired() {
-                return Ok(PartitionRun::Checkpoint);
-            }
-            match resolution {
-                // Keep every member, each with the pack that kept it.
-                MergeResolution::Accumulate => {
-                    let answer = ResolvedConflictOutput::of_first_try(
-                        ctx.vault,
-                        conflict,
-                        step_identity.0,
-                        members.iter().map(|member| member.claim_id).collect(),
-                        "accumulate",
-                    );
-                    for index in &conflict.candidate_indexes {
-                        join_decisions(kept_by.entry(*index).or_default(), &answers.decisions);
-                        answered.entry(*index).or_default().extend(answer.clone());
-                    }
-                }
-                MergeResolution::Merge {
-                    value,
-                    candidate_ref,
-                } => {
-                    let mut selected = conflict.clone();
-                    if let Some(id) = candidate_ref {
-                        let member = members
-                            .iter()
-                            .find(|member| member.claim_id == id)
-                            .ok_or_else(|| {
-                                invalid_consolidation("merge selected an unlisted candidate")
-                            })?;
-                        selected.identity =
-                            super::routing::candidate_keys(member, resources.key_rules())?.identity;
-                        let matching = resources.matching_priors(member, resources.key_rules())?;
-                        selected.prior_head = (matching.len() == 1).then(|| matching[0].0);
-                    } else if members.iter().any(|member| {
-                        candidate_facts(&member.candidate)
-                            .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
-                    }) {
-                        return Err(invalid_consolidation(
-                            "cross-predicate merge requires a candidate identity",
-                        )
-                        .into());
-                    }
-                    dropped.extend(conflict.candidate_indexes.iter().copied());
-                    let mut output = merged_candidate(
-                        &selected,
-                        &members,
-                        &prior_heads,
-                        value,
-                        decisions,
-                        step_identity.0,
-                        ctx.now_ms,
-                    )?;
-                    // The marker is the original conflict's, minted before
-                    // a cross-predicate selection moved its identity.
-                    let answer = ResolvedConflictOutput::of_first_try(
-                        ctx.vault,
-                        conflict,
-                        step_identity.0,
-                        vec![output.claim_id],
-                        answers.resolution.as_deref().unwrap_or("merge"),
-                    );
-                    output.answers.extend(answer);
-                    merged.push(output);
-                }
-                MergeResolution::Escalate => {
-                    // A durable outage fallback is still an unresolved question,
-                    // not permission to lose the prior head's conflict marker.
-                    resources.require_output(resources.scope())?;
-                    super::open_conflict::park_open_conflict(
-                        ctx.vault,
-                        self.actor,
-                        step_identity.0,
-                        conflict,
-                        &members,
-                        &decisions,
-                        &resources.write_fence(),
-                        ctx.now_ms,
-                    )?;
-                    dropped.extend(conflict.candidate_indexes.iter().copied());
-                    escalated.push(contradiction_gap(conflict, &members, ctx.now_ms)?);
-                }
-            }
-        }
+        let state = match self
+            .resolve_sets(
+                ConflictInput {
+                    candidates: &candidates,
+                    conflicts: &conflicts,
+                    corrections: &corrections,
+                    policy: &policy,
+                },
+                resources,
+                ctx,
+                step_identity,
+                charges,
+            )
+            .await?
+        {
+            ControlFlow::Break(run) => return Ok(run),
+            ControlFlow::Continue(state) => state,
+        };
+        let ResolvedSets {
+            dropped,
+            merged,
+            escalated,
+            kept_by,
+            mut answered,
+            waiting,
+        } = state;
 
         if ctx.deadline.expired() {
             return Ok(PartitionRun::Checkpoint);
         }
         if !escalated.is_empty() {
-            resources.upsert_verified_gaps(resources.scope(), escalated, ctx.now_ms)?;
+            let gap_started = std::time::Instant::now();
+            let upserted = resources.upsert_verified_gaps(resources.scope(), escalated, ctx.now_ms);
+            stages.gap_ms = super::stage_log::ms_since(gap_started);
+            upserted?;
         }
 
         let mut surviving: Vec<VerifiedCandidate> = candidates
@@ -405,6 +222,12 @@ impl ConsolidationExecutor<'_> {
             .map(|(index, mut candidate)| {
                 if let Some(decisions) = kept_by.get(&index) {
                     join_decisions(&mut candidate.proposal.decisions, decisions);
+                    // FIX 12084: an accumulated member resolved its conflict;
+                    // the tournament gate reads it as contested. Single-pass
+                    // never sets it.
+                    if matches!(self.strategy, DreamerClaimAuthoringStrategy::Tournament) {
+                        candidate.contested = true;
+                    }
                 }
                 if let Some(bound) = answered.remove(&index) {
                     candidate.answers.extend(bound);
@@ -508,6 +331,7 @@ fn merged_candidate(
     let mut chain: Vec<ConsolidationProvenanceHop> = Vec::new();
     let mut meet = ClaimSource::UserStated;
     let mut confidence = 0.0_f32;
+    let mut sources: Option<Vec<EntityId>> = Some(Vec::new());
     for member in members {
         combined = Some(combined.map_or_else(
             || member.evidence.clone(),
@@ -525,6 +349,7 @@ fn merged_candidate(
                 chain.push(*hop);
             }
         }
+        sources = crate::skill_optimize::union_source_rows([sources, member.sources.clone()]);
         meet = source_meet(meet, member.evidence_meet);
         confidence = confidence.max(0.5);
     }
@@ -548,7 +373,7 @@ fn merged_candidate(
         &value,
         conflict.identity.world,
         conflict.identity.facet,
-        conflict.identity.rel,
+        conflict.identity.rel.as_ref(),
         conflict.identity.project,
         conflict.identity.topic.as_deref(),
     )?;
@@ -558,9 +383,7 @@ fn merged_candidate(
         value,
         confidence,
     );
-    if let Some(rel) = conflict.identity.rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(conflict.identity.rel.clone());
     if let Some(world) = conflict.identity.world {
         candidate = candidate.with_world(world);
     }
@@ -590,6 +413,9 @@ fn merged_candidate(
         },
         evidence: combined,
         answers: Vec::new(),
+        sources,
+        // Set by the caller on the tournament strategy (FIX 12084).
+        contested: false,
     })
 }
 
@@ -696,7 +522,10 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
         // A Timer wake's plan parent (FIX 336): its children and remainder
         // landed with it at enqueue, so running it only completes it.
         if attempt.status.payload.attempt_type == crate::dreamer_wake::nightly::PLAN_ATTEMPT {
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
         if attempt.status.payload.attempt_type == crate::dreamer_wake::sieve::RUNG_ATTEMPT {
             return self.run_sieve_rungs(attempt, ctx).await;
@@ -766,7 +595,10 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 agent: self.actor,
             };
             crate::edit_distance::miner::run_substitution_miner(ctx.vault, &run)?;
-            return Ok(DreamerAttemptExecution::Completed { completed_units: 0 });
+            return Ok(DreamerAttemptExecution::Completed {
+                completed_units: 0,
+                step_hashes: Vec::new(),
+            });
         }
 
         if attempt.status.payload.attempt_type == DREAMER_GAP_SCAN_ATTEMPT_TYPE {
@@ -845,6 +677,7 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                                 .now_ms
                                 .div_ceil(1_000)
                                 .saturating_add(super::RESIDENCY_RETRY_SECS),
+                            step_hashes: Vec::new(),
                         })
                     }
                     _ => Err(invalid_consolidation(
@@ -873,82 +706,19 @@ impl DreamerAttemptExecutor for ConsolidationExecutor<'_> {
                 "prepared branch scope changed after the wake pin",
             ));
         }
-        let payload = plan.input().clone();
-        // A turn demoted since the wake prepared it waits for its promotion
-        // (FIX 3861), as one away at preparation does.
-        let resources = match BranchResources::open_prepared(ctx.vault, self.actor, plan, wake) {
-            Err(error) if super::residency::waits_on_residency(&error) => {
-                return Ok(super::residency::residency_deferral(ctx.now_ms, 0));
-            }
-            resources => resources?,
-        };
-        let run_id = attempt.status.attempt.run_id.clone();
-        let mut charges = StepChargeTally::default();
-        match self
-            .run_partition_attempt(
-                &payload,
-                &resources,
-                ctx,
-                attempt.status.attempt.id,
-                run_id,
-                &mut charges,
-            )
-            .await
+        // FIX 7729: a child its preparation narrowed holds only what it runs.
+        let narrowed = plan.branch().bucket_set();
+        if decode_partition_payload(&attempt.status.payload.input)
+            .is_ok_and(|queued| queued.bucket_set() != narrowed)
         {
-            Ok(PartitionRun::Completed { .. } | PartitionRun::Held { .. })
-                if ctx.deadline.expired() =>
-            {
-                Ok(charges.checkpoint())
-            }
-            Ok(PartitionRun::Checkpoint) => Ok(charges.checkpoint()),
-            // A refused extraction, a refused citation (FIX 7274) among
-            // them, retries as the same try after its retry delay (FIX 7218,
-            // Engine 10-21): a private park would keep its row leased.
-            Ok(PartitionRun::Refused { reason }) => {
-                Ok(charges.park_for(&reason, DreamerParkCause::Retry))
-            }
-            // A turn demoted after the model answered waits too (FIX 6060),
-            // settling what the attempt already spent.
-            Ok(PartitionRun::Completed { candidates }) => {
-                if let Err(error) = resources
-                    .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
-                    .await
-                {
-                    return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
-                }
-                Ok(DreamerAttemptExecution::Completed {
-                    completed_units: charges.units,
-                })
-            }
-            Ok(PartitionRun::Held {
-                candidates,
-                retry_at_ms,
-            }) => {
-                if let Err(error) = resources
-                    .accept_until(resources.scope(), self.sink, candidates, ctx.deadline)
-                    .await
-                {
-                    return super::residency::spent_or_deferred(error, ctx.now_ms, charges.units);
-                }
-                Ok(DreamerAttemptExecution::Deferred {
-                    completed_units: charges.units,
-                    retry_at: retry_at_ms.div_ceil(1_000),
-                })
-            }
-            // The step layer already parked the trapped attempt; Park it for resume
-            // WITHOUT accepting candidates or completing it (#485-1, #485-2).
-            Ok(PartitionRun::Trapped) => {
-                Ok(charges.park_for("durable step trapped for resume", DreamerParkCause::Signal))
-            }
-            Err(crate::llm::DurableStepError::Engine(error)) => {
-                super::residency::spent_or_deferred(error, ctx.now_ms, charges.units)
-            }
-            // Every other failure parks with what the attempt spent, a
-            // refused conflict read's paid usage included (FIX 414).
-            Err(other) => Ok(failure::park_partition_failure_with_spend(
-                other,
-                &mut charges,
-            )),
+            super::running_buckets::record_running_buckets(
+                ctx.vault,
+                attempt.status.attempt.id,
+                attempt.status.attempt.attempt_count,
+                &narrowed,
+            )?;
         }
+        self.execute_prepared_partition(attempt, ctx, plan, wake)
+            .await
     }
 }

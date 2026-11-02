@@ -76,8 +76,11 @@ pub(super) fn scrub_pending(vault: &Vault, txn: &mut heed::RwTxn<'_>, id: Entity
     // is obsolete; it must not be transmitted by reconnect.
     let pending = SYNC_QN_E.scan_from(&vault.store, txn, &key_prefix)?;
     for (key, bytes) in pending {
+        let queued = super::PendingNoteRequest::decode(&bytes)
+            .ok_or_else(|| invalid("NOTE pending request"))?
+            .frame;
         let frame = crate::sync::transport::decode_document(
-            bytes
+            queued
                 .get(1..)
                 .ok_or_else(|| invalid("NOTE pending frame"))?,
         )

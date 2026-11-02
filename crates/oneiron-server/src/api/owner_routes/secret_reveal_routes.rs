@@ -9,19 +9,20 @@
 
 use std::sync::Arc;
 
-use axum::Router;
-use axum::extract::rejection::{JsonRejection, QueryRejection};
+use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use base64::Engine as _;
 use oneiron::secret_custody::{
-    RevealTarget, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk, SecretRevealReceipt,
+    RevealGrantScope, RevealTarget, SecretRevealAnswer, SecretRevealAnswered, SecretRevealAsk,
+    SecretRevealReceipt,
 };
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner};
-use crate::api::{json_payload, query_params};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
+use crate::api::body_spool::OwnerJsonBody;
+use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
@@ -29,11 +30,58 @@ use crate::server::SyncServer;
 /// The most reveals one read lists.
 const MAX_REVEALS_PAGE: usize = 200;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/secrets/reveals", get(reveals))
-        .route("/secrets/reveals/answer", post(answer))
-        .route("/secrets/reveal", post(reveal))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/secrets/reveals",
+                summary: "The vault's reveals, newest first, each with its receipt and, while it waits on the owner, its ask card and digest.",
+                row: None,
+            },
+            get(reveals),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/reveals/answer",
+                summary: "The owner's answer to one asked reveal, against the exact digest it was listed with.",
+                row: None,
+            },
+            post(answer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/secrets/reveal",
+                summary: "The owner reads one secret's value.",
+                row: None,
+            },
+            post(reveal),
+        ),
+    ]
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveals/answer`'s body (FIX 11611):
+/// [`AnswerReveal`].
+pub(crate) fn answer_reveal_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnswerReveal>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveals/answer`'s answer (FIX 11611):
+/// [`AnsweredView`].
+pub(crate) fn reveal_answered_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<AnsweredView>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveal`'s body (FIX 11611): [`OwnerReveal`].
+pub(crate) fn owner_reveal_body_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<OwnerReveal>()
+}
+
+/// The OpenAPI schema of `POST /v1/owner/secrets/reveal`'s answer (FIX 11611): [`RevealedView`].
+pub(crate) fn revealed_view_schema() -> serde_json::Value {
+    oneiron_contracts::code_run::vault_read::request_schema::<RevealedView>()
 }
 
 #[derive(Debug, Deserialize)]
@@ -49,7 +97,7 @@ struct RevealsQuery {
 
 /// One reveal's receipt, as the owner reads it. It names the handle, never
 /// the value.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct ReceiptView {
     reveal: String,
     handle: String,
@@ -68,6 +116,10 @@ struct ReceiptView {
     delivered_at: Option<u64>,
     /// The file an agent's read of a marked file named, as 32 hex.
     file: Option<String>,
+    /// Why the reveal closed with no value, `None` otherwise (FIX 8350).
+    cause: Option<String>,
+    /// The reach of the standing grant that answered it (FIX 2354).
+    scope: Option<&'static str>,
 }
 
 impl From<SecretRevealReceipt> for ReceiptView {
@@ -90,6 +142,8 @@ impl From<SecretRevealReceipt> for ReceiptView {
             asked_at: receipt.asked_at,
             delivered_at: receipt.delivered_at,
             file: receipt.file.map(|file| file.to_hex()),
+            cause: receipt.cause.map(|cause| cause.as_str().to_owned()),
+            scope: receipt.scope.map(RevealGrantScope::as_str),
         }
     }
 }
@@ -106,8 +160,12 @@ struct RevealView {
     disclosure: Option<String>,
     /// Lowercase hex; an answer sends exactly this back as `expected_digest`.
     expected_digest: Option<String>,
-    /// The registry row a `standing` answer writes.
+    /// The registry row a `standing` answer writes at its default reach.
     grant_ref: Option<String>,
+    /// The reaches a `standing` answer may send as `scope`, the narrowest
+    /// first (FIX 2354); empty for a repo file reveal, which sends
+    /// `repo_scope`.
+    scopes: Vec<&'static str>,
     card: Option<oneiron::genui::ConsentAskCard>,
 }
 
@@ -120,12 +178,17 @@ impl From<SecretRevealAsk> for RevealView {
             disclosure: ask.disclosure,
             expected_digest: ask.once_digest.map(|digest| digest.to_hex()),
             grant_ref: ask.grant_ref,
+            scopes: ask
+                .scopes
+                .into_iter()
+                .map(RevealGrantScope::as_str)
+                .collect(),
             card: ask.card,
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum Answer {
     Once,
@@ -143,7 +206,7 @@ impl From<Answer> for SecretRevealAnswer {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct AnswerReveal {
     /// The reveal, as 32 hex.
@@ -157,9 +220,14 @@ struct AnswerReveal {
     /// revoked.
     #[serde(default)]
     repo_scope: Option<oneiron::secret_custody::RepoFileRevealScope>,
+    /// For a standing answer to any other reveal, its reach (FIX 2354):
+    /// `project`, `every_project`, `task` or `run`, one of the reveal's
+    /// `scopes`. Absent: this project.
+    #[serde(default)]
+    scope: RevealGrantScope,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct AnsweredView {
     reveal: String,
     outcome: &'static str,
@@ -167,6 +235,8 @@ struct AnsweredView {
     /// The standing grant a `standing` answer wrote; revoke it in the
     /// consent registry.
     grant_ref: Option<String>,
+    /// That grant's reach (FIX 2354); `None` for a repo file reveal's.
+    scope: Option<&'static str>,
 }
 
 impl From<SecretRevealAnswered> for AnsweredView {
@@ -176,11 +246,12 @@ impl From<SecretRevealAnswered> for AnsweredView {
             outcome: answered.answer.as_str(),
             receipt_ref: format!("gate:{}", answered.decision.to_hex()),
             grant_ref: answered.grant_ref,
+            scope: answered.scope.map(RevealGrantScope::as_str),
         }
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct OwnerReveal {
     /// The secret's handle, such as `sc12`; or `name`.
@@ -194,7 +265,7 @@ struct OwnerReveal {
 }
 
 /// The owner's read: the value, in this body only, and its receipt.
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 struct RevealedView {
     value_base64: String,
     receipt: ReceiptView,
@@ -229,10 +300,10 @@ async fn reveals(
 async fn answer(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AnswerReveal>, JsonRejection>,
+    payload: OwnerJsonBody<AnswerReveal>,
 ) -> OwnerReply<AnsweredView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let answered = blocking(move || -> OwnerResult<AnsweredView> {
         let reveal = entity_id("reveal", &request.reveal)?;
         let digest = digest_bytes(&request.expected_digest)?;
@@ -244,6 +315,7 @@ async fn answer(
                 &digest,
                 request.outcome.into(),
                 request.repo_scope,
+                request.scope,
             )?
             .into())
     })
@@ -257,10 +329,10 @@ async fn answer(
 async fn reveal(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<OwnerReveal>, JsonRejection>,
+    payload: OwnerJsonBody<OwnerReveal>,
 ) -> OwnerReply<RevealedView> {
     let owner = owner(&auth, &server)?;
-    let request = json_payload(payload)?;
+    let request = payload.read(&server).await?;
     let revealed = blocking(move || -> OwnerResult<RevealedView> {
         let target = match (request.handle, request.name) {
             (Some(handle), None) => RevealTarget::Handle(handle),

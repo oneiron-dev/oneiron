@@ -1,8 +1,10 @@
 use zeroize::Zeroize;
 
+use super::overlay::PlanCharge;
 use crate::batch::BatchOp;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::skill_attribution::RunWriteToken;
 use crate::temporal::TimeRange;
 
 /// Semantic ownership tag on a typed journal entry (ARCH-0052 D4, K3).
@@ -47,6 +49,10 @@ pub(crate) struct JournalEntry {
     pub(crate) learned_at: u64,
     pub(crate) occurred: TimeRange,
     pub(crate) op: BatchOp,
+    /// The leased run whose envelope was open as the op was journaled: an
+    /// authorized promotion that replays the op witnesses its edges for that
+    /// run, never for the promoter (FIX 3103). `None` is unknown.
+    pub(crate) source_run: Option<RunWriteToken>,
 }
 
 impl JournalEntry {
@@ -56,7 +62,8 @@ impl JournalEntry {
     /// room's media door stages (`Vault::put_session_media_vector`): derived
     /// from the room's own records and recomputable, it spends none, and the
     /// door marks its row as bookkeeping too, so a write that fits the room
-    /// without it still fits (FIX 2345, Engine 10-20 23:4x).
+    /// without it still fits (FIX 2345, Engine 10-20 23:4x). Its source run
+    /// is the host's bookkeeping too, and spends none (FIX 3103).
     pub(super) fn byte_size(&self) -> usize {
         if matches!(
             self.op,
@@ -67,7 +74,9 @@ impl JournalEntry {
         ) {
             return 0;
         }
-        std::mem::size_of::<Self>().saturating_add(batch_op_payload_bytes(&self.op))
+        std::mem::size_of::<Self>()
+            .saturating_sub(std::mem::size_of::<Option<RunWriteToken>>())
+            .saturating_add(batch_op_payload_bytes(&self.op))
     }
 }
 
@@ -169,10 +178,10 @@ impl JournalScope {
 /// One turn's promotable closure, cut out of the typed journal by
 /// [`OverlaySnapshot::plan_promotion`] (ARCH-0052 D4, ONE-1730).
 ///
-/// The plan is pure data: it names WHAT to replay, and the promote
-/// transaction decides how. Selection and durable commit are separate so the
-/// caller can hold the per-session state lock across both and a failed commit
-/// leaves the journal it was cut from untouched.
+/// The plan is data and the charge on its copies: it names WHAT to replay,
+/// and the promote transaction decides how. Selection and durable commit are
+/// separate so the caller can hold the per-session state lock across both and
+/// a failed commit leaves the journal it was cut from untouched.
 pub(crate) struct PromotePlan {
     /// The replay program, in journal-staging order — the shell put leads, so
     /// every later op refers to a row the base apply already materialized.
@@ -193,11 +202,17 @@ pub(crate) struct PromotePlan {
     /// other: never one published after the snapshot this plan was cut from,
     /// nor one the plan left out.
     pub(super) cut_from: Vec<u64>,
+    /// The source run each op's journal entry kept, in the same order as
+    /// `ops` (FIX 3103).
+    pub(super) source_runs: Vec<Option<RunWriteToken>>,
     pub(super) turn: EntityId,
     pub(super) conversation: EntityId,
     /// Whether the turn is already in base, saved by this stretch, so the
     /// plan only adds messages said into it since ([`Self::appends`]).
     pub(super) appends: bool,
+    /// The copies' charge on what the room's overlay retains, held for the
+    /// plan's life. Last, so it drops after the copies it counts.
+    pub(super) charge: Option<PlanCharge>,
 }
 
 // Replay ops and in-room aliases are private temporary copies of journal
@@ -229,6 +244,15 @@ impl PromotePlan {
     /// after the run spoke on into a saved turn).
     pub(crate) const fn appends(&self) -> bool {
         self.appends
+    }
+
+    /// Each op with the source run its journal entry kept, in plan order.
+    pub(crate) fn ops_with_source_runs(
+        &self,
+    ) -> impl Iterator<Item = (&BatchOp, Option<&RunWriteToken>)> {
+        self.ops
+            .iter()
+            .zip(self.source_runs.iter().map(Option::as_ref))
     }
 }
 

@@ -35,6 +35,8 @@ use crate::memory::{
 use crate::origin::export::EngineCommitExport;
 use crate::origin::publication::OriginPublicationStatus;
 use crate::origin::residence::{OriginAuthorityLease, OriginHostAuthority};
+use crate::origin::secret_projection::RepoRevealRecipient;
+use crate::origin::secret_projection::checkout_recipient::record_run_checkout_recipient;
 use crate::origin::smart_http::{
     ORIGIN_REPO_DIR_SUFFIX, origin_repo_dir, origin_serving_root, push_queue_key,
 };
@@ -125,6 +127,8 @@ pub struct RepoExportOutput {
 struct RunCheckout {
     served: String,
     lease: CheckoutLeaseAct,
+    /// The PROJECT the run's admission bound its anchor in.
+    project: EntityId,
 }
 
 impl Memory<'_> {
@@ -152,6 +156,14 @@ impl Memory<'_> {
         // to the masked copy once, and the port materializes that copy.
         wire.select_projected_checkout(&own.lease, true)
             .map_err(checkout_refusal)?;
+        // FIX 10271/9328: the run's proven agent, PROJECT and run, kept
+        // beside the copy's binding for its later Git exchanges.
+        if binding.actor.actor_class() == crate::EdgeActorClass::Agent {
+            let recipient = RepoRevealRecipient::proven_agent(binding.actor.entity_ref())
+                .in_project(Some(own.project))
+                .for_run(Some(binding.executor_run.to_hex()));
+            record_run_checkout_recipient(self.vault, &own.lease, input.repo, &recipient);
+        }
         wire.materialize(&own.lease).map_err(checkout_refusal)?;
         let checkout = own.lease.checkout_id.to_string();
         let remote_url = input.endpoint.as_deref().map(|endpoint| {
@@ -175,7 +187,8 @@ impl Memory<'_> {
     /// `self.code.export` for a run: the revision is one the run's lane
     /// reads, the run's checkout is materialized on the served store, and
     /// L02's publication policy admits the ref over every path the revision
-    /// holds, judged again just before the unchanged engine export.
+    /// holds, judged again just before the engine export; a ref move that
+    /// rewrites history needs that Grant to list publish_rewrite too.
     pub fn repo_export_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -202,7 +215,8 @@ impl Memory<'_> {
             input.epoch,
             paths.clone(),
         )?;
-        let grant = self.repo_publication_grant(binding, input.repo, &input.git_ref, &paths)?;
+        let grant =
+            self.repo_publication_grant(binding, input.repo, &input.git_ref, &paths, false)?;
         let wire = GitWire::new(self.vault)?;
         let source = self.repo_checkout_source(&wire, &own)?;
         let request = EngineCommitExport {
@@ -222,12 +236,40 @@ impl Memory<'_> {
             &repo_target(input.repo, &input.git_ref, &paths),
             RepoAccessIntent::Read,
         )?;
-        if self.repo_publication_grant(binding, input.repo, &input.git_ref, &paths)? != grant {
+        if self.repo_publication_grant(binding, input.repo, &input.git_ref, &paths, false)? != grant
+        {
             return Err(refusal_error(RepoAccessRefusal::StaleLease));
         }
-        let receipt =
-            self.vault
-                .export_engine_commit(&wire, &source, &request, authority.as_ref())?;
+        // The exact ref move is classified once its projection is known: a
+        // move whose new commit does not descend from `expected_old_oid` is a
+        // history rewrite, and needs a Grant that also lists publish_rewrite
+        // (FIX 8800); without one it is the typed publication hold.
+        let mut grant = grant;
+        let receipt = self.vault.export_engine_commit_judged(
+            &wire,
+            &source,
+            &request,
+            authority.as_ref(),
+            |new_oid| {
+                let Some(old) = &request.expected_old_oid else {
+                    return Ok(Ok(()));
+                };
+                // A move this store cannot prove descends is a rewrite.
+                let descends = wire
+                    .commits_reachable_from(
+                        &source,
+                        std::slice::from_ref(old),
+                        std::slice::from_ref(new_oid),
+                    )
+                    .unwrap_or(false);
+                if descends {
+                    return Ok(Ok(()));
+                }
+                Ok(self
+                    .repo_publication_grant(binding, input.repo, &input.git_ref, &paths, true)
+                    .map(|rewrite| grant = rewrite))
+            },
+        )??;
         Ok(RepoRunAnswer {
             rows: vec![input.repo, revision.revision_id],
             output: RepoExportOutput {
@@ -279,7 +321,11 @@ impl Memory<'_> {
         if lease.task_ref != binding.task {
             return Err(refusal_error(RepoAccessRefusal::StaleLease));
         }
-        Ok(RunCheckout { served, lease })
+        Ok(RunCheckout {
+            served,
+            lease,
+            project: admitted.membership.bounds.project,
+        })
     }
 
     /// The run's materialized checkout as the export's source: its tree
@@ -322,13 +368,15 @@ impl Memory<'_> {
 
     /// L02's publication policy for the run: the one Grant that admits
     /// `git_ref` of `repo` over every one of `paths` and lists `publish`,
-    /// read in one snapshot. None is the typed hold.
+    /// and `publish_rewrite` too for a `rewrite`, read in one snapshot.
+    /// None is the typed hold.
     fn repo_publication_grant(
         &self,
         binding: &RepoRunBinding,
         repo: EntityId,
         git_ref: &str,
         paths: &BTreeSet<String>,
+        rewrite: bool,
     ) -> MemoryResult<EntityId> {
         let txn = self
             .vault
@@ -341,7 +389,7 @@ impl Memory<'_> {
             binding.actor.entity_ref(),
             binding.actor.actor_class(),
             &repo_target(repo, git_ref, paths),
-            false,
+            rewrite,
             None,
         )?;
         match admitted {

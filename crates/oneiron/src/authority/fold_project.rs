@@ -147,6 +147,10 @@ pub(super) fn project_once(
     let accepted_roster_marks = merged.as_ref().map_or_else(BTreeSet::new, |state| {
         rows.accepted_roster_marks(state, &valid_entries)
     });
+    // Each live agent world edit's world as read without it (FIX 11426).
+    let agent_world_undo = merged.as_mut().map_or_else(Default::default, |state| {
+        super::agent_world_undo::AgentWorldUndo::of(state, context.pin, context.machine_standing)
+    });
     let fold = AuthorityFold {
         append_heads: BTreeSet::new(),
         anchor_heads: BTreeMap::new(),
@@ -170,6 +174,9 @@ pub(super) fn project_once(
             .as_ref()
             .map_or_else(BTreeMap::new, |state| state.roster.clone()),
         retired_keys,
+        host_custody: merged
+            .as_ref()
+            .map_or_else(BTreeSet::new, super::machine_profile::host_custody_closure),
         closed_handoffs,
         genesis_fragile: merged.as_ref().is_some_and(|state| {
             state.genesis_recovery_dismissed && !state.recovery_redundancy_established
@@ -240,6 +247,17 @@ pub(super) fn project_once(
                 context.machine_standing,
             )
         }),
+        policy_settings: merged.as_ref().map_or_else(Default::default, |state| {
+            super::policy_setting_choice::folded_policy_settings(
+                state,
+                context.pin,
+                context.machine_standing,
+            )
+        }),
+        agent_carried_acts: merged
+            .as_ref()
+            .map_or_else(BTreeMap::new, |state| state.agent_carried_acts.clone()),
+        agent_world_undo,
         home_candidacy: merged.as_ref().map_or_else(BTreeMap::new, |state| {
             super::home_candidacy::folded_home_candidacies(state)
         }),

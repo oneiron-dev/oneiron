@@ -32,10 +32,6 @@ pub(in crate::attempt_queue) const MAX_RUN_ID_LEN: usize =
     crate::skill_optimize::SKILL_EDIT_CYCLE_MAX_BYTES
         - crate::skill_optimize::SKILL_EDIT_CYCLE_RUN_PREFIX.len();
 
-const MAX_INTERVENTION_ACTOR_LEN: usize = 128;
-
-const MAX_INTERVENTION_NOTE_LEN: usize = 2048;
-
 /// Same bound as a resume point's artifact reference: both name one durable
 /// artifact, so one over-long reference must not be admissible on one door and
 /// refused on the other.
@@ -76,11 +72,7 @@ pub(in crate::attempt_queue) const ERR_RUN_ID_TOO_LONG: &str =
 
 const ERR_INTERVENTION_ACTOR_EMPTY: &str = "intervention actor must not be empty";
 
-const ERR_INTERVENTION_ACTOR_TOO_LONG: &str = "intervention actor exceeds 128 bytes";
-
 const ERR_INTERVENTION_NOTE_EMPTY: &str = "intervention note must not be empty";
-
-const ERR_INTERVENTION_NOTE_TOO_LONG: &str = "intervention note exceeds 2048 bytes";
 
 pub(in crate::attempt_queue) const ERR_MANIFEST_REFERENCE_EMPTY: &str =
     "manifest reference must not be empty";
@@ -375,34 +367,30 @@ pub(in crate::attempt_queue) fn validate_optional_run_id(run_id: Option<&str>) -
     Ok(())
 }
 
+/// Structural only, at the door and at decode alike (FIX 9580): an actor
+/// names someone, so it is not empty. Its length is no refusal; the queue's
+/// encode observes it on the `attempt_event_actor_bytes` scan row, so an
+/// admitted actor always decodes.
 pub(in crate::attempt_queue) fn validate_intervention_actor(actor: &str) -> Result<()> {
     if actor.is_empty() {
         return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
             ERR_INTERVENTION_ACTOR_EMPTY,
         )));
     }
-    if actor.len() > MAX_INTERVENTION_ACTOR_LEN {
-        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_INTERVENTION_ACTOR_TOO_LONG,
-        )));
-    }
     Ok(())
 }
 
+/// Structural only, at the door and at decode alike (FIX 9580): a note that
+/// is present says something. Its length is no refusal; the queue's encode
+/// observes it on the `attempt_event_note_bytes` scan row, so an admitted
+/// note always decodes.
 pub(in crate::attempt_queue) fn validate_optional_intervention_note(
     note: Option<&str>,
 ) -> Result<()> {
-    if let Some(note) = note {
-        if note.is_empty() {
-            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-                ERR_INTERVENTION_NOTE_EMPTY,
-            )));
-        }
-        if note.len() > MAX_INTERVENTION_NOTE_LEN {
-            return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-                ERR_INTERVENTION_NOTE_TOO_LONG,
-            )));
-        }
+    if note.is_some_and(str::is_empty) {
+        return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
+            ERR_INTERVENTION_NOTE_EMPTY,
+        )));
     }
     Ok(())
 }

@@ -2,8 +2,14 @@
 //!
 //! `POST` admits a normalized inbound event: the engine routes it, commits the
 //! attempt, and this route returns `202` with a stable attempt ref before any
-//! dispatcher runs. `GET` reads the durable snapshot for one correlation id.
-//! Production worker wiring is the later surface-serving ticket's scope.
+//! dispatcher runs. A mail that carries its email thread takes the scoped
+//! CC door instead (`email_thread`, FIX 974). `GET` reads the durable
+//! snapshot for one correlation id. Production worker wiring is the later
+//! surface-serving ticket's scope.
+
+mod email_thread;
+
+pub(crate) use self::email_thread::SurfaceEmailThreadPayload;
 
 use super::core_engine_error;
 use super::json_payload;
@@ -243,6 +249,11 @@ pub(crate) struct SurfaceEventSubmitRequest {
     /// The engine stamps every routed event `true`; `false` is not honoured.
     #[schema(example = true)]
     foreign_inbound: bool,
+    /// An email message's threading headers (FIX 974): the mail joins its
+    /// thread across identities through the CC door. Absent, the event takes
+    /// the generic door.
+    #[serde(default)]
+    email_thread: Option<SurfaceEmailThreadPayload>,
 }
 
 impl SurfaceEventSubmitRequest {
@@ -569,6 +580,7 @@ impl From<oneiron::SurfaceEventHandoffStatus> for SurfaceEventStatusResponse {
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:read or core:write. A submitter needs core:read on the identity it addresses: the receiving identity resolves under the submitter's own read, and its acknowledgement points at a status read.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 422, description = "Identity routing refused the event without queueing. The body is the typed route receipt, naming which of the four rejection reasons applied. An identity the submitter cannot read is refused as `unknown_receiving_identity`, as a missing one is.", body = SurfaceEventRejectionResponse, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Admission failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -587,16 +599,21 @@ pub(crate) async fn submit_core_surface_event(
     // the ack points at a status read: a submitter reads what it addresses.
     auth.require(CoreScope::Read)?;
     auth.require(CoreScope::Write)?;
-    let req = json_payload(payload)?;
+    let mut req: SurfaceEventSubmitRequest = json_payload(payload)?;
     let read = scoped_read_for_core_auth(&server.vault, &auth)?;
+    let thread = req.email_thread.take();
 
-    let admission = server
-        .vault
-        .enqueue_inbound_surface_event_as(&read, req.into_engine(), unix_seconds_now())
-        .map_err(|error| {
-            tracing::error!(kind = ?error.kind(), "surface event admission failed");
-            core_engine_error("surface event admission failed", error)
-        })?;
+    let admission = email_thread::enqueue_as(
+        &server.vault,
+        &read,
+        req.into_engine(),
+        thread,
+        unix_seconds_now(),
+    )
+    .map_err(|error| {
+        tracing::error!(kind = ?error.kind(), "surface event admission failed");
+        core_engine_error("surface event admission failed", error)
+    })?;
 
     Ok(match admission {
         oneiron::SurfaceEventAdmission::Accepted(ack) => {

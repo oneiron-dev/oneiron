@@ -49,14 +49,13 @@ use crate::limit_ask::EngineLimit;
 use super::super::redaction::{TextFilter, TextFilterError};
 use super::anonymous::{self, TrainingTransport};
 use super::crypto::IntakeRecipient;
-use super::custody::{
-    self, ControlChange, SubmissionCustody, SubmissionState, put_submission_in, record_control_in,
-};
+use super::custody::{self, SubmissionCustody, SubmissionState, put_submission_in};
 use super::lifecycle::{
     PublisherTrainingLifecycle, ReleaseDecision, TrainingSubmissionId, TrainingUnavailable,
     TrainingWithheld,
 };
 use super::source::{self, TrainingSelection};
+use super::withdraw;
 use super::{ConversationSource, Eligibility, eligible};
 
 /// The key context of an offer's worlds' settings digest.
@@ -410,7 +409,10 @@ impl Vault {
     /// Settles a held submission after its release: published, and every
     /// older published submission of the same source withdrawn by id-only
     /// forget controls naming exactly those ids; or withheld or withdrawn,
-    /// its files already purged. A row no longer held is left as it stands.
+    /// its files already purged. A row withdrawn or withheld while its
+    /// publication was under way keeps that standing, and the publication
+    /// is recorded with a forget control naming it (FIX 9855); any other row
+    /// no longer held is left as it stands.
     fn mark_submission(
         &self,
         id: TrainingSubmissionId,
@@ -422,6 +424,23 @@ impl Vault {
                 return Ok(());
             };
             if row.state != SubmissionState::Held {
+                let late = state == SubmissionState::Published
+                    && matches!(
+                        row.state,
+                        SubmissionState::Withdrawn | SubmissionState::Withheld
+                    );
+                if late {
+                    // Its files left after its withdrawal: the publication
+                    // stands recorded, and a forget names it.
+                    if row.published_at.is_none() {
+                        row.published_at = Some(now);
+                    }
+                    if withdraw::may_reach_intake(&row) {
+                        withdraw::forget_hosted_in(self, txn, vec![(id, row)], now)?;
+                    } else {
+                        put_submission_in(self, txn, id, &row)?;
+                    }
+                }
                 return Ok(());
             }
             row.state = state;
@@ -439,12 +458,12 @@ impl Vault {
 /// Withdraws every published submission of `row`'s source but `id` that
 /// the intake has not already removed, and records forget controls naming
 /// exactly those ids: one per month and generation they were prepared in,
-/// each under that pair's scope, never recoded under the new offer's (none
+/// each under that pair's scope, never recoded under the new offer's (by
+/// each row's kept source code; for a row held before it was kept, none
 /// for an orphaned generation, counted unavailable); every anonymous one
 /// takes its withdrawal intent in the same write instead, and joins no
-/// control. The source changed, so
-/// its older versions are invalid, while the offer just published stays
-/// live.
+/// control (`withdraw`). The source changed, so its older versions are
+/// invalid, while the offer just published stays live.
 fn forget_older_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -452,7 +471,7 @@ fn forget_older_in(
     row: &SubmissionCustody,
     now: u64,
 ) -> Result<()> {
-    let mut older: BTreeMap<(String, u32), Vec<[u8; 16]>> = BTreeMap::new();
+    let mut owed = Vec::new();
     for (other, mut held) in custody::submissions(vault, txn)? {
         let removed = held
             .receipt
@@ -466,21 +485,13 @@ fn forget_older_in(
         }
         held.state = SubmissionState::Withdrawn;
         anonymous::withdraw(&mut held);
-        put_submission_in(vault, txn, other, &held)?;
         if held.transport == TrainingTransport::Hosted {
-            older
-                .entry((held.month, held.generation))
-                .or_default()
-                .push(other.0);
+            owed.push((other, held));
+        } else {
+            put_submission_in(vault, txn, other, &held)?;
         }
     }
-    for ((month, generation), submissions) in older {
-        let change = ControlChange::ForgetSource {
-            source: row.source,
-            submissions,
-        };
-        record_control_in(vault, txn, (&month, generation), change, now)?;
-    }
+    withdraw::forget_hosted_in(vault, txn, owed, now)?;
     Ok(())
 }
 
@@ -510,6 +521,8 @@ struct Placed {
     scope: [u8; 32],
     scope_seq: u64,
     prepared_at: u64,
+    /// The code its offer names its source by, kept on its row (FIX 9855).
+    source_code: [u8; 32],
 }
 
 /// A held submission, ready to seal.

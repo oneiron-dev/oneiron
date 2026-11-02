@@ -139,6 +139,11 @@ impl Vault {
             }
         }
         if !ids.is_empty() {
+            // Each retirement stays known here and reaches its peers, in this
+            // writer (FIX-LIST 5107, 10772).
+            for id in &ids {
+                crate::authority::withdraw_grant_row_in_txn(&self.store, txn, *id)?;
+            }
             apply_ops(
                 &self.store,
                 &self.config,
@@ -155,7 +160,7 @@ impl Vault {
     }
 
     /// `owner`'s live own-device grant that confers at `now`, if any.
-    fn own_device_grant_in_txn(
+    pub(crate) fn own_device_grant_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         owner: EntityId,

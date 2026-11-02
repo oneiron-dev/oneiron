@@ -326,8 +326,10 @@ pub(super) fn apply_relationship_filter(
     let mut in_scope = Vec::with_capacity(scores.len());
     let mut other = Vec::new();
     for scored in scores.iter().copied() {
-        let is_other = claim_rel(store, rtxn, &scored.id)?
-            .is_some_and(|relationship| relationship != *active_relationship);
+        let is_other = !crate::claim::relationship_scope_includes(
+            claim_rel(store, rtxn, &scored.id)?.as_ref(),
+            *active_relationship,
+        );
         if is_other {
             other.push(scored);
         } else {
@@ -344,7 +346,12 @@ pub(super) fn apply_relationship_filter(
     Ok(())
 }
 
-fn claim_rel(store: &StoreRead<'_>, rtxn: &RoTxn<'_>, id: &EntityId) -> Result<Option<EntityId>> {
+/// A CLAIM's relationship key; every other kind reads as `all`.
+fn claim_rel(
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<crate::claim::RelationshipScope> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(None);
     };
@@ -408,7 +415,8 @@ pub(super) fn apply_world_filter(
     for scored in scores.iter().copied() {
         // Base is an explicit member, never implicit in a named world; a
         // world-scoped row passes only for its own world.
-        if record_world(store, rtxn, &scored.id)?.is_some_and(|world| world == target) {
+        let holds = |world: Option<EntityId>| world == target;
+        if record_world(store, rtxn, &scored.id, Some(&holds))?.is_some_and(holds) {
             kept.push(scored);
         }
     }
@@ -440,7 +448,7 @@ fn drop_stale_federated_claims(
 
     let mut kept = Vec::with_capacity(scores.len());
     for scored in scores.iter().copied() {
-        let stale_world = record_world(store, rtxn, &scored.id)?
+        let stale_world = record_world(store, rtxn, &scored.id, None)?
             .flatten()
             .is_some_and(|world| stale.contains_key(&world));
         if !stale_world {
@@ -464,6 +472,7 @@ fn record_world(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
+    holds: Option<&dyn Fn(Option<EntityId>) -> bool>,
 ) -> Result<Option<Option<EntityId>>> {
     let Some(raw) = store.port_entity_record(rtxn, id)? else {
         return Ok(Some(None));
@@ -473,7 +482,15 @@ fn record_world(
             crate::claim::decode_claim_body(&raw.body, true)?.world,
         ));
     }
-    crate::federation::record_scope::record_world_in(store, rtxn, *id, raw.entity_type, &raw.body)
+    // A NOTE at a world it is in that `holds` admits (FIX-LIST 9433).
+    crate::federation::record_scope::note_world::record_world_where(
+        store,
+        rtxn,
+        *id,
+        raw.entity_type,
+        &raw.body,
+        holds,
+    )
 }
 
 /// Whether one candidate survives a resolved per-turn ActiveSet (ONE-1420).
@@ -489,7 +506,8 @@ fn active_set_admits(
     id: &EntityId,
     active_set: &WorldAuthoritySet,
 ) -> Result<bool> {
-    Ok(record_world(store, rtxn, id)?.is_some_and(|world| active_set.admits(world)))
+    let holds = |world: Option<EntityId>| active_set.admits(world);
+    Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }
 
 pub(super) fn apply_filters(
@@ -783,15 +801,13 @@ fn pipeline_candidate_matches_relationship_filter(
     if entity_type != ENTITY_TYPE_CLAIM {
         return Ok(true);
     }
-    Ok(match claim_rel(store, rtxn, id)? {
-        Some(relationship) if relationship != active_relationship => {
-            matches!(mode, RelMode::Demote)
-        }
-        _ => true,
-    })
+    Ok(crate::claim::relationship_scope_includes(
+        claim_rel(store, rtxn, id)?.as_ref(),
+        active_relationship,
+    ) || matches!(mode, RelMode::Demote))
 }
 
-fn pipeline_candidate_matches_world_filter(
+pub(super) fn pipeline_candidate_matches_world_filter(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     id: &EntityId,
@@ -808,7 +824,7 @@ fn pipeline_candidate_matches_world_filter(
             let Some(stale) = stale_worlds else {
                 return Ok(true);
             };
-            return Ok(!record_world(store, rtxn, id)?
+            return Ok(!record_world(store, rtxn, id, None)?
                 .flatten()
                 .is_some_and(|world| stale.contains_key(&world)));
         }
@@ -833,5 +849,6 @@ fn pipeline_candidate_matches_world_filter(
         }
     };
 
-    Ok(record_world(store, rtxn, id)?.is_some_and(|world| world == target))
+    let holds = |world: Option<EntityId>| world == target;
+    Ok(record_world(store, rtxn, id, Some(&holds))?.is_some_and(holds))
 }

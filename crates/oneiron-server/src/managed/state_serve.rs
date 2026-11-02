@@ -4,7 +4,7 @@ use std::future::Future;
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use axum::Json;
 use axum::Router;
@@ -46,10 +46,17 @@ use refusal::writes_frozen_body;
 mod admission;
 /// The vault data key's boot steps: its page seal, escrow wraps and spool.
 mod boot_keys;
+/// A vault VM's live look at its outbox companion and the escrow
+/// recipients its carrier delivers (FIX 6683, FIX 6684).
+#[cfg(target_os = "linux")]
+mod carrier_watch;
 /// The ctl dispatcher, [`ManagedState::handle_request`].
 mod control;
 /// Supervised boot, serve and shutdown: [`serve_managed`].
 mod coordinator;
+/// The vault's deletion marker, as `Ping` reports it and the deletion gate
+/// reads it (FIX 11710).
+mod deletion;
 /// The backup before an idle reap (`prepare_idle_reap`).
 mod idle_backup;
 /// The managed routers and the reap freeze gate in front of them.
@@ -63,6 +70,8 @@ mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
 
+#[cfg(target_os = "linux")]
+pub(super) use self::carrier_watch::carrier_recipient;
 pub use self::coordinator::serve_managed;
 pub use self::ingress::build_managed_app;
 pub(super) use self::ingress::build_managed_artifact_app;
@@ -195,8 +204,9 @@ pub struct ManagedState {
     /// a supervisor reads as unknown.
     backup_facts: Option<ManagedBackupFacts>,
     /// The vault VM outbox carrier's revision, as every `Ping` reports it
-    /// (FIX 5235): set once at boot; `None` on a node or without one.
-    vm_outbox_revision: Option<u32>,
+    /// (FIX 5235): set at boot, then as its companion answers each look
+    /// (FIX 6683); 0 for none, on a node or while no companion answers.
+    vm_outbox_revision: AtomicU32,
     /// The cold restore this process kept, which `restore_status` answers
     /// for: set once at boot, before ctl serves; `None` for an open.
     restore: Option<Arc<super::restore::RestoreOutcome>>,
@@ -214,6 +224,12 @@ pub(crate) struct ManagedWidenHolder(pub(crate) oneiron::EntityId);
 /// request, verified at ingress; never the host root.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ManagedOwnerHolder(pub(crate) oneiron::EntityId);
+
+/// The person a supervisor-signed `ManagedPersonAction` names for one
+/// request at a member door (FIX 1302), verified at ingress; never the
+/// owner and never the host root.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonHolder(pub(crate) oneiron::EntityId);
 
 /// Managed ingress's mark on every request it hands the app (FIX 5125): the
 /// supervisor forwarded it on its caller's behalf, so the caller sits off this
@@ -278,6 +294,21 @@ impl ManagedOwnerSession {
     }
 }
 
+/// The member a held MCP socket serves (FIX 1302 stage 2): the person his
+/// supervisor signed the socket's upgrade for (`ManagedPersonAction`). Not
+/// [`ManagedPersonHolder`], which signs one request and its exact body: this
+/// signs no later body. It names whose socket a call came on, and each call
+/// reaches the member doors alone, where the engine judges him again.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ManagedPersonSession(pub(crate) oneiron::EntityId);
+
+impl ManagedPersonSession {
+    /// The member whose socket this is.
+    pub(crate) fn holder(&self) -> oneiron::EntityId {
+        self.0
+    }
+}
+
 /// The listener a request reached: the API's, or the artifact origin's,
 /// which serves artifact reads alone.
 #[derive(Clone, Copy)]
@@ -323,8 +354,9 @@ fn owner_attestable(surface: Surface, method: &Method, path: &str) -> bool {
 /// (WILL-PLAN L14 row 01): `GET /api/search/vector`, `/api/search/text`,
 /// `/api/entity/{id}`, `/api/edges/{id}`, `/api/core/discover`,
 /// `/api/booking/{page_token}/agent-instructions`, `/v1/llm/defaults`,
-/// `/v1/ai/waves/{attempt}` and `/v1/ai/video/{job}`; `POST
-/// /v1/core/pairing/links`, `/v1/core/slips/revoke`,
+/// `/v1/llm/defaults/proposals`, `/v1/ai/waves/{attempt}` and
+/// `/v1/ai/video/{job}`, each with its HEAD
+/// (FIX 9496); `POST /v1/core/pairing/links`, `/v1/core/slips/revoke`,
 /// `/v1/core/org-admin/{org}/policy`, the four
 /// `/api/booking/{page_token}/{availability|book|reschedule|cancel}` and
 /// `/mcp`. The rest of the attested routes, root-admin doors among them, are
@@ -335,10 +367,14 @@ fn console_attestable(method: &Method, path: &str) -> bool {
             .and_then(|rest| rest.strip_suffix(suffix))
             .is_some_and(|rest| !rest.is_empty() && !rest.contains('/'))
     };
-    if *method == Method::GET {
+    if super::attested_routes::registered_method_matches(method, Method::GET.as_str()) {
         matches!(
             path,
-            "/api/search/vector" | "/api/search/text" | "/api/core/discover" | "/v1/llm/defaults"
+            "/api/search/vector"
+                | "/api/search/text"
+                | "/api/core/discover"
+                | "/v1/llm/defaults"
+                | "/v1/llm/defaults/proposals"
         ) || between("/api/entity/", "")
             || between("/api/edges/", "")
             || between("/api/booking/", "/agent-instructions")
@@ -402,7 +438,7 @@ impl ManagedState {
             voice_actions: std::sync::Mutex::default(),
             readiness: ManagedReadiness::Ready,
             backup_facts: None,
-            vm_outbox_revision: None,
+            vm_outbox_revision: AtomicU32::new(0),
             restore: None,
             idle_backup: Arc::default(),
             relay_delete: Arc::default(),
@@ -505,11 +541,16 @@ impl ManagedState {
     /// Fail-closed on both halves: an upgrade that was refused after this gate
     /// (401, no such route) still counts for the settle window, and a clock
     /// that steps backwards reads as live rather than as settled.
+    ///
+    /// This vault's own device sync, dialing its home, is live too until its
+    /// run and refresh have paused at the freeze (FIX 5127).
     pub fn live_sync_writer(&self) -> bool {
         // Crate-internal on purpose: the receiver count is the only liveness
         // signal a session leaves outside its own task, and adding a second
         // registry to `SyncServer` would put the same fact in two places.
-        if self.server.broadcast_tx.receiver_count() > 0 {
+        if self.server.broadcast_tx.receiver_count() > 0
+            || self.admission.in_flight().device_sync > 0
+        {
             return true;
         }
         let admitted = self.last_sync_upgrade.load(Ordering::SeqCst);

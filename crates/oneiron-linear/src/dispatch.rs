@@ -6,7 +6,7 @@ use std::time::{Duration, Instant};
 
 use oneiron::linear_sync::{
     LINEAR_RATE_WINDOW_REASON, LinearEffectHold, LinearEffectKind, LinearEffectRequest,
-    LinearRateTurn, LinearRoleApproval, LinearTaskStore, VaultLinearTaskStore,
+    LinearEffectRole, LinearRateTurn, LinearRoleApproval, LinearTaskStore, VaultLinearTaskStore,
 };
 use oneiron::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
@@ -15,13 +15,13 @@ use oneiron::outbound::{
     OutboundIntentTrigger,
 };
 use oneiron::{EntityId, LinearSyncError, LinearSyncResult, Vault};
-use serde_json::Value;
 
 use crate::egress::{CREATE, LinearMutation, UPDATE};
+use crate::http::status_text;
 use crate::journal::{LinearResponseJournal, request_ref};
 use crate::{
-    GraphQlCall, GraphQlExecutor, GraphQlTransportError, LinearBodyLine, LinearOutboundDoor,
-    invalid,
+    GraphQlCall, GraphQlExecutor, GraphQlTransportError, GraphQlValue, LinearBodyLine,
+    LinearOutboundDoor, invalid,
 };
 
 /// The credential-bearing host connector bound to the engine's ordinary
@@ -96,30 +96,35 @@ impl<'v, T> VaultLinearOutboundDoor<'v, T> {
     /// # Errors
     /// Returns an error if the request cannot be read or decoded, or was
     /// erased with its TASK.
-    pub fn request_by_ref(&self, reference: &str) -> LinearSyncResult<Option<Value>> {
+    pub fn request_by_ref(&self, reference: &str) -> LinearSyncResult<Option<GraphQlValue>> {
         self.journal.read_request(reference)
     }
 }
 
 /// The door's refusal of a call it did not deliver.
 const DID_NOT_DELIVER: &str = "Linear outbound dispatch did not deliver";
-/// What follows [`DID_NOT_DELIVER`] when the Gate holds the call for the
-/// owner's approve-once press (FIX 6424 part 2a): the digest, then the role.
-const HELD_DIGEST: &str = "; approve-once digest ";
+/// What closes a refusal of a call the endpoint answered with a status (FIX
+/// 9385): the status and its canonical reason, never a provider body.
+const ANSWERED: &str = "; Linear answered HTTP ";
 
-/// FIX 6424 part 2a: the approve-once digest and role
-/// (`<64 lower-hex> (<scheduler|writer>)`) a [`VaultLinearOutboundDoor`]
-/// refusal names when the Gate held the call for the owner's press; `None`
-/// for every other error. The refusal keeps its variant and its text; this
-/// reads the part it adds.
+/// FIX 6824: the approve-once digest (64 lower-hex) and the role of the
+/// actor whose press it names, read off a [`LinearSyncError::Held`] a
+/// [`VaultLinearOutboundDoor`] returns when the Gate held the call for the
+/// owner's press, or (FIX 6837) off the first held push a mirror pass's
+/// [`LinearSyncError::PushFailed`] carries; `None` for every other error.
 #[must_use]
-pub fn held_approve_once(error: &LinearSyncError) -> Option<&str> {
-    let LinearSyncError::Transport(message) = error else {
-        return None;
-    };
-    message
-        .strip_prefix(DID_NOT_DELIVER)?
-        .strip_prefix(HELD_DIGEST)
+pub fn held_approve_once(error: &LinearSyncError) -> Option<(&str, LinearEffectRole)> {
+    match error {
+        LinearSyncError::Held {
+            role,
+            approval_digest,
+            ..
+        } => Some((approval_digest, *role)),
+        LinearSyncError::PushFailed(failures) => failures
+            .iter()
+            .find_map(|failure| held_approve_once(&failure.error)),
+        _ => None,
+    }
 }
 
 struct LinearSink<'a, 'v, T> {
@@ -129,6 +134,9 @@ struct LinearSink<'a, 'v, T> {
     call: &'a GraphQlCall,
     intent_ref: &'a str,
     content_ref: &'a str,
+    /// The status the endpoint answered the call with, when it answered one
+    /// that was not a success.
+    status: &'a mut Option<u16>,
 }
 
 impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, '_, T> {
@@ -152,6 +160,7 @@ impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, '_, T> {
             // FIX 8611: the endpoint refused the credential and ran nothing:
             // a definite non-delivery, kept with its status alone.
             Err(GraphQlTransportError::Rejected { status }) => {
+                *self.status = Some(status);
                 OutboundExecutionOutcome::failed("linear credential rejected")
                     .with_receipt_field("linear_http_status", status.to_string())
             }
@@ -159,7 +168,25 @@ impl<T: GraphQlExecutor> OutboundExecutionSink for LinearSink<'_, '_, T> {
                 OutboundExecutionOutcome::failed("linear delivery uncertain")
                     .with_possible_delivery()
             }
+            // FIX 9385: any other status may follow a run: uncertain, as
+            // before, and kept with its status.
+            Err(GraphQlTransportError::HttpStatus { status }) => {
+                *self.status = Some(status);
+                OutboundExecutionOutcome::failed("linear delivery uncertain")
+                    .with_possible_delivery()
+                    .with_receipt_field("linear_http_status", status.to_string())
+            }
         }
+    }
+
+    /// FIX 9379: this exact operation's journal holds the endpoint's durable
+    /// refusal of its credential, written before the ledger could record the
+    /// definite non-delivery: nothing ran, so the engine retries it as one.
+    /// Any other journal state proves nothing.
+    fn known_non_delivery(&self, intent_ref: &str, idempotency_key: Option<&str>) -> bool {
+        intent_ref == self.intent_ref
+            && idempotency_key == Some(blake3::Hash::from(self.operation_id).to_hex().as_str())
+            && self.journal.rejected(&self.operation_id)
     }
 }
 
@@ -285,10 +312,15 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         &mut self,
         mutation: &LinearMutation<'_>,
         call: &GraphQlCall,
-    ) -> LinearSyncResult<Value> {
+    ) -> LinearSyncResult<GraphQlValue> {
         let operation_id = mutation.operation_id;
         let (effect, verb, target) = self.mutation_effect(mutation, call)?;
-        self.vault.recheck_admitted_linear_effect(&effect)?;
+        // FIX 6823: a retried send is rechecked over the request this door
+        // dispatches it under, so its scheduler's kept press is read.
+        let (recheck_request, _) =
+            self.door_request(operation_id, verb, target, &request_ref(&operation_id));
+        self.vault
+            .recheck_admitted_linear_effect(&effect, &recheck_request)?;
         let content_ref = self
             .journal
             .stage_request(&operation_id, effect.task_ref, call)?;
@@ -298,6 +330,7 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         let now = Instant::now();
         let deadline = now.checked_add(self.rate_wait).unwrap_or(now);
         let mut turn = LinearRateTurn::default();
+        let mut status = None;
         let result = loop {
             turn = self.vault.linear_rate_turn(&effect, deadline, turn)?;
             let (request, intent_ref) = self.door_request(operation_id, verb, target, &content_ref);
@@ -308,6 +341,7 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
                 call,
                 intent_ref: &intent_ref,
                 content_ref: &content_ref,
+                status: &mut status,
             };
             let result = self
                 .vault
@@ -325,14 +359,22 @@ impl<T: GraphQlExecutor> LinearOutboundDoor for VaultLinearOutboundDoor<'_, T> {
         };
         drop(turn);
         if result.outcome != OutboundDispatchOutcome::DeliveredToChannel {
-            // FIX 6424 part 2a: the same refusal; a hold for the owner's
-            // press names the blocking actor's digest, copied from the
-            // result, after its unchanged text.
-            let mut refusal = DID_NOT_DELIVER.to_owned();
+            // FIX 6824: a hold for the owner's press is a typed hold naming
+            // the blocking actor, its decision and its digest, copied from
+            // the result.
             if let Some(hold) = LinearEffectHold::of_door_result(&result, &effect)
-                && let Some(digest) = hold.approval_digest.as_deref()
+                && let Some(approval_digest) = hold.approval_digest
             {
-                refusal.push_str(&format!("{HELD_DIGEST}{digest} ({})", hold.role.as_str()));
+                return Err(LinearSyncError::Held {
+                    role: hold.role,
+                    actor: hold.actor,
+                    gate_decision_ref: hold.gate_decision_ref,
+                    approval_digest,
+                });
+            }
+            let mut refusal = DID_NOT_DELIVER.to_owned();
+            if let Some(status) = status {
+                refusal.push_str(&format!("{ANSWERED}{}", status_text(status)));
             }
             return Err(invalid(&refusal));
         }

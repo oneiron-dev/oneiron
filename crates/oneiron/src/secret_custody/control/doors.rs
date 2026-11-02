@@ -19,7 +19,7 @@ use super::super::doors::{register_generation_in_txn, resolve_secret_ref_in_txn}
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::{custody_portable, transition_named_in_txn};
 use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus};
-use super::input::attach_manifest;
+use super::input::{SealedFrame, SealedInput, attach_manifest};
 use super::manifest::unstated_input;
 use super::permits::candidate_for;
 use super::{
@@ -79,6 +79,13 @@ pub struct SecretCustodyView {
 
 /// A register or rotate whose protected input the owner's surface sealed to
 /// the holder itself, under the binding [`SecretCustodyView`] gave it.
+///
+/// The deposit carries no carrier key, and no surface holds one (FIX 7402):
+/// while the carrier wire is on, its recorder mints the input's key and
+/// seals the deposited input, with what it attaches, under that key before
+/// the request's digest exists, when it fits one row (one past it is kept
+/// as it lies, FIX 11140). The relayed input's head names the key's
+/// reference, which is what the holder asks the recorder for, live.
 pub struct SealedCustodyChange<'a> {
     /// For a register, the `manifest_ref` the sealed record names, as the
     /// surface states it: this install attaches the manifest it resolves
@@ -98,8 +105,9 @@ pub struct SealedCustodyChange<'a> {
     pub recipients: &'a [CustodyRecipientPermit],
     /// The input's bytes, sealed to the holder's key: one envelope, or for
     /// a body past one envelope's plaintext bound, the frame of numbered
-    /// envelopes a door seals such a body as (FIX 5521).
-    pub input: &'a [u8],
+    /// envelopes a door seals such a body as (FIX 5521). The door reads
+    /// them where they lie, never as one buffer (FIX 11140).
+    pub input: SealedInput<'a>,
 }
 
 // Never print the ciphertext.
@@ -337,8 +345,9 @@ impl Vault {
     /// publishes none, or they cannot be read, an explicit mark says so
     /// (CALLS CUSTODY_MANIFEST_UNSTATED_MULTI). An input past one row's bound
     /// travels in numbered parts; none is left out, and none is refused for
-    /// its length (FIX 5445). The same input sent again is the request
-    /// already recorded (CALLS CUSTODY_RETRY).
+    /// its length (FIX 5445). The input is read where it lies, part by part,
+    /// and never joined in one buffer (FIX 11140). The same input sent again
+    /// is the request already recorded (CALLS CUSTODY_RETRY).
     /// `surface` is audit only.
     ///
     /// # Errors
@@ -352,7 +361,7 @@ impl Vault {
     /// the surface read it; a permit that no longer stands, or permits out
     /// of order; a holder that is no live linked install with an importable
     /// key; this install carrying no owner act; this install, the holder,
-    /// refusing the input; storage errors.
+    /// refusing the input; storage errors, and errors reading the input.
     pub fn seal_custody_change_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -372,16 +381,17 @@ impl Vault {
             return Err(refused("the sealed input is empty"));
         }
         // Read before the writer is taken: the manifest comes out of git.
+        // What is attached frames the envelope by its length alone.
+        let len = sealed.input.len();
         let (attached, manifest_check) = match (sealed.change, sealed.manifest_ref) {
             (CustodyChange::Register, None) => {
-                let (attached, check) = unstated_input(self, sealed.input)?;
+                let (attached, check) = unstated_input(self, len)?;
                 (Some(attached), Some(check))
             }
             (_, None) => (None, None),
             (CustodyChange::Register, Some(manifest_ref)) => {
                 let manifest = self.origin_secret_manifest_at(manifest_ref)?;
-                let attached =
-                    attach_manifest(sealed.input, &manifest.manifest_ref, &manifest.text)?;
+                let attached = attach_manifest(len, &manifest.manifest_ref, &manifest.text)?;
                 (Some(attached), None)
             }
             (_, Some(_)) => return Err(refused("only a register names a manifest")),
@@ -426,7 +436,7 @@ impl Vault {
                 generation: sealed.generation,
                 plan: &plan,
                 material: secret.as_ref().map_or(Material::Held, Material::Input),
-                sealed: Some(attached.as_deref().unwrap_or(sealed.input)),
+                sealed: Some(SealedFrame::new(attached.as_ref(), sealed.input)),
                 seen: Some(sealed.seen),
                 permits: Some(sealed.recipients),
             },

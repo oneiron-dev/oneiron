@@ -11,15 +11,16 @@
 //! reviewed import manifest (FIX 6869, G4 PR1). The root's receipt is
 //! exactly its typed import approval, judged again on every read, and
 //! without one it is a named gap, never an approval.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use super::CodeRevision;
 use super::promotion::{promotion_receipt_in_txn, put_promotion_receipt_in_txn};
 use super::storage::{get_code_revision_in_txn, read_code_revision_record_in_txn};
 use super::tree_inventory::document_mode;
-use crate::error::{Error, Result};
+use crate::error::{ArtifactError, Error, Result};
 use crate::merge_queue::{GreenQueueRevision, QueueTestedTarget};
 use crate::repo_mutation::proposal::RepoProposalStatus;
+use crate::scan_check::{EngineScan, ScanCount};
 use crate::{EntityId, Vault};
 
 /// Why a tested queue revision cannot be promoted yet.
@@ -142,18 +143,30 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let mut root = read_code_revision_record_in_txn(&self.store, &txn, &revision_id)?
                 .ok_or(Error::EntityNotFound)?;
-            for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+            let mut count = ScanCount::start(
+                &self.store,
+                &txn,
+                EngineScan::DagWalkRecords,
+                revision_id.as_bytes(),
+            )?;
+            let mut visited = HashSet::new();
+            loop {
+                if !visited.insert(root.revision_id) {
+                    count.defer(&self.store);
+                    return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                        "code revision parent chain contains a cycle",
+                    )));
+                }
+                count.row();
                 let Some(parent) = root.parent_revision_id else {
                     break;
                 };
                 root = read_code_revision_record_in_txn(&self.store, &txn, &parent)?
                     .ok_or(Error::EntityNotFound)?;
             }
+            count.defer(&self.store);
             root
         };
-        if root.parent_revision_id.is_some() {
-            return Err(Error::IndexOverflow("tested queue revision chain"));
-        }
         Ok(self.baseline_promotion_receipt(&root)?.err())
     }
 
@@ -193,13 +206,29 @@ impl Vault {
     /// promoted one: newest first.
     fn unpromoted_queue_chain(&self, revision_id: EntityId) -> Result<Vec<CodeRevision>> {
         let txn = self.store.env.read_txn()?;
+        let mut count = ScanCount::start(
+            &self.store,
+            &txn,
+            EngineScan::DagWalkRecords,
+            revision_id.as_bytes(),
+        )?;
+        let mut visited = HashSet::new();
         let mut chain = Vec::new();
         let mut next = Some(revision_id);
-        for _ in 0..crate::limits::MAX_ANCESTOR_DEPTH {
+        loop {
             let Some(id) = next else {
+                count.defer(&self.store);
                 return Ok(chain);
             };
+            if !visited.insert(id) {
+                count.defer(&self.store);
+                return Err(Error::Artifact(ArtifactError::InvalidCodeArtifactBody(
+                    "code revision parent chain contains a cycle",
+                )));
+            }
+            count.row();
             if promotion_receipt_in_txn(&self.store, &txn, &id)?.is_some() {
+                count.defer(&self.store);
                 return Ok(chain);
             }
             let revision = if chain.is_empty() {
@@ -211,7 +240,6 @@ impl Vault {
             next = revision.parent_revision_id;
             chain.push(revision);
         }
-        Err(Error::IndexOverflow("tested queue revision chain"))
     }
 
     /// The receipt ids that promote `revision` once its parent is promoted:
@@ -283,8 +311,8 @@ impl Vault {
                     "a source is not the applied review it names",
                 );
             }
-            if proposal.received_candidate().is_some() {
-                if let Err(gap) = self.received_promotion_documents(&proposal, &mut reviewed)? {
+            if proposal.is_file_bundle() {
+                if let Err(gap) = self.bundle_promotion_documents(&proposal, &mut reviewed)? {
                     return Ok(Err(gap));
                 }
                 continue;
@@ -328,32 +356,34 @@ impl Vault {
         Ok(Ok(ids))
     }
 
-    /// Each present file of the applied received bundle `proposal`, as its
-    /// own child receipt's frontier at its reviewed mode, into `reviewed`
-    /// (G4 PR2). A mode-only change earns its own fold here.
-    fn received_promotion_documents(
+    /// Each present file of the applied file bundle `proposal`, as its own
+    /// child receipt's frontier at its reviewed mode, into `reviewed` (G4
+    /// PR2). A mode-only change earns its own fold here.
+    fn bundle_promotion_documents(
         &self,
         proposal: &crate::repo_mutation::proposal::RepoProposal,
         reviewed: &mut BTreeMap<[u8; 32], (crate::code_document::CodeDocumentFrontier, u32)>,
     ) -> Result<std::result::Result<(), QueuePromotionGap>> {
-        for file in proposal.files.iter().filter(|file| file.content.is_some()) {
+        for (index, file) in proposal.files.iter().enumerate() {
+            if file.content.is_none() {
+                continue;
+            }
             let gap = |why: &str| {
                 Ok(Err(QueuePromotionGap::Unreviewed(format!(
                     "{}: {why}",
                     file.path
                 ))))
             };
-            let (Some(source), Some(mode)) = (
-                file.source_operation,
-                file.metadata_edit
-                    .as_ref()
-                    .and_then(|edit| edit.replacement.mode),
-            ) else {
-                return gap("a received file has no reviewed state");
+            let Some(mode) = file
+                .metadata_edit
+                .as_ref()
+                .and_then(|edit| edit.replacement.mode)
+            else {
+                return gap("a bundle file has no reviewed state");
             };
-            let operation = crate::repo_mutation::received_file_operation(proposal.id, source)?;
+            let operation = proposal.file_operation(index)?;
             let Some(edit) = self.code_file_edit_receipt(operation)? else {
-                return gap("a received file has no document receipt");
+                return gap("a bundle file has no document receipt");
             };
             if edit.session_id != proposal.session
                 || edit.actor.map(|actor| actor.entity_ref()) != proposal.actor.id()

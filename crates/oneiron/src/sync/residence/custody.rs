@@ -11,7 +11,9 @@ use super::bundle::denied;
 use crate::Vault;
 use crate::authority::PeerMachine;
 use crate::error::Result;
-use crate::store::custody_protocol::{AckRecord, CustodyPosition, Lineage, ResidenceCommit};
+use crate::store::custody_protocol::{
+    AckRecord, CustodyPosition, DrainAck, DrainTicket, Lineage, ResidenceCommit,
+};
 
 /// Admits a machine of the owner's, as its socket proved it.
 fn owner_machine(vault: &Vault, peer: PeerMachine) -> Result<()> {
@@ -98,4 +100,21 @@ pub fn custody_residence_commit(
     owner_machine(vault, peer)?;
     let home = vault.local_machine()?.ok_or_else(denied)?.id;
     vault.store.residence_custody_commit(commit, home)
+}
+
+/// Drains the lineage `ticket` names and returns this home's sweep ack for
+/// it, as `residence:<home hex>`. A drain sent again after a lost reply
+/// answers the same ack.
+///
+/// # Errors
+///
+/// A refused peer; a home with no machine id; storage errors.
+pub fn custody_residence_drain(
+    vault: &Vault,
+    peer: PeerMachine,
+    ticket: &DrainTicket,
+) -> Result<DrainAck> {
+    owner_machine(vault, peer)?;
+    let home = vault.local_machine()?.ok_or_else(denied)?.id;
+    vault.store.residence_custody_drain(ticket, home)
 }

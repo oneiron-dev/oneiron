@@ -14,14 +14,16 @@ use oneiron::compaction::{
     FoldCompactAsked, FoldDescription, FoldList, FoldMarked, FoldReply, FoldUnfolded,
 };
 use oneiron::engine_executor::history::{FoldHistory, read_fold_description, read_fold_history};
-use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MemoryError, MemoryResult};
+use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 
 use super::FacadeApiError;
-use super::action_routes::{ActionRequest, action_bound, attach_run_as, invoke_action_dispatch};
+use super::action_routes::{
+    ActionRequest, action_bound, attach_run_as, failed_outcome, invoke_action_dispatch,
+};
 use super::host_doors::support::{Listed, credential_listing, internal};
 use crate::auth::CoreAuth;
 use crate::server::{LiveRunCaller, LiveRunRefusal, SyncServer};
@@ -96,9 +98,7 @@ async fn fold_action<T: DeserializeOwned>(
             "the run action was refused",
             &[],
         )),
-        SelfDispatchOutcome::Failed(failed) => {
-            Err(MemoryError::new(MEMORY_CODE_INTERNAL, failed.error, &[]))
-        }
+        SelfDispatchOutcome::Failed(failed) => Err(failed_outcome(verb, failed)),
         _ => Err(internal(verb)),
     }
 }

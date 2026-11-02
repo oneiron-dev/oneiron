@@ -6,6 +6,9 @@ use std::sync::Arc;
 use oneiron::agent_dispatch::PartialResultHold;
 use oneiron::agent_dispatch::budget_doors::{self, *};
 use oneiron::llm::rsi_doors::{self, RsiLineRequest, RsiLineView};
+use oneiron::llm::run_admission::resident_doors::{
+    self, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest,
+};
 use oneiron::llm::{RsiBudgetConfig, RsiTopUp};
 use oneiron::memory::MemoryError;
 
@@ -258,6 +261,54 @@ pub(crate) async fn vault_budgets_rsi_hold_resume(
                 .map_err(MemoryError::from)
         },
         |_| Vec::new(),
+    )
+    .await
+}
+
+/// The residents a share view names.
+fn residents(view: &ResidentSharesView) -> Vec<oneiron::EntityId> {
+    view.residents
+        .iter()
+        .filter_map(|share| oneiron::EntityId::from_hex(&share.resident).ok())
+        .collect()
+}
+
+/// `vault.budgets.resident_shares`: every resident's share and depletion
+/// (FIX 11310). It lists the residents it names.
+pub(crate) async fn vault_budgets_resident_shares(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: ResidentSharesRequest,
+) -> Listed<ResidentSharesView> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.resident_shares",
+        move |server, owner| {
+            resident_doors::resident_shares_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        residents,
+    )
+    .await
+}
+
+/// `vault.budgets.resident_shares.set`: the owner sets one resident's share
+/// (FIX 11310). It lists the residents the view it answers names.
+pub(crate) async fn vault_budgets_resident_shares_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SetResidentShareRequest,
+) -> Listed<ResidentSharesView> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.budgets.resident_shares.set",
+        move |server, owner| {
+            resident_doors::set_resident_share_as_owner(server.vault(), owner, &input)
+                .map_err(MemoryError::from)
+        },
+        residents,
     )
     .await
 }

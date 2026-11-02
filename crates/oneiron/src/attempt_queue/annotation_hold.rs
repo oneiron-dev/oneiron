@@ -8,7 +8,7 @@
 //! pauses carry the typed [`AnnotationHold`] reason, so a reattach resumes
 //! exactly those rows and never one a person paused.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -16,7 +16,7 @@ use crate::error::Result;
 
 use super::AttemptQueue;
 use super::types::{
-    AttemptId, AttemptInterventionKind, AttemptRecord, AttemptState, InterveneAttempt,
+    AttemptId, AttemptInterventionKind, AttemptPause, AttemptRecord, AttemptState, InterveneAttempt,
 };
 
 /// The intervention actor of an annotation-hold pause and of its release.
@@ -67,23 +67,25 @@ pub struct AnnotationHoldSweep {
 
 impl AttemptRecord {
     /// The annotation hold this row is paused for. `None` unless the row is
-    /// paused and its newest pause is the engine's hold: a row a person paused
-    /// reads `None` even while a hold also applies, so nothing resumes it.
+    /// paused and the pause it is held under is the engine's hold: a row a
+    /// person paused reads `None` even while a hold also applies, so nothing
+    /// resumes it. Read from the row's held pause, never from its pruned
+    /// event history (FIX 9579).
     #[must_use]
     pub fn annotation_hold(&self) -> Option<AnnotationHold> {
         if self.state != AttemptState::Paused {
             return None;
         }
-        let event = self.events.iter().rev().find(|event| {
-            matches!(
-                event.kind,
-                AttemptInterventionKind::Pause | AttemptInterventionKind::Resume
-            )
-        })?;
-        if event.kind != AttemptInterventionKind::Pause || event.actor != ANNOTATION_HOLD_ACTOR {
-            return None;
+        match self.active_pause? {
+            AttemptPause::Annotation {
+                artifact_id,
+                thread_id,
+            } => Some(AnnotationHold {
+                artifact_id,
+                thread_id,
+            }),
+            AttemptPause::Person | AttemptPause::Budget | AttemptPause::Fanout { .. } => None,
         }
-        AnnotationHold::from_note(event.note.as_deref()?)
     }
 }
 
@@ -200,18 +202,24 @@ impl Vault {
     }
 
     /// Resumes every attempt whose annotation hold is gone, for a runner pump
-    /// that does not wait on the reattach door. Reads outside the writer and
-    /// takes it only when a hold has lifted.
+    /// that does not wait on the reattach door. Reads only the rows the hold
+    /// index marks (FIX 11318) outside the writer, and takes it only when a
+    /// hold has lifted or a mark outlived its hold; a mark whose row the
+    /// writer finds held again stays.
     pub fn release_annotation_holds(&self) -> Result<AnnotationHoldSweep> {
         let queue = AttemptQueue::new(self);
         let mut held: BTreeMap<EntityId, usize> = BTreeMap::new();
         let mut lifted = Vec::new();
+        let mut stale = BTreeSet::new();
         {
             let rtxn = self.store.env.read_txn()?;
-            for row in queue.list_in_txn(&rtxn)? {
+            let marked = super::index::annotation_hold_ids_in_txn(&self.store, &rtxn)?;
+            stale.extend(marked.iter().copied());
+            for row in queue.working_rows_in_txn(&rtxn, marked)? {
                 if row.annotation_hold().is_none() {
                     continue;
                 }
+                stale.remove(&row.id);
                 let Some(task) = row
                     .task_ref
                     .as_deref()
@@ -228,13 +236,21 @@ impl Vault {
             }
         }
         let held: usize = held.values().sum();
-        if lifted.is_empty() {
+        if lifted.is_empty() && stale.is_empty() {
             return Ok(AnnotationHoldSweep { resumed: 0, held });
         }
         let mut wtxn = self.store.env.write_txn()?;
         let mut resumed = 0;
         for task in &lifted {
             resumed += self.resume_annotation_held_attempts_in_txn(&mut wtxn, task)?;
+        }
+        for row in queue.working_rows_in_txn(&wtxn, stale.iter().copied())? {
+            if row.annotation_hold().is_some() {
+                stale.remove(&row.id);
+            }
+        }
+        for id in stale {
+            super::index::delete_annotation_hold_in_txn(&self.store, &mut wtxn, id)?;
         }
         wtxn.commit()?;
         if resumed > 0 {

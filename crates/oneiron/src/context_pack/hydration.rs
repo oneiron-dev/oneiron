@@ -40,7 +40,7 @@ pub(crate) fn context_entity_matches_read_snapshot(
                 true,
             )?)
         } else {
-            decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..]).unwrap_or_default()
+            decode_entity_fields(&raw[ENTITY_METADATA_HEADER_LEN..], false).unwrap_or_default()
         };
         for (key, value) in fields {
             if key == super::WORLD_STALE_FIELD {
@@ -152,6 +152,9 @@ pub(super) fn hydrate_entity(
     options: HydrateOptions<'_>,
     claims_suppressed: &mut usize,
 ) -> Result<Option<ContextEntity>> {
+    if let Some(deadline) = options.deadline {
+        deadline.answer_checkpoint(Error::IndexOverflow("context pack hydration"))?;
+    }
     let Some(live_raw) = vault
         .live_entity_in_txn(store, rtxn, &id)
         .map_err(|error| match error {
@@ -185,9 +188,15 @@ pub(super) fn hydrate_entity(
     else {
         return Ok(None);
     };
+    // Whether the read revision is another than the live row, judged on the
+    // stored bytes before a file-plane ASSET's body replaces its manifest.
+    let other_revision = raw != live_raw;
+    // A file-plane ASSET's live row hydrates its body, not its manifest;
+    // an older revision keeps the manifest it was stored as.
+    let raw = vault.materialized_revision_in_txn(rtxn, &id, raw)?;
     // A history pin cannot restore a claim inadmissible at the current door,
     // its live support included, as the scoped read lane admits a pin.
-    if raw != live_raw && live_raw[0] == ENTITY_TYPE_CLAIM {
+    if other_revision && live_raw[0] == ENTITY_TYPE_CLAIM {
         match crate::claim::decode_claim_body(&live_raw[ENTITY_METADATA_HEADER_LEN..], true) {
             Ok(body)
                 if claim_surfaceable(&body)
@@ -230,7 +239,7 @@ pub(super) fn hydrate_entity(
         // no verdict in this run stands for it: it is not served.
         let cached = options.claim_bodies.and_then(|cache| cache.get(&id));
         let pinned = matches!(options.read_mode, crate::vault::ReadMode::Pinned(_));
-        let judged_here = cached.is_none() || pinned || raw != live_raw;
+        let judged_here = cached.is_none() || pinned || other_revision;
         match (cached, &decoded_here) {
             // Pipeline-gated result: the body the gate admitted.
             (Some(cached), Some(body)) if same_claim_body(cached, body) => {
@@ -294,46 +303,15 @@ pub(super) fn hydrate_entity(
     let fields = if options.hydrate_fields {
         Some(match gated_claim_body {
             Some(body) => claim_fields_to_json(body),
-            // A NOTE's live prose is in its document, which its row pin does
-            // not hold: words a reranker scored are the pinned row's. A row
-            // the write door refuses hydrates no field, as below.
-            None if options.words_pinned => {
-                let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-                if crate::batch::export::write_door_refuses_body(body) {
-                    HashMap::new()
-                } else {
-                    decode_entity_fields(body).unwrap_or_default()
-                }
-            }
-            None => {
-                let body = crate::note::live_body_in_txn(
-                    &vault.store,
-                    rtxn,
-                    &id,
-                    header.entity_type,
-                    &raw[ENTITY_METADATA_HEADER_LEN..],
-                )?;
-                let markdown = if header.entity_type == crate::registry::ENTITY_TYPE_NOTE {
-                    Some(vault.note_text_in_txn(rtxn, id)?)
-                } else {
-                    None
-                };
-                // A body the write door refuses (a note's text is its body
-                // too) hydrates no field, as one no decoder reads hydrates none.
-                let refused = crate::batch::export::write_door_refuses_body(&body)
-                    || markdown.as_ref().is_some_and(|text| {
-                        crate::batch::export::write_door_refuses_body(text.as_bytes())
-                    });
-                if refused {
-                    HashMap::new()
-                } else {
-                    let mut fields = decode_entity_fields(&body).unwrap_or_default();
-                    if let Some(markdown) = markdown {
-                        fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
-                    }
-                    fields
-                }
-            }
+            None => hydrate_selected_note_fields(
+                vault,
+                store,
+                rtxn,
+                &id,
+                header.entity_type,
+                &raw[ENTITY_METADATA_HEADER_LEN..],
+                options,
+            )?,
         })
     } else {
         None
@@ -350,6 +328,7 @@ pub(super) fn hydrate_entity(
             &id,
             options.edge_cache,
             options.clamp,
+            options.deadline,
         )?)
     } else {
         None
@@ -386,6 +365,47 @@ pub(super) fn hydrate_entity(
         edges,
         vector,
     }))
+}
+
+/// The fields of a non-claim row, from `body`, the revision the read
+/// selected (FIX 9763). An Indexed or Pinned read, and a row whose words a
+/// reranker scored at its pin, serve that revision's words, a NOTE's
+/// markdown and title included. Only an explicit Live read projects a NOTE
+/// from its live document, read through `store`, the content the pack reads.
+/// A NOTE keeps its pending-erasure gate either way.
+/// A body the write door refuses (a note's text is its body too) hydrates no
+/// field, as one no decoder reads hydrates none.
+fn hydrate_selected_note_fields(
+    vault: &Vault,
+    store: &StoreRead<'_>,
+    rtxn: &RoTxn<'_>,
+    id: &EntityId,
+    entity_type: u8,
+    body: &[u8],
+    options: HydrateOptions<'_>,
+) -> Result<HashMap<String, serde_json::Value>> {
+    let note = entity_type == crate::registry::ENTITY_TYPE_NOTE && !options.words_pinned;
+    // A NOTE whose citation erasure is pending is beyond use at any frontier.
+    if note && !body.is_empty() {
+        crate::note::ensure_citations_ready(store.base(), rtxn, *id)?;
+    }
+    if !(note && options.read_mode == crate::vault::ReadMode::Live) {
+        if crate::batch::export::write_door_refuses_body(body) {
+            return Ok(HashMap::new());
+        }
+        return Ok(decode_entity_fields(body, true).unwrap_or_default());
+    }
+    let body =
+        crate::note::live_body_from_in_txn(store.base(), store, rtxn, id, entity_type, body)?;
+    let markdown = vault.note_text_from_in_txn(store, rtxn, *id)?;
+    if crate::batch::export::write_door_refuses_body(&body)
+        || crate::batch::export::write_door_refuses_body(markdown.as_bytes())
+    {
+        return Ok(HashMap::new());
+    }
+    let mut fields = decode_entity_fields(&body, true).unwrap_or_default();
+    fields.insert("markdown".to_owned(), serde_json::Value::String(markdown));
+    Ok(fields)
 }
 
 /// Whether `revision` pins the indexed frontier the vector row belongs to:
@@ -450,6 +470,15 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     );
     out.insert("val".to_owned(), project(&body.value));
     out.insert("conf".to_owned(), serde_json::json!(body.confidence));
+    // What `conf` means travels with it (FIX 7761).
+    out.insert(
+        "confBand".to_owned(),
+        serde_json::Value::String(body.confidence_band.as_str().to_owned()),
+    );
+    out.insert(
+        "confBasis".to_owned(),
+        serde_json::Value::String(body.confidence_basis.as_str().to_owned()),
+    );
     if let Some(salience) = body.salience {
         out.insert("sal".to_owned(), serde_json::json!(salience));
     }
@@ -511,7 +540,11 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
     out
 }
 
-fn decode_entity_fields(payload: &[u8]) -> Option<HashMap<String, serde_json::Value>> {
+/// `write_accepted`: the write door's scan has read and accepted `payload`.
+fn decode_entity_fields(
+    payload: &[u8],
+    write_accepted: bool,
+) -> Option<HashMap<String, serde_json::Value>> {
     if payload.is_empty() {
         return Some(HashMap::new());
     }
@@ -520,7 +553,13 @@ fn decode_entity_fields(payload: &[u8]) -> Option<HashMap<String, serde_json::Va
     let value = rmpv::decode::read_value(&mut cursor).ok()?;
     // A body that reads as a secret whole, before this projection drops a
     // float's width and in the bytes it was stored as, hydrates no field.
-    if crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload) {
+    // The write door's read of bytes it accepted is not repeated (speed).
+    let reads_whole = if write_accepted {
+        crate::batch::secret_scan::release_accepted_body_reads_whole_as_stored(&value, payload)
+    } else {
+        crate::batch::secret_scan::release_body_reads_whole_as_stored(&value, payload)
+    };
+    if reads_whole {
         return Some(HashMap::new());
     }
     let rmpv::Value::Map(entries) = value else {

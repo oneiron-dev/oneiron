@@ -18,14 +18,16 @@
 //! render/admission precondition, never the proposal precondition. An
 //! uninstalled or `Candidate` pack may be PROPOSED; owner consent covers
 //! install plus admission; the section becomes renderable only once that same
-//! approved flow turns the skill `Active`. There is no autonomous pre-consent
-//! install.
+//! approved flow turns the skill `Active`. An explicit offer runs the
+//! deterministic fit first (FIX 9752): a code-free section whose requests its
+//! caller already holds installs with undo; everything else is the owner's.
 
 mod admission;
 mod claim;
 mod codec;
 mod doors;
 mod errors;
+mod fit_install;
 mod install;
 mod manifest;
 mod pages;
@@ -50,6 +52,11 @@ pub use self::doors::{
     EngineSectionBindings, VaultPluginInstallExecutor, VaultPluginInstallSource,
 };
 pub use self::errors::{PluginResult, PluginSectionError};
+pub(crate) use self::fit_install::erase_section_fit_receipts_in_txn;
+pub use self::fit_install::{
+    PREDICATE_SKILL_SECTION_FIT, PluginSectionFitEvidence, PluginSectionFitOutcome,
+    PluginSectionInstalled, install_plugin_section_after_fit, plugin_section_fit_evidence,
+};
 pub use self::install::{PluginInstallOrigin, PluginInstallTarget, ValidatedSectionManifest};
 pub use self::manifest::{
     ApprovedPluginIdentity, AuthorityLaneRef, PluginInstallExecutor, PluginInstallSource,

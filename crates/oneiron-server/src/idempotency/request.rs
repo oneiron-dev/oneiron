@@ -101,15 +101,12 @@ async fn idempotent(
     let store_key = store_key(&principal, &key);
     let target = request_target(&request);
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+    // FIX 9528: a body that does not fit or cannot be read is refused in the
+    // route's own typed envelope, naming why.
+    let read = super::body_read::keyed_body(body, &parts.headers, ROUTE_BODY_LIMIT_BYTES).await;
+    let body = match read {
         Ok(body) => body,
-        Err(_) => {
-            tracing::warn!(
-                reason = "body_read_failed",
-                "failed to read idempotent request body"
-            );
-            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-        }
+        Err(error) => return api_error_response(error, is_core_auth_route),
     };
     let request_body = body.to_vec();
 
@@ -161,8 +158,18 @@ async fn idempotent(
                 is_core_auth_route,
             );
         }
-        Ok(IdempotencyLookup::Interrupted) => {
+        Ok(IdempotencyLookup::Interrupted {
+            committed_writes: 0,
+        }) => {
             return api_error_response(intent::outcome_unknown(), is_core_auth_route);
+        }
+        // Its writes counted themselves on the intent: they landed, and the
+        // reply was not kept. Never a second run (FIX 10379).
+        Ok(IdempotencyLookup::Interrupted { committed_writes }) => {
+            return api_error_response(
+                intent::reply_not_kept(committed_writes),
+                is_core_auth_route,
+            );
         }
         Ok(IdempotencyLookup::Miss) => {}
         Err(_) => {
@@ -205,12 +212,17 @@ async fn idempotent(
     }
 
     let request = Request::from_parts(parts, Body::from(request_body.clone()));
-    let response = next.run(request).await;
-    let (parts, body) = response.into_parts();
+    // The route runs, and its reply is read, under its intent: each write it
+    // commits counts itself on the intent in its own transaction (FIX 10379).
     // The outcome is read whole: a large success is kept and answered, never
     // turned into a failure after its effect landed (FIX 6056). A body that
     // does not read leaves the intent, so a retry is not run again.
-    let body = match to_bytes(body, usize::MAX).await {
+    let (parts, body) = intent::run_under_intent(&store_key, async {
+        let (parts, body) = next.run(request).await.into_parts();
+        (parts, to_bytes(body, usize::MAX).await)
+    })
+    .await;
+    let body = match body {
         Ok(body) => body,
         Err(_) => {
             tracing::error!(
@@ -285,16 +297,13 @@ pub(crate) async fn idempotency_for_mutating_form(
     if !request.headers().contains_key(IDEMPOTENCY_KEY_HEADER) {
         return next.run(request).await;
     }
+    let is_core_route = is_core_auth_route(request_path(&request));
     let (parts, body) = request.into_parts();
-    let body = match to_bytes(body, ROUTE_BODY_LIMIT_BYTES).await {
+    // FIX 9528: refused in the route's own typed envelope, naming why.
+    let read = super::body_read::keyed_body(body, &parts.headers, ROUTE_BODY_LIMIT_BYTES).await;
+    let body = match read {
         Ok(body) => body,
-        Err(_) => {
-            tracing::warn!(
-                reason = "body_read_failed",
-                "failed to read keyed request body"
-            );
-            return StatusCode::PAYLOAD_TOO_LARGE.into_response();
-        }
+        Err(error) => return api_error_response(error, is_core_route),
     };
     let mutating = mutates(&body);
     let request = Request::from_parts(parts, Body::from(body));

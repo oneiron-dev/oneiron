@@ -212,6 +212,17 @@ impl GitPushStamp {
         }
     }
 
+    /// Names [`ERASED_CALL_IDENTITY`](crate::receipt::ERASED_CALL_IDENTITY)
+    /// as the pusher where the stamp names `actor`, for a retained journal
+    /// row an erase reaches (FIX 8806); `true` when it did.
+    pub(crate) fn erase_principal(&mut self, actor: &EntityId) -> bool {
+        let named = self.principal == actor.to_hex();
+        if named {
+            crate::receipt::ERASED_CALL_IDENTITY.clone_into(&mut self.principal);
+        }
+        named
+    }
+
     pub(super) fn naming(mut self, grant: EntityId, repo: GitPushRepo, anchor: String) -> Self {
         self.grant = Some(grant.to_hex());
         self.repo = Some(repo);
@@ -224,6 +235,13 @@ impl GitPushStamp {
     /// repository by it).
     pub(crate) fn served_name(&self) -> &str {
         &self.served
+    }
+
+    /// The CODE anchor and PROJECT this push was admitted on, when its arm
+    /// named one (FIX 7608 pre-flip, FIX 10271): the repo a held file's
+    /// reveal target names.
+    pub(crate) const fn code_repo(&self) -> Option<&GitPushRepo> {
+        self.repo.as_ref()
     }
 
     /// Whether this push was admitted on a checkout's run Grant: its ref

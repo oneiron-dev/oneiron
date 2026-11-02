@@ -14,11 +14,11 @@ use serde_json::Value as JsonValue;
 use super::sse::{EventTooLarge, SseDecoder, SseEvent};
 use crate::config::models::{ProviderConfig, RequestCodec, RequestCompression};
 
+mod never_sent;
 mod reply_line;
 
-pub(crate) use reply_line::install_media_reply_line;
-use reply_line::read_booked;
-pub(super) use reply_line::{ReplyBytes, charge_read, holding_replies};
+pub(super) use reply_line::{ReplyBytes, charge_read, holding_chat_replies, holding_replies};
+use reply_line::{read_booked, read_whole};
 
 /// The smallest request body worth compressing (ARCH-0081 §6).
 const MIN_COMPRESSED_BYTES: usize = 16 * 1024;
@@ -57,17 +57,18 @@ pub(super) enum HttpFailure {
     Malformed,
     /// A streamed event grew past the decoder's bound before it ended.
     EventTooLarge,
-    /// A reply body grew past [`MAX_REPLY_BYTES`] before it ended.
+    /// A reply body grew past its caller's own bound before it ended: an
+    /// identity or launch-manifest read ([`MAX_REPLY_BYTES`]), or a decision
+    /// read's. A JSON reply or an error status's body has none (FIX 9321).
     BodyTooLarge,
     /// The memory a media reply's body needed could not be allocated
     /// (FIX 8615): the machine's own floor, never a size bound.
     OutOfMemory,
 }
 
-/// The most one whole reply body may hold: a JSON reply, or the body of a
-/// streamed call's error status. Far above any reply a provider sends (a
-/// whole long answer with its usage), so only a broken provider or proxy
-/// reaches it.
+/// The most a house server's identity or launch-manifest read holds: that
+/// protocol's own bound. A JSON reply or an error status's body is read
+/// whole, however large (FIX 9321).
 pub(super) const MAX_REPLY_BYTES: usize = 16 << 20;
 
 impl From<reqwest::Error> for HttpFailure {
@@ -93,15 +94,42 @@ pub(super) struct BytesReply {
     pub(super) held: ReplyBytes,
 }
 
+/// A media exchange whose answer is taken as it arrives
+/// ([`ProviderHttp::send_media_streamed`]).
+pub(super) enum StreamedReply {
+    /// A 2xx answer, its body still to read.
+    Body(MediaStream),
+    /// Any other status, its body read whole on the media-reply line, for
+    /// the caller to classify.
+    Refused(BytesReply),
+}
+
+/// A 2xx media reply's body, taken a chunk at a time as it arrives and never
+/// held whole here (FIX 6122).
+pub(super) struct MediaStream(reqwest::Response);
+
+impl MediaStream {
+    /// The body's next bytes as they arrive; `None` at its end.
+    pub(super) async fn chunk(&mut self) -> Result<Option<Vec<u8>>, HttpFailure> {
+        Ok(self.0.chunk().await?.map(Vec::from))
+    }
+}
+
 /// What one media exchange sends.
 pub(super) enum MediaSend {
     Get,
     Delete,
     Json(JsonValue),
     Multipart(reqwest::multipart::Form),
-    /// A framed binary body (`application/octet-stream`).
-    Octets(Vec<u8>),
+    /// A framed binary body (`application/octet-stream`) carrying an upload
+    /// its admission allowed for one request (FIX 9517): a refused
+    /// compressed body's plain resend asks it again and goes only while it
+    /// still allows the upload.
+    Octets(Vec<u8>, UploadAdmission),
 }
+
+/// Asked right before an upload goes again: `false` sends nothing more.
+pub(super) type UploadAdmission = Arc<dyn Fn() -> bool + Send + Sync>;
 
 /// A finished, non-streamed exchange.
 pub(super) struct JsonReply {
@@ -114,6 +142,9 @@ pub(super) struct JsonReply {
 #[derive(Clone)]
 pub(super) struct ProviderHttp {
     client: reqwest::Client,
+    /// The same client keeping no idle connection: what a request that never
+    /// reached its upstream goes once more on (FIX 7113).
+    fresh: reqwest::Client,
     /// The same client with no provider header and no key: what a file the
     /// provider redirects to elsewhere is fetched with.
     bare: reqwest::Client,
@@ -220,8 +251,11 @@ impl ProviderHttp {
             headers.insert(name, value);
         }
         // One request per call (`SingleSend`): a redirect is answered, never
-        // followed, and nothing is sent twice. reqwest's default policy would
-        // resend a request an HTTP/2 server refused at the protocol level.
+        // followed, and nothing the upstream may have read is sent twice; a
+        // request that never reached it goes once more on `fresh`, a client
+        // that keeps no idle connection (FIX 7113). reqwest's default policy
+        // would resend a request an HTTP/2 server refused at the protocol
+        // level.
         let builder = || {
             let builder = reqwest::Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
@@ -230,10 +264,15 @@ impl ProviderHttp {
                 .timeout(Duration::from_secs(provider.timeout_secs));
             if direct { builder.no_proxy() } else { builder }
         };
-        let client = builder().default_headers(headers).build()?;
+        let client = builder().default_headers(headers.clone()).build()?;
+        let fresh = builder()
+            .default_headers(headers)
+            .pool_max_idle_per_host(0)
+            .build()?;
         let bare = builder().build()?;
         Ok(Self {
             client,
+            fresh,
             bare,
             base_url: provider.base_url.clone(),
             compression: provider.request_compression.map(|compression| {
@@ -259,6 +298,7 @@ impl ProviderHttp {
     pub(super) fn native(&self) -> Self {
         Self {
             client: self.client.clone(),
+            fresh: self.fresh.clone(),
             bare: self.bare.clone(),
             base_url: self
                 .base_url
@@ -287,38 +327,44 @@ impl ProviderHttp {
     /// (ARCH-0081 §6).
     fn post(&self, path: &str, headers: &BTreeMap<String, String>, body: &JsonValue) -> Sending {
         let plain = serde_json::to_vec(body).unwrap_or_default();
-        self.send_body(path, || self.request(path, headers), plain)
+        self.send_body(path, || self.request(path, headers), plain, None)
     }
 
     /// Sends `plain` on a request `request` builds, compressed when this
     /// provider's route takes it. A 400 or 415 to a compressed body is sent
-    /// once more, plain; when the plain answer differs, the encoding was the
-    /// cause and compression turns off for this process.
+    /// once more, plain, while `admission`, when there is one, still allows
+    /// the upload, and otherwise stands; when the plain answer differs, the
+    /// encoding was the cause and compression turns off for this process.
+    /// Each send that never reached the upstream goes once more on a fresh
+    /// connection ([`never_sent::send`]).
     fn send_body(
         &self,
         path: &str,
         request: impl Fn() -> reqwest::RequestBuilder,
         plain: Vec<u8>,
+        admission: Option<UploadAdmission>,
     ) -> Sending {
         let encoded = self.compression.as_ref().and_then(|compressor| {
             Some((Arc::clone(compressor), compressor.encode(path, &plain)?))
         });
         let Some((compressor, encoded)) = encoded else {
-            return Box::pin(request().body(plain).send());
+            return never_sent::send(&self.fresh, request().body(plain));
         };
         let (request, resend) = (request(), request());
+        let fresh = self.fresh.clone();
         Box::pin(async move {
-            let response = request
+            let request = request
                 .header(reqwest::header::CONTENT_ENCODING, compressor.token())
-                .body(encoded)
-                .send()
-                .await?;
-            if !matches!(response.status().as_u16(), 400 | 415) {
+                .body(encoded);
+            let response = never_sent::send(&fresh, request).await?;
+            if !matches!(response.status().as_u16(), 400 | 415)
+                || admission.is_some_and(|admits| !admits())
+            {
                 return Ok(response);
             }
             let refused = response.status();
             drop(response);
-            let response = resend.body(plain).send().await?;
+            let response = never_sent::send(&fresh, resend.body(plain)).await?;
             if response.status() != refused {
                 compressor.on.store(false, Ordering::Relaxed);
                 tracing::warn!(
@@ -331,17 +377,25 @@ impl ProviderHttp {
         })
     }
 
+    /// One JSON exchange at `path`, its reply read whole, however large
+    /// (FIX 9321): no size refuses it, and only a real allocation failure
+    /// ends the read.
     pub(super) async fn post_json(
         &self,
         path: &str,
         headers: &BTreeMap<String, String>,
         body: &JsonValue,
     ) -> Result<JsonReply, HttpFailure> {
-        self.post_json_within(path, headers, body, MAX_REPLY_BYTES)
-            .await
+        let response = self.post(path, headers, body).await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        // The encoded bytes stay booked, inside a media call, until the
+        // reply is parsed.
+        let (bytes, _held) = read_whole(response).await?;
+        json_reply(status, headers, &bytes)
     }
 
-    /// [`Self::post_json`], with a reply bound of the caller's.
+    /// [`Self::post_json`], with a reply bound of the caller's own protocol.
     pub(super) async fn post_json_within(
         &self,
         path: &str,
@@ -353,20 +407,7 @@ impl ProviderHttp {
         let status = response.status().as_u16();
         let headers = reply_headers(&response);
         let bytes = bounded_body(response, max_bytes).await?;
-        let body = if bytes.is_empty() {
-            JsonValue::Null
-        } else {
-            match serde_json::from_slice(&bytes) {
-                Ok(body) => body,
-                Err(_) if !(200..300).contains(&status) => JsonValue::Null,
-                Err(_) => return Err(HttpFailure::Malformed),
-            }
-        };
-        Ok(JsonReply {
-            status,
-            headers,
-            body,
-        })
+        json_reply(status, headers, &bytes)
     }
 
     /// One media exchange at `path`, its reply body read whole, however
@@ -378,6 +419,48 @@ impl ProviderHttp {
         path: &str,
         send: MediaSend,
     ) -> Result<BytesReply, HttpFailure> {
+        let response = self.media_response(path, send).await?;
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response).await?;
+        Ok(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        })
+    }
+
+    /// [`Self::send_media`], its 2xx reply's body left for the caller to
+    /// take as it arrives ([`MediaStream::chunk`]), never held whole here
+    /// (FIX 6122). Any other status's body is read whole, as `send_media`
+    /// reads it.
+    pub(super) async fn send_media_streamed(
+        &self,
+        path: &str,
+        send: MediaSend,
+    ) -> Result<StreamedReply, HttpFailure> {
+        let response = self.media_response(path, send).await?;
+        if response.status().is_success() {
+            return Ok(StreamedReply::Body(MediaStream(response)));
+        }
+        let status = response.status().as_u16();
+        let headers = reply_headers(&response);
+        let (body, held) = read_booked(response).await?;
+        Ok(StreamedReply::Refused(BytesReply {
+            status,
+            headers,
+            body,
+            held,
+        }))
+    }
+
+    /// Sends one media exchange at `path`: its answer, its body unread.
+    async fn media_response(
+        &self,
+        path: &str,
+        send: MediaSend,
+    ) -> Result<reqwest::Response, HttpFailure> {
         let url = self.url(path);
         let body = |content_type: &'static str| {
             let url = url.as_str();
@@ -387,12 +470,12 @@ impl ProviderHttp {
                     .header(reqwest::header::CONTENT_TYPE, content_type)
             }
         };
-        let response = match send {
+        Ok(match send {
             MediaSend::Get => self.client.get(url.as_str()).send().await?,
             MediaSend::Delete => self.client.delete(url.as_str()).send().await?,
             MediaSend::Json(json) => {
                 let plain = serde_json::to_vec(&json).unwrap_or_default();
-                self.send_body(path, body("application/json"), plain)
+                self.send_body(path, body("application/json"), plain, None)
                     .await?
             }
             MediaSend::Multipart(form) => {
@@ -402,19 +485,10 @@ impl ProviderHttp {
                     .send()
                     .await?
             }
-            MediaSend::Octets(octets) => {
-                self.send_body(path, body("application/octet-stream"), octets)
-                    .await?
+            MediaSend::Octets(octets, admission) => {
+                let send = body("application/octet-stream");
+                self.send_body(path, send, octets, Some(admission)).await?
             }
-        };
-        let status = response.status().as_u16();
-        let headers = reply_headers(&response);
-        let (body, held) = read_booked(response).await?;
-        Ok(BytesReply {
-            status,
-            headers,
-            body,
-            held,
         })
     }
 
@@ -480,8 +554,9 @@ impl ProviderHttp {
     }
 
     /// Starts a streamed exchange. A non-2xx answer arrives as one
-    /// [`SseItem::Status`] (or [`HttpFailure::BodyTooLarge`]); a 2xx answer
-    /// as its events, in order.
+    /// [`SseItem::Status`], its body read whole however large (FIX 9321),
+    /// or [`HttpFailure::OutOfMemory`] when that body could not be held; a
+    /// 2xx answer as its events, in order.
     pub(super) fn post_sse(
         &self,
         path: &str,
@@ -491,6 +566,29 @@ impl ProviderHttp {
         let sending = self.post(path, headers, body);
         futures_util::stream::unfold(SseState::Start(sending), next_sse)
     }
+}
+
+/// A finished exchange's reply as JSON: an empty body is null, and a body
+/// that does not parse is null on an error status and malformed otherwise.
+fn json_reply(
+    status: u16,
+    headers: BTreeMap<String, String>,
+    bytes: &[u8],
+) -> Result<JsonReply, HttpFailure> {
+    let body = if bytes.is_empty() {
+        JsonValue::Null
+    } else {
+        match serde_json::from_slice(bytes) {
+            Ok(body) => body,
+            Err(_) if !(200..300).contains(&status) => JsonValue::Null,
+            Err(_) => return Err(HttpFailure::Malformed),
+        }
+    };
+    Ok(JsonReply {
+        status,
+        headers,
+        body,
+    })
 }
 
 fn reply_headers(response: &reqwest::Response) -> BTreeMap<String, String> {
@@ -555,10 +653,10 @@ async fn next_sse(state: SseState) -> Option<(Result<SseItem, HttpFailure>, SseS
             if !response.status().is_success() {
                 let status = response.status().as_u16();
                 let headers = reply_headers(&response);
-                let body = match bounded_body(response, MAX_REPLY_BYTES).await {
-                    Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null),
-                    Err(HttpFailure::BodyTooLarge) => {
-                        return Some((Err(HttpFailure::BodyTooLarge), SseState::Done));
+                let body = match read_whole(response).await {
+                    Ok((bytes, _held)) => serde_json::from_slice(&bytes).unwrap_or(JsonValue::Null),
+                    Err(HttpFailure::OutOfMemory) => {
+                        return Some((Err(HttpFailure::OutOfMemory), SseState::Done));
                     }
                     Err(_) => JsonValue::Null,
                 };

@@ -27,6 +27,18 @@ pub struct DecisionAskAnswerRequest {
     pub answer: DecisionAnswer,
 }
 
+/// `vault.decisions.asks.confirm_grant`'s input: the owner's confirm of the
+/// standing grant his reason drafted on one ask about a consent effect (FIX
+/// 2975). The owner is the credential's, never a field here.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DecisionAskConfirmGrantRequest {
+    /// The ask's arrival number.
+    pub seq: u64,
+    /// The one-line notice shown beside the live grant, in the host's words.
+    pub notice: String,
+}
+
 /// `vault.decisions.asks.climb`'s input: one open ask to move to the next
 /// role on its chain with a live holder, up to its ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

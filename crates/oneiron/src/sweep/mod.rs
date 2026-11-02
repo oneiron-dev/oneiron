@@ -5,7 +5,7 @@
 //! transaction itself and queues a durable `h:{seq:8BE}` obligation row for
 //! the HISTORICAL carriers — the persisted Loro op-history that still
 //! embeds the erased payload bytes (`d:w:{key}` full snapshots above all,
-//! plus the `u:w:{key}:{seq:08x}` incremental rows). This module is the
+//! plus the `u:w:{key}:{seq:016x}` incremental rows). This module is the
 //! consumer of those rows.
 //!
 //! # Mechanism (OWNER-DECISION, ONE-1087 design)
@@ -111,12 +111,17 @@
 //! whose scope contains the receipt's scope — a dropped obligation (e.g. a
 //! manually deleted row) is surfaced as `sweep_obligations_missing` plus a
 //! `tracing::error`, never silent. `SyncQueue::clear_all` re-bootstrap
-//! already preserves `h:` rows byte-identically (ONE-1091 residual).
+//! already preserves `h:` rows byte-identically (ONE-1091 residual). An
+//! owed `hc:` compaction that names the receipt covers it too (FIX 11082),
+//! and a receipt another device attested is that device's to complete and
+//! to audit (FIX 2596).
 
 mod compact;
 // A corrupt CLAIM's erase asks for every carrier (FIX 7800).
 mod corrupt;
 mod finalize;
+#[cfg(feature = "sync")]
+mod holds;
 #[cfg(feature = "sync")]
 pub(crate) mod owed;
 mod run;

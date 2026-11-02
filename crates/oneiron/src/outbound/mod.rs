@@ -5,6 +5,7 @@
 //! [`OutboundExecutionSink`], while delivery-window policy is evaluated as a
 //! delivery-time request stage.
 
+mod ambient_alternative;
 mod capability;
 mod connector_reply;
 mod connector_task;
@@ -15,7 +16,9 @@ mod executor;
 mod intent;
 mod manifests;
 mod receipt_fields;
+mod recovery_suggestions;
 mod reply_content;
+mod reply_job;
 mod retry_audit;
 mod served_sink;
 mod window_door;
@@ -25,6 +28,8 @@ mod tests;
 
 pub use crate::delivery_window::DeliveryWindowDecision as OutboundDeliveryWindowDecision;
 
+pub use self::ambient_alternative::{OutboundAmbientAlternative, OutboundScheduleContinuation};
+pub(crate) use self::capability::OutboundReplaySafety;
 pub(crate) use self::capability::is_canonical_outbound_verb;
 pub use self::capability::{
     COMMON_OUTBOUND_VERB_KINDS, OUTBOUND_CAPABILITY_MANIFEST_VERSION, OUTBOUND_VERB_FIELD_CONTRACT,
@@ -43,6 +48,7 @@ pub(crate) use self::dispatch_attempt_id::{
 };
 pub(crate) use self::dispatch_pipeline::FrozenDispatchIdentity;
 pub(crate) use self::dispatch_pipeline::outbound_gate_effect;
+pub(crate) use self::dispatch_pipeline::provider_retry_after_secs;
 pub(crate) use self::dispatch_pipeline::resolve_channel_identity_ref_for_connector;
 pub(crate) use self::dispatch_pipeline::validate_publisher_signature_in_txn;
 pub(crate) use self::dispatch_pipeline::{
@@ -56,21 +62,32 @@ pub use self::dispatch_pipeline::{
 pub use self::dispatch_types::{
     OutboundDispatchActor, OutboundDispatchError, OutboundDispatchGate, OutboundDispatchOutcome,
     OutboundDispatchPolicyRisk, OutboundDispatchRequest, OutboundDispatchResult,
-    OutboundExecutionOutcome, OutboundExecutionOutcomeKind, OutboundExecutionRequest,
-    OutboundExecutionSink,
+    OutboundExecutionHold, OutboundExecutionOutcome, OutboundExecutionOutcomeKind,
+    OutboundExecutionRequest, OutboundExecutionSink,
 };
 pub use self::executor::ConnectorTaskExecutorError;
 pub use self::intent::{
     MentionProvenance, OUTBOUND_INTENT_SCHEMA_VERSION, OutboundIntent, OutboundIntentDraft,
     OutboundIntentSource, OutboundIntentTrigger,
 };
+pub use self::recovery_suggestions::OutboundRecoverySuggestion;
 pub use self::reply_content::{CONNECTOR_REPLY_BODY_PREFIX, ConnectorReplyBody};
-pub use self::served_sink::{OwnedServedChannelSink, ServedChannelSink};
+pub use self::reply_job::{
+    CONNECTOR_REPLY_JOB_KIND, CONNECTOR_REPLY_RESULT_PREFIX, ConnectorReplyJob,
+    ConnectorReplyJobResult, ConnectorReplyStage,
+};
+pub use self::served_sink::{
+    LINE_API_BASE, OwnedServedChannelSink, SLACK_API_BASE, ServedChannelSink, ServedEndpoints,
+    ServedTransports, TELEGRAM_API_BASE,
+};
 
 pub(crate) use self::connector_task::{
     connector_send_attempt_payload, put_connector_send_task_in_txn,
 };
 pub(crate) use self::receipt_fields::APPROVAL_DIGEST_FIELD;
+pub(crate) use self::reply_job::{
+    erase_connector_reply_job_payload, erase_connector_reply_results_in_txn,
+};
 pub(crate) use self::window_door::stored_delivery_window_policy_claims;
 
 /// Runs `hook` once, on this thread, when the next new outbound effect has

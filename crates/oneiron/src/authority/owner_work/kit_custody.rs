@@ -51,10 +51,16 @@ pub(super) fn apply_kit_request(
     {
         return Err(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
+    // Its permits in pieces join from its own signer's pieces at its parents
+    // (FIX 11866); pieces that do not join leave it without effect.
+    let Some(request) = permit_pieces::joined_request(&state.owner_work, key, request) else {
+        state.owner_work.refused.insert(hash);
+        return Ok(());
+    };
     let pinned = pin.is_some_and(|pin| pin.id == root && pin.anchor_key == *key);
     let live = pinned
         && crate::authority::owner_act::owner_live_at(state, request.act.owner)
-        && custody::custody_request_lands(&state.owner_work, request);
+        && custody::custody_request_lands(&state.owner_work, &request);
     let work = &mut state.owner_work;
     if !live {
         work.refused.insert(hash);
@@ -63,7 +69,7 @@ pub(super) fn apply_kit_request(
     work.requests.insert(
         hash,
         Arc::new(WorkRequest {
-            request: request.clone(),
+            request: request.into_owned(),
             key: *key,
             marks: BTreeMap::new(),
             narrow_only: false,

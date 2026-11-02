@@ -18,6 +18,7 @@ impl McpCodeModeVerbs {
             served: std::sync::Mutex::new(Vec::new()),
             run_id,
             guests: RunGuests::new(server, run_id),
+            collector: crate::api::call_receipt::attempt_collector(),
         }
     }
 
@@ -91,7 +92,9 @@ impl McpCodeModeVerbs {
                 .map(|read| read.actor_key().clone())
                 .map_err(|error| AgentVerbRefusal {
                     code: match error.code() {
-                        crate::error::ErrorCode::Forbidden => "forbidden",
+                        crate::error::ErrorCode::Forbidden
+                        | crate::error::ErrorCode::HostActionRequiresSupportGrant
+                        | crate::error::ErrorCode::OwnerBindingRequired => "forbidden",
                         _ => "engine_error",
                     }
                     .to_owned(),
@@ -154,10 +157,23 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             origin: origin.clone(),
             run_id: self.run_id,
         };
-        self.runtime.spawn(HELD_IMAGE.scope(held, async move {
-            let _ = sender.send(execute_code_mode_verb(&server, &actor, verb, input, run).await);
-        }));
-        let Ok(executed) = receiver.recv() else {
+        // What the answer holds (a deck preview's renderer) comes back with
+        // it, kept until the answer is handed to the run (FIX 8238).
+        let answered = HELD_IMAGE.scope(held, async move {
+            let executed = crate::api::answer_hold::keeping(execute_code_mode_verb(
+                &server, &actor, verb, input, run,
+            ))
+            .await;
+            let _ = sender.send(executed);
+        });
+        // A live-run hold the verb makes names its attempt on the
+        // `execute_code` call's receipt (FIX 10938).
+        self.runtime
+            .spawn(crate::api::call_receipt::with_attempt_collector(
+                self.collector.clone(),
+                answered,
+            ));
+        let Ok((executed, kept)) = receiver.recv() else {
             return Ok(Err(AgentVerbRefusal {
                 code: "engine_error".to_owned(),
             }));
@@ -170,10 +186,9 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .extend(listed.iter().flatten().copied());
-        Ok(Ok(AgentVerbAnswer {
-            output,
-            rows: listed,
-        }))
+        let answer = AgentVerbAnswer::new(output, listed);
+        drop(kept);
+        Ok(Ok(answer))
     }
 
     /// The run's answer to the questions one of its connector calls waits on
@@ -213,10 +228,7 @@ impl AgentVerbDoor for McpCodeModeVerbs {
         };
         Ok(match receiver.recv() {
             Ok(Ok(reply)) => match serde_json::to_value(reply) {
-                Ok(output) => Ok(AgentVerbAnswer {
-                    output,
-                    rows: Some(Vec::new()),
-                }),
+                Ok(output) => Ok(AgentVerbAnswer::new(output, Some(Vec::new()))),
                 Err(_) => Err(refusal("engine_error")),
             },
             Ok(Err(error)) => Err(refusal(&error.code)),
@@ -259,6 +271,12 @@ impl AgentVerbDoor for McpCodeModeVerbs {
             return Ok(None);
         }
         self.credential_lane().map(Some)
+    }
+
+    /// The host turn's hooks read on the credential's lane, as the run's
+    /// own search does (FIX 9841). A keyless reply stays keyless.
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        self.credential_lane().ok()
     }
 
     /// A read a session-bound run serves through the room (WILL L11-01)
@@ -390,16 +408,22 @@ pub(super) async fn run_code_mode_verb(
     let mut served = super::McpServed::default();
     let mut board_hooks = None;
     let origin = run.origin.clone();
-    let (output, ..) = crate::api::facade::host_doors::with_calling_origin(
+    // A media call spends on the run's own line, as its steps do (FIX 780).
+    let line = media_line(server, tool.name, run.run_id);
+    // The verb table's fan-out, on the heap (FIX 12072).
+    let (output, ..) = crate::api::facade::host_doors::support::with_calling_origin(
         origin,
-        execute_agent_verb_input(
-            server,
-            tool.name,
-            input,
-            actor,
-            Some(run),
-            &mut served,
-            &mut board_hooks,
+        crate::api::facade::host_doors::with_calling_line(
+            line,
+            Box::pin(execute_agent_verb_input(
+                server,
+                tool.name,
+                input,
+                actor,
+                Some(run),
+                &mut served,
+                &mut board_hooks,
+            )),
         ),
     )
     .await?;
@@ -412,4 +436,39 @@ pub(super) async fn run_code_mode_verb(
     // An act whose rows are unknown answers off this device only that it
     // ran (FIX 5988); a read releases as before.
     super::served_rows::unknown_act_answer(tool.name, actor, output, served)
+}
+
+/// The `ai.*` media verbs a code-mode run's line pays for (FIX 780), and
+/// `connector.call`, whose web calls on the deploy's key it pays for (FIX 11604).
+const LINE_VERBS: [&str; 9] = [
+    "ai.options",
+    "ai.image",
+    "ai.speech",
+    "ai.transcribe",
+    "ai.embed",
+    "ai.video",
+    "ai.video.poll",
+    "ai.video.cancel",
+    "connector.call",
+];
+
+/// The line a code-mode run's `ai.*` media call spends on (FIX 780): code
+/// mode's own meter, the one the run's steps spend on, under the run's own
+/// name. `None` for any other verb, or where code mode lends no meter: that
+/// call takes the owner's door, as a direct tool call does.
+fn media_line(
+    server: &SyncServer,
+    verb: &str,
+    run_id: oneiron::EntityId,
+) -> Option<oneiron::llm::run_admission::RunAdmission> {
+    if !LINE_VERBS.contains(&verb) {
+        return None;
+    }
+    let meter = server
+        .code_execution_host()?
+        .engine_native()?
+        .provider()
+        .host_meter()?;
+    let run = format!("code-mode:{}", run_id.to_hex());
+    Some(server.ai.model_runtime().funded_run(run, meter, None))
 }

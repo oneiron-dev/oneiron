@@ -14,9 +14,20 @@
 //! its runtime files go. It listens where its provider calls: the
 //! provider's own loopback `base_url`. An external row is the operator's
 //! endpoint, and names only what its answers must show.
+//!
+//! The media workers (FIX 8318) are rows too: a `vox_cpm2` worker serves a
+//! `voxcpm2` provider, an `asr` worker a `local-openai-compat` one (an
+//! external one also an `openai-compat` provider that says it is an own
+//! server). A managed one takes its provider's bearer credential, which
+//! its launcher passes on by the provider's `key_env` alone, and its
+//! Python environment from the row's own lock: no embedded lock is a
+//! media worker's. Its launch is the house recipe, so it names no draft,
+//! native server or extra argument; a VoxCPM2 worker's environment names
+//! its serving-policy file, and nothing else.
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
+use oneiron::ModelLocality;
 use oneiron::llm::{CacheDigest, CacheIdentity, WorkerKind, WorkerMode};
 use serde::Deserialize;
 
@@ -31,6 +42,19 @@ const DEFAULT_EXL3_PYTHON: &str = "python3.12";
 /// The interpreter a llama.cpp launch's identity script runs on when the row
 /// names none; it needs only the standard library.
 const DEFAULT_LLAMA_PYTHON: &str = "python3";
+
+/// The interpreter a media worker's environment is built with when the row
+/// names none: the version its lock is resolved for.
+const DEFAULT_MEDIA_PYTHON: &str = "python3.12";
+
+/// Whether a managed media worker must name its environment lock. Its
+/// packages (voxcpm, torch, transformers) are pinned only there; no
+/// embedded lock stands in for it.
+const REQUIRE_MEDIA_ENV_LOCK: bool = true;
+
+/// The environment variable a managed VoxCPM2 row names its serving-policy
+/// file by: the vault's resolved ceiling, as the worker reads it.
+const VOICE_POLICY_ENV: &str = "ONEIRON_VOICE_POLICY_FILE";
 
 /// `[models.workers.<id>]` as written.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -118,16 +142,24 @@ pub struct ManagedLaunch {
     /// The environment variable holding a hub read token, for a repository
     /// that needs one. Never the token itself.
     pub hub_token_env: Option<String>,
-    /// The interpreter: EXL3's environment is built with it, llama.cpp's
-    /// launch identity runs on it.
+    /// The interpreter: EXL3's and a media worker's environment is built
+    /// with it, llama.cpp's launch identity runs on it.
     pub python: PathBuf,
-    /// An EXL3 environment lock in place of the embedded one.
+    /// An EXL3 environment lock in place of the embedded one; a media
+    /// worker's own lock, which it always names.
     pub env_lock: Option<PathBuf>,
     /// llama.cpp's `llama-server`, verified by its SHA-256 before each launch.
     pub server: Option<NativeServer>,
     /// The loopback host and port the worker listens on: its provider's.
     pub listen_host: String,
     pub listen_port: u16,
+    /// The environment variable holding a media worker's bearer credential:
+    /// its provider's `key_env`. Never the credential itself; `None` for a
+    /// chat worker, which is given no key.
+    pub credential_env: Option<String>,
+    /// A VoxCPM2 worker's serving-policy file, as its row's
+    /// `env.ONEIRON_VOICE_POLICY_FILE` names it.
+    pub policy_file: Option<PathBuf>,
     /// The CUDA device the worker runs on, as `CUDA_VISIBLE_DEVICES` names
     /// it, and the device ledger its declaration goes in.
     pub device: Option<String>,
@@ -218,29 +250,40 @@ impl WorkerFile {
                 binding.provider
             )
         })?;
-        anyhow::ensure!(
-            matches!(
-                provider.kind,
-                ProviderKind::LocalOpenaiCompat | ProviderKind::OpenaiCompat
-            ),
-            "{}: a worker serves an OpenAI-compatible provider",
-            field("model")
-        );
+        let kind = self
+            .kind
+            .ok_or_else(|| anyhow::anyhow!("{} is required", field("kind")))?;
+        let mode = self.mode.unwrap_or_default();
+        let media = media_kind(kind);
+        if !media {
+            anyhow::ensure!(
+                matches!(
+                    provider.kind,
+                    ProviderKind::LocalOpenaiCompat | ProviderKind::OpenaiCompat
+                ),
+                "{}: a worker serves an OpenAI-compatible provider",
+                field("model")
+            );
+        }
         anyhow::ensure!(
             provider.key_secret.is_none(),
             "{}: a worker's provider cannot hold a key_secret key; its probe reads no broker key",
             field("model")
         );
         let engine = binding.engine_id(&provider.revision)?;
-        let kind = self
-            .kind
-            .ok_or_else(|| anyhow::anyhow!("{} is required", field("kind")))?;
         anyhow::ensure!(
-            matches!(kind, WorkerKind::LlamaCpp | WorkerKind::Exl3),
-            "{}: only llama_cpp and exl3 workers have a launcher and a probe",
+            media || matches!(kind, WorkerKind::LlamaCpp | WorkerKind::Exl3),
+            "{}: only llama_cpp, exl3, vox_cpm2 and asr workers have a launcher and a probe",
             field("kind")
         );
-        let mode = self.mode.unwrap_or_default();
+        if media {
+            media_provider(&field("model"), kind, mode, provider)?;
+            anyhow::ensure!(
+                self.expected.template.is_none(),
+                "{}: a media worker renders no chat template",
+                field("expected.template")
+            );
+        }
         let expected = self.expected.resolve(&field("expected"))?;
         let launch = match mode {
             WorkerMode::Managed => {
@@ -256,6 +299,15 @@ impl WorkerFile {
                 if let Some(endpoint) = &self.endpoint {
                     reqwest::Url::parse(endpoint)
                         .map_err(|error| anyhow::anyhow!("{}: {error}", field("endpoint")))?;
+                    // A media worker's probe asks what its calls are sent
+                    // to: its provider's own base_url.
+                    anyhow::ensure!(
+                        !media
+                            || endpoint.trim_end_matches('/')
+                                == provider.base_url.trim_end_matches('/'),
+                        "{}: a media worker is probed where its provider calls, its base_url",
+                        field("endpoint")
+                    );
                 }
                 None
             }
@@ -353,9 +405,10 @@ impl WorkerFile {
                 field("server")
             ),
         };
+        let media = media_kind(kind);
         anyhow::ensure!(
-            kind == WorkerKind::Exl3 || self.env_lock.is_none(),
-            "{}: only an exl3 worker builds a Python environment",
+            kind == WorkerKind::Exl3 || media || self.env_lock.is_none(),
+            "{}: only an exl3 or a media worker builds a Python environment",
             field("env_lock")
         );
         let env_lock = self
@@ -367,7 +420,13 @@ impl WorkerFile {
             Some(python) if python.components().count() == 1 => python.clone(),
             Some(python) => absolute(&field("python"), python, base)?,
             None if kind == WorkerKind::Exl3 => PathBuf::from(DEFAULT_EXL3_PYTHON),
+            None if media => PathBuf::from(DEFAULT_MEDIA_PYTHON),
             None => PathBuf::from(DEFAULT_LLAMA_PYTHON),
+        };
+        let (credential_env, policy_file) = if media {
+            self.media_launch(id, kind, provider, base)?
+        } else {
+            (None, None)
         };
         if let Some(env) = &self.hub_token_env {
             anyhow::ensure!(
@@ -414,6 +473,8 @@ impl WorkerFile {
             server,
             listen_host,
             listen_port,
+            credential_env,
+            policy_file,
             device: self.device.clone(),
             args: self.args.clone(),
             env: self.env.clone(),
@@ -426,6 +487,95 @@ impl WorkerFile {
             idle_stop_secs: self.idle_stop_secs,
         })
     }
+
+    /// A managed media worker's own inputs: the variable holding its
+    /// provider's credential and, for VoxCPM2, its serving-policy file. Its
+    /// launch is the house recipe: no draft and no extra argument, and its
+    /// environment names nothing but that file.
+    fn media_launch(
+        &self,
+        id: &str,
+        kind: WorkerKind,
+        provider: &ProviderConfig,
+        base: Option<&Path>,
+    ) -> anyhow::Result<(Option<String>, Option<PathBuf>)> {
+        let field = |name: &str| format!("models.workers.{id}.{name}");
+        let credential = provider.key_env.clone().ok_or_else(|| {
+            anyhow::anyhow!(
+                "{}: a managed media worker takes its provider's bearer credential; set key_env on the provider",
+                field("model")
+            )
+        })?;
+        anyhow::ensure!(
+            !REQUIRE_MEDIA_ENV_LOCK || self.env_lock.is_some(),
+            "{} is required for a managed media worker: its packages are pinned there alone",
+            field("env_lock")
+        );
+        anyhow::ensure!(
+            self.draft.is_none() && self.draft_manifest.is_none() && self.draft_dir.is_none(),
+            "{}: a media worker loads no draft",
+            field("draft")
+        );
+        anyhow::ensure!(
+            self.args.is_empty(),
+            "{}: a media worker runs the house launch, with no extra argument",
+            field("args")
+        );
+        let policy = self.env.get(VOICE_POLICY_ENV);
+        if let Some(name) = self
+            .env
+            .keys()
+            .find(|name| kind != WorkerKind::VoxCpm2 || *name != VOICE_POLICY_ENV)
+        {
+            anyhow::bail!(
+                "{}.{name}: a media worker's environment names only a VoxCPM2 worker's {VOICE_POLICY_ENV}",
+                field("env")
+            );
+        }
+        let policy_file = match (kind, policy) {
+            (WorkerKind::VoxCpm2, Some(path)) => Some(absolute(
+                &format!("{}.{VOICE_POLICY_ENV}", field("env")),
+                Path::new(path),
+                base,
+            )?),
+            (WorkerKind::VoxCpm2, None) => anyhow::bail!(
+                "{}.{VOICE_POLICY_ENV} is required: the serving-policy file with the vault's ceiling",
+                field("env")
+            ),
+            _ => None,
+        };
+        Ok((Some(credential), policy_file))
+    }
+}
+
+/// Whether `kind` is a media worker's: VoxCPM2 speech or local ASR.
+fn media_kind(kind: WorkerKind) -> bool {
+    matches!(kind, WorkerKind::VoxCpm2 | WorkerKind::Asr)
+}
+
+/// Whether a media worker of `kind` serves `provider`: VoxCPM2 a `voxcpm2`
+/// provider; ASR a `local-openai-compat` one, or, external, an
+/// `openai-compat` one that says it is an own server.
+fn media_provider(
+    field: &str,
+    kind: WorkerKind,
+    mode: WorkerMode,
+    provider: &ProviderConfig,
+) -> anyhow::Result<()> {
+    match kind {
+        WorkerKind::VoxCpm2 => anyhow::ensure!(
+            provider.kind == ProviderKind::Voxcpm2,
+            "{field}: a vox_cpm2 worker serves a voxcpm2 provider"
+        ),
+        _ => anyhow::ensure!(
+            provider.kind == ProviderKind::LocalOpenaiCompat
+                || (mode == WorkerMode::External
+                    && provider.kind == ProviderKind::OpenaiCompat
+                    && provider.locality == ModelLocality::OwnServer),
+            "{field}: an asr worker serves a local-openai-compat provider (an external one also an openai-compat provider with locality = \"own_server\")"
+        ),
+    }
+    Ok(())
 }
 
 impl ExpectedFile {

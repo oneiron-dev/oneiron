@@ -18,6 +18,7 @@ use axum::extract::State;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::rejection::QueryRejection;
 use axum::response::Json;
+use axum::response::Response;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use futures_util::Stream;
 use oneiron::task_verb::run_cancel::RunCancelOutcome;
@@ -30,7 +31,9 @@ use utoipa::IntoParams;
 use utoipa::ToSchema;
 
 mod cancel;
+mod encode;
 mod keyed;
+mod projection;
 mod scoped;
 
 pub(crate) use self::keyed::intervene_idempotency;
@@ -110,7 +113,8 @@ pub(crate) struct CoreRunTreeInterventionResponse {
     /// the caller does not stand to stop the branch.
     #[serde(skip_serializing_if = "Option::is_none")]
     proposal_ref: Option<String>,
-    /// Fresh snapshot for the affected run, when the attempt row has a run id.
+    /// Fresh snapshot for the affected run, when the attempt row has a run id,
+    /// and null without run-tree read authority (FIX 8220).
     tree: Option<CoreRunTreeResponse>,
 }
 
@@ -131,16 +135,22 @@ pub(crate) enum CoreRunTreeInterventionEffect {
     Proposed,
 }
 
-/// Runtime attempt tree response.
+/// Runtime attempt tree response, as its flat table (FIX 11107): every
+/// attempt once, in pre-order, with the roots and each attempt's children
+/// named by index into `nodes`. The SDK reads the same table.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeResponse {
-    /// Root attempts after non-mutating repair of missing parents or cycles.
-    roots: Vec<CoreRunTreeNode>,
+    /// Every attempt in the tree, once, in pre-order.
+    nodes: Vec<CoreRunTreeNode>,
+    /// Root attempts after non-mutating repair of missing parents or cycles,
+    /// as indexes into `nodes`, in order.
+    #[schema(example = json!([0]))]
+    roots: Vec<u64>,
     /// Repairs applied while rendering the tree from queue rows.
     repairs: Vec<CoreRunTreeRepair>,
 }
 
-/// One runtime attempt in the rendered tree.
+/// One runtime attempt in the rendered tree's table.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct CoreRunTreeNode {
     /// Hex-encoded attempt id.
@@ -180,9 +190,10 @@ pub(crate) struct CoreRunTreeNode {
     failure: Option<CoreRunTreeFailure>,
     /// Lifecycle/operator events projected from the backing queue row.
     events: Vec<CoreRunTreeEvent>,
-    /// Child attempts ordered deterministically by creation time and attempt id.
-    #[schema(no_recursion)]
-    children: Vec<CoreRunTreeNode>,
+    /// Child attempts, as indexes into the response's `nodes`, ordered
+    /// deterministically by creation time and attempt id.
+    #[schema(example = json!([1, 2]))]
+    children: Vec<u64>,
 }
 
 /// Surface lifecycle state for a runtime attempt.
@@ -298,7 +309,7 @@ pub(crate) async fn core_run_tree(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     query: Result<Query<CoreRunTreeQuery>, QueryRejection>,
-) -> Result<Json<CoreRunTreeResponse>, EnvelopedApiError> {
+) -> Result<Response, EnvelopedApiError> {
     auth.require(CoreScope::Read)?;
     auth.require_unrestricted_record_scope()?;
     let params = query_params(query)?;
@@ -311,7 +322,10 @@ pub(crate) async fn core_run_tree(
         core_engine_error("core run tree read failed", error)
     })?;
 
-    Ok(Json(core_run_tree_response(tree)))
+    // FIX 11107: the flat table, however deep the tree.
+    let body = encode::run_tree_json(tree)
+        .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
+    Ok(encode::raw_json(body))
 }
 
 /// Observe the runtime attempt queue as a deterministic run tree.
@@ -340,28 +354,34 @@ pub(crate) async fn core_run_tree_observe(
     // Subscribe first: a commit during the initial read is either reflected in
     // that snapshot or queued for the next read. No polling timer is involved.
     let receiver = oneiron::AttemptQueue::new(&server.vault).subscribe();
+    // FIX 10381: a revoke wakes the stream to judge its credential again.
+    let revocations = server.vault.subscribe_credential_revocations();
     let initial = oneiron::RunTreeAdapter::new(&server.vault)
         .read_run(&run_id)
         .map_err(|e| core_engine_error("core run tree observe failed", e))?;
-    let initial = serde_json::to_string(&core_run_tree_response(initial))
+    let initial = encode::run_tree_json(initial)
         .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
     // FIX 8221: the stream keeps the admitted credential and judges its read
     // authority again before each snapshot it sends.
-    let updates = scoped::observe(server, auth, receiver, run_id, initial);
+    let updates = scoped::observe(server, auth, receiver, revocations, run_id, initial);
     Ok(Sse::new(updates).keep_alive(KeepAlive::default()))
 }
 
 /// Intervene on a runtime attempt and return a fresh run-tree snapshot.
+/// With an `Idempotency-Key` the intervention runs once and a retry replays
+/// the kept effect (FIX 6056); `tree` is null without run-tree read
+/// authority, on a fresh answer and on a replay alike (FIX 8220).
 #[utoipa::path(
     post,
     path = "/v1/core/run-tree/intervene",
     request_body(content = CoreRunTreeInterventionRequest, content_type = "application/json"),
     responses(
-        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row; a cancel by a caller that neither is the vault owner nor owns the TASK, run or spawn answers `proposed` with its `proposal_ref` and changes nothing (FIX 8219).", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
+        (status = 200, description = "Intervention applied idempotently and recorded on the backing attempt row; a cancel by a caller that neither is the vault owner nor owns the TASK, run or spawn answers `proposed` with its `proposal_ref` and changes nothing (FIX 8219). With an `Idempotency-Key` the intervention runs once and a retry replays the kept effect, its tree projected again under the caller's read authority as it stands then (FIX 6056, FIX 8220).", body = CoreRunTreeInterventionResponse, content_type = "application/json"),
         (status = 400, description = "Malformed intervention or invalid lifecycle transition.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Core token lacks core:write; or, for pause and resume, the caller is neither the vault owner, the host root, nor the owner of the TASK the job realizes.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 404, description = "For pause and resume, no job names this id, or the job realizes a TASK the caller is no party to (`job`).", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Run-tree intervention failed.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]
@@ -369,7 +389,7 @@ pub(crate) async fn core_run_tree_intervene(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
     payload: Result<Json<CoreRunTreeInterventionRequest>, JsonRejection>,
-) -> Result<Json<CoreRunTreeInterventionResponse>, EnvelopedApiError> {
+) -> Result<Response, EnvelopedApiError> {
     auth.require(CoreScope::Write)?;
     let req = json_payload(payload)?;
     let attempt_id = parse_attempt_id_param(&req.attempt_id, "job_id")?;
@@ -423,7 +443,11 @@ pub(crate) async fn core_run_tree_intervene(
                 Some(actor) => match cancel::core_run_cancel(&server, &auth, actor, input)? {
                     RunCancelOutcome::Applied(outcome) => Ok(outcome),
                     RunCancelOutcome::Proposed { proposal_ref } => {
-                        return Ok(Json(cancel::proposed(attempt_id, req.kind, proposal_ref)));
+                        let proposed = cancel::proposed(attempt_id, req.kind, proposal_ref);
+                        let body = encode::intervention_json(proposed, None).map_err(|_| {
+                            ApiError::internal_server_error("run tree serialization failed")
+                        })?;
+                        return Ok(encode::raw_json(body));
                     }
                 },
             }
@@ -445,14 +469,18 @@ pub(crate) async fn core_run_tree_intervene(
         None => None,
     };
 
-    Ok(Json(CoreRunTreeInterventionResponse {
+    // FIX 11107: the snapshot is the flat table, however deep.
+    let response = CoreRunTreeInterventionResponse {
         attempt_id: response_attempt_id,
         run_id,
         kind: req.kind,
         effect: core_run_tree_intervention_effect(outcome.effect),
         proposal_ref: None,
-        tree,
-    }))
+        tree: None,
+    };
+    let body = encode::intervention_json(response, tree)
+        .map_err(|_| ApiError::internal_server_error("run tree serialization failed"))?;
+    Ok(encode::raw_json(body))
 }
 
 /// A pause or resume through the run-control doors' own admission (FIX
@@ -571,73 +599,6 @@ pub(crate) fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<
     Ok(())
 }
 
-pub(crate) fn core_run_tree_response(tree: oneiron::RunTree) -> CoreRunTreeResponse {
-    CoreRunTreeResponse {
-        roots: tree.roots.into_iter().map(core_run_tree_node).collect(),
-        repairs: tree.repairs.into_iter().map(core_run_tree_repair).collect(),
-    }
-}
-
-pub(crate) fn core_run_tree_node(node: oneiron::RunTreeNode) -> CoreRunTreeNode {
-    CoreRunTreeNode {
-        attempt_id: node.attempt_id,
-        run_id: node.run_id,
-        parent_id: node.parent_id,
-        worker_kind: node.worker_kind,
-        worker: node.worker,
-        agent_id: node.agent_id,
-        status: core_run_tree_status(node.status),
-        result_ref: node.result_ref,
-        timestamps: CoreRunTreeTimestamps {
-            created_at: node.timestamps.created_at,
-            updated_at: node.timestamps.updated_at,
-        },
-        failure: node.failure.map(|failure| CoreRunTreeFailure {
-            reason: failure.reason,
-        }),
-        events: node.events.into_iter().map(core_run_tree_event).collect(),
-        children: node.children.into_iter().map(core_run_tree_node).collect(),
-    }
-}
-
-pub(crate) fn core_run_tree_status(status: oneiron::RunTreeStatus) -> CoreRunTreeStatus {
-    match status {
-        oneiron::RunTreeStatus::Queued => CoreRunTreeStatus::Queued,
-        oneiron::RunTreeStatus::Running => CoreRunTreeStatus::Running,
-        oneiron::RunTreeStatus::Paused => CoreRunTreeStatus::Paused,
-        oneiron::RunTreeStatus::Completed => CoreRunTreeStatus::Completed,
-        oneiron::RunTreeStatus::Failed => CoreRunTreeStatus::Failed,
-        oneiron::RunTreeStatus::Cancelled => CoreRunTreeStatus::Cancelled,
-        oneiron::RunTreeStatus::Abandoned => CoreRunTreeStatus::Abandoned,
-    }
-}
-
-pub(crate) fn core_run_tree_event(event: oneiron::RunTreeEvent) -> CoreRunTreeEvent {
-    CoreRunTreeEvent {
-        sequence: event.sequence,
-        at: event.at,
-        actor: event.actor,
-        kind: core_run_tree_event_kind(event.kind),
-        note: event.note,
-    }
-}
-
-pub(crate) fn core_run_tree_event_kind(kind: oneiron::RunTreeEventKind) -> CoreRunTreeEventKind {
-    match kind {
-        oneiron::RunTreeEventKind::Created => CoreRunTreeEventKind::Created,
-        oneiron::RunTreeEventKind::Claimed => CoreRunTreeEventKind::Claimed,
-        oneiron::RunTreeEventKind::Paused => CoreRunTreeEventKind::Paused,
-        oneiron::RunTreeEventKind::Resumed => CoreRunTreeEventKind::Resumed,
-        oneiron::RunTreeEventKind::Completed => CoreRunTreeEventKind::Completed,
-        oneiron::RunTreeEventKind::Failed => CoreRunTreeEventKind::Failed,
-        oneiron::RunTreeEventKind::Cancelled => CoreRunTreeEventKind::Cancelled,
-        oneiron::RunTreeEventKind::Interrupted => CoreRunTreeEventKind::Interrupted,
-        oneiron::RunTreeEventKind::Abandoned => CoreRunTreeEventKind::Abandoned,
-        oneiron::RunTreeEventKind::ResultAttached => CoreRunTreeEventKind::ResultAttached,
-        oneiron::RunTreeEventKind::Redirected => CoreRunTreeEventKind::Redirected,
-    }
-}
-
 pub(crate) fn attempt_intervention_kind(
     kind: CoreRunTreeInterventionKind,
 ) -> oneiron::AttemptInterventionKind {
@@ -673,25 +634,6 @@ pub(crate) fn core_run_tree_intervention_effect(
         oneiron::AttemptInterventionEffect::AlreadyCancelled => {
             CoreRunTreeInterventionEffect::AlreadyCancelled
         }
-    }
-}
-
-pub(crate) fn core_run_tree_repair(repair: oneiron::RunTreeRepair) -> CoreRunTreeRepair {
-    match repair {
-        oneiron::RunTreeRepair::MissingParent {
-            attempt_id,
-            missing_parent_id,
-        } => CoreRunTreeRepair::MissingParent {
-            attempt_id,
-            missing_parent_id,
-        },
-        oneiron::RunTreeRepair::ParentCycle {
-            attempt_id,
-            parent_id,
-        } => CoreRunTreeRepair::ParentCycle {
-            attempt_id,
-            parent_id,
-        },
     }
 }
 

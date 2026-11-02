@@ -289,10 +289,11 @@ impl Vault {
         };
         Ok(Some((
             machine,
-            zeroize::Zeroizing::new(blake3::derive_key(
+            // FIX 6669: derive straight into the guard.
+            crate::world_keys::derive_guarded(
                 "oneiron/mesh-transport-ed25519/v1",
-                key.as_bytes(),
-            )),
+                &[&key.as_bytes()[..]],
+            ),
         )))
     }
     /// The physical machine behind an authenticated mesh endpoint, in one

@@ -12,6 +12,8 @@ use oneiron::persona_snapshot::{
     PersonaSnapshotCompile, PersonaSnapshotCompileOptions, PersonaSnapshotCopyRequest,
 };
 use oneiron::settings::ReadDestination;
+use oneiron::share_travel::{CopyTravelChoice, effective_copy_refs};
+use oneiron::task_verb::sdk::PersonaSnapshotCopyReceipt;
 use oneiron::{ErrorKind, Vault};
 use serde::{Deserialize, Serialize};
 
@@ -44,7 +46,9 @@ pub(crate) struct Row {
     pub(crate) struck: bool,
 }
 
-#[derive(Debug, Deserialize)]
+/// `POST /v1/owner/persona/export`'s body; the OpenAPI document publishes
+/// its schema (FIX 10289).
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ExportRequest {
     /// The person the card is about.
@@ -57,10 +61,15 @@ pub(crate) struct ExportRequest {
     /// Default-struck row ids to let in.
     #[serde(default)]
     pub(crate) unstrike: Vec<String>,
+    /// Whether the copy carries its vault refs (FIX 10289): `{"refs":
+    /// "omit"}` drops them; absent, `{}` or `{"refs": "preserve"}` is
+    /// today's copy.
+    #[serde(default)]
+    pub(crate) travel: Option<CopyTravelChoice>,
 }
 
 /// The exported card.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct Exported {
     /// The export record; its Share receipt carries the compile stamp.
     pub(crate) export_id: String,
@@ -74,6 +83,9 @@ pub(crate) struct Exported {
     pub(crate) struck_row_ids: Vec<String>,
     pub(crate) compiled_at: String,
     pub(crate) stale_after_secs: u64,
+    /// What this copy is, by digest, and what it left out (FIX 1199), as
+    /// the facade rows answer it.
+    pub(crate) receipt: PersonaSnapshotCopyReceipt,
 }
 
 pub(crate) fn preview(
@@ -114,7 +126,7 @@ pub(crate) fn export(
         stamp: request.stamp.clone(),
         strike: request.strike.iter().cloned().collect(),
         unstrike: request.unstrike.iter().cloned().collect(),
-        travel: None,
+        travel: request.travel,
     };
     let artifact = vault
         .export_persona_snapshot_copy_as(owner, &copy, destination)
@@ -137,6 +149,11 @@ pub(crate) fn export(
         struck_row_ids: artifact.struck_row_ids,
         compiled_at: rfc3339_secs(artifact.compiled_at_secs),
         stale_after_secs: artifact.stale_after_secs,
+        receipt: PersonaSnapshotCopyReceipt {
+            refs: effective_copy_refs(request.travel.as_ref()),
+            artifact_fingerprint: artifact.artifact_fingerprint,
+            omitted_refs: artifact.omitted_refs,
+        },
     })
 }
 

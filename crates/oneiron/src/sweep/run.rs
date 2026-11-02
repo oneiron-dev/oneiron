@@ -4,12 +4,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::compact::compact_all_windows;
 use super::finalize::{
-    audit_dropped_obligations, finalize_job, finalize_withdrawn_job, rewrite_job_for_retry,
-    rewrite_withdrawn_job_for_retry,
+    FinalizeOutcome, audit_dropped_obligations, finalize_job, finalize_withdrawn_job,
+    rewrite_job_for_retry, rewrite_withdrawn_job_for_retry,
 };
 use crate::Vault;
 use crate::deletion::{
-    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WITHDRAWN_GENERATION_SWEEP_PREFIX,
+    HARD_ERASE_SWEEP_PREFIX, HardEraseSweepJob, WITHDRAWN_GENERATION_SWEEP_PREFIX, WithdrawnCutoff,
     WithdrawnGenerationSweepJob, decode_hard_erase_sweep_job, decode_hard_erase_sweep_seq,
     decode_withdrawn_generation_row, withdrawn_generation_cutoffs_in_txn,
 };
@@ -30,16 +30,24 @@ pub(super) const RETRY_BACKOFF_BASE_SECS: u64 = 60;
 pub(crate) struct HardEraseSweepRun {
     pub jobs_processed: u64,
     pub jobs_deferred: u64,
+    /// Of `jobs_deferred`, the jobs whose pending receipt needed a signed
+    /// completion row while this install's signer was not loaded (FIX
+    /// 2597). Each keeps its obligation and receipts, with no backoff.
+    pub jobs_deferred_signer_unavailable: u64,
     pub jobs_failed: u64,
     pub windows_compacted: u64,
     pub windows_deferred_live: u64,
     /// Windows deferred because a `u:w:` row appeared/vanished or the
     /// `d:w:` snapshot changed between the read phase and the compaction
     /// write txn (anti-clobber re-read guard) — the run defers, no carrier
-    /// is overwritten, the obligation stays. A cut whose encoded root was
-    /// not the window's tip (FIX 6520) defers the same way and counts here.
+    /// is overwritten, the obligation stays.
     /// SIBLING of `windows_deferred_live`; never folded into it.
     pub windows_deferred_raced: u64,
+    /// Windows deferred because the cut's encoded root was not proved to be
+    /// the window's tip (FIX 6520): nothing is written, the obligation stays
+    /// and the next pass cuts again. SIBLING of the raced deferrals (FIX
+    /// 6629).
+    pub windows_deferred_unproved: u64,
     /// Windows and documents left as they are because a legal hold names a
     /// row their compaction would destroy (OF-470); the obligation stays
     /// until the hold lifts.
@@ -118,14 +126,16 @@ thread_local! {
 /// The withdrawn generations one pass rewrites (OF-013), beside the
 /// erased-id authority. Unlike an erased id, a withdrawn artifact keeps its
 /// row and every newer generation: only its carriers of the withdrawn
-/// generation or older change, to the content-free keyframe.
+/// generation or older change, to the content-free form its cutoff names, a
+/// keyframe or a Shell (FIX 931).
 #[derive(Debug, Default)]
 pub(super) struct WithdrawnSweep {
-    /// Each artifact's newest withdrawn generation, from every `hw:` row and
-    /// every fence. A fenced artifact's carriers are rewritten on every pass,
-    /// as a `dt:` id's are scrubbed: a late re-put goes with the next one.
+    /// Each artifact's newest withdrawn generation and its replacement, from
+    /// every `hw:` row and every fence. A fenced artifact's carriers are
+    /// rewritten on every pass, as a `dt:` id's are scrubbed: a late re-put
+    /// goes with the next one.
     #[cfg_attr(not(feature = "sync"), allow(dead_code))]
-    pub(super) cutoffs: BTreeMap<EntityId, u64>,
+    pub(super) cutoffs: BTreeMap<EntityId, WithdrawnCutoff>,
     /// Artifacts with a due `hw:` row: their document outbox goes with this
     /// pass, and every compacted window's queued sends with it.
     pub(super) due: BTreeSet<EntityId>,
@@ -298,6 +308,17 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         }
     }
 
+    // Hook memo, verdict, outcome and intent carriers go before the sweep
+    // can call any historical carrier complete (FIX 10080).
+    if !erased.is_empty() {
+        vault.with_write_txn_grouped(|txn| {
+            for id in &erased {
+                crate::runtime_hooks::scrub_hook_source_in_txn(vault, txn, id, now)?;
+            }
+            Ok(())
+        })?;
+    }
+
     // Withdrawn-generation authority: every hw: row and fence, due or not.
     let mut withdrawn = WithdrawnSweep {
         cutoffs: {
@@ -307,6 +328,11 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         due: withdrawn_due.iter().map(|(_, id, _)| *id).collect(),
         held: BTreeSet::new(),
     };
+
+    // Retained federation and maintenance copies of an erased row go before
+    // its carriers are compacted (FIX 7998).
+    #[cfg(feature = "sync")]
+    crate::sync::federation_burst::scrub_retained_copies(vault, &erased)?;
 
     // ── 3. Compact the historical carriers ──────────────────────────────
     // A shallow snapshot drops history, which is an erase, so a run no one
@@ -347,7 +373,7 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
         WindowSweepState::AllCompacted => {
             for (key, job) in &due {
                 match finalize_job(vault, key, job, now) {
-                    Ok(Some(finalized)) => {
+                    Ok(FinalizeOutcome::Finalized(finalized)) => {
                         run.receipts_finalized += finalized;
                         run.jobs_processed += 1;
                     }
@@ -360,8 +386,24 @@ fn hard_erase_sweep(vault: &Vault, owner_asked: bool) -> Result<HardEraseSweepRu
                     // DO NOT consume retry backoff. Routing through
                     // rewrite_job_for_retry would misclassify it as failed
                     // and burn an attempt. The carrier self-heals next run.
-                    Ok(None) => {
+                    Ok(FinalizeOutcome::FenceDeferred) => {
                         run.jobs_deferred += 1;
+                    }
+                    // This install's signer was not loaded, and a receipt of
+                    // this device's needed its completion row signed (FIX
+                    // 2597): nothing was written, so the obligation and its
+                    // receipts stay as they are. Like the fence, no backoff
+                    // is consumed: the next pass retries, and sibling jobs
+                    // go on now.
+                    Ok(FinalizeOutcome::SignerUnavailable(cause)) => {
+                        tracing::warn!(
+                            seq = ?decode_hard_erase_sweep_seq(key),
+                            kind = ?cause.kind(),
+                            "sweep: the completion signer is not loaded — obligation kept, \
+                             job deferred to the next pass"
+                        );
+                        run.jobs_deferred += 1;
+                        run.jobs_deferred_signer_unavailable += 1;
                     }
                     // Finding 2 (fail closed, per-job): an undecodable
                     // REDACTION_AUDIT receipt body aborted THIS job's

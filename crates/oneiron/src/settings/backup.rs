@@ -23,7 +23,7 @@ const POLICY: SideTable<(), BackupPolicy, Named> = SideTable::new(&side_table::B
 
 /// One backup policy: the owner's choice, or the deployment's `[backup]`
 /// section read as one.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BackupPolicy {
     /// Whether a running server takes backups on its own. A backup asked

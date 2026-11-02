@@ -24,6 +24,8 @@
 //! attempt claimed a second time was cut off when the process stopped under
 //! it: it is failed and never run again, so its reply stays as saved until
 //! someone asks again.
+//!
+//! [`CONTINUE_INSTRUCTION`]: crate::api::ai::chat::CONTINUE_INSTRUCTION
 use std::sync::{Arc, Weak};
 
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
@@ -31,21 +33,25 @@ use oneiron::attempt_queue::{
     AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome, CompleteAttempt, FailAttempt,
     ManifestEntry,
 };
-use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnAction, TurnActionAttempt};
-use oneiron::memory::{MessageWriteMode, WitnessAuthor};
-use oneiron::{EntityId, LlmCapability, LlmMessage, LlmMessageRole, Vault, WriteActor};
+use oneiron::claim::CallerLocality;
+use oneiron::conversation::{TURN_ACTION_ATTEMPT_KIND, TurnActionAttempt, TurnActionAuthority};
+use oneiron::memory::{Memory, MessageWriteMode, WitnessAuthor};
+use oneiron::{EntityId, LlmMessage, LlmMessageRole, Vault, WriteActor};
 use tokio::sync::{broadcast, watch};
 
+use super::AiHandle;
 use super::payer_funding::room_launch_funding;
-use super::resident_craft::{place_craft, snapshot_craft_scoped};
-use super::{AiHandle, CHAT_ROLE};
+use super::resident_craft::{craft_withdrawn, place_craft, snapshot_craft_scoped};
 use crate::api::ai::chat::{
-    Answer, AnswerOpen, AnswerRefused, CONTINUE_INSTRUCTION, ChatReuse, ReplyAssertionCollector,
-    TurnCredential, after_turn, begin_answer, chat_request, keepalive_every, live_fork_unavailable,
-    reuse_chat_breakpoint, text_message, turn_generate_pre, witness_turn,
+    Answer, AnswerRefused, ChatReuse, ReplyAssertionCollector, TurnCredential, after_turn,
+    begin_answer, keepalive_every, live_fork_unavailable, reuse_chat_breakpoint, text_message,
+    turn_generate_pre,
 };
 use crate::api::{action_board, freeze_chat_context, record_action_answer};
 use crate::server::{SyncServer, blocking};
+
+mod phases;
+use phases::{ActionText, admit_action, answer_open};
 
 const LEASE_OWNER: &str = "oneiron-server-turn-actions";
 /// Recorded on an attempt whose reason does not fit the queue's bound.
@@ -184,25 +190,21 @@ async fn act(
     // OF-490: the answering agent is shown its own craft, read on one
     // snapshot, and its action's attempt names what it was shown. Only the
     // notes the requester's own read admits are shown (SCAN C009, FIX 6102),
-    // read as the action's context is: a queued action carries no
-    // credential, so it reads as its actor. A call that runs as it always
-    // did is stamped with today's craft before it is shown, and shows none
-    // whose stamp fails. Beside a reused prefix, which shows and stamps the
-    // craft it captured, today's call is stamped only if it answers. One
-    // layout, the vault's or else the host's, places it (FIX 6676).
+    // read as the action's context is: where the requester asked from, under
+    // the authority its action stands on, judged again now (FIX 9464). A
+    // call that runs as it always did is stamped with today's craft before
+    // it is shown, and shows none whose stamp fails. Beside a reused prefix,
+    // which shows and stamps the craft it captured, today's call is stamped
+    // only if it answers. One layout, the vault's or else the host's, places
+    // it (FIX 6676).
     let layout = ai.prompt_layout();
     let lead = messages.len();
     let at = vault.now_recorded_at();
     let craft = blocking(|| {
-        snapshot_craft_scoped(
-            vault,
-            &vault.memory(actor, class),
-            &context.agent,
-            at,
-            layout,
-        )
+        craft_reader(vault, &action)
+            .and_then(|reader| snapshot_craft_scoped(vault, &reader, &context.agent, at, layout))
     });
-    let (shown, today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
+    let (shown, mut today_craft) = if matches!(reuse, ChatReuse::Reused(_)) {
         craft.map(|craft| (craft.message, craft.entries)).unzip()
     } else {
         let mut shown = None;
@@ -249,68 +251,37 @@ async fn act(
     if let Some(craft) = shown {
         place_craft(&mut messages, lead, craft, layout);
     }
-    let admit = |messages| {
-        ai.admit_role(vault, CHAT_ROLE, chat_request(&seat, messages))
-            .map_err(|refusal| refusal.to_string())
+    let text = ActionText {
+        saved: context.saved,
+        answers,
     };
-    // An empty saved reply is an honest empty prefix: the reply is generated
-    // afresh on the same MESSAGE.
-    let continues = action.action == TurnAction::Continue && !context.saved.is_empty();
-    let request = |mut messages: Vec<LlmMessage>| {
-        let mut admitted = admit(messages.clone())?;
-        if continues {
-            let prefill = admitted
-                .ladder
-                .supports(&admitted.request.model, &LlmCapability::AssistantPrefill);
-            messages.push(text_message(
-                LlmMessageRole::Assistant,
-                context.saved.clone(),
-            ));
-            if !prefill {
-                messages.push(text_message(
-                    LlmMessageRole::User,
-                    CONTINUE_INSTRUCTION.to_owned(),
-                ));
-            }
-            admitted = admit(messages)?;
-        }
-        Ok::<_, String>(admitted)
-    };
-    // A call its role does not admit with the board, first or with its
-    // suffix, is admitted exactly as it always was, and so is the final call
-    // admitted where the board may not go (FIX 7257), never sent with it.
-    let (admitted, board_context) = match board {
-        Some(board) => {
-            let mut framed = messages.clone();
-            framed.insert(
-                answers,
-                text_message(LlmMessageRole::User, board.board.block.clone()),
-            );
-            match request(framed) {
-                Ok(admitted) if board.rides(vault, &admitted) => (admitted, board.board.context),
-                Ok(_) => (request(messages)?, None),
-                Err(_) => {
-                    tracing::info!(
-                        "a turn action's call was not admitted with its context board; it goes without it"
-                    );
-                    (request(messages)?, None)
-                }
-            }
-        }
-        None => (request(messages)?, None),
-    };
+    let (admitted, board_context) = admit_action(vault, ai, &seat, &action, text, messages, board)?;
     // FIX 7145: what the admitted board showed, frozen against the call it
     // rides in.
     let board_context =
         board_context.map(|capture| freeze_chat_context(capture, &admitted.request));
-    let prefix_reused = matches!(reuse, ChatReuse::Reused(_));
     // A missing, stale or refused breakpoint leaves the action as it always
-    // ran; a kept one is sent first, with this call behind it.
+    // ran; a kept one is sent first, with this call behind it. One whose
+    // captured craft names a note erased, revised or no longer supported
+    // since is never sent again (FIX 8985): the action runs as it always
+    // did, on today's craft, stamped before it is sent.
     let (admitted, today, breakpoint) = match reuse {
         ChatReuse::Reused(reused) => {
-            let reused = *reused;
-            stamp_craft(vault, attempt, context.agent, &reused.craft);
-            (reused.live, Some(admitted), Some(reused.breakpoint))
+            let captured = &reused.craft;
+            match blocking(|| craft_withdrawn(vault, captured)) {
+                None => {
+                    let reused = *reused;
+                    stamp_craft(vault, attempt, context.agent, &reused.craft);
+                    (reused.live, Some(admitted), Some(reused.breakpoint))
+                }
+                Some(reason) => {
+                    live_fork_unavailable(reason);
+                    if let Some(entries) = today_craft.take() {
+                        stamp_craft(vault, attempt, context.agent, &entries);
+                    }
+                    (admitted, None, None)
+                }
+            }
         }
         ChatReuse::Unavailable(reason) => {
             live_fork_unavailable(reason);
@@ -318,6 +289,7 @@ async fn act(
         }
         ChatReuse::Today => (admitted, None, None),
     };
+    let prefix_reused = breakpoint.is_some();
     let keepalive = keepalive_every(
         vault
             .message_stream_policy()
@@ -340,24 +312,7 @@ async fn act(
     )
     .map_err(|error| error.to_string())?
     .map_err(|stop| stop.to_string())?;
-    let open = match action.action {
-        TurnAction::Continue => AnswerOpen::Continue(action.message),
-        // The reply's TURN lands with its MESSAGE, in the reply's terminal
-        // write (FIX 3152): on a DAG conversation a sibling of the old one
-        // that leaves HEAD where it is, in a project room an answer to the
-        // same claimed turn (FIX 3149), elsewhere the TURN the stream mints.
-        // A Retry never admitted leaves neither.
-        TurnAction::Retry => AnswerOpen::Retry {
-            turn: witness_turn(
-                &action.conversation.to_hex(),
-                None,
-                WitnessAuthor::Companion,
-                String::new(),
-                vault.now_recorded_at(),
-            ),
-            action: Box::new(action.clone()),
-        },
-    };
+    let open = answer_open(vault, &action);
     let answering = begin_answer(
         ai,
         Answer {
@@ -421,6 +376,42 @@ async fn act(
         return Err("the reply was not recorded".into());
     }
     Ok(())
+}
+
+/// The reader a queued `action`'s craft is read through (FIX 9464), built
+/// as its context's is: the requester's own handle, where it asked from,
+/// under the slip its request was admitted on, verified again now. A native
+/// action, and an attested owner's, stand on the actor binding alone and
+/// read with no proof. `None`, logged without content, for an action that
+/// no longer stands (its slip revoked, or taken by its requester's erase,
+/// or its owner no longer the vault's) or whose slip does not verify now:
+/// its call is shown no craft.
+fn craft_reader<'v>(vault: &'v Vault, action: &TurnActionAttempt) -> Option<Memory<'v>> {
+    let (actor, class) = action.requester().ok()?;
+    if !action.requester_live(vault) {
+        tracing::info!(
+            "a turn action no longer stands for its requester; its call is shown no craft"
+        );
+        return None;
+    }
+    let reader = vault.memory(actor, class).at(if action.off_device {
+        CallerLocality::OffDevice
+    } else {
+        CallerLocality::OnDevice
+    });
+    let TurnActionAuthority::Slip { binding } = &action.authority else {
+        return Some(reader);
+    };
+    match vault.verify_invocation_slip(binding) {
+        Ok(proof) => Some(reader.with_read_proof(&proof)),
+        Err(error) => {
+            tracing::info!(
+                kind = ?error.kind(),
+                "a turn action's slip did not verify for its craft; its call is shown no craft"
+            );
+            None
+        }
+    }
 }
 
 /// Stamps craft `agent`'s call on `attempt` was shown without a load on the

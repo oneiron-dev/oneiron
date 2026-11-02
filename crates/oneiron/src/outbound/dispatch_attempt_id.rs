@@ -1,3 +1,7 @@
+//! Logical-send and attempt identity derivation.
+//! Entry: `outbound_dispatch_attempt_id`.
+//! Defines its own items.
+
 use super::dispatch_types::OutboundDispatchError;
 use crate::entity_id::EntityId;
 

@@ -47,6 +47,7 @@ mod channel_doors;
 mod checkout_doors;
 mod claim_settle_doors;
 mod cleanup_doors;
+pub(crate) mod clock_ingress;
 mod clustering_doors;
 mod coach_offer_doors;
 mod code_doors;
@@ -55,12 +56,14 @@ mod code_run_doors;
 mod code_view_doors;
 mod code_wait_doors;
 mod codebase_doors;
+mod comm_widen_doors;
 mod commitment_doors;
 mod compliance_doors;
 mod connector_call_doors;
 mod connector_pack_doors;
 mod connector_revision_doors;
 mod connector_slate_doors;
+mod connector_witness_read_doors;
 mod consent_doors;
 mod consolidation_doors;
 mod content_policy_doors;
@@ -72,6 +75,7 @@ mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;
 mod critical_confirm_doors;
+mod custody_drain_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
@@ -82,6 +86,7 @@ mod dispatch;
 mod embedding_space_doors;
 mod errors;
 mod eval_doors;
+pub(super) mod export_transfer;
 mod extraction_doors;
 mod fanout_doors;
 mod federation_burst_doors;
@@ -95,6 +100,7 @@ mod gate_policy_doors;
 mod git_push_doors;
 mod goal_optimize_doors;
 mod graduation_doors;
+mod grants_doors;
 mod graph_ask_doors;
 mod guest_document_doors;
 mod guest_doors;
@@ -108,6 +114,7 @@ mod hyde_doors;
 mod identity;
 mod identity_doors;
 mod identity_topology_doors;
+mod inbox_group_doors;
 mod invocations;
 mod invoke;
 mod learning_doors;
@@ -128,6 +135,7 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;
+pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
 mod pack_preview_doors;
@@ -143,6 +151,7 @@ mod release;
 mod reply_doors;
 mod repo_doors;
 mod research_doors;
+mod reservoir_source_doors;
 mod residence_doors;
 mod result_doors;
 mod retrieval_doors;
@@ -150,13 +159,17 @@ pub(super) mod role_picks;
 mod root_request_doors;
 mod run_read_doors;
 mod run_review_doors;
+pub(crate) mod run_write_polls;
 mod runner_seat_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;
+mod secret_body;
+mod secret_custody_doors;
 mod secret_grant_doors;
 mod secret_lift_doors;
 mod secret_use_doors;
+mod self_actor_doors;
 mod setting_doors;
 mod share_doors;
 mod shared_act_doors;
@@ -171,6 +184,7 @@ mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
 mod standing_doors;
+mod stream_recovery_doors;
 mod summary_doors;
 mod support_grant_doors;
 #[cfg(test)]
@@ -182,7 +196,13 @@ mod vault_shape_doors;
 mod vector_doors;
 mod voice_bank_doors;
 mod wave_doors;
+#[expect(
+    dead_code,
+    reason = "the trusted MFA step-up verifier (FIX 9431) binds the served Admin route to these"
+)]
+mod weave_admin_doors;
 mod weave_doors;
+mod web_connector_doors;
 mod web_fetch_doors;
 mod widen_proposal_doors;
 mod wire_health_doors;
@@ -191,12 +211,16 @@ pub(crate) use admission_doors::{admission_observer, call_verb};
 pub(crate) use asr_doors::AsrSessions;
 pub(crate) use call_context::{FacadeCall, FacadeCallOutput};
 use call_context::{VerbContext, context_required, facade_invocation_id};
-pub(crate) use connector_call_doors::{connector_answer_as, connector_call_listing_as};
+pub(crate) use connector_call_doors::{
+    connector_answer_as, connector_call_listing_as, connector_call_listing_on,
+};
+pub(crate) use export_transfer::{ExportTransfers, mcp_export_transfer};
 pub(crate) use hooks::*;
 pub(crate) use host_doors::ai_speech_for_run;
 pub(crate) use host_doors::{
-    ai_media_as_owner, ai_video_as_owner, ai_video_cancel_as_owner, ai_video_poll_as_owner,
-    vault_hooks_replay_as_owner,
+    ai_media_as_owner, ai_media_for_run, ai_options_for_program, ai_video_as_owner,
+    ai_video_cancel_as_owner, ai_video_cancel_for_run, ai_video_for_agent_run, ai_video_for_run,
+    ai_video_poll_as_owner, ai_video_poll_for_run, vault_hooks_replay_as_owner,
 };
 pub(crate) use identity::*;
 pub(crate) use invocations::*;
@@ -205,6 +229,7 @@ pub(crate) use model_stream_doors::ModelStreams;
 use output::*;
 use receipts::*;
 pub(crate) use release::*;
+pub(crate) use secret_body::{lift_custody_secret, with_custody_secret};
 pub(crate) use secret_use_doors::self_use_as;
 
 use std::sync::Arc;
@@ -215,7 +240,7 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::rejection::JsonRejection;
 use axum::extract::{DefaultBodyLimit, FromRequestParts, Request, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode};
+use axum::http::{Extensions, HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::post;
@@ -303,18 +328,44 @@ async fn facade_unknown_verb(uri: axum::http::Uri) -> FacadeApiError {
 /// the row runs in the facade's dispatch ([`call_verb`]), which the held
 /// socket runs too. A body that is not JSON is refused where the row reads
 /// it, as its handler refused it before. Its answer meets one destination
-/// release before it is sent ([`released_reply`], FIX 8170).
+/// release before it is sent ([`released_reply`], FIX 8170). What its answer
+/// holds (a deck preview's renderer) is kept until the reply's body is
+/// encoded (FIX 8238). The owner's clock repair the binding door left
+/// unjudged runs with its caller judged in its own writer (FIX 11190).
 async fn facade_route(
-    auth: CoreAuth,
+    caller: clock_ingress::FacadeCaller,
     State(server): State<Arc<SyncServer>>,
     uri: axum::http::Uri,
     headers: HeaderMap,
+    extensions: Extensions,
     payload: Result<Json<serde_json::Value>, JsonRejection>,
-) -> Result<(axum::Extension<FacadeReleased>, Json<serde_json::Value>), FacadeApiError> {
-    let call = FacadeCall::http(&server, &auth, &headers);
-    let verb = uri.path().trim_start_matches('/');
-    let output = call_verb(&server, &call, verb, facade_json(payload)).await?;
-    Ok(released_reply(&server, &auth, verb, output))
+) -> Response {
+    let auth = match caller {
+        clock_ingress::FacadeCaller::Credential(auth) => auth,
+        clock_ingress::FacadeCaller::ClockRepair(caller) => {
+            return clock_ingress::repair_reply(&server, caller, facade_json(payload)).await;
+        }
+    };
+    super::answer_hold::until_encoded(async move {
+        let call = FacadeCall::http(&server, &auth, &headers, &extensions);
+        let verb = uri.path().trim_start_matches('/');
+        // A wiped custody body's value, scoped for its door (FIX 11442).
+        let secret = extensions
+            .get::<secret_body::FacadeSecret>()
+            .map(secret_body::FacadeSecret::secret);
+        let input = facade_json(payload);
+        let output = match secret {
+            Some(secret) => {
+                secret_body::scope_secret(secret, call_verb(&server, &call, verb, input)).await
+            }
+            None => call_verb(&server, &call, verb, input).await,
+        };
+        match output {
+            Ok(output) => released_reply(&server, &auth, verb, output).into_response(),
+            Err(refused) => refused.into_response(),
+        }
+    })
+    .await
 }
 
 /// `verb`, which names no facade verb, refused before the actor, the input
@@ -386,6 +437,22 @@ struct FacadeErrorBody {
     /// (FIX 3194); the reply carries it as `Retry-After` too.
     #[serde(skip_serializing_if = "Option::is_none")]
     retry_after: Option<u64>,
+    /// Each time the refused call's limit resets, as Unix seconds, when its
+    /// source said (FIX 8190).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    resets_at: Vec<u64>,
+    /// The refusal's stable reason codes, in its producer's order, when it
+    /// named any (FIX 7398).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reason_codes: Vec<String>,
+    /// The typed legal-hold notice, when the engine supplied one.
+    #[serde(rename = "legal_hold", skip_serializing_if = "Option::is_none")]
+    legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
+    /// A failed run's program type feedback (FIX 10389), beside the refusal
+    /// and never among its words: each item released whole, or withheld
+    /// with none of its text when its own release check holds it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    program_steps: Vec<oneiron::code_run::ProgramStepFeedbackRelease>,
 }
 
 /// The OpenAPI mirror of a facade refusal's body ([`FacadeErrorEnvelope`]):
@@ -416,4 +483,11 @@ pub(crate) struct MemoryErrorBodySchema {
     suggestions: Vec<String>,
     receipt_ref: Option<String>,
     retry_after: Option<u64>,
+    resets_at: Option<Vec<u64>>,
+    reason_codes: Option<Vec<String>>,
+    #[schema(value_type = Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>)]
+    #[serde(rename = "legal_hold")]
+    legal_hold: Option<crate::api::legal_hold_schema::LegalHoldNoticeSchema>,
+    #[schema(value_type = Option<Vec<Object>>)]
+    program_steps: Option<Vec<serde_json::Value>>,
 }

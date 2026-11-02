@@ -49,9 +49,11 @@ pub struct ClaimInput {
     pub source: String,
     /// Optional WORLD entity ref.
     pub world_ref: Option<String>,
-    /// Optional RELATIONSHIP ref; unknown or wrong-kind refs are rejected.
+    /// Optional RELATIONSHIP refs: absent means all relationships, `[]` the
+    /// explicit empty set, otherwise every listed relationship. Unknown or
+    /// wrong-kind refs are rejected.
     #[serde(default)]
-    pub relationship_ref: Option<String>,
+    pub relationship_ref: Option<Vec<String>>,
     /// Optional scope map (e.g. `{"sensitivity": 0}`).
     pub scope: Option<serde_json::Value>,
     /// Validity window start (Unix seconds).
@@ -64,6 +66,10 @@ pub struct ClaimInput {
     pub learned_at: Option<u64>,
     /// Optional salience in `[0, 1]`.
     pub salience: Option<f32>,
+    /// The band and basis a calibrated producer gave `confidence`; absent
+    /// means the house band of the number (FIX 7761).
+    #[serde(default)]
+    pub confidence_details: Option<crate::claim::ConfidenceDetails>,
 }
 
 /// Receipt for one committed claim. A refused element of a batch never
@@ -174,6 +180,9 @@ pub struct RecordRefusal {
     /// The JSON pointer of the refused element or slot (`/claims/2`), the
     /// field its receipt names.
     pub field: String,
+    /// The legal-hold notice behind this refusal, when its producer supplied one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legal_hold: Option<Box<crate::error::LegalHoldNotice>>,
 }
 
 impl RecordRefusal {
@@ -185,6 +194,7 @@ impl RecordRefusal {
             message: error.message.clone(),
             suggestions: error.suggestions.clone(),
             field,
+            legal_hold: error.legal_hold.clone(),
         }
     }
 
@@ -357,10 +367,11 @@ pub(super) fn parse_claim_source(value: &str) -> MemoryResult<ClaimSource> {
 
 mod commit;
 mod lifecycle;
+mod prompted;
 mod settle;
 
 pub use settle::{
     ClaimChangeVerdict, ClaimProposalReview, ClaimProposalReviewRequest, ClaimSettleDecision,
     ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer, ClaimSettlementReason,
-    ClaimSettlementRevert, ClaimSettlementVerdict,
+    ClaimSettlementRevert, ClaimSettlementVerdict, SettleWarning, SettleWarningCode,
 };

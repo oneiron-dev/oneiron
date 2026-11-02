@@ -4,7 +4,7 @@
 //! operator's root acts as nobody (FIX 2222), and no agent reaches this door
 //! for its own grant: the owner's proof only. His say-so counts from any
 //! surface he is authenticated on; the act records where it reached this
-//! install (`machine_routes::act_surface`). Each route runs its
+//! install (`machine_routes::act_surface_admitted`). Each route runs its
 //! `vault.agents.grants.*` row's verb hooks once around the one engine
 //! operation the SDK and MCP doors also call. The grants are reviewed in
 //! the consent registry, each with its own one-tap revoke. `GET
@@ -13,26 +13,49 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::State;
-use axum::extract::rejection::JsonRejection;
-use axum::http::HeaderMap;
+use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::task_verb::sdk::{self, AgentGrantMintRequest, AgentGrantRevokeRequest, EmptyRequest};
 use serde_json::Value;
 
-use super::{OwnerReply, blocking, hooked_owner};
-use crate::api::json_payload;
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, hooked_owner};
+use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{hooked_row, memory_refusal};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/agent-grants/mint", post(mint))
-        .route("/agent-grants/revoke", post(revoke))
-        .route("/agents/base", get(base))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/agent-grants/mint",
+                summary: "Grant one named agent an explicit verb list (FIX 5628): a live agent principal of the vault (`agent`, 32 hex: an agent definition, or a base agent such as the Coach), the owner's complete six-axis scope stored exactly as given (`authority_scope`, its verbs a nonempty explicit set; it confers only with `read` among them) and an optional `expires_at` (Unix seconds; omitted, the grant stands until revoked). A second mint adds a second grant. Answers the grant, with its one-tap revoke command, and the signed act's ref.",
+                row: Some("vault.agents.grants.mint"),
+            },
+            post(mint),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/agent-grants/revoke",
+                summary: "Revoke one agent grant (`grant_ref`, 32 hex; optional `seen`, 64 hex): the grant stops conferring at once. A repeat answers `changed: false`; an id that names no agent grant (an owner, own-device, guest or member grant included) is not found.",
+                row: Some("vault.agents.grants.revoke"),
+            },
+            post(revoke),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/agents/base",
+                summary: "The base agents' principal ids for the owner (FIX 5734): `agents`, each `{name, id}`, the Coach first, then the Dreamer; `id` (32 hex) is what `/agent-grants/mint` takes as `agent`.",
+                row: Some("vault.agents.base"),
+            },
+            get(base),
+        ),
+    ]
 }
 
 /// `POST /v1/owner/agent-grants/mint`: grants one live agent principal
@@ -42,12 +65,14 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 async fn mint(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AgentGrantMintRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AgentGrantMintRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         let vault = server.vault();
         hooked_row(
@@ -70,12 +95,14 @@ async fn mint(
 async fn revoke(
     auth: CoreAuth,
     headers: HeaderMap,
+    extensions: Extensions,
     State(server): State<Arc<SyncServer>>,
-    payload: Result<Json<AgentGrantRevokeRequest>, JsonRejection>,
+    payload: OwnerJsonBody<AgentGrantRevokeRequest>,
 ) -> OwnerReply<Value> {
     let (owner, actor) = hooked_owner(&auth, &server)?;
-    let surface = super::machine_routes::act_surface(&server, &auth, &headers);
-    let request = json_payload(payload)?;
+    let surface =
+        super::machine_routes::act_surface_admitted(&server, &auth, &headers, &extensions);
+    let request = payload.read(&server).await?;
     let response = blocking(move || {
         let vault = server.vault();
         hooked_row(

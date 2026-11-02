@@ -5,10 +5,13 @@
 //! name, written whole: a temporary sibling, synced, renamed, the directory
 //! synced. It holds no member bytes: the agreed version's digest, the last
 //! transfer taken from the other end, the transfer sent and not yet acked,
-//! the highest revision this end ever sent, and a digest cache keyed by the
-//! local file's stamp. A record outlives its member as a tombstone, so a
-//! late replay never brings a retired file back; none is aged out or
-//! evicted. The next transfer id is `next-transfer`.
+//! the highest revision this end ever sent, a digest cache keyed by the
+//! local file's stamp, and the state of a file whose put the other end
+//! refused as `digest_mismatch` (FIX 11075), and a copy kept when the origin
+//! retired a version this end never agreed on (FIX 11074), and each such copy
+//! the owner kept aside (FIX 11985). A record outlives its member
+//! as a tombstone, so a late replay never brings a retired file back; none
+//! is aged out or evicted. The next transfer id is `next-transfer`.
 //! Every record is read into memory when the end starts.
 //!
 //! The host also keeps `backup-label.json` (FIX 7046): the backup label the
@@ -19,7 +22,7 @@
 //! VM runs.
 
 use super::local::FileStamp;
-use oneiron_vault_contract::vm_outbox::{VmOutboxDescriptor, VmOutboxKind};
+use oneiron_vault_contract::vm_outbox::{VmOutboxDescriptor, VmOutboxKind, VmOutboxSide};
 use rustix::fs::{AtFlags, Mode, OFlags};
 use rustix::io::Errno;
 use serde::{Deserialize, Serialize};
@@ -78,9 +81,101 @@ pub(super) struct MemberRecord {
     #[serde(default)]
     pub(super) pending: Option<VmOutboxDescriptor>,
     /// The change the other end refused (`put:<digest>` or
-    /// `remove:<digest>`), not sent again until the member changes.
+    /// `remove:<digest>`), not sent again until the member changes; a put
+    /// refused as `digest_mismatch` is kept in `source` instead, and clears
+    /// this as any later refusal replaces it.
     #[serde(default)]
     pub(super) refused: Option<String>,
+    /// This end's own file, once the other end refused a put of it as
+    /// `digest_mismatch`: due to be read again, or damaged here; `None`
+    /// otherwise, once that put is recorded as sent again, and once the
+    /// member changes.
+    #[serde(default)]
+    pub(super) source: Option<SourceStatus>,
+    /// A copy of the member the carrier never agreed on, kept as its origin
+    /// retired the agreed version: on the end that holds it, and on the
+    /// origin as the other end answered (FIX 11074). `None` once its owner
+    /// had it removed, and once the member changes on the end that holds it.
+    #[serde(default)]
+    pub(super) diverged: Option<Diverged>,
+    /// On the guest: a diverged copy the owner answered, as answered, that
+    /// the host is still to be told of (FIX 11736, FIX 11737); `None` once
+    /// a turn sent it.
+    #[serde(default)]
+    pub(super) notice: Option<Diverged>,
+    /// Each diverged copy the owner kept, moved aside under its side name:
+    /// on the end that holds it, and on the guest as the host holds it
+    /// (FIX 11985). An entry goes once its side copy is removed.
+    #[serde(default)]
+    pub(super) aside: Vec<KeptAside>,
+}
+
+/// A diverged copy the owner kept, moved aside under its side name
+/// ([`super::local::aside_name`]) on `held_by`'s end (FIX 11985).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct KeptAside {
+    pub(super) held_by: VmOutboxSide,
+    pub(super) held: Version,
+    /// The side copy's name, relative to its kind's root.
+    pub(super) aside: String,
+    /// When the owner's keep was carried out, in Unix milliseconds.
+    pub(super) kept_at_ms: u64,
+    /// On the guest, for a host copy: the owner had it removed, and the
+    /// host is told at each turn until it answers.
+    #[serde(default)]
+    pub(super) removing: bool,
+    /// Why the last removal of the side copy did not go through.
+    #[serde(default)]
+    pub(super) failed: Option<String>,
+}
+
+/// A copy of a member the carrier never agreed on, kept when the member's
+/// origin retired the version both ends agreed on (FIX 11074). The carrier
+/// never removes it by itself: only its owner's answer does.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Diverged {
+    /// The end that holds the copy.
+    pub(super) held_by: VmOutboxSide,
+    /// The kept copy's version.
+    pub(super) held: Version,
+    /// The agreed version's digest the origin retired, when the retirement
+    /// named one.
+    pub(super) retired: Option<String>,
+    /// The owner's answer once given: on `diverged`, a removal of the
+    /// host's copy still being carried, or, on the host's own copy, a keep
+    /// whose move aside failed, carried once the copy blocks the guest's
+    /// next put (FIX 11986); on `notice`, the answer the host is told of.
+    #[serde(default)]
+    pub(super) answer: Option<DivergedAnswer>,
+}
+
+/// The owner's answer to a diverged copy's ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DivergedAnswer {
+    Keep,
+    Remove,
+}
+
+/// What this end knows of its own file after the other end refused a put
+/// of it as `digest_mismatch`: its bytes did not hash, on arrival, to the
+/// digest the transfer named (FIX 11075).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(super) enum SourceStatus {
+    /// The refused put named `blake3`: the set's next paced look reads the
+    /// file again whole and hashes it, and sends it again while it still
+    /// hashes to that digest, even where it is the agreed version. It stands
+    /// until that put is recorded as sent.
+    Recheck { blake3: String },
+    /// The file at `stamp`, read again, hashes to `read`, no longer to
+    /// `recorded`, its own recorded digest: the source is damaged, and none
+    /// of it is sent until the member changes.
+    SourceDigestMismatch {
+        stamp: FileStamp,
+        recorded: String,
+        read: String,
+    },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -167,6 +262,13 @@ impl Store {
             .filter(|((of, _), _)| *of == kind)
             .map(|((_, member), record)| (member.clone(), record.clone()))
             .collect()
+    }
+
+    /// Every record this end has, by kind and member.
+    pub(super) fn records(&self) -> impl Iterator<Item = (VmOutboxKind, &str, &MemberRecord)> {
+        self.records
+            .iter()
+            .map(|((kind, member), record)| (*kind, member.as_str(), record))
     }
 
     /// Writes `member`'s record durably, then keeps it in memory; the record

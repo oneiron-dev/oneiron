@@ -54,10 +54,10 @@ pub struct SignedReferee {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum MarketMode {
-    /// M1: one bounty to the best submission.
+    /// M1: one bounty to the first submission that passes the signed rule.
     Bounty,
     /// M2: each round keeps the top half, plus `wildcard_slots` kept for
-    /// exploration.
+    /// exploration (at least one).
     HalvingWildcard { wildcard_slots: u32 },
     /// M3: agents work in islands and may pay `peek_price` to read another
     /// island's submissions.
@@ -107,13 +107,16 @@ pub struct LedgerEntry {
     pub units: u64,
 }
 
-/// One submission and, once refereed, its score.
+/// One submission and, once refereed, its score and the signed rule's
+/// pass verdict.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Submission {
     pub agent: String,
     pub submission_ref: String,
     pub at: u64,
     pub score: Option<f64>,
+    /// Whether the submission passed the signed rule; `None` until refereed.
+    pub passed: Option<bool>,
 }
 
 /// How a market closed.
@@ -355,6 +358,7 @@ pub fn submit(
             submission_ref: submission_ref.to_owned(),
             at: now,
             score: None,
+            passed: None,
         });
         Ok(())
     })
@@ -432,8 +436,9 @@ pub fn peek_island(
     })
 }
 
-/// Records the signed referee's scores. Each score must carry the digest of
-/// the rule signed before the work; nobody else's opinion scores a market.
+/// Records the signed referee's scores and pass verdicts. Each score must
+/// carry the digest of the rule signed before the work; nobody else's
+/// opinion scores a market.
 ///
 /// # Errors
 ///
@@ -443,7 +448,7 @@ pub fn referee_scores(
     vault: &Vault,
     team_ref: &str,
     referee_digest: &str,
-    scores: &[(String, f64)],
+    scores: &[(String, f64, bool)],
 ) -> Result<()> {
     update(vault, team_ref, |market| {
         if market.result.is_some() {
@@ -454,7 +459,7 @@ pub fn referee_scores(
                 "only the referee signed before the work scores a market",
             ));
         }
-        for (submission_ref, score) in scores {
+        for (submission_ref, score, passed) in scores {
             if !score.is_finite() {
                 return Err(Error::InvalidClaimBody("a referee score is finite"));
             }
@@ -464,13 +469,14 @@ pub fn referee_scores(
                 .find(|s| s.submission_ref == *submission_ref)
                 .ok_or(Error::InvalidClaimBody("no such submission"))?;
             found.score = Some(*score);
+            found.passed = Some(*passed);
         }
         Ok(())
     })
 }
 
-/// M2's round: keep the top half by best refereed score, plus the wildcard
-/// slots for exploration (protected agents first, then the unscored, then
+/// M2's round: keep the top half by best refereed score, plus at least one
+/// wildcard for exploration (protected agents first, then the unscored, then
 /// the next best). Retired agents' unspent shares return to the bounty.
 /// Returns the agents kept.
 ///
@@ -503,9 +509,10 @@ pub fn halving_round(vault: &Vault, team_ref: &str, now: u64) -> Result<Vec<Stri
         let mut rest: Vec<&(String, Option<f64>, bool)> = active.iter().skip(keep_top).collect();
         // Protected exploration first, then the untried, then the next best.
         rest.sort_by_key(|a| (!a.2, a.1.is_some()));
+        // The better half continue, with one wildcard kept.
         kept.extend(
             rest.iter()
-                .take(wildcard_slots as usize)
+                .take((wildcard_slots as usize).max(1))
                 .map(|a| a.0.clone()),
         );
         let retired: Vec<String> = active
@@ -532,9 +539,11 @@ pub fn halving_round(vault: &Vault, team_ref: &str, now: u64) -> Result<Vec<Stri
     })
 }
 
-/// Closes the market: the best refereed submission wins the bounty (ties go
-/// to the earlier submission). A market with no scored submission closes
-/// with no winner and keeps its bounty unpaid.
+/// Closes the market: a bounty pays the first submission the signed rule
+/// passed (earliest submission time; insertion order breaks equal times),
+/// other modes pay the best refereed submission (ties go to the earlier
+/// submission). A bounty with no passing submission closes with no winner
+/// and keeps its bounty unpaid, as does a market with no scored submission.
 ///
 /// # Errors
 ///
@@ -544,17 +553,26 @@ pub fn close_market(vault: &Vault, team_ref: &str, now: u64) -> Result<MarketRes
         if market.result.is_some() {
             return Err(Error::InvalidClaimBody("the market is closed"));
         }
-        let winner = market
-            .submissions
-            .iter()
-            .filter(|s| s.score.is_some())
-            .max_by(|a, b| {
-                a.score
-                    .unwrap_or(f64::NEG_INFINITY)
-                    .total_cmp(&b.score.unwrap_or(f64::NEG_INFINITY))
-                    .then_with(|| b.at.cmp(&a.at))
-            })
-            .cloned();
+        let winner = match market.mode {
+            MarketMode::Bounty => market
+                .submissions
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| s.passed == Some(true))
+                .min_by(|(ia, a), (ib, b)| a.at.cmp(&b.at).then_with(|| ia.cmp(ib)))
+                .map(|(_, s)| s.clone()),
+            _ => market
+                .submissions
+                .iter()
+                .filter(|s| s.score.is_some())
+                .max_by(|a, b| {
+                    a.score
+                        .unwrap_or(f64::NEG_INFINITY)
+                        .total_cmp(&b.score.unwrap_or(f64::NEG_INFINITY))
+                        .then_with(|| b.at.cmp(&a.at))
+                })
+                .cloned(),
+        };
         let bounty = market.bounty;
         if let Some(win) = &winner {
             if let Some(p) = market.participants.get_mut(&win.agent) {

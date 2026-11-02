@@ -112,6 +112,9 @@ pub(super) fn source_in_txn(
     let kind = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("graph ask source header"))?
         .entity_type;
+    // The funnel supplies the live revision's logical bytes (FIX 5396):
+    // hash the supplied row; an older revision's manifest bytes miss the
+    // recorded hash and read as changed (FIX 5398).
     if kind != shown.entity_type
         || *blake3::hash(&raw[ENTITY_METADATA_HEADER_LEN..]).as_bytes() != shown.hash
         || !source_eligible(lane.vault(), txn, &shown.id, kind)?
@@ -123,5 +126,15 @@ pub(super) fn source_in_txn(
     else {
         return Ok(None);
     };
+    // A NOTE source sits at one world it is in that the lane holds, else at
+    // base reality as before (FIX-LIST 9433).
+    let scope = crate::federation::record_scope::note_world::source_position(
+        &lane.store_read(),
+        txn,
+        shown.id,
+        kind,
+        scope,
+        &[&lane.actor_key().world_ceiling().worlds],
+    );
     Source::fitted(kind, &raw, &scope).map(Some)
 }
