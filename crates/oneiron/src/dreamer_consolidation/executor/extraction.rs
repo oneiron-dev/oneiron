@@ -20,7 +20,7 @@ pub(in crate::dreamer_consolidation) use wire::{
     contract_reply, decode_ref, disagreeing_child_hashes, extraction_reply, reply_json,
     resolve_subject,
 };
-use wire::{entity_id_from_hex, parse_candidate};
+use wire::{authored_fallback, entity_id_from_hex, parse_candidate};
 
 impl ConsolidationExecutor<'_> {
     /// The extraction request over one child's `transcript`, rendered with
@@ -125,10 +125,11 @@ impl ConsolidationExecutor<'_> {
                 "child evidence hash disagrees with the ledger"
             );
         }
+        let authored = authored_fallback(response);
         let mut parsed = Vec::new();
         let mut skipped = 0_usize;
         for item in items {
-            match parse_candidate(item, ctx, scope) {
+            match parse_candidate(item, ctx, scope, authored) {
                 Ok(mut candidate) => {
                     candidate.sources = sources.to_vec();
                     parsed.push(candidate);
@@ -305,19 +306,23 @@ fn resolve_proposal(
     };
     let value = json_to_rmpv(&parsed.value);
     let rel = match (corrects, parsed.rel) {
-        (Some(prior), _) => prior.body.rel,
-        (None, None) => scope.relationship,
+        (Some(prior), _) => prior.body.rel.clone(),
+        (None, None) => scope.relationship.clone(),
         // A relationship the call listed, by its label (FIX 7575).
-        (None, Some(CandidateRel::Listed(rel))) => Some(rel),
+        (None, Some(CandidateRel::Listed(rel))) => crate::claim::relationship_scope_of(Some(rel)),
         // A value that is no listed label is read as before.
-        (None, Some(CandidateRel::Unlisted(value))) => Some(
+        (None, Some(CandidateRel::Unlisted(value))) => crate::claim::relationship_scope_of(Some(
             value
                 .as_str()
                 .and_then(entity_id_from_hex)
                 .ok_or_else(|| invalid_consolidation("invalid relationship ref"))?,
-        ),
+        )),
     };
-    if scope.relationship.is_some_and(|bound| rel != Some(bound)) {
+    // A bound branch writes inside its relationship set: the whole set or a
+    // narrower one, never a relationship outside it or `all`.
+    if let Some(bound) = &scope.relationship
+        && !rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+    {
         return Err(invalid_consolidation(
             "extraction relationship crossed branch scope",
         ));
@@ -329,9 +334,7 @@ fn resolve_proposal(
         parsed.confidence,
     )
     .with_lexical_hints(parsed.prospective_queries);
-    if let Some(rel) = rel {
-        candidate = candidate.with_relationship(rel);
-    }
+    candidate = candidate.with_relationships(rel.clone());
     if let Some(world) = partition.world_ref {
         candidate = candidate.with_world(world);
     }
@@ -366,7 +369,7 @@ fn resolve_proposal(
         &facts.value,
         partition.world_ref,
         partition.facet_ref,
-        rel,
+        rel.as_ref(),
         facts.project,
         facts.topic.as_deref(),
     )?;

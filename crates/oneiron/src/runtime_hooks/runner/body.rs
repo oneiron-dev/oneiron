@@ -83,6 +83,9 @@ pub(super) struct VerdictPins {
     calls: Vec<HookSettledCallRef>,
     /// Every evidence id, including one whose request/reply pin did not fit.
     evidence: Vec<EntityId>,
+    /// False once a verdict heard evidence it could not list, pinned or not
+    /// (FIX 5764): `evidence` is then not the whole set.
+    evidence_known: bool,
 }
 
 impl VerdictPins {
@@ -94,6 +97,7 @@ impl VerdictPins {
             heard: 0,
             calls: Vec::new(),
             evidence: Vec::new(),
+            evidence_known: true,
         }
     }
 
@@ -110,11 +114,10 @@ impl VerdictPins {
         } = answer;
         self.heard = self.heard.saturating_add(1);
         self.calls.extend(calls);
-        self.evidence
-            .extend(evidence.as_deref().unwrap_or_default().iter().copied());
+        self.evidence.extend(evidence.iter().copied());
         let (Ok(text) | Err(text)) = &reply;
         // Each evidence row pins as its 32-hex id.
-        let rows = evidence.as_ref().map_or(0, Vec::len).saturating_mul(32);
+        let rows = evidence.len().saturating_mul(32);
         let bytes = self
             .bytes
             .saturating_add(request.len())
@@ -128,7 +131,7 @@ impl VerdictPins {
         self.pins.push(HookVerdictPin {
             request_json: request.to_owned(),
             reply,
-            evidence,
+            evidence: Some(evidence),
         });
     }
 }
@@ -271,6 +274,7 @@ pub(super) fn record(
         reads,
         verdicts: verdicts.pins,
         verdicts_complete: verdicts.complete,
+        verdict_evidence_known: verdicts.evidence_known,
         verdict_calls: verdicts.calls,
         preparation: verdict.preparation.clone(),
         outcome_json: verdict.outcome_json.clone(),

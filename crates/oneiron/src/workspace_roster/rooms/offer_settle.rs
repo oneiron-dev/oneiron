@@ -487,7 +487,7 @@ impl Memory<'_> {
             ));
         }
         let vault = self.vault();
-        let caller = WriteActor::new(self.actor(), self.actor_class());
+        let caller = self.write_actor();
         let card = {
             let txn = vault.store.env.read_txn().map_err(Error::from)?;
             let stored = OFFERS

@@ -26,12 +26,21 @@
 //! withholds that handle alone, PendingCustody, warned; anywhere else
 //! today's path goes on, warned.
 //!
-//! Only an erase retires a credential's keys: nothing stages one for a
-//! rotate or a revoke, an image's own erase rows never land (`fences`), and
-//! the finisher runs an erase's intent alone. So a retired credential key in
-//! custody a restore takes, and a credential key's erase intent, are
-//! erase-only evidence: a fence is derived from them, never from a peer's
-//! tombstone.
+//! Only an erase retires a credential's value keys: nothing stages one for
+//! a rotate or a revoke, an image's own erase rows never land (`fences`),
+//! and the finisher runs an erase's intent alone. So a retired credential
+//! value key in custody a restore takes, and a credential key's erase
+//! intent, are erase-only evidence: a fence is derived from them, never
+//! from a peer's tombstone. A carrier's key also retires once what it
+//! carried is answered (FIX 7402): a Retention intent of a transition's or
+//! request input's instance, which the finisher runs too and which no fence
+//! is ever derived from.
+//!
+//! A fence's value-free fact reaches key custody at its erase, once the
+//! erase's writer commits (FIX 11211, `fence_journal`); the finisher hands
+//! every fact over again and journals none twice.
+
+mod fence_journal;
 
 use std::cell::RefCell;
 use std::collections::BTreeSet;
@@ -147,11 +156,14 @@ fn erased_id() -> Error {
 }
 
 /// What this thread's writers staged: how many credential erases, for the
-/// post-commit detection of the writer it runs in, and each id whose fence
-/// did not write, which its erase's receipt binds all the same.
+/// post-commit detection of the writer it runs in, each id whose fence did
+/// not write, which its erase's receipt binds all the same, and each id
+/// fenced whose fact goes to key custody once its writer commits (FIX
+/// 11211).
 struct Staged {
     count: u64,
     unfenced: BTreeSet<EntityId>,
+    fences_to_journal: BTreeSet<EntityId>,
 }
 
 thread_local! {
@@ -159,6 +171,7 @@ thread_local! {
         RefCell::new(Staged {
             count: 0,
             unfenced: BTreeSet::new(),
+            fences_to_journal: BTreeSet::new(),
         })
     };
 }
@@ -170,14 +183,23 @@ pub(crate) fn credential_erases_staged() -> u64 {
 }
 
 /// The custody finisher's predicate for a credential's keys: an erase's
-/// intent for a fenced id runs; any other waits, warned (nothing else
-/// retires a credential's keys).
+/// intent for a fenced id runs, and so does a carrier key's retirement once
+/// what it carried is answered (FIX 7402); any other waits, warned (nothing
+/// else retires a credential's keys).
 fn credential_retirement_ready(
     store: &Store,
     txn: &RoTxn<'_>,
     intent: &RetirementIntent,
 ) -> Result<bool> {
     let parent = parent_of(&intent.subject).ok_or_else(|| intent.subject.kind().corrupt())?;
+    if intent.cause == RetireCause::Retention
+        && matches!(
+            intent.subject.kind(),
+            CustodyKind::CustodyTransition | CustodyKind::CustodyRequestInput
+        )
+    {
+        return Ok(true);
+    }
     let fenced = FENCES.contains(store, txn, &parent)?;
     if intent.cause != RetireCause::Erase || !fenced {
         tracing::warn!(
@@ -254,18 +276,7 @@ impl Store {
                 tracing::warn!("a credential erase fence row did not read; left");
                 continue;
             };
-            let fact = match discovery {
-                Discovery::Owed => FenceFact::Owed,
-                Discovery::Complete { .. }
-                    if self
-                        .credential_erase_finished_in_txn(txn, &id)
-                        .unwrap_or(false) =>
-                {
-                    FenceFact::Complete
-                }
-                Discovery::Complete { keys: false } => FenceFact::NoSubject,
-                Discovery::Complete { keys: true } => FenceFact::Keyed,
-            };
+            let fact = self.fence_fact(txn, &id, discovery);
             let slot = facts.entry(id).or_insert(fact);
             *slot = (*slot).max(fact);
         }
@@ -381,13 +392,18 @@ impl Store {
     /// is written first. Nothing here refuses the erase: a fence that does
     /// not write is warned, the erase's receipt still binds it, pending,
     /// and the finisher installs it from the intents staged here; a
-    /// discovery that faults leaves it owed, warned.
+    /// discovery that faults leaves it owed, warned. Its fact goes to key
+    /// custody once `wtxn` commits ([`Self::journal_staged_fence_facts`]).
     pub(crate) fn stage_credential_erase_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
         credential: &EntityId,
     ) {
-        STAGED.with(|staged| staged.borrow_mut().count += 1);
+        STAGED.with(|staged| {
+            let mut staged = staged.borrow_mut();
+            staged.count += 1;
+            staged.fences_to_journal.insert(*credential);
+        });
         if let Err(error) = FENCES.put(self, wtxn, credential, &Discovery::Owed) {
             tracing::warn!(
                 credential = %credential.to_hex(),
@@ -523,7 +539,8 @@ impl Store {
     /// custody faults: the next pass retries.
     pub(crate) fn finish_credential_retirements(&self) -> Result<bool> {
         // KCEraseEvidence (FIX 10584 item 3): every fence's value-free fact
-        // rides the custody head; a fault is warned and retried.
+        // rides the custody head; a fault is warned and retried. Each went
+        // at its erase already (FIX 11211): only a larger fact is journaled.
         self.publish_credential_erase_evidence();
         let owed = {
             let txn = self.env.read_txn()?;
@@ -674,8 +691,11 @@ impl crate::Vault {
     /// the overall final row of every erase they completed, outside the
     /// custody locks. They are durable, so a failure here is retried by the
     /// next housekeeping pass or reopen and never reported as a failure of
-    /// the erase that already committed.
+    /// the erase that already committed. A fence this thread's erase
+    /// committed reaches key custody first, whatever the finisher does
+    /// (FIX 11211).
     pub(crate) fn finish_credential_retirements_after_commit(&self) {
+        self.store.journal_staged_fence_facts();
         match self.store.finish_credential_retirements() {
             Ok(true) => self.finish_redaction_erases_logged(),
             Ok(false) => {}

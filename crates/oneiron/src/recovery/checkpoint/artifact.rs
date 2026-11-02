@@ -47,6 +47,7 @@
 //! codecs are the shared ones in `oneiron_crypto::backup`; the engine reads
 //! version 2 only.
 mod manifest;
+mod payload_inventory;
 mod sink;
 
 use std::fs::File;
@@ -62,6 +63,7 @@ use oneiron_crypto::backup::{
 };
 
 use self::manifest::StreamEntry;
+pub(super) use self::payload_inventory::write_payload_inventory;
 use self::sink::Sealer;
 pub(super) use self::sink::{ArtifactBody, write_artifact};
 use super::admission::{
@@ -242,13 +244,15 @@ impl CheckpointKey {
         self.opened.as_ref()
     }
 
-    /// [`CheckpointKey::unlock`] with this install's keystore at the platform
-    /// defaults, from the device wrap it holds a slot for, trusting the
-    /// signers whose seeds that keystore holds. `vault_dir` is the vault's
-    /// directory, which the keystore must lie outside.
-    pub fn unlock_on_this_device(path: &Path, vault_dir: &Path) -> Result<Self> {
-        let keystore = oneiron_keystore::default_platform_keystore(&[vault_dir])
-            .map_err(crate::world_keys::keystore_error)?;
+    /// [`CheckpointKey::unlock`] with this install's keystore, trusting its signers;
+    /// `None` is a host with none, which unlocks nothing (FIX 12225).
+    pub fn unlock_on_this_device(
+        path: &Path,
+        keystore: Option<&std::sync::Arc<dyn oneiron_keystore::DeviceKeystore>>,
+    ) -> Result<Self> {
+        let keystore = keystore
+            .cloned()
+            .ok_or_else(commitment::no_keystore_for_restore)?;
         Ok(
             Self::unlock(path, &VaultKeyUnlock::Device(keystore.as_ref()))?
                 .trusting_device(keystore),
@@ -424,9 +428,6 @@ pub(super) struct OpenedArtifact<'k> {
     pub(super) sequence: u64,
     /// The snapshot id its verified commitment signs.
     pub(super) snapshot: [u8; 32],
-    /// The payload compartments it carries, apart from its bodies (KS-7).
-    #[allow(dead_code, reason = "KS7-5 opens the compartments")]
-    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// The result bodies an opened artifact carries, each read back through its
@@ -436,6 +437,8 @@ pub(super) struct SealedBodies<'k> {
     sealer: Sealer<'k>,
     /// Each body's manifest line and its frames (offset, length).
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
+    /// The payload compartments it carries, apart from its bodies (KS-7).
+    pub(super) payload: Option<SealedPayload<'k>>,
 }
 
 /// Opens the artifact at `path` with `key`: its manifest, checked against the
@@ -613,17 +616,16 @@ pub(super) fn open_artifact_file(
             file,
             sealer,
             streams,
+            payload,
         },
         custody: manifest.custody,
         sequence: commitment.sequence,
         snapshot: prelude.snapshot,
-        payload,
     })
 }
 
 /// The payload compartments an opened artifact carries (KS-7), read apart
 /// from its bodies: each bundle's stream after the last body's.
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 pub(super) struct SealedPayload<'k> {
     pub(super) section: PayloadSection,
     file: File,
@@ -633,8 +635,12 @@ pub(super) struct SealedPayload<'k> {
     streams: Vec<(StreamEntry, Vec<(u64, u64)>)>,
 }
 
-#[allow(dead_code, reason = "KS7-5 opens the compartments")]
 impl SealedPayload<'_> {
+    /// The vault its compartments are sealed for.
+    pub(super) fn vault_id(&self) -> [u8; 32] {
+        self.sealer.key.vault_id
+    }
+
     /// The `index`th payload stream's bytes, each chunk checked against the
     /// manifest and opened as it is read, the whole checked after.
     pub(super) fn stream(&mut self, index: usize) -> Result<Vec<u8>> {

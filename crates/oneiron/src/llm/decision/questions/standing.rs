@@ -20,10 +20,10 @@ use rmpv::Value;
 
 /// One backfill identity: question id + `backfill` family + version, unit and frontier.
 #[derive(Clone, Copy)]
-struct BackfillKey {
-    question: EntityId,
+pub(super) struct BackfillKey {
+    pub(super) question: EntityId,
     version: u32,
-    unit: EntityId,
+    pub(super) unit: EntityId,
     frontier: [u8; 32],
 }
 impl SideKey for BackfillKey {
@@ -45,7 +45,7 @@ impl SideKey for BackfillKey {
         })
     }
 }
-const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
+pub(super) const QUESTION_BACKFILL: SideTable<BackfillKey, EntityIdBytes, Named> =
     SideTable::new(&side_table::TYPED_QUESTION);
 
 /// The host obtains `source_frontier` before asking a provider. Admission
@@ -220,6 +220,9 @@ fn sources_in_txn(
         }
         let raw = crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, id)?
             .ok_or(Error::EntityNotFound)?;
+        // A file-plane ASSET's stored row holds its manifest: judge, hash and
+        // scope the body in its place (FIX 5398).
+        let raw = vault.materialized_row_in_txn(txn, id, raw)?;
         let header = EntityMetadataHeader::parse(&raw)
             .ok_or(Error::CorruptedIndex("standing source header"))?;
         // A claim awaiting its owner's answer is a missing required source.
@@ -385,6 +388,8 @@ pub(super) fn prepare_graph_answer(
         let Some((kind, _, body)) = lane.graph_ask_parts_in_txn(&txn, id)? else {
             return Err(Error::EntityNotFound);
         };
+        // The funnel supplies the live revision's logical bytes (FIX 5396):
+        // bound, hash and keep the supplied body (FIX 5398).
         if !super::graph_ask::kind_is_graph_evidence(kind)
             || body.is_empty()
             || body.len() > 1_048_576
@@ -767,7 +772,7 @@ pub(super) struct ScopeFold {
     principal: String,
     taint: ClaimSource,
     position: Option<(EntityId, EntityId, EntityId)>,
-    rel: Option<EntityId>,
+    rel: crate::claim::RelationshipScope,
     scope: Vec<(Value, Value)>,
     sensitivity: u8,
 }
@@ -823,11 +828,19 @@ impl ScopeFold {
         if let Some(inherited) = crate::claim::claim_evidence_taint(body) {
             self.taint = crate::dreamer_consolidation::source_meet(self.taint, inherited);
         }
-        if let Some(id) = body.rel {
-            if self.rel.is_some_and(|existing| existing != id) {
+        if let Some(ids) = &body.rel {
+            // The answer reaches only the relationships every source does
+            // (the meet; `all` is its identity). Sources in disjoint
+            // relationships conflict, as one-relationship sources always
+            // did; an explicitly empty source carries its empty set.
+            let met = crate::claim::meet_relationship_scopes(self.rel.as_ref(), Some(ids));
+            if met.as_ref().is_some_and(|met| met.is_empty())
+                && !ids.is_empty()
+                && self.rel.as_ref().is_some_and(|folded| !folded.is_empty())
+            {
                 return Err(SourceConflict::Relationship);
             }
-            self.rel = Some(id);
+            self.rel = met;
         }
         if let Some(value) = &body.scope {
             let Value::Map(entries) = value else {
@@ -883,8 +896,8 @@ impl ScopeFold {
                 *candidate = candidate.clone().with_world(world);
             }
         }
-        if let Some(id) = self.rel {
-            *candidate = candidate.clone().with_relationship(id);
+        if self.rel.is_some() {
+            *candidate = candidate.clone().with_relationships(self.rel);
         }
         if !scope.is_empty() {
             *candidate = candidate.clone().with_scope(Value::Map(scope));
@@ -894,4 +907,4 @@ impl ScopeFold {
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
-struct EntityIdBytes([u8; 16]);
+pub(super) struct EntityIdBytes([u8; 16]);

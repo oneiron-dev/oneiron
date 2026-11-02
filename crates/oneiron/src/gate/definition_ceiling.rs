@@ -1,4 +1,7 @@
+use std::collections::BTreeMap;
+
 use crate::agent_def::{AgentDefinition, decode_agent_definition};
+use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::edge::EdgeActorClass;
@@ -9,7 +12,7 @@ use crate::store::Store;
 use crate::write_envelope::WriteActor;
 
 use super::ceiling::PolicyApprovalCeiling;
-use super::constants::FIRST_PARTY_CONNECTOR_ACTOR_ID;
+use super::constants::{FIRST_PARTY_CONNECTOR_ACTOR_ID, MAX_DELEGATION_DEPTH};
 
 pub(crate) fn first_party_connector_actor_ref() -> String {
     bytes_to_hex_lower(&FIRST_PARTY_CONNECTOR_ACTOR_ID)
@@ -45,6 +48,115 @@ pub(crate) fn agent_definition_ceiling_for_actor(
         (Some(a), Some(b)) => Some(a.restrict(b)),
         (a, b) => a.or(b),
     }
+}
+
+/// The delegation ancestor whose live bound no longer allows a delegated
+/// child's write (FIX 10537): its agent-dispatch attempt and its AGENT_DEF
+/// row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DelegationNarrowing {
+    /// The ancestor's agent-dispatch attempt.
+    pub(crate) attempt: AttemptId,
+    /// The ancestor's AGENT_DEF row, whose live bound narrowed the write.
+    pub(crate) agent: EntityId,
+}
+
+/// The ancestor that narrows `actor`'s write, read live in `txn` (FIX 10537,
+/// Engine 09:24 and 10:43). It reads only an agent bound to the attempt
+/// whose run writes ([`WriteActor::run_attempt`]), where that attempt
+/// dispatched the agent's own row unforked: up its delegation chain, with
+/// the reads dispatch's own chain walk takes, it names the nearest ancestor
+/// whose live bound ([`agent_definition_ceiling_for_actor`]) is `Proposed`.
+/// A chain that comes back on itself proves no grant and narrows at the
+/// attempt it came back to. `None`: no agent bound to a run; a child forked
+/// at dispatch, which keeps its row's clamp; no agent parent, which keeps
+/// today's Auto; or a chain every ancestor of which still allows the write.
+/// The walk reads at most [`MAX_DELEGATION_DEPTH`] ancestors and past them
+/// stops, never refusing on a count (rule 5). A read that fails narrows, as
+/// every read of this resolver fails closed.
+pub(crate) fn delegation_chain_narrowing(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    actor: WriteActor,
+) -> Option<DelegationNarrowing> {
+    if actor.actor_class() != EdgeActorClass::Agent {
+        return None;
+    }
+    let child = AttemptId::from_bytes(&actor.run_attempt()?).ok()?;
+    let queue = AttemptQueue::from_store(store);
+    let mut row = match queue.get_in_txn(txn, child) {
+        Ok(row) => row?,
+        Err(error) => return chain_read_failed(child, actor.entity_ref(), &error),
+    };
+    // The attempt binds only the run that dispatched this actor's own row.
+    if dispatch_target(&row) != Some(actor.entity_ref()) {
+        return None;
+    }
+    match crate::agent_def::delegation_parent_in_txn(store, txn, &actor.entity_ref()) {
+        Ok(None) => {}
+        Ok(Some(_)) => return None,
+        Err(error) => return chain_read_failed(child, actor.entity_ref(), &error),
+    }
+    let mut seen = BTreeMap::from([(child, actor.entity_ref())]);
+    let mut target = actor.entity_ref();
+    for _ in 0..MAX_DELEGATION_DEPTH {
+        let parent =
+            match crate::agent_dispatch::delegation_lineage_parent_in_txn(store, txn, &row, target)
+            {
+                Ok(parent) => parent?,
+                Err(error) => return chain_read_failed(row.id, target, &error),
+            };
+        if let Some(&agent) = seen.get(&parent) {
+            return Some(DelegationNarrowing {
+                attempt: parent,
+                agent,
+            });
+        }
+        row = match queue.get_in_txn(txn, parent) {
+            Ok(row) => row?,
+            Err(error) => return chain_read_failed(parent, target, &error),
+        };
+        target = dispatch_target(&row)?;
+        seen.insert(parent, target);
+        let live = agent_definition_ceiling_for_actor(
+            store,
+            txn,
+            WriteActor::new(target, EdgeActorClass::Agent),
+        );
+        if live == Some(PolicyApprovalCeiling::Proposed) {
+            return Some(DelegationNarrowing {
+                attempt: parent,
+                agent: target,
+            });
+        }
+    }
+    tracing::info!(
+        actor_entity_id = %actor.entity_ref().to_hex(),
+        read = MAX_DELEGATION_DEPTH,
+        "a delegated write's chain goes past the ancestors the gate reads; the rest are not read",
+    );
+    None
+}
+
+/// The AGENT_DEF row `row`'s agent dispatch targets, `None` for a row that
+/// is no agent dispatch.
+fn dispatch_target(row: &AttemptRecord) -> Option<EntityId> {
+    crate::agent_dispatch::record_dispatch_input(row)
+        .and_then(|input| input.target.agent_definition_ref().ok())
+}
+
+/// A delegation-chain read that failed narrows at the attempt it read.
+fn chain_read_failed(
+    attempt: AttemptId,
+    agent: EntityId,
+    error: &crate::error::Error,
+) -> Option<DelegationNarrowing> {
+    tracing::warn!(
+        actor_entity_id = %agent.to_hex(),
+        %error,
+        "delegation chain read failed; failing closed to proposed",
+    );
+    Some(DelegationNarrowing { attempt, agent })
 }
 
 /// The bound an agent actor's own stored definition puts on its writes: its

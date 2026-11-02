@@ -14,6 +14,7 @@ use crate::sync::types::parse_window_key_str;
 use crate::side_table::HexId;
 use crate::sync::documents::DS_E;
 
+use super::server_close::ServerClose;
 use super::session::{
     EPHEMERAL_HOUSEKEEPING_INTERVAL_SECS, MACHINE_HISTORY_FETCH_TASKS,
     MACHINE_HISTORY_RETRY_INTERVAL_SECS, SEALED_RELAY_INTERVAL_SECS,
@@ -44,6 +45,8 @@ impl SyncConnection {
         let debounce_ms = u64::from(self.config.client_config.sync_debounce_ms).max(1);
         let mut debounce_buffer: Vec<LocalUpdate> = Vec::new();
         let mut document_buffer: Vec<Vec<u8>> = Vec::new();
+        // Window updates and documents lead the tick's batch in turn (FIX 8870).
+        let mut batch_turn = super::node_batch::NodeBatchTurn::default();
         // One owed artifact publication part at a time, outside the document
         // buffer, and where this connection stands in them (FIX 9575).
         let mut publication_cursor = crate::artifact_hosting::ArtifactPublicationCursor::default();
@@ -77,7 +80,9 @@ impl SyncConnection {
         }
         let mut left_rx = self.left.subscribe();
 
-        loop {
+        // Every `break` is the run's shutdown; any other exit returns, and
+        // its upkeep rounds run on beside the next connection.
+        let exit = loop {
             self.run_machine_history(&mut machine_history_tasks, &machine_history_due, event_tx);
             // Compute sleep future for debounce timer
             let debounce_sleep = match debounce_deadline {
@@ -135,8 +140,14 @@ impl SyncConnection {
                                 return LoopExit::Disconnected(format!("Pong failed: {e}"));
                             }
                         }
-                        Some(Ok(Message::Close(_))) | None => {
-                            // Flush debounce buffer before disconnecting
+                        Some(Ok(Message::Close(frame))) => {
+                            // Flush debounce buffer before disconnecting; the
+                            // close code tells a server fault from a refusal
+                            // (FIX 5927).
+                            flush_to_queue(&self.queue, &mut debounce_buffer);
+                            return LoopExit::Closed(ServerClose::read(frame.as_ref()));
+                        }
+                        None => {
                             flush_to_queue(&self.queue, &mut debounce_buffer);
                             return LoopExit::Disconnected("Server closed connection".to_string());
                         }
@@ -208,7 +219,7 @@ impl SyncConnection {
                         // A slow socket skips obsolete partials; the durable final
                         // and the next full-text partial repair the user view.
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => return LoopExit::Shutdown,
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break LoopExit::Shutdown,
                     }
                 }
 
@@ -263,7 +274,7 @@ impl SyncConnection {
                         }
                         None => {
                             // Channel closed — application is shutting down
-                            return LoopExit::Shutdown;
+                            break LoopExit::Shutdown;
                         }
                     }
                 }
@@ -274,7 +285,7 @@ impl SyncConnection {
 
                     match self.flush_node_batch(
                         &mut write, client, &mut debounce_buffer, &mut document_buffer,
-                        &mut publication_slot,
+                        &mut publication_slot, &mut batch_turn,
                     ).await {
                         Err(error) => {
                             flush_to_queue(&self.queue, &mut debounce_buffer);
@@ -441,6 +452,12 @@ impl SyncConnection {
                 // Loro's Rust EphemeralStore has no internal timer.
                 _ = ephemeral_housekeeping.tick() => {
                     client.remove_outdated_ephemeral();
+                    if let Err(e) = crate::sync::asset_body::client::send_asset_bodies(client, &mut write).await {
+                        return LoopExit::Disconnected(e);
+                    }
+                    if let Err(e) = crate::sync::client::send_leaf_key_requests(client, &mut write).await {
+                        return LoopExit::Disconnected(e);
+                    }
                     if let Err(error) = client.replay_deferred_federation_update() {
                         return LoopExit::Disconnected(format!("federation replay: {error}"));
                     }
@@ -477,7 +494,7 @@ impl SyncConnection {
                 () = async { let _ = left_rx.wait_for(|left| *left).await; } => {
                     flush_to_queue(&self.queue, &mut debounce_buffer);
                     let _ = write.send(Message::Close(None)).await;
-                    return LoopExit::Shutdown;
+                    break LoopExit::Shutdown;
                 }
 
                 // Shutdown signal
@@ -486,10 +503,28 @@ impl SyncConnection {
                     flush_to_queue(&self.queue, &mut debounce_buffer);
                     // Send close frame
                     let _ = write.send(Message::Close(None)).await;
-                    return LoopExit::Shutdown;
+                    break LoopExit::Shutdown;
                 }
             }
+        };
+        // FIX 12037: the run ends with its residence upkeep ended, so none of
+        // its writes lands after it (a reap's export waits on this): the
+        // async rounds are aborted, and each task, the blocking tombstone
+        // retry included, is waited for.
+        if let Some(task) = &sealed_task {
+            task.abort();
         }
+        for task in &machine_history_tasks {
+            task.abort();
+        }
+        for task in sealed_task
+            .into_iter()
+            .chain(tombstone_task)
+            .chain(machine_history_tasks)
+        {
+            let _ = task.await;
+        }
+        exit
     }
 
     /// Starts an owed machine-history round off this loop once one is due and

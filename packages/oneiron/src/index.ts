@@ -218,7 +218,9 @@ export class Oneiron {
    * `open` stays the rootless door. A secret that is not the vault's settled
    * root, over a profile that already stands, opens and says so in
    * `hostRoot.wrongRoot`. The handle binds the local owner actor, as `open`
-   * does, and carries no owner proof.
+   * does, and carries no owner proof. With `opts.holdCheckpointRootSigner`
+   * (FIX 5343) the handle holds this install's host root as its checkpoint
+   * signer, unless the secret went unused; omitted is `false`.
    */
   static openWithHostRoot(
     path: string | undefined,
@@ -232,6 +234,7 @@ export class Oneiron {
         opts.dimensions,
         hostRootSecret,
         opts.deviceClass,
+        opts.holdCheckpointRootSigner,
       )
     } catch (error) {
       throw translateNativeError(error)
@@ -638,6 +641,8 @@ export class Oneiron {
         quotas: (input: Facade.RunnerSeatQuotasRequest): Facade.RunnerSeatQuotasView => this.#call(() => this.#client.vaultRunnersSeatsQuotas(input) as Facade.RunnerSeatQuotasView),
         /** The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so. */
         top_up: (input: Facade.RunnerSeatCreditTopUpRequest): Facade.RunnerSeatTopUpReceipt => this.#call(() => this.#client.vaultRunnersSeatsTopUp(input) as Facade.RunnerSeatTopUpReceipt),
+        /** The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write. */
+        resume: (input: Facade.RunnerWorkResumeRequest): Facade.RunnerWorkResumeView => this.#call(() => this.#client.vaultRunnersSeatsResume(input) as Facade.RunnerWorkResumeView),
       },
     },
     /** Writes one whole MESSAGE atomically through the witness gate; birth supplies its immutable conversation, turn and author axes. */
@@ -654,6 +659,10 @@ export class Oneiron {
     cancel_stream: (input: Facade.CancelStreamRequest): Facade.MessageStreamReceipt => this.#call(() => this.#client.vaultCancelStream(input) as Facade.MessageStreamReceipt),
     /** Reads only this actor's accepted in-memory partial using its generation-bound stream handle. */
     message_stream_partial: (input: Facade.MessageStreamRequest): Facade.MessageStreamPartial => this.#call(() => this.#client.vaultMessageStreamPartial(input) as Facade.MessageStreamPartial),
+    message_streams: {
+      /** Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again. */
+      refused: (input: Facade.EmptyRequest = {}): Facade.StreamRecoveryRefusal[] => this.#call(() => this.#client.vaultMessageStreamsRefused(input) as Facade.StreamRecoveryRefusal[]),
+    },
     messages: {
       /** Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane. */
       durability: (input: Facade.MessageDurabilityRequest): Facade.ScopedReadResult<Facade.MessageDurability | null> => this.#call(() => this.#client.vaultMessagesDurability(input) as Facade.ScopedReadResult<Facade.MessageDurability | null>),
@@ -1076,6 +1085,8 @@ export class Oneiron {
         tradeoff_asks: Object.assign((input: Facade.EmptyRequest = {}): Facade.SkillOptimizeTradeoffAskView[] => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsks(input) as Facade.SkillOptimizeTradeoffAskView[]), {
           /** Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant. */
           pick: (input: Facade.SkillOptimizeTradeoffPickRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsksPick(input) as Facade.SkillOptimizeResultView),
+          /** The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference. */
+          resolve: (input: Facade.SkillOptimizeTradeoffResolveRequest): Facade.SkillOptimizeResultView => this.#call(() => this.#client.vaultSkillsOptimizeTradeoffAsksResolve(input) as Facade.SkillOptimizeResultView),
         }),
       },
       governance: {
@@ -1949,6 +1960,8 @@ export class Oneiron {
     lenses: {
       /** Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it. */
       propose: (input: Facade.LensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesPropose(input) as Facade.LensProposalReceipt),
+      /** Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it. */
+      propose_from_pack: (input: Facade.PackLensProposeRequest): Facade.LensProposalReceipt => this.#call(() => this.#client.vaultLensesProposeFromPack(input) as Facade.LensProposalReceipt),
       /** The owner selects a proposed lens revision for its pack slot. */
       activate: (input: Facade.LensActivateRequest): Facade.LensActivationReceipt => this.#call(() => this.#client.vaultLensesActivate(input) as Facade.LensActivationReceipt),
       /** The owner clears a pack slot's selected lens; the pack, its skill and the proposal stay. */
@@ -2270,7 +2283,7 @@ export class Oneiron {
         /** Claim the caller's checkout on an assigned task, with a bounded TTL and declared idempotence. */
         claim: (input: Facade.CheckoutClaimInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutClaim(input) as Facade.CheckoutLeaseView),
         /** Read checkout custody and vault-clock expiry as a task party, without claiming or renewing it. */
-        get: (input: Facade.CheckoutGetInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.CheckoutLeaseView),
+        get: (input: Facade.CheckoutGetInput): Facade.ScopedReadResult<Facade.CheckoutLeaseView | null> => this.#call(() => this.#client.vaultCodeCheckoutGet(input) as Facade.ScopedReadResult<Facade.CheckoutLeaseView | null>),
         /** Renew the caller's still-live checkout under its exact holder and epoch fence. */
         renew: (input: Facade.CheckoutRenewInput): Facade.CheckoutLeaseView => this.#call(() => this.#client.vaultCodeCheckoutRenew(input) as Facade.CheckoutLeaseView),
         /** Reclaim an expired declared-idempotent build or verify checkout as an authorized successor at the named epoch. */
@@ -2311,7 +2324,7 @@ export class Oneiron {
         read: (input: Facade.CodeSnapshotReadRequest): Facade.CodeSnapshotPinnedFile | null => this.#call(() => this.#client.vaultCodeSnapshotsRead(input) as Facade.CodeSnapshotPinnedFile | null),
       },
       merge_queue: {
-        /** Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
+        /** Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed. */
         enqueue: (input: Facade.MergeQueueEnqueueRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueEnqueue(input) as Facade.MergeQueueBatchView),
         /** Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move. */
         stage: (input: Facade.MergeQueueBatchRequest): Facade.MergeQueueBatchView => this.#call(() => this.#client.vaultCodeMergeQueueStage(input) as Facade.MergeQueueBatchView),
@@ -2920,6 +2933,8 @@ export class Oneiron {
       },
       /** The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model. */
       lineage: (input: Facade.ConsolidationLineageRequest): Facade.ConsolidationLineageView | null => this.#call(() => this.#client.vaultConsolidationLineage(input) as Facade.ConsolidationLineageView | null),
+      /** The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value. */
+      candidate_decisions: (input: Facade.DreamerCandidateDecisionsRequest): Facade.DreamerDecidedCandidateView[] => this.#call(() => this.#client.vaultConsolidationCandidateDecisions(input) as Facade.DreamerDecidedCandidateView[]),
       /** Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals. */
       promote: (input: Facade.ConsolidationPromoteRequest): Facade.ConsolidationPromotion => this.#call(() => this.#client.vaultConsolidationPromote(input) as Facade.ConsolidationPromotion),
       /** Pins reference-only evidence for six-axis consolidation buckets at one owner-scoped ledger revision. Hashes, lineage taint and source eligibility are derived by the root, never accepted from children. */

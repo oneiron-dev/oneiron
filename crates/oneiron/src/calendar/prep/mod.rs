@@ -41,11 +41,11 @@
 //!   CAL-07's [`super::outcome::OutcomeCheckInWake`] already does. CAL never
 //!   plans a window, so [`PREP_WAKE_SCHEDULE_KIND`] pins the `exact` arm as a
 //!   value a caller can assert without the dep.
-//! * **Commitment trigger.** Until CMT-3 lands there is no commitment entity to
-//!   key on, so `prep_section_kind_for` maps stored entity types onto the
-//!   three ranked sections. That mapping is the swap point: when CMT-3 arrives,
-//!   the commitment section keys on commitment rows instead of CLAIM rows and
-//!   nothing else in this module moves.
+//! * **Commitment trigger.** The prior-commitment section keys on
+//!   `commitment.record` rows, decoded with the commitment codec: a live open
+//!   promise involving the meeting or its people. Every other CLAIM row, a
+//!   closed promise included, is dossier history, and the other stored entity
+//!   types map onto the three sections through `prep_section_kind_for`.
 
 mod home_node;
 mod lens;

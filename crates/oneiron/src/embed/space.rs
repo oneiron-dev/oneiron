@@ -1183,6 +1183,8 @@ impl Vault {
                 true,
             )?;
         }
+        #[cfg(feature = "sync")]
+        self.mark_pending_mirrors_in_txn(wtxn, &written)?;
         Ok(written)
     }
 

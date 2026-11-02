@@ -7,16 +7,16 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::rejection::QueryRejection;
 use axum::extract::{Query, State};
 use axum::response::Json;
 use axum::routing::{get, post};
 use oneiron::EdgeActorClass;
 use oneiron::dreamer_consolidation::{DreamerChange, DreamerRevertReceipt};
+use oneiron::memory::DreamerDecidedCandidateView;
 use serde::{Deserialize, Serialize};
 
-use super::{OwnerReply, blocking, owner, owner_error};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner, owner_error};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
@@ -26,12 +26,62 @@ use crate::server::SyncServer;
 /// The most changes one list returns unless the caller asks for fewer.
 const DEFAULT_LIMIT: usize = 100;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/dreamer/changes", get(changes))
-        .route("/dreamer/revert", post(revert))
-        .route("/dreamer/pause", post(pause_dreamer))
-        .route("/dreamer/resume", post(resume_dreamer))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/candidate-decisions",
+                summary: "Every candidate one Dreamer attempt decided a correction for, with its kept decisions: ids and decisions only.",
+                row: None,
+            },
+            get(candidate_decisions),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/dreamer/changes",
+                summary: "The Dreamer's standing changes, newest first, and the people whose about it wrote.",
+                row: None,
+            },
+            get(changes),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/revert",
+                summary: "The owner's revert of one Dreamer change, with one receipt.",
+                row: None,
+            },
+            post(revert),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/pause",
+                summary: "Sets the owner's own Dreamer pause: no new pass starts, and the running attempt parks at its next boundary. Answers the pause and the owner's cause of it.",
+                row: None,
+            },
+            post(pause_dreamer),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/dreamer/resume",
+                summary: "Clears the owner's own Dreamer pause; a managed freeze still holds it. Answers the pause and the owner's cause of it.",
+                row: None,
+            },
+            post(resume_dreamer),
+        ),
+    ]
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CandidateDecisionsQuery {
+    /// The attempt, as `vault.consolidation.status` names it (`job:`
+    /// prefix allowed).
+    job_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -171,6 +221,30 @@ fn reverted_view(receipt: DreamerRevertReceipt) -> ChangeReverted {
         left_alone: reverted.left_alone,
         receipt_ref: receipt.receipt_ref,
     }
+}
+
+/// `GET /v1/owner/dreamer/candidate-decisions?job_ref=<ref>`: every
+/// candidate the Dreamer attempt decided a correction for, with its kept
+/// decisions. Ids and decisions only, never a candidate's value.
+async fn candidate_decisions(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    query: Result<Query<CandidateDecisionsQuery>, QueryRejection>,
+) -> OwnerReply<Vec<DreamerDecidedCandidateView>> {
+    let owner = owner(&auth, &server)?;
+    let query = query_params(query)?;
+    let locality = auth.locality();
+    let read = blocking(move || -> OwnerResult<Vec<DreamerDecidedCandidateView>> {
+        let vault = server.vault();
+        let actor = owner.revalidate(vault)?;
+        vault
+            .memory(actor, EdgeActorClass::Human)
+            .at(locality)
+            .dreamer_candidate_decisions(Some(&owner), &query.job_ref)
+            .map_err(memory_refused)
+    })
+    .await?;
+    Ok(Json(read))
 }
 
 /// `GET /v1/owner/dreamer/changes` (optionally `?limit=<n>`): the Dreamer's

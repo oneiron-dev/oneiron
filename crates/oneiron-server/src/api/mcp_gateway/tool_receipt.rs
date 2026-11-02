@@ -57,6 +57,7 @@ pub(super) fn mcp_call_receipt(
                 .auth
                 .as_ref()
                 .and_then(crate::api::call_receipt::credential_ref),
+            carrier_machine: None,
             outcome,
             request_digest,
             result_digest,

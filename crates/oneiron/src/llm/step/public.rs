@@ -5,7 +5,7 @@ use super::super::{
     BudgetGuard, ContentPart, FallbackRegistry, FatalLlmError, LlmBackend, LlmError, LlmRequest,
     LlmResponse, LlmUsage, ResponseFormat,
 };
-use super::step_claim::step_index_lookup;
+use super::step_claim::{step_index_lookup, step_index_lookup_in_txn};
 use super::step_state::step_state_read;
 use super::submission_custody::{SUBMISSIONS, Submission, erased, put_submission_in_txn};
 use super::{
@@ -560,4 +560,19 @@ pub(crate) fn step_terminal_claim(
     step_hash: &[u8; 32],
 ) -> Result<Option<EntityId>> {
     step_index_lookup(vault, attempt_id, step_hash)
+}
+
+/// [`step_terminal_claim`] in the caller's snapshot, so a paid receipt pinned
+/// in the same writer names the claim its charge paid for (FIX 7489).
+///
+/// # Errors
+///
+/// Returns an error when the step index cannot be read.
+pub(crate) fn step_terminal_claim_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt_id: AttemptId,
+    step_hash: &[u8; 32],
+) -> Result<Option<EntityId>> {
+    step_index_lookup_in_txn(vault, txn, attempt_id, step_hash)
 }

@@ -1,6 +1,10 @@
 //! Typed policy reads, owner edits and inert untrusted contributions.
 //! The owner writer is the same one `install_owner_policy_manifest` takes;
 //! composition and validation remain the existing manifest resolver's.
+mod calendar_outcome_grace;
+pub use calendar_outcome_grace::{
+    calendar_outcome_grace_as_owner, set_calendar_outcome_grace_as_owner,
+};
 mod claim_aging;
 pub(crate) use claim_aging::{
     CLAIM_AGING_PROFILES_KEY, claim_aging_profiles_for_run, decode_claim_aging_profiles,
@@ -172,6 +176,56 @@ fn record(
     Ok(receipt.decision_id.to_hex())
 }
 
+/// Replaces one field of the owner-trusted default manifest through the
+/// owner's manifest writer and records its receipt: the door a typed policy
+/// field owned outside this module writes through. `rewrite` is handed the
+/// field's current value, if any, and returns its replacement.
+pub(crate) fn rewrite_default_manifest_field_as_owner_in_txn(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    txn: &mut heed::RwTxn<'_>,
+    key: &str,
+    rewrite: impl FnOnce(Option<&rmpv::Value>) -> Result<rmpv::Value>,
+    reason_code: &str,
+) -> Result<String> {
+    let actor = owner.revalidate_in_txn(vault, txn)?;
+    let id = super::default_policy_manifest_id()?;
+    let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
+    if !manifest_is_trusted(&vault.store, txn, &id, &body)? {
+        return Err(invalid(
+            "this policy field requires an owner-trusted manifest",
+        ));
+    }
+    let mut fields = decode_fields(&body)?;
+    let mut matching = fields
+        .iter()
+        .filter(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, value)| value);
+    let current = matching.next();
+    if matching.next().is_some() {
+        return Err(invalid("duplicate policy manifest field"));
+    }
+    let replacement = rewrite(current)?;
+    fields.retain(|(name, _)| name.as_str() != Some(key));
+    fields.push((rmpv::Value::from(key), replacement));
+    vault.write_owner_policy_manifest_in_txn(
+        owner,
+        txn,
+        id,
+        encode_fields(fields)?,
+        crate::unix_seconds_now(),
+    )?;
+    let body = body_in_txn(vault, txn, id)?.ok_or(Error::EntityNotFound)?;
+    record(
+        vault,
+        txn,
+        crate::WriteActor::new(actor, EdgeActorClass::Human),
+        id,
+        &body,
+        ("allow", vec![reason_code.to_owned()]),
+    )
+}
+
 /// Read the policy envelope and axes, under the owner's current proof.
 pub fn policy_manifests_as_owner(
     vault: &Vault,
@@ -249,6 +303,25 @@ pub fn put_policy_manifest_as_owner(
 /// 8177): one target for every manifest, at vault scope.
 pub const GATE_POLICY_PUT_GRANT_TARGET: &str = "gate-policy:manifest-put";
 
+/// Whether `holder`'s person holds the vault-scope policy power over a gate
+/// policy manifest put now (FIX 8516): the read-only preflight of
+/// [`put_policy_manifest_as_holder`]'s own write-transaction check. The
+/// admission consults it so a powerless person's pre-hooks never fire; the
+/// writer still checks, so a revocation landing between the two is still
+/// refused at commit, and a grant landing there is admitted on retry.
+/// Read-only: it opens no writer.
+pub fn holder_has_policy_power(vault: &Vault, holder: &AuthenticatedOwner) -> Result<bool> {
+    let txn = vault.store.env.read_txn()?;
+    let actor = holder.revalidate_person_in_txn(vault, &txn)?;
+    crate::policy_model::holds_vault_policy_power_in_txn(
+        vault,
+        &txn,
+        actor,
+        GATE_POLICY_PUT_GRANT_TARGET,
+        crate::unix_seconds_now(),
+    )
+}
+
 /// [`put_policy_manifest_as_owner`] for a policy-power holder (FIX 8177): a
 /// live Owner, or an Admin or Delegate whose Owner-minted grant names
 /// [`GATE_POLICY_PUT_GRANT_TARGET`], found again in this write transaction
@@ -310,7 +383,7 @@ pub fn propose_policy_manifest(
     let vault = memory.vault();
     let data = encode_manifest(&input.manifest, None)?;
     memory.with_verified_actor_write_txn(|txn| {
-        let actor = crate::WriteActor::new(memory.actor(), memory.actor_class());
+        let actor = memory.write_actor();
         let policy = resolve_policy_manifest(&vault.store, txn)?;
         let decision = policy.evaluate_gate(&GateEvaluatorInput {
             actor: GateActor {

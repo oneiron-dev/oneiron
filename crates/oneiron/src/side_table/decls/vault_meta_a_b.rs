@@ -96,7 +96,8 @@ side_tables! {
     /// (artifact id).
     ARTIFACT_SYNC_OUTBOX: VaultMeta b"artifact:sync:outbox:v1:" Named;
     /// Live attempt's frozen execution context and append-only use witnesses. Key: attempt id16.
-    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored;
+    ATTEMPT_PACK_ATTRIBUTION: VaultMeta b"attempt_attribution:v1:" Named Authored
+        => crate::receipt::erase_attempt_attribution_scope_in_txn;
     /// Terminal PACK RECEIPT for one attempt run under a skill pack, cited by receipt_ref lookups.
     /// Key: string ("attempt:" + hex32 attempt id).
     ATTEMPT_PACK_RECEIPT: VaultMeta b"attempt_receipt:v1:" Named
@@ -260,8 +261,8 @@ side_tables! {
     BOOKING_PUBLICATION_WRITE_STAGE: VaultMeta b"booking.public_write.in_txn/" Raw;
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed;
-    /// Booking anti-abuse rules, notices, rate counters and slot-list caches. Key: tag NUL + hash32
-    /// (rule, notice, rate, cache).
+    /// Booking anti-abuse rule proposals, rate counters, slot-list caches and quarantined
+    /// submissions. Key: tag NUL + hash32 or id16 (proposal, rate, cache, submission).
     BOOKING_ANTI_ABUSE: VaultMeta b"booking:anti_abuse:v1:" Raw;
     /// Companion shortlist proposal. Key: bytes32.
     BOOKING_COMPANION_PROPOSAL: VaultMeta b"booking:companion_proposal:v1:" VersionedNamed;

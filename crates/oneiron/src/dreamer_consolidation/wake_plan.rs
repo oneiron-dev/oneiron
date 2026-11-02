@@ -48,7 +48,6 @@ impl PreparedConsolidationAttempt {
     pub(crate) fn branch(&self) -> &super::branch::QueuedBranch {
         &self.branch
     }
-    #[cfg(test)]
     pub(crate) fn turn_ids(&self) -> &[EntityId] {
         &self.turn_ids
     }
@@ -156,6 +155,11 @@ pub struct PreparedWake {
     /// The receipt of the one scoped read behind `sources`; `None` when the
     /// wake read nothing. Every branch opened on this wake folds it.
     read_receipt: Option<ScopedReadReceipt>,
+    /// Wall ms the preparation took, for each partition's stage line.
+    prepared_ms: u64,
+    /// The material this pass's admitted `host.wake` pre-hooks added, in
+    /// order (FIX 8722, 10665): every extraction of the wake reads it.
+    hook_material: Vec<String>,
 }
 
 impl PreparedWake {
@@ -209,10 +213,13 @@ impl PreparedWake {
         only_attempt: Option<AttemptId>,
         preempt: Option<&PreparationPreempt<'_>>,
     ) -> Result<Self> {
-        let (wake, owed) = Self::read_matching(vault, scope, caller_scope, only_attempt, preempt)?;
+        let started = std::time::Instant::now();
+        let (mut wake, owed) =
+            Self::read_matching(vault, scope, caller_scope, only_attempt, preempt)?;
         // The read transaction has closed: each retry's overflow is owed in
         // its own commit, before any branch of this wake runs.
         chunks::owe(vault, scope, owed);
+        wake.prepared_ms = super::stage_log::ms_since(started);
         Ok(wake)
     }
 
@@ -377,9 +384,30 @@ impl PreparedWake {
                 left,
                 preparations,
                 read_receipt: Some(read_receipt),
+                prepared_ms: 0,
+                hook_material: Vec::new(),
             },
             owed,
         ))
+    }
+
+    /// Wall ms this wake's frozen preparation took.
+    pub(crate) fn prepared_ms(&self) -> u64 {
+        self.prepared_ms
+    }
+
+    /// This wake with the material its pass's admitted `host.wake`
+    /// pre-hooks added (FIX 10665).
+    #[must_use]
+    pub(crate) fn with_hook_material(mut self, material: Vec<String>) -> Self {
+        self.hook_material = material;
+        self
+    }
+
+    /// The material this wake's `host.wake` pre-hooks added, in order; empty
+    /// when none did.
+    pub(crate) fn hook_material(&self) -> &[String] {
+        &self.hook_material
     }
 
     /// Only work known at the wake's single revision may execute on it.
@@ -465,7 +493,7 @@ fn neighbourhood_in(
     let axes = project.map(|project| Scope {
         world: plan.branch.world_ref,
         facet: plan.branch.facet_ref,
-        relationship: bound.and_then(|scope| scope.relationship),
+        relationship: bound.and_then(|scope| scope.relationship.clone()),
         project: Some(project),
         ..Scope::default()
     });
@@ -475,7 +503,13 @@ fn neighbourhood_in(
         bound,
         thing: plan.thing,
     };
-    super::neighbourhood::discover_in(vault, txn, read, plan.attempt_id, &passage)
+    super::neighbourhood::discover_in(
+        vault,
+        txn,
+        read,
+        super::neighbourhood::ListingPin::attempt(plan.attempt_id),
+        &passage,
+    )
 }
 
 /// An attempt no pass runs before a later write, which a later wake

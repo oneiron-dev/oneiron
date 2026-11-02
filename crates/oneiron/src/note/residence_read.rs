@@ -95,15 +95,26 @@ fn thin_note_view(
     {
         return Err(invalid("opened NOTE requires its admitted state").into());
     }
-    let (head, rest) = frame
-        .payload
-        .split_at_checked(crate::entity_id::ENTITY_ID_LEN)
-        .ok_or_else(|| invalid("opened NOTE head"))?;
-    let (_, snapshot) = rest
-        .split_at_checked(8)
-        .ok_or_else(|| invalid("opened NOTE head"))?;
-    let head =
-        crate::EntityId::from_bytes(head.try_into().map_err(|_| invalid("opened NOTE head"))?)?;
+    // The state envelope names the head, its sequence, its seal and the
+    // NOTE's own overrides before the document (FIX 2401, FIX 3819).
+    let envelope = crate::sync::documents::note_state::NoteStateEnvelope::decode(
+        thin.entity_id,
+        frame.payload,
+    )
+    .map_err(|_| invalid("opened NOTE head"))?;
+    let (head, snapshot) = (envelope.head, envelope.document);
+    // The read ends here: the overrides below need a write.
+    drop(txn);
+    // A cached frame carries the NOTE's own overrides too (FIX 3819): they
+    // install beside a live NOTE row in their own write, or not at all.
+    vault.with_write_txn_grouped(|txn| {
+        super::overrides::install_frame_overrides_in_txn(
+            vault,
+            txn,
+            &thin.entity_id,
+            envelope.overrides,
+        )
+    })?;
     let canonical = super::document::NoteDocument::load(thin.entity_id, snapshot)?;
     Ok(Some(read_view(
         &NoteDocument {

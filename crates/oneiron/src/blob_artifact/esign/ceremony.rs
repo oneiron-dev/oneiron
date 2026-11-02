@@ -171,15 +171,36 @@ impl Vault {
         ip: Option<String>,
         user_agent: Option<String>,
     ) -> Result<SigningOutcome> {
+        self.execute_signing_action_within(token, action, caller, ip, user_agent, &|_, _| Ok(true))
+    }
+
+    /// [`Self::execute_signing_action_as`] under a narrowed caller's
+    /// credential ceiling (FIX 6403): `ceiling` judges the document the
+    /// capability binds as soon as the binding names it, in the observation
+    /// writer and in the act's writer, before either reads or writes
+    /// anything else. A document out of its reach answers as an invalid
+    /// capability and is not observed. The capability, turn, access,
+    /// consent and D6 gates stand as they are.
+    pub(super) fn execute_signing_action_within(
+        &self,
+        token: &EsignCapability,
+        action: &SigningAction,
+        caller: SigningCaller,
+        ip: Option<String>,
+        user_agent: Option<String>,
+        ceiling: &dyn Fn(&heed::RoTxn<'_>, EntityId) -> Result<bool>,
+    ) -> Result<SigningOutcome> {
         let now = self.now_recorded_at();
         // Observe independently, including refused mutation attempts. A failed
         // observation transaction cannot turn a valid ceremony into a refusal.
         let _ = self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
+            super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
             super::rate::observe(self, txn, &cap.document, &cap.recipient, now)
         });
         self.with_write_txn_grouped(|txn| {
             let cap = binding(self, txn, token)?;
+            super::lane_scope::ceiling_admits_in(ceiling, txn, &cap.document)?;
             let document = EntityId::from_hex(&cap.document)?;
             // A reject narrows the document, so it lands even while an event
             // awaits its owner's answer; nothing else does.

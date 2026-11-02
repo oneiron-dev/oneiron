@@ -144,7 +144,7 @@ impl LiveQueries {
                     cursor: state.cursor(derived.cursor.clone())?,
                     kind: "data",
                     result: Some(derived.value.clone()),
-                    rows: derived_rows(&derived.dependencies),
+                    rows: self.lent_rows(&derived.dependencies)?,
                 };
                 self.source
                     .record(&view, channel, std::slice::from_ref(&catch_up))?;
@@ -198,7 +198,7 @@ impl LiveQueries {
             cursor: next_cursor.clone(),
             kind: "snapshot",
             result: Some(derived.value.clone()),
-            rows: derived_rows(&derived.dependencies),
+            rows: self.lent_rows(&derived.dependencies)?,
         });
         pushes.push(Push {
             subscription_id: id,

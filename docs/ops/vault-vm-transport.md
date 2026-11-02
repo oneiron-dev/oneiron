@@ -116,8 +116,41 @@ credential.
   same page and answer, with their SDK and MCP doors (FIX 11739). The
   carrier does it at its next turn. For a guest copy, `remove` deletes the file while it still
   has that digest. For a host copy, the guest's next scan sends an ordinary
-  remove that names the digest. This change does not bump the outbox wire
-  revision: both carrier ends ship in one release.
+  remove that names the digest. `keep` moves the copy, while it still has
+  that digest, to a hidden sibling of the member, `.<leaf>.diverged-<digest>`
+  (the leaf cut to fit one name), and never over a file already there. The
+  carrier skips hidden names, as it skips its own temporaries, so the copy
+  stays whole under its own name and the origin's next version lands at the
+  member's name (FIX 11736). The guest tells the host of every answer but a
+  `remove` of a host copy with a `divergence_cleared` frame at its next turn
+  (kind, member, digest, the end that holds the copy), kept on the guest's
+  member record until a turn sends it (FIX 11737). For a guest copy, the
+  host drops its refusal of its own version, so its next scan sends that
+  version again. For a host copy the owner kept, the host moves its copy
+  aside, so the guest's next version lands. When that move fails, the host
+  says so once, keeps the owner's keep on its record, and moves the copy
+  aside when it blocks the guest's next put (FIX 11986). The host acts only
+  on a copy its own record keeps with that digest.
+- Copies kept aside (FIX 11985). A kept copy that moved aside is recorded
+  on the end that holds it, and on the guest for a host copy. The
+  companion's `member_status` lists each one as `kept_aside` (kind, member,
+  the end that holds it, digest, length, side name, `kept_at_ms`,
+  `removing`, `failed`), and its card offers "Remove this copy". The owner's
+  `remove` naming that digest deletes the side copy. On the guest, the
+  companion deletes it at its next turn. For a host copy, the guest sends
+  `divergence_cleared` with `action` `remove_aside` at each turn, and the
+  host deletes its side copy and answers `aside_removed` (kind, member,
+  digest, `failed`) first in its next turn. A keep of a host copy is
+  answered the same way with `aside_kept` (FIX 12010): when the host's
+  move aside failed, the entry keeps `failed` saying why, while the copy
+  stays at the member's name until the next put moves it. The entry goes
+  once the side copy is deleted. A delete that fails is logged once and
+  keeps the entry,
+  with `failed` saying why, so the owner can answer again. A keep whose side
+  name is already there, with the same bytes, counts as aside, and the twin
+  at the member's name is deleted. Other notices carry `action` `answered`.
+  These frames are outbox wire revision 4, and each end refuses revision 3
+  at the hello.
 
 ## The channel
 

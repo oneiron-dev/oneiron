@@ -29,7 +29,6 @@
 
 use std::sync::Arc;
 
-use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::{Extensions, HeaderMap};
 use axum::response::Json;
@@ -42,17 +41,42 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use super::machine_routes::{act_surface_admitted, parse_revision};
-use super::{OwnerReply, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
-pub(super) fn routes() -> Router<Arc<SyncServer>> {
-    Router::new()
-        .route("/owner-work/{request}", get(status))
-        .route("/owner-work/{request}/diagnostics", get(diagnostics))
-        .route("/bundles/publications", post(publish_bundle))
+pub(super) fn owner_table() -> OwnerTable {
+    vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/owner-work/{request}",
+                summary: "Where one owner work request stands, from this install's fold: the receipt (ids only), recorded and awaiting a holder until its executor's result arrives, then enacted or refused, with the engine's words.",
+                row: None,
+            },
+            get(status),
+        ),
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/owner-work/{request}/diagnostics",
+                summary: "What blocks one pending owner work request, as its executor observes it: a re-assertion's keys and their blockers (paged by offset), or a bundle publication's home, relay reach, outer capsules and unresolved attempt. Ids and closed reasons only; any other install answers that the executor's observation is unavailable here.",
+                row: None,
+            },
+            get(diagnostics),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/bundles/publications",
+                summary: "Records the owner's ask that the vault's sealed bundle be published to one linked home, ids only; the receipt is recorded and awaiting a holder, polled at /v1/owner/owner-work/{request}, or says why nothing was recorded.",
+                row: None,
+            },
+            post(publish_bundle),
+        ),
+    ]
 }
 
 /// One owner work receipt with the holder's manifest judgment as a surface
@@ -117,7 +141,7 @@ impl From<OwnerWorkReceipt> for OwnerWorkView {
         let status_text = receipt.status.text();
         let unassigned_text = receipt.unassigned.map(OwnerWorkUnassigned::text);
         let advice_text = receipt.status.advice();
-        let home_warning_text = receipt.home_warning.map(BundleHomeWarning::text);
+        let home_warning_text = receipt.home_warning.as_ref().map(BundleHomeWarning::text);
         let cancel_text = receipt.cancel.as_ref().map(|cancel| cancel.state.text());
         Self {
             status_text,

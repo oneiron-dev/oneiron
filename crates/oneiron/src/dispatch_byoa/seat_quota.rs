@@ -22,7 +22,7 @@ use crate::llm::SpentKind;
 use super::connector::BYOA_ATTEMPT_KIND;
 use super::error::ByoaResult;
 use super::owner_doors::RunnerSeatTopUpEffect;
-use super::record::{append_record_in_txn, head_record};
+use super::record::{append_record_in_txn, head_record, head_record_checked};
 use super::seat::{RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatSpent};
 
 /// Domain a seat's quota record id is derived under.
@@ -98,21 +98,22 @@ pub(super) fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
     Ok(entity_id_from_hash_material(SEAT_QUOTA_DOMAIN, &parts)?)
 }
 
-/// Records what `attempt`'s capture read of `seat`'s quota, in the routing
-/// writer: a spend, or a completed run's clearing of a spent seat. Any other
-/// capture proves nothing and records nothing. A replay, and an older
-/// capture settling after a newer reading, keep the head.
+/// Records what `attempt`'s capture read of quota `id`, in the routing
+/// writer: a spend, or a completed run's clearing of a spent seat. The id
+/// comes from the current seat or the capture hop's frozen identity when the
+/// seat was removed (FIX 11984). Any other capture proves nothing and records
+/// nothing. A replay, and an older capture settling after a newer reading,
+/// keep the head.
 ///
 /// # Errors
 /// A record that does not encode or decode; a store failure.
-pub(super) fn record_seat_quota_in_txn(
+pub(super) fn record_seat_quota_by_id_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    seat: &RunnerSeat,
+    id: EntityId,
     attempt: &AttemptRecord,
     spent: Option<&SeatSpent>,
 ) -> ByoaResult<()> {
-    let id = seat_quota_id(seat)?;
     let head: Option<SeatQuotaRecord> = head_record(vault, wtxn, &id)?;
     let cleared = attempt.state == AttemptState::Completed
         && head.as_ref().is_some_and(|head| head.spent.is_some());
@@ -222,10 +223,11 @@ pub(super) fn seat_quotas_in_txn(
 }
 
 /// `seat`'s quota at `now`, as the seat at `index`, in the caller's
-/// snapshot: the head of its record, whatever policy orders it.
+/// snapshot: the head of its record, whatever policy orders it. A head that
+/// does not decode counts as unavailable (FIX 11651), never available.
 ///
 /// # Errors
-/// A record that does not decode; a store failure.
+/// A store failure.
 pub(super) fn seat_quota_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -233,7 +235,27 @@ pub(super) fn seat_quota_in_txn(
     seat: &RunnerSeat,
     now: u64,
 ) -> ByoaResult<RunnerSeatQuota> {
-    let head: Option<SeatQuotaRecord> = head_record(vault, rtxn, &seat_quota_id(seat)?)?;
+    let checked: Option<ByoaResult<SeatQuotaRecord>> =
+        head_record_checked(vault, rtxn, &seat_quota_id(seat)?)?;
+    // FIX 11651: a corrupt quota head fails closed as unavailable, the
+    // pre-#4170 behavior via `available`, not via a propagated error, so
+    // the landed capture keeps its existing skip/park routing.
+    let head: Option<SeatQuotaRecord> = match checked {
+        None => None,
+        Some(Ok(head)) => Some(head),
+        Some(Err(_)) => {
+            return Ok(RunnerSeatQuota {
+                seat: index,
+                runner: seat.runner.clone(),
+                available: false,
+                spent: None,
+                observed_at: None,
+                back_at: None,
+                last_capture: None,
+                topped_up_at: None,
+            });
+        }
+    };
     let observed_at = head.as_ref().map(|head| head.observed_at);
     let last_capture = head.as_ref().map(|head| bytes_to_hex_lower(&head.attempt));
     let topped_up_at = head

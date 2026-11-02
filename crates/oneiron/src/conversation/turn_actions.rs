@@ -429,7 +429,7 @@ impl Memory<'_> {
             text: Vec::new(),
             session,
             thread_audience: None,
-            actor: crate::WriteActor::new(self.actor(), self.actor_class()),
+            actor: self.write_actor(),
         };
         crate::conversation_dag::require_append_references_in_txn(
             vault,

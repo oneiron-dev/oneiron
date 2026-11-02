@@ -25,7 +25,10 @@ mod validate;
 #[cfg(test)]
 mod tests;
 
-pub(crate) use self::call::{AnswerMemory, execute_callable_skill_cancellable, matches_shape};
+pub(crate) use self::call::{
+    AnswerMemory, erase_callable_case_actor_in_txn, erase_callable_cases_in_txn,
+    execute_callable_skill_cancellable, matches_shape,
+};
 pub use self::call::{CallableSkillAnswer, execute_callable_skill};
 pub use self::codec::{decode_skill_record, encode_skill_record};
 pub(crate) use self::codec::{is_legacy_opaque_skill_body, validate_skill_record_bytes};
@@ -42,8 +45,8 @@ pub use self::lifecycle::{SkillGovernanceTier, SkillLifecycle};
 pub(crate) use self::loaded_revision::{
     pinned_skill_revisions, receipt_skill_record, receipt_skill_record_in_txn,
 };
-pub use self::pack_load::LoadedSkillPack;
 pub(crate) use self::pack_load::skill_loadable;
+pub use self::pack_load::{LoadedSkillPack, MeasuredSkillPack};
 pub use self::record::{
     SKILL_DEPENDENCY_KEYS, SKILL_DESC_MAX_BYTES, SKILL_ID_MAX_BYTES, SKILL_RECORD_BODY_KEYS,
     SKILL_VERSION_MAX_BYTES, SkillDependency, SkillRecord,

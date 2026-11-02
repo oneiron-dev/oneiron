@@ -12,8 +12,10 @@
 //! on, is running or ended without a spend is answered as it stands, and a
 //! replay of the old spent capture never takes it back (`moved_on_in_txn`).
 //!
-//! There is no served resume door: the trusted dispatcher calls it under its
-//! own authority, and the owner through [`ByoaDispatcher::resume_runner_work_as_owner`].
+//! The served resume door is `vault.runners.seats.resume`
+//! ([`Vault::resume_runner_work_as_owner`]): the trusted dispatcher calls the
+//! act under its own authority, and the owner through
+//! [`ByoaDispatcher::resume_runner_work_as_owner`].
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
@@ -117,21 +119,32 @@ where
             return Ok(RunnerWorkResume::Gone);
         };
         let attempt = AttemptId::from_bytes(&head.attempt)?;
-        let seat = remap_seat(policy, &head, seat_index(head.seat))?;
+        let stored = seat_index(head.seat);
+        let remapped = remap_seat(policy, &head, stored)?;
+        let reported = remapped.unwrap_or(stored);
         if attempt != request.expected_attempt {
-            return Ok(RunnerWorkResume::Current { seat, attempt });
+            return Ok(RunnerWorkResume::Current {
+                seat: reported,
+                attempt,
+            });
         }
         let Some(spent) = AttemptQueue::new(vault).get_in_write_txn(wtxn, attempt)? else {
             return Ok(RunnerWorkResume::Gone);
         };
         if !spent.state.is_terminal() {
-            return Ok(RunnerWorkResume::Current { seat, attempt });
+            return Ok(RunnerWorkResume::Current {
+                seat: reported,
+                attempt,
+            });
         }
         if head.spent.is_none() {
-            return Ok(RunnerWorkResume::Unchanged { seat, attempt });
+            return Ok(RunnerWorkResume::Unchanged {
+                seat: reported,
+                attempt,
+            });
         }
         let (from, only) = match request.choice {
-            None => (seat, false),
+            None => (remapped.unwrap_or(0), false),
             Some(RunnerSeatChoice::NextSeat { from }) => (from, false),
             Some(RunnerSeatChoice::Seat(index)) => (index, true),
         };
@@ -140,7 +153,10 @@ where
         }
         let payload = decode_byoa_record(&spent)?;
         let Some(hand) = HandOff::of(vault, wtxn, &spent, payload)? else {
-            return Ok(RunnerWorkResume::Unchanged { seat, attempt });
+            return Ok(RunnerWorkResume::Unchanged {
+                seat: reported,
+                attempt,
+            });
         };
         let search = SeatSearch {
             from,
@@ -221,7 +237,8 @@ pub(super) fn moved_on_in_txn(
         return Ok(None);
     };
     let connector_kind = decode_byoa_record(&attempt)?.connector.kind();
-    let seat = remap_seat(policy, &head, seat_index(head.seat))?;
+    let seat =
+        remap_seat(policy, &head, seat_index(head.seat))?.unwrap_or_else(|| seat_index(head.seat));
     let mut receipt = receipt.clone();
     receipt.skipped_seats = head.skipped;
     Ok(Some(SeatRoute::NextSeat {

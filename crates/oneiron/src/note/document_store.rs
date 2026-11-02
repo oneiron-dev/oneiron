@@ -72,12 +72,15 @@ pub(super) fn persist_authoritative(
     super::title_index::replace_authoritative_document_in_txn(vault, txn, doc)
 }
 
+/// A sealed NOTE's replica keeps its frozen head and text (FIX 2401); an
+/// erasure's scrub, which only drops citations, still lands.
 #[cfg(feature = "sync")]
 pub(super) fn persist_replica(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     doc: &NoteDocument,
 ) -> Result<()> {
+    super::replica::seal::refuse_frozen_motion(vault, txn, doc)?;
     super::title_index::remove_replica_projection_in_txn(vault, txn, doc.id)?;
     persist_structural(vault, txn, doc, false)
 }
@@ -305,7 +308,10 @@ impl Memory<'_> {
         let kind = NoteKind::Plugin("brief".into());
         let read = self.read_lane(crate::claim::ClaimReadStatus::Recorded)?;
         let id = self.vault().new_entity_id()?;
-        let actor = WriteActor::new(self.actor(), self.actor_class());
+        let actor = self.write_actor();
+        // The brief's commits after its birth name the actor's stamp token
+        // (FIX 10930), read on a write of its own before the content write.
+        let stamp = crate::provenance::actor_stamp(self.vault(), actor)?;
         let body = encode_note_body(&NoteBody {
             kind,
             author_ref: super::NoteActor::Actor(self.actor()),
@@ -358,7 +364,7 @@ impl Memory<'_> {
             let doc = NoteDocument::birth(id, &markdown, &actor)?;
             for pin in pins {
                 validate_pin_source(self.vault(), content.read(), pin)?;
-                doc.add_pin(pin, &actor)?;
+                doc.add_pin(pin, stamp)?;
             }
             let now = self.vault().now_recorded_at();
             content.apply_batch(
@@ -387,6 +393,7 @@ impl Memory<'_> {
                         grant: None,
                         command_hash: *blake3::hash(&body).as_bytes(),
                     },
+                    stamp,
                 )?;
                 persist_authoritative(self.vault(), txn, &doc)?;
                 Ok(())
@@ -642,12 +649,7 @@ pub(super) fn require_note_writer(
     }
     let (_, body) = super::verbs::note_core(memory.vault(), txn, id)?;
     if !body.author_ref.is(memory.actor())
-        && !super::proposals::automatic_edit_grant(
-            memory.vault(),
-            txn,
-            id,
-            crate::WriteActor::new(memory.actor(), memory.actor_class()),
-        )?
+        && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
         if memory.actor_class() != EdgeActorClass::Human {
             return Err(MemoryError::bad_request_with(
@@ -684,5 +686,5 @@ pub(crate) fn resolve_deck_pin_in_txn(
 
 mod deck;
 pub(crate) use deck::{
-    DeckSpanObservation, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
+    DeckSpanObservation, DeckSpanReads, deck_outline_markdown_at_in_txn, observe_deck_span_in_txn,
 };

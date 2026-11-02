@@ -11,9 +11,11 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod nightly_link_grant;
 mod parts;
 mod pins;
 mod prior;
+pub(super) use nightly_link_grant::require_nightly_link_write;
 pub(super) use pins::{BranchPins, OwnedPins};
 pub(super) use prior::standing;
 pub(super) mod signals;
@@ -469,7 +471,9 @@ impl<'a> BranchResources<'a> {
             let facts = candidate_facts(&candidate.candidate)?;
             if facts.world != scope.world
                 || facts.facet != scope.facet
-                || scope.relationship.is_some_and(|rel| facts.rel != Some(rel))
+                || scope.relationship.as_ref().is_some_and(|bound| {
+                    !facts.rel.as_ref().is_some_and(|rel| rel.is_subset(bound))
+                })
                 || candidate.supersedes.is_some()
                 || !candidate.provenance_chain.is_empty()
                 || candidate.claim_id
@@ -480,7 +484,7 @@ impl<'a> BranchResources<'a> {
                         &facts.value,
                         facts.world,
                         facts.facet,
-                        facts.rel,
+                        facts.rel.as_ref(),
                         facts.project,
                         facts.topic.as_deref(),
                     )?
@@ -606,19 +610,25 @@ impl<'a> BranchResources<'a> {
     /// The verified `candidates` sealed into one write for `sink`, carrying
     /// the wake pass's `deadline`, which its promotion's checker turns and
     /// consults spend (FIX 8701). The sink awaits its checker's turn rather
-    /// than hold the executor's thread in line (FIX 9110).
+    /// than hold the executor's thread in line (FIX 9110). The promotion
+    /// door tells `landing` what it landed and refused.
     pub(super) async fn accept_until(
         &self,
         scope: &Scope,
         sink: &mut dyn ConsolidationSink,
         candidates: Vec<super::evidence::VerifiedCandidate>,
         deadline: &crate::WakePassDeadline,
+        landing: &super::stage_log::LandingTally,
     ) -> Result<()> {
         let due =
             std::time::Instant::now() + std::time::Duration::from_millis(deadline.remaining_ms());
         let write = self.prepare_write_verified(scope, candidates)?;
-        sink.accept_scoped_in_line(write.with_checker_deadline(due))
-            .await
+        sink.accept_scoped_in_line(
+            write
+                .with_checker_deadline(due)
+                .with_landing(landing.clone()),
+        )
+        .await
     }
 
     #[cfg(test)]

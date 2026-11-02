@@ -1,7 +1,7 @@
 //! Transactional point-claim and retry lineage reads for ordered host composition.
 
 use super::AttemptQueue;
-use crate::attempt_queue::encoding::{decode_record, ready_at};
+use crate::attempt_queue::encoding::ready_at;
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::validate::{lease_claimed_record, validate_lease_owner};
 use crate::attempt_queue::{
@@ -93,24 +93,17 @@ impl AttemptQueue<'_> {
             .get_in_txn(txn, start)?
             .ok_or_else(|| invalid_transition("retry_tip", "missing"))?;
         let mut seen = std::collections::HashSet::new();
-        let mut children = std::collections::HashMap::new();
-        for entry in self.store.attempt_records.iter(txn)? {
-            let (key, bytes) = entry?;
-            let row = decode_record(&bytes, AttemptId::from_bytes(&key)?)?;
-            if let Some(parent) = row.retry_of {
-                children.entry(parent).or_insert_with(Vec::new).push(row);
-            }
-        }
         loop {
             if !seen.insert(current.id) {
                 return Err(invalid_transition("retry_tip", "cycle"));
             }
-            let Some(mut candidates) = children.remove(&current.id) else {
+            let mut candidates = self.retry_children_in_txn(txn, current.id)?;
+            if candidates.is_empty() {
                 self.store
                     .limit_watch
                     .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
                 return Ok(current);
-            };
+            }
             if candidates.len() != 1 {
                 return Err(invalid_transition("retry_tip", "forked_retry"));
             }
@@ -140,29 +133,43 @@ impl AttemptQueue<'_> {
         txn: &heed::RoTxn<'_>,
         start: AttemptId,
     ) -> Result<Option<AttemptId>> {
-        let mut children = std::collections::HashMap::<AttemptId, Vec<AttemptId>>::new();
-        for entry in self.store.attempt_records.iter(txn)? {
-            let (key, bytes) = entry?;
-            let row = decode_record(&bytes, AttemptId::from_bytes(&key)?)?;
-            if let Some(parent) = row.retry_of {
-                children.entry(parent).or_default().push(row.id);
-            }
-        }
         let mut seen = std::collections::HashSet::from([start]);
         let mut current = start;
-        while let Some(next) = children.get(&current) {
-            let [next] = next.as_slice() else {
-                return Ok(None);
+        loop {
+            let next = self.retry_children_in_txn(txn, current)?;
+            let next = match next.as_slice() {
+                [] => break,
+                [next] => next.id,
+                _ => return Ok(None),
             };
-            if !seen.insert(*next) {
+            if !seen.insert(next) {
                 return Ok(None);
             }
-            current = *next;
+            current = next;
         }
         self.store
             .limit_watch
             .measure(EngineLimit::AttemptRetryTipRows, seen.len() as u64);
         Ok(Some(current))
+    }
+
+    /// The rows whose `retry_of` names `parent`, read by their keys from the
+    /// retry-child index (FIX 11318); an id whose row is gone or retries
+    /// another try is passed over.
+    fn retry_children_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: AttemptId,
+    ) -> Result<Vec<AttemptRecord>> {
+        let mut children = Vec::new();
+        for id in crate::attempt_queue::index::retry_child_ids_in_txn(self.store, txn, parent)? {
+            if let Some(row) = self.get_in_txn(txn, id)?
+                && row.retry_of == Some(parent)
+            {
+                children.push(row);
+            }
+        }
+        Ok(children)
     }
 }
 

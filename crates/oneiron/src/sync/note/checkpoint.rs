@@ -14,12 +14,11 @@
 
 use std::collections::BTreeSet;
 
-use super::{FORMAT, FORMAT_KEY, id, pack, unpack};
+use super::{BundleCarrier, FORMAT, FORMAT_KEY, id, pack, unpack};
 use crate::EntityId;
 use crate::error::Result;
 use crate::note::{
-    ACTOR_ERASE_PENDING_NOTE_FORK, NoteActor, NoteFork, NoteLandingReceipt, NoteReviewBundle,
-    PendingNoteForkErase,
+    ACTOR_ERASE_PENDING_NOTE_FORK, NoteActor, NoteFork, NoteLandingReceipt, PendingNoteForkErase,
 };
 use crate::recovery::{CanonicalHead, CanonicalHeadMove};
 use crate::store::checkpoint_payload::rows::{OwnerRef, bad_part};
@@ -34,10 +33,6 @@ const WAITING: &str = "waiting/";
 /// The field a bundle's landing receipt's actor fills, then the receipt's
 /// id.
 const LANDED: &str = "landed/";
-
-/// The explainer a bundle that lost a waiting fork keeps, as the erase
-/// leaves it: it can quote what left.
-const REDACTED: &str = "redacted";
 
 /// Where the value under `key` in the NOTE map `map` goes.
 pub(in crate::sync) fn entry(map: &str, key: &str, value: &[u8]) -> Placement {
@@ -138,11 +133,13 @@ fn fork(key: &str, value: &[u8]) -> Option<Placement> {
     workflow(row.note, actor, pack(&row).ok())
 }
 
-/// A review bundle: each NOTE whose forks or receipts it holds keeps its
-/// own copy, with the explainer they share, and each member's actor is a
-/// field of its own.
+/// A review bundle, whole or a projection: each NOTE whose forks or
+/// receipts it holds keeps its own copy, with the explainer they share, and
+/// each member's actor is a field of its own. A member NOTE whose core rides
+/// another window holds its copy here all the same.
 fn bundle(key: &str, value: &[u8]) -> Option<Placement> {
-    let mut row: NoteReviewBundle = unpack(value).ok()?;
+    let mut carrier: BundleCarrier = unpack(value).ok()?;
+    let row = &mut carrier.bundle;
     if id(key).ok()? != row.id {
         return None;
     }
@@ -168,7 +165,7 @@ fn bundle(key: &str, value: &[u8]) -> Option<Placement> {
             actors.push((format!("{LANDED}{}", receipt.id.to_hex()), actor));
         }
     }
-    let no_one = pack(&row).ok()?;
+    let no_one = pack(&carrier).ok()?;
     Some(Placement::split(holders, ValueSplit { no_one, actors }))
 }
 
@@ -223,7 +220,8 @@ pub(in crate::sync) fn fill(
             pack(&row).map(Some)
         }
         "note_proposals" => {
-            let mut row: NoteReviewBundle = unpack(no_one)?;
+            let mut carrier: BundleCarrier = unpack(no_one)?;
+            let row = &mut carrier.bundle;
             for (field, actor) in opened {
                 let slot = if let Some(fork) = field.strip_prefix(WAITING) {
                     row.waiting
@@ -248,9 +246,9 @@ pub(in crate::sync) fn fill(
                 if row.waiting.is_empty() && row.landed.is_empty() {
                     return Ok(None);
                 }
-                REDACTED.clone_into(&mut row.explainer);
+                carrier.redact();
             }
-            pack(&row).map(Some)
+            pack(&carrier).map(Some)
         }
         _ => Err(bad_part()),
     }

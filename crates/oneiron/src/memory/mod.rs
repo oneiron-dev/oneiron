@@ -55,6 +55,7 @@ mod dreamer_revert;
 mod people_verbs;
 mod plugin_sections;
 pub mod run_review;
+mod settled_vad;
 mod skill_authoring;
 pub mod wellness_doors;
 pub(crate) use booking::booking_error;
@@ -179,9 +180,12 @@ pub use claims::{
     ClaimSettleDecision, ClaimSettleRequest, ClaimSettlement, ClaimSettlementAnswer,
     ClaimSettlementReason, ClaimSettlementRevert, ClaimSettlementVerdict, CommitOutcome,
     CommitReceipt, DeleteReceipt, DeleteRequestState, MULTI_CARDINALITY_PREDICATES, MemoryReceipt,
-    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason,
+    PendingWrite, RecordRefusal, RefusalReason, SafeDeleteReason, SettleWarning, SettleWarningCode,
 };
-pub use conflict_settle::DreamerDecidedCandidateView;
+pub use conflict_settle::{
+    DreamerCandidateDecisionsRequest, DreamerDecidedCandidateView,
+    read_dreamer_candidate_decisions_as,
+};
 pub use conversation_list::{ConversationListFilter, ConversationListPage, ConversationListRow};
 pub use diagnostics::{
     BlockedReportView, CoachInspectRequest, CoachInspectionView, CoachProposalView,
@@ -272,9 +276,9 @@ pub use crate::origin::secret_projection::recipient::RepoRevealRecipient;
 pub use oneiron_contracts::memory::MEMORY_CODE_ROOM_MANAGEMENT;
 pub use outbound::{
     BRIDGE_OUTBOUND_ATTEMPT_KIND, CALENDAR_INVITE_OUTBOUND_CHANNEL, CALENDAR_INVITE_OUTBOUND_VERB,
-    CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteSurfaceInput,
-    CalendarInviteSurfaceMethod, OutboundDraftInput, OutboundIntentReceipt,
-    OutboundScheduleContext,
+    CalendarFreebusyDto, CalendarFreebusyIntervalDto, CalendarInviteOrigin,
+    CalendarInviteSurfaceInput, CalendarInviteSurfaceMethod, OutboundDraftInput,
+    OutboundIntentReceipt, OutboundScheduleContext,
 };
 pub use read_selection::RecallWorlds;
 pub use reads::{ClaimListFilter, ClaimView, LexicalHit, NeighborHit, NeighborOpts};
@@ -341,7 +345,8 @@ pub use witness::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, MAX_MESSAGE_STREAM_BYTES, MessageCompletion,
     MessageStreamError, MessageStreamHandle, MessageStreamPartial, MessageStreamPolicy,
     MessageStreamPump, MessageStreamReceipt, MessageStreamResult, MessageWriteMode, StreamCadence,
-    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamSyncVisibility,
+    StreamCancelReason, StreamFinality, StreamFinalityReason, StreamRecoveryRefusal,
+    StreamSyncVisibility,
 };
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,

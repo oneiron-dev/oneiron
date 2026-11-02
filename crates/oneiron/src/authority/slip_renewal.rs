@@ -256,12 +256,19 @@ impl Vault {
             }
             None => false,
         };
-        let own_device_grant_stands = match original.grant_ref.as_deref().map(EntityId::from_hex) {
-            Some(Ok(grant)) => {
-                self.own_device_grant_stands_in_txn(&txn, grant, &original.holder_ref, now)?
-            }
-            _ => false,
+        let own_device_grant = match original.grant_ref.as_deref().map(EntityId::from_hex) {
+            Some(Ok(grant)) => self
+                .own_device_grant_stands_in_txn(&txn, grant, &original.holder_ref, now)?
+                .then_some(grant),
+            // FIX 3393: a device paired before its holder became an Owner
+            // names no grant; it renews under the holder's own-device grant.
+            None if holder_is_live_owner => match holder {
+                Some(holder) => self.own_device_grant_in_txn(&txn, holder, now)?,
+                None => None,
+            },
+            _ => None,
         };
+        let own_device_grant_stands = own_device_grant.is_some();
         let facts = RenewalFacts {
             original: &original,
             unattenuated: presented.caveats.is_empty()
@@ -300,6 +307,10 @@ impl Vault {
             expires_at: now.checked_add(ttl_secs).ok_or_else(lifetime)?,
             ttl_secs,
             single_use: false,
+            grant_ref: original
+                .grant_ref
+                .clone()
+                .or_else(|| own_device_grant.map(|grant| grant.to_hex())),
             ..original
         };
         let slip =

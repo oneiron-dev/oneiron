@@ -645,7 +645,9 @@ pub(super) fn archive_only_reason(row: &ExportEntity) -> Option<ImportOmissionRe
                 Some(ImportOmissionReason::ForeignSkillSignalNotRestored)
             } else if matches!(
                 predicate,
-                Some("actor.peer_binding" | "actor.confidence_prior")
+                // A stamp token resolves its own vault's stamps (FIX 10930):
+                // a binding no other vault holds, as a peer binding is.
+                Some("actor.peer_binding" | "actor.confidence_prior" | "actor.stamp_token")
             ) {
                 Some(ImportOmissionReason::LocalActorConfigurationNotRestored)
             } else if predicate.is_some_and(crate::learning::is_learning_predicate) {

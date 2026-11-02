@@ -212,6 +212,7 @@ class Oneiron:
         *,
         dimensions: int | None = None,
         device_class: str | None = None,
+        hold_checkpoint_root_signer: bool | None = None,
     ) -> dict[str, Any]:
         """:meth:`open`, then this install's own machine profile from the vault's host root secret.
 
@@ -232,11 +233,14 @@ class Oneiron:
         says so in ``host_root["wrong_root"]``: reported, never refused. The
         handle binds the local owner actor, as :meth:`open` does, and carries
         no owner proof. ``device_class`` is :meth:`open`'s.
+        With ``hold_checkpoint_root_signer`` (FIX 5343) the handle holds this
+        install's host root as its checkpoint signer, unless the secret went
+        unused; omitted or ``None`` is ``False``.
         """
         resolved = os.fspath(path) if path is not None else None
         native = _translate(
             lambda: _NativeClient.open_with_host_root(
-                resolved, host_root_secret, dimensions, device_class
+                resolved, host_root_secret, dimensions, device_class, hold_checkpoint_root_signer
             )
         )
         raw = native.host_root_profile()
@@ -549,6 +553,9 @@ class Oneiron:
         def message_stream_partial(self, spec):
             """Reads only this actor's accepted in-memory partial using its generation-bound stream handle."""
             return json.loads(_translate(lambda: self._client.vault_message_stream_partial(json.dumps(spec))))
+        @property
+        def message_streams(self) -> "Oneiron._VaultMessageStreamsVerbs":
+            return Oneiron._VaultMessageStreamsVerbs(self._client)
         @property
         def messages(self) -> "Oneiron._VaultMessagesVerbs":
             return Oneiron._VaultMessagesVerbs(self._client)
@@ -1277,6 +1284,15 @@ class Oneiron:
         def top_up(self, spec):
             """The owner says a runner seat's spent credit is topped up: only the named capture's credit spend, while it is still the seat's last reading, is cleared; a second, stale or non-credit top-up changes nothing and says so."""
             return json.loads(_translate(lambda: self._client.vault_runners_seats_top_up(json.dumps(spec))))
+        def resume(self, spec):
+            """The owner resumes a bound runner work a spend parked: while the work still stands at the spent attempt named, it moves to a successor on the given seat order; any other stand is answered as it stands, with no write."""
+            return json.loads(_translate(lambda: self._client.vault_runners_seats_resume(json.dumps(spec))))
+    class _VaultMessageStreamsVerbs:
+        def __init__(self, client: _NativeClient) -> None:
+            self._client = client
+        def refused(self, spec=None):
+            """Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."""
+            return json.loads(_translate(lambda: self._client.vault_message_streams_refused(json.dumps({} if spec is None else spec))))
     class _VaultMessagesVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -1997,6 +2013,9 @@ class Oneiron:
         def pick(self, spec):
             """Approves or rejects the exact shown tradeoff; the attributed pick becomes a preference and a proposed project revision, never a Grant."""
             return json.loads(_translate(lambda: self._client.vault_skills_optimize_tradeoff_asks_pick(json.dumps(spec))))
+        def resolve(self, spec):
+            """The owner approves or rejects one exact pending tradeoff with decision evidence; it writes the permission or the refusal, never a preference."""
+            return json.loads(_translate(lambda: self._client.vault_skills_optimize_tradeoff_asks_resolve(json.dumps(spec))))
     class _VaultSkillsGovernanceVerbs:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
@@ -3520,6 +3539,9 @@ class Oneiron:
         def propose(self, spec):
             """Stores one frozen compiled lens tree for a pack slot as this actor's proposal: a CODE kind=lens row born from a lens/intent NOTE holding its prompt, read within the scope declared or bound; it mounts only once the owner selects it."""
             return json.loads(_translate(lambda: self._client.vault_lenses_propose(json.dumps(spec))))
+        def propose_from_pack(self, spec):
+            """Proposes the compiled tree an installed pack carries for one of its lenses, read from its Active installation with the intent, slot and content hash it was compiled against; it mounts only once the owner selects it."""
+            return json.loads(_translate(lambda: self._client.vault_lenses_propose_from_pack(json.dumps(spec))))
         def activate(self, spec):
             """The owner selects a proposed lens revision for its pack slot."""
             return json.loads(_translate(lambda: self._client.vault_lenses_activate(json.dumps(spec))))
@@ -4158,7 +4180,7 @@ class Oneiron:
         def __init__(self, client: _NativeClient) -> None:
             self._client = client
         def enqueue(self, spec):
-            """Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
+            """Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."""
             return json.loads(_translate(lambda: self._client.vault_code_merge_queue_enqueue(json.dumps(spec))))
         def stage(self, spec):
             """Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."""
@@ -5201,6 +5223,9 @@ class Oneiron:
         def lineage(self, spec):
             """The owner reads one consolidation job's retry chain back to its root and a page of its committed step refs, without resuming, leasing or calling a model."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_lineage(json.dumps(spec))))
+        def candidate_decisions(self, spec):
+            """The owner reads one Dreamer attempt's decided candidates: every candidate it decided a correction for, with its kept decisions. Ids and decisions only, never a candidate's value."""
+            return json.loads(_translate(lambda: self._client.vault_consolidation_candidate_decisions(json.dumps(spec))))
         def promote(self, spec):
             """Promotes typed generated candidates in an admitted Dreamer attempt through its host-stamped writer and checker, returning retained evidence and refusals."""
             return json.loads(_translate(lambda: self._client.vault_consolidation_promote(json.dumps(spec))))

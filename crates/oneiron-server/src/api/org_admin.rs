@@ -42,7 +42,7 @@ fn policy_error(error: OrgAdminError) -> ApiError {
         (status = 200, description = "The organization is configured.", body = Object, content_type = "application/json"),
         (status = 400, description = "Malformed organization id, or the policy names another organization.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 403, description = "Not an owner act, or the organization administration power is denied.", body = ApiErrorEnvelope, content_type = "application/json"),
-        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again.", body = ApiErrorEnvelope, content_type = "application/json"),
+        (status = 409, description = "The key's first request never settled an outcome (`idempotent_outcome_unknown`, FIX 9527): its effect may have landed, so it is not run again; read the resource's state, or send a new `Idempotency-Key` to act again. A retry whose first request counted committed writes gets `idempotent_reply_not_kept` instead (FIX 10379): those writes landed, and the reply was not kept.", body = ApiErrorEnvelope, content_type = "application/json"),
         (status = 500, description = "Organization setup failed, or it is already configured.", body = ApiErrorEnvelope, content_type = "application/json")
     )
 )]

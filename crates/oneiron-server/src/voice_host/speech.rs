@@ -65,20 +65,12 @@ pub struct TurnSources {
     /// heard (the person's words are none, an answer is its own turn's), the
     /// memories it heard and the rows each tool context was read from.
     /// What it says, and each verdict on what it says, derives from them.
-    /// `None` when one of them is unknown.
-    pub said: Option<Vec<EntityId>>,
+    /// Each is known: the brain lists every row it reads into the input
+    /// (FIX 6080).
+    pub said: Vec<EntityId>,
     /// The rows its memories read found, heard or withheld: what its
     /// memories receipt counts.
     pub found: Vec<EntityId>,
-}
-
-/// Adds `rows` to `into`: unknown rows, or an unknown `into`, leave it
-/// unknown.
-pub(super) fn add_rows(into: &mut Option<Vec<EntityId>>, rows: Option<&[EntityId]>) {
-    match (into.as_mut(), rows) {
-        (Some(into), Some(rows)) => into.extend_from_slice(rows),
-        _ => *into = None,
-    }
 }
 
 /// The policy row a safeguard notice names, when it names one by id (a
@@ -462,7 +454,7 @@ impl VoiceHost {
             undelivered |= outputs.control.submit(update.control).is_err();
         }
         for notice in notices {
-            undelivered |= outputs.brain.notice(&notice).is_err();
+            undelivered |= outputs.brain.notice(generation, &notice).is_err();
             undelivered |= outputs
                 .control
                 .submit(ControlEvent::Notice { generation, notice })

@@ -39,6 +39,9 @@ pub(super) struct ConnState {
     pub(super) locality: oneiron::claim::CallerLocality,
     /// A single revision-bound, metadata-only index projection for this socket.
     pub(super) residence_index: Option<crate::livequery::ResidenceIndexCache>,
+    /// The authority entry this socket's machine appends in parts, held
+    /// until it is whole; it goes with the socket (FIX 8246).
+    pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
     /// Whether this socket sent countersign parts: as it closes, its
     /// machine's countersign stage goes (FIX 5111).
     pub(super) countersigned: bool,
@@ -54,6 +57,10 @@ pub(super) struct ConnState {
     /// (FIX 7608 slice 4): another one is replaced at an equal vector.
     pub(super) repo_copy_generations:
         std::sync::Mutex<std::collections::HashMap<WindowKey, [u8; 32]>>,
+    /// This socket's by-reference ASSET body transfers (FIX 5489). Only the
+    /// socket's loop takes it, through `&mut`; the mutex keeps the state
+    /// `Sync`.
+    pub(super) asset_bodies: std::sync::Mutex<oneiron::sync::AssetBodySession>,
 }
 
 impl ConnState {
@@ -72,11 +79,13 @@ impl ConnState {
             bound_auth: None,
             locality: oneiron::claim::CallerLocality::OffDevice,
             residence_index: None,
+            authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
             window_pads: oneiron::sync::transport::WindowPadAssembly::default(),
             window_pad_carrier: std::collections::HashSet::new(),
             repo_copy_generations: std::sync::Mutex::default(),
+            asset_bodies: std::sync::Mutex::default(),
         }
     }
 

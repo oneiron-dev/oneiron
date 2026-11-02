@@ -7,7 +7,9 @@ use super::*;
 impl Vault {
     /// Review one artifact head through the host's decide() ladder. Keep/discard
     /// through the existing consume-once edit-settle door; a changed head is
-    /// retained as a stale preview.
+    /// retained as a stale preview. A deck with a live body has each unit's
+    /// text read on its projection at its head, as a wake reads it; the
+    /// images stay the caller's (FIX 12019).
     pub fn review_blob_artifact_slides(
         &self,
         artifact: &EntityId,
@@ -25,17 +27,27 @@ impl Vault {
         let (bytes, read_rows) = self
             .read_blob_artifact_version_listing(artifact, head.version)?
             .ok_or(Error::EntityNotFound)?;
-        let run = self.review_blob_artifact_slides_at(artifact, head.version, &bytes, request)?;
+        let live = self.live_head_deck(artifact)?;
+        let run = self.review_blob_artifact_slides_at(
+            artifact,
+            head.version,
+            &bytes,
+            live.as_ref().map(|(pin, deck)| (pin, deck.as_slice())),
+            request,
+        )?;
         Ok(SlideReviewRun { read_rows, ..run })
     }
 
-    /// [`Self::review_blob_artifact_slides`] over one version's `bytes`, which
-    /// the units' images were rendered from.
+    /// [`Self::review_blob_artifact_slides`] over one version's `bytes`; or,
+    /// with `shown`, over a live deck's projection at its head and the pin
+    /// read before it, where the units' texts are read (FIX 11981, 12019),
+    /// the comments still landing on `bytes`.
     pub(crate) fn review_blob_artifact_slides_at(
         &self,
         artifact: &EntityId,
         version: u64,
         bytes: &[u8],
+        shown: Option<(&crate::office_body::LivePin, &[u8])>,
         request: &SlideReviewRequest<'_>,
     ) -> std::result::Result<SlideReviewRun, SlideReviewError> {
         // The policy read ends before any provider call starts.
@@ -65,10 +77,29 @@ impl Vault {
             version: Some(version),
             artifact: *artifact,
             package_limits: self.docedit_package_limits()?,
+            shown: shown.map(|(_, deck)| deck),
         };
-        let run = review_slides(&base, &effective)?;
-        if let Some(proposal) = &run.proposal {
+        // The deck's live body as the review starts (FIX 2115), or the one
+        // the units were read on.
+        let judged_live = match shown {
+            Some((pin, _)) => Some(pin.clone()),
+            None => self.office_body_pin(artifact)?,
+        };
+        let mut run = review_slides(&base, &effective)?;
+        if let Some(proposal) = &mut run.proposal {
+            for row in &mut proposal.manifest.slide_judgments {
+                row.judged_live.clone_from(&judged_live);
+            }
             self.measure_pptx_comment_patches(proposal);
+        }
+        // The units the ladder left unanswered or refused name the live body
+        // they were read on, when they were read on one (FIX 12051).
+        let read_live = shown.map(|(pin, _)| pin.clone());
+        for unit in &mut run.abstained {
+            unit.judged_live.clone_from(&read_live);
+        }
+        for unit in &mut run.refused {
+            unit.judged_live.clone_from(&read_live);
         }
         Ok(run)
     }

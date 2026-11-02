@@ -31,6 +31,13 @@ impl Asking<'_> {
         ask: impl FnOnce(&str) -> Result<ArtifactAskRun>,
     ) -> Result<Option<PendingProposalView>> {
         let vault = self.vault;
+        // The live bodies it reads, pinned as the ask starts (FIX 2115).
+        let mut live = Vec::new();
+        for (id, _) in &observed {
+            if let Some(pin) = vault.office_body_pin(id)? {
+                live.push((*id, pin));
+            }
+        }
         let ask_id = EntityId::now();
         let reference = format!(
             "{kind}:{}:{}:{}:{}",
@@ -70,6 +77,7 @@ impl Asking<'_> {
                     asked_at: self.now,
                     proposal_ref: proposal_ref.clone(),
                     ask_id: Some(ask_id),
+                    live: live.clone(),
                 };
                 ASKED.put(&vault.store, wtxn, &(self.question, artifact), &stamp)?;
                 let principal = self.record.principal;
@@ -109,6 +117,7 @@ pub(in crate::llm::decision::questions) fn artifact_event_record(
         asked_at: event.asked_at,
         proposal_ref: event.proposal_ref.clone(),
         ask_id: Some(event.ask_id),
+        live: Vec::new(),
     };
     let mut record = ask_record(vault, event.artifact, &stamp, event.failed)?;
     record

@@ -99,8 +99,8 @@ pub(super) fn apply_op(
         | AuthorityOp::RevokeActor { .. } => {}
         // `fold_entry_state`'s machine-profile, anchor, world-privacy,
         // grant-travel, owner-choice, home-candidacy, agent-grant-act,
-        // policy-setting, export-act, owner-work and world-key arms return
-        // before reaching here.
+        // policy-setting, export-act, owner-work (a custody permit piece
+        // among them) and world-key arms return before reaching here.
         AuthorityOp::MachineProfile(_)
         | AuthorityOp::OwnerRoot(_)
         | AuthorityOp::WorldPrivacy(_)
@@ -116,6 +116,7 @@ pub(super) fn apply_op(
         | AuthorityOp::OwnerWorkRequest(_)
         | AuthorityOp::OwnerWorkResult(_)
         | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::CustodyPermitPiece(_)
         | AuthorityOp::WorldKeyWraps(_)
         | AuthorityOp::FrontierJoin(_) => {}
         // The signed record of a shared-act change; the change itself is the

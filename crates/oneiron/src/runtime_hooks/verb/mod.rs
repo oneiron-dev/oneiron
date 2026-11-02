@@ -16,6 +16,7 @@ mod record;
 mod redact;
 mod resume;
 mod served;
+mod snapshot;
 mod state;
 mod storage;
 
@@ -42,6 +43,7 @@ pub use credential::{
 pub(crate) use plain_resume::PlainRowResume;
 pub(super) use record::{HookVerbRunRecord, VERB_RUNS};
 pub(crate) use resume::{VerbResume, verb_ask_settled_in_txn};
+pub use snapshot::VerbHookPreSnapshot;
 pub(crate) use state::{HookDepth, VerbHookState};
 pub use state::{
     InvocationClaim, InvocationEntry, InvocationOutcome, InvocationRelease, InvocationWait,

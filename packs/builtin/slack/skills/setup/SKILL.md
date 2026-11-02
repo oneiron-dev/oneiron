@@ -40,7 +40,10 @@ own qualification passes.
 4. Install the app. `POST /v1/owner/packs/slack/install` returns a link; the
    owner opens it in the browser signed in to the workspace and approves. Slack
    sends them back to the host, which stores the bot token and checks the
-   connection. The link works once, for ten minutes.
+   connection. The link works once, for ten minutes. When the owner allowed
+   posting as them, Slack also asks them to let the app post as them, and the
+   host stores their own user token beside the bot token. Only the spaces the
+   owner sets to post as them use it.
 5. The check asks Slack who the app is and which scopes it holds. It passes
    only when Slack names the workspace and the scopes match what the owner
    allowed, no more and no less. The install page says whether it passed; the

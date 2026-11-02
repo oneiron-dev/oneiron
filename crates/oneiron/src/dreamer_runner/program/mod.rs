@@ -31,6 +31,8 @@ mod arm;
 mod authority;
 mod bodies;
 mod erase;
+mod hold_index;
+mod index;
 mod lease;
 mod read;
 mod rebind;
@@ -59,6 +61,7 @@ pub(crate) use self::authority::{
 pub(crate) use self::bodies::{
     program_run_actor_in_txn, program_step_carriage, program_step_owners,
 };
+pub(crate) use self::hold_index::{index_program_hold_in_txn, unindex_program_hold_in_txn};
 pub use self::read::{
     ProgramAdmissionOutcomeView, ProgramCheckpointCallView, ProgramCheckpointConsentView,
     ProgramCheckpointHeadView, ProgramCheckpointRequest, ProgramCheckpointView,

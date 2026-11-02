@@ -143,6 +143,12 @@ async fn dial(
             Ok((transport, owner.clone()))
         })
         .await?;
+    // Every direct address is dialed (FIX 8091, L13 09:35): the owner's
+    // count is measured as the engine's own doors measure theirs, and only
+    // asks; it never waits or refuses.
+    server
+        .vault()
+        .measure_authority_items(input.address.direct_addrs.len());
     // The owner's complete MACHINE lookup names the receipt's machine where
     // the bounded one stops (FIX 8622).
     let lookup = oneiron_mesh_transport::iroh_transport::owner_machine_lookup(
