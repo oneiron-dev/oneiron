@@ -118,6 +118,10 @@ impl SpentKey {
 /// the next open takes the writer there.
 #[derive(Default)]
 pub(crate) struct SpentNonces {
+    /// The process that minted this set: a forked child holding an inherited
+    /// set (its locks, its journal descriptor) never spends through it (P2),
+    /// as a child minting its own does not ([`Self::shared_for`]).
+    pid: u32,
     /// The authority second this process first opened the environment at;
     /// unset, no admission spends here. A later handle of the same
     /// environment is not a new open and never moves it.
@@ -171,6 +175,9 @@ struct Nonces {
     journal: Option<File>,
     /// The journal's length as this set last measured or wrote it.
     journal_len: u64,
+    /// A past-cap spend has warned since the journal last drained under the
+    /// cap, so a stalled drain warns once, not per spend.
+    cap_warned: bool,
 }
 
 impl Nonces {
@@ -195,14 +202,23 @@ impl Nonces {
     /// Opens the journal in the environment at `root` on first use: a torn
     /// tail a failed append left is trimmed, since that spend took the
     /// writer's path and is durable there, and a record after it would
-    /// misalign every record that follows. `false`: it did not open, said
-    /// in a warn.
+    /// misalign every record that follows. The root directory is synced
+    /// with it, so the file a first spend created survives the power loss
+    /// its fdatasync guards against. `false`: it did not open, said in a
+    /// warn.
     fn open_journal_if_needed(&mut self, root: &Path) -> bool {
         if self.journal.is_some() {
             return true;
         }
         match open_journal(&root.join(SPEND_JOURNAL_FILE)) {
             Ok(file) => {
+                if let Err(error) = File::open(root).and_then(|dir| dir.sync_all()) {
+                    tracing::warn!(
+                        error = %error,
+                        "the slip-spend journal's directory did not sync; the spend takes the writer's path"
+                    );
+                    return false;
+                }
                 self.journal_len = file.metadata().map_or(0, |meta| meta.len());
                 let torn = self.journal_len % (JOURNAL_RECORD_LEN as u64);
                 if torn > 0 && file.set_len(self.journal_len - torn).is_ok() {
@@ -236,10 +252,13 @@ impl Nonces {
             return false;
         }
         if self.journal_len.saturating_add(JOURNAL_RECORD_LEN as u64) > JOURNAL_CAP_BYTES {
-            tracing::warn!(
-                journal_len = self.journal_len,
-                "the slip-spend journal is past its cap; the spend takes the writer's path"
-            );
+            if !self.cap_warned {
+                self.cap_warned = true;
+                tracing::warn!(
+                    journal_len = self.journal_len,
+                    "the slip-spend journal is past its cap; the spend takes the writer's path"
+                );
+            }
             return false;
         }
         let record = journal_record(key, window_end, proof_now);
@@ -280,7 +299,10 @@ impl Nonces {
         }
         if let Some(file) = self.journal.as_mut() {
             match file.set_len(0) {
-                Ok(()) => self.journal_len = 0,
+                Ok(()) => {
+                    self.journal_len = 0;
+                    self.cap_warned = false;
+                }
                 Err(error) => tracing::warn!(
                     error = %error,
                     "the drained slip-spend journal did not truncate; its records replay harmlessly"
@@ -330,7 +352,13 @@ fn parse_journal_record(bytes: &[u8]) -> Option<JournalRecord> {
     {
         return None;
     }
-    let le_u64 = |at: usize| u64::from_le_bytes(bytes[at..at + 8].try_into().ok()?);
+    let le_u64 = |at: usize| -> Option<u64> {
+        bytes
+            .get(at..at + 8)?
+            .try_into()
+            .ok()
+            .map(u64::from_le_bytes)
+    };
     Some(JournalRecord {
         key: SpentKey {
             timestamp: le_u64(0)?,
@@ -359,9 +387,10 @@ fn holds_writer_lease(vault: &Vault) -> bool {
 /// refuses with [`Error::VaultServedElsewhere`]: that process serves the
 /// vault and may have spent this nonce in memory, its row not landed yet.
 ///
-/// Threads of one process need no second guard: the writer a door opens
-/// serializes them before any spend, and a second try-lock by the same
-/// process would only refuse itself.
+/// Threads of one process take [`spend_guard`]'s per-environment lock first,
+/// so the try-lock here never meets this process's own spend: each spend
+/// guard is a fresh open file description, which `flock` would otherwise
+/// refuse against itself.
 pub(super) fn writer_spend_lease(vault: &Vault) -> Result<Option<VaultWriterLease>> {
     if holds_writer_lease(vault) || cfg!(not(unix)) {
         return Ok(None);
@@ -373,18 +402,44 @@ pub(super) fn writer_spend_lease(vault: &Vault) -> Result<Option<VaultWriterLeas
     }
 }
 
+/// Per-environment locks of this process's own writer spends, by canonical
+/// root: one small lock per environment ever spent on, kept for the
+/// process's life.
+static SPEND_LOCKS: LazyLock<Mutex<HashMap<PathBuf, &'static Mutex<()>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The lock this process's spends on the environment at `root` queue on, so
+/// a second thread waits its turn instead of refusing itself on the spend
+/// lease's `flock` (each guard locks through its own open file description,
+/// which `flock` treats as a stranger).
+fn spend_lock(root: &Path) -> &'static Mutex<()> {
+    let mut locks = SPEND_LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    *locks
+        .entry(root.to_path_buf())
+        .or_insert_with(|| Box::leak(Box::new(Mutex::new(()))))
+}
+
+/// What [`spend_guard`] holds for a door's writer spend: this process's turn
+/// at the environment, and, in a lease-less process, the spend lease itself.
+pub(in crate::authority) struct SpendGuard {
+    _turn: MutexGuard<'static, ()>,
+    _lease: Option<VaultWriterLease>,
+}
+
 /// What a door that spends a request's nonce in its own writer holds from
-/// before that writer opens until it commits (FIX 12023 W0, P1-b): in a
-/// process that holds the vault's writer lease, nothing, since its spends
-/// in memory are this set's own. In a lease-less process, the lease itself,
-/// taken for the spend ([`writer_spend_lease`]): no lease holder spends the
-/// nonce in memory between this writer's read of its row and its commit,
-/// and a process opening under the lease after this door lets go reads the
-/// committed row. Under that lease the door first replays a journal a
-/// crashed lease holder left (P1-a=B), so a spend it answered is a row this
-/// writer reads; an absent or empty journal, the common path, costs one
-/// stat.
-pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<Option<VaultWriterLease>> {
+/// before that writer opens until it commits (FIX 12023 W0, P1-b): this
+/// process's turn at the environment, and, in a lease-less process, the
+/// writer lease taken for the spend ([`writer_spend_lease`]) under that
+/// turn: no lease holder spends the nonce in memory between this writer's
+/// read of its row and its commit, and a process opening under the lease
+/// after this door lets go reads the committed row. Under that lease the
+/// door first replays a journal a crashed lease holder left (P1-a=B), so a
+/// spend it answered is a row this writer reads; an absent or empty
+/// journal, the common path, costs one stat.
+pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<SpendGuard> {
+    let turn = spend_lock(vault.store.canonical_root())
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     let lease = writer_spend_lease(vault)?;
     if lease.is_some() {
         let journal = vault.store.canonical_root().join(SPEND_JOURNAL_FILE);
@@ -392,10 +447,28 @@ pub(in crate::authority) fn spend_guard(vault: &Vault) -> Result<Option<VaultWri
             vault.spent_nonces.replay_journal(vault);
         }
     }
-    Ok(lease)
+    Ok(SpendGuard {
+        _turn: turn,
+        _lease: lease,
+    })
 }
 
 impl SpentNonces {
+    fn new() -> Self {
+        Self {
+            pid: std::process::id(),
+            ..Self::default()
+        }
+    }
+
+    /// Whether this set is this process's own, not one inherited across a
+    /// fork: checked before any of its locks or its journal are touched, so
+    /// a child takes the writer's path instead of an inherited lock a
+    /// vanished thread may hold.
+    fn in_own_process(&self) -> bool {
+        self.pid == std::process::id()
+    }
+
     fn lock(&self) -> MutexGuard<'_, Nonces> {
         self.nonces.lock().unwrap_or_else(PoisonError::into_inner)
     }
@@ -413,7 +486,7 @@ impl SpentNonces {
         {
             Ok(_) => {}
             Err(owner) if owner == pid => {}
-            Err(_) => return Arc::new(SpentNonces::default()),
+            Err(_) => return Arc::new(SpentNonces::new()),
         }
         let mut entries = REGISTRY
             .entries
@@ -423,15 +496,17 @@ impl SpentNonces {
         if let Some(set) = entries.get(root).and_then(Weak::upgrade) {
             return set;
         }
-        let set = Arc::new(SpentNonces::default());
+        let set = Arc::new(SpentNonces::new());
         entries.insert(root.to_path_buf(), Arc::downgrade(&set));
         set
     }
 
-    /// Notes the authority second `vault` opened at, on the clock a slip's
-    /// mint takes its time from ([`Vault::capability_slip_now`]). A reading
-    /// that fails leaves it unset, and every admission on this handle takes
-    /// the writer, as today.
+    /// Notes the authority second this process opened `vault`'s environment
+    /// at, on the clock a slip's mint takes its time from
+    /// ([`Vault::capability_slip_now`]). The first handle whose reading
+    /// succeeds sets it (the set is the environment's, not a handle's); while
+    /// it is unset every admission on the environment takes the writer, as
+    /// today.
     pub(crate) fn note_open(&self, vault: &Vault) {
         match vault.capability_slip_now() {
             Ok(now) => {
@@ -439,7 +514,7 @@ impl SpentNonces {
             }
             Err(error) => tracing::warn!(
                 kind = ?error.kind(),
-                "the open's authority second did not read; every admission on this handle takes the writer"
+                "the open's authority second did not read; every admission on this environment takes the writer"
             ),
         }
     }
@@ -452,6 +527,9 @@ impl SpentNonces {
     /// since the set is the environment's, not a handle's. `None`: the
     /// writer's path.
     pub(in crate::authority) fn door(&self, vault: &Vault) -> Option<SpendDoor> {
+        if !self.in_own_process() {
+            return None;
+        }
         let opened_at = *self.opened_at.get()?;
         let served = self.served_of(vault)?;
         if !holds_writer_lease(&served) || served.store.writes_sealed() {
@@ -464,6 +542,9 @@ impl SpentNonces {
     /// while it lives, else found now. `None`: none is served, and the
     /// writer's path judges every admission (FIX 12023 W0, P2).
     fn served_of(&self, vault: &Vault) -> Option<Arc<Vault>> {
+        if !self.in_own_process() {
+            return None;
+        }
         let mut cached = self.served.lock().unwrap_or_else(PoisonError::into_inner);
         if let Some(served) = cached.as_ref().and_then(Weak::upgrade) {
             return Some(served);
@@ -538,8 +619,11 @@ impl SpentNonces {
     /// leave. Where no admission can spend in memory in this process (no
     /// served handle of the environment holds its writer lease) nothing is
     /// staged: the writer's door holds the lease for the spend instead
-    /// ([`writer_spend_lease`]), so no process spends in memory beside it.
+    /// ([`spend_guard`]), so no process spends in memory beside it.
     pub(super) fn stage(&self, vault: &Vault, key: SpentKey) -> bool {
+        if !self.in_own_process() {
+            return true;
+        }
         if !holds_writer_lease(vault)
             && !self
                 .served_of(vault)
@@ -562,7 +646,7 @@ impl SpentNonces {
     /// row as well reads it in a writer, or in a snapshot opened after this
     /// call, never in one opened before.
     pub(super) fn admitted(&self, key: &SpentKey) -> bool {
-        self.lock().admitted.contains_key(key)
+        self.in_own_process() && self.lock().admitted.contains_key(key)
     }
 
     /// Lets go of `key`'s entry, from its spend's after-commit callback once
@@ -592,14 +676,17 @@ impl SpentNonces {
     }
 
     /// Lands every unexpired spend the journal holds, in one writer, then
-    /// truncates it under this set's lock. The caller holds the environment's
-    /// writer lease, by its open or by a spend's guard, so no process appends
-    /// beside the replay. `proof_now` is never restored as a floor (L02
-    /// 11-03): replay reads the proof clock fresh in its own writer, as a
-    /// landing does, so a floor an owner's clock recovery lowered is never
-    /// raised again; a record whose `proof_now` stands far ahead of the
-    /// authority second now only warns, the wall having stepped back across
-    /// the crash.
+    /// truncates it. The caller holds the environment's writer lease, by its
+    /// open or by a spend's guard, so no other process appends beside the
+    /// replay. This set's lock is never held across the writer (a writer
+    /// spend stages under it, the opposite order), and the truncate after
+    /// the commit takes it only to check that nothing appended since the
+    /// read and no entry here is unlanded. `proof_now` is never restored as
+    /// a floor (L02 11-03): replay reads the proof clock fresh in its own
+    /// writer, as a landing does, so a floor an owner's clock recovery
+    /// lowered is never raised again; a record whose `proof_now` stands far
+    /// ahead of the authority second now only warns, the wall having stepped
+    /// back across the crash.
     fn replay_journal(&self, vault: &Vault) {
         let path = vault.store.canonical_root().join(SPEND_JOURNAL_FILE);
         let bytes = match std::fs::read(&path) {
@@ -648,7 +735,7 @@ impl SpentNonces {
             }
             records.retain(|record| record.window_end >= now);
         }
-        let mut nonces = self.lock();
+        let read_len = (bytes.len() - torn) as u64;
         if !records.is_empty() {
             let landed = (|| -> Result<()> {
                 let mut txn = vault.store.env.write_txn()?;
@@ -668,14 +755,25 @@ impl SpentNonces {
             }
         }
         // After the commit, never before: a crash between the two replays
-        // the same records at the next open, which the rows absorb.
-        if nonces.open_journal_if_needed(vault.store.canonical_root()) {
+        // the same records at the next open, which the rows absorb. Only a
+        // journal nothing appended to since the read truncates, and only
+        // once no entry here is unlanded; else `landed` truncates it when
+        // it drains.
+        let mut nonces = self.lock();
+        if nonces.open_journal_if_needed(vault.store.canonical_root())
+            && nonces.journal_len == read_len
+            && nonces.admitted.is_empty()
+            && nonces.queuing == 0
+        {
             let truncated = match nonces.journal.as_mut() {
                 Some(file) => file.set_len(0),
                 None => Ok(()),
             };
             match truncated {
-                Ok(()) => nonces.journal_len = 0,
+                Ok(()) => {
+                    nonces.journal_len = 0;
+                    nonces.cap_warned = false;
+                }
                 Err(error) => tracing::warn!(
                     error = %error,
                     "the replayed slip-spend journal did not truncate; its records replay harmlessly"
@@ -783,7 +881,9 @@ impl SpendDoor {
         );
         let _entered = span.enter();
         let served = &self.served;
-        let admitted = served.spent_nonces.admit(served, key, now, expires_at, clock);
+        let admitted = served
+            .spent_nonces
+            .admit(served, key, now, expires_at, clock);
         span.record("admitted", admitted);
         if !admitted {
             return false;

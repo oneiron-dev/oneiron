@@ -6,8 +6,8 @@ use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::{Vault, VaultWriterLease};
 
 mod spent_nonces;
-pub(super) use spent_nonces::{SpentKey, spend_guard};
 pub(crate) use spent_nonces::SpentNonces;
+pub(super) use spent_nonces::{SpentKey, spend_guard};
 
 /// How far, either way, a proof's signed timestamp may sit from the vault's
 /// proof clock ([`request_now_in_txn`]).

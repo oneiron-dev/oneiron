@@ -60,6 +60,8 @@ impl Vault {
             return Err(invalid_authority());
         }
         txn.commit()?;
+        // The spend is committed; the sweep holds no lease beside it.
+        drop(_spend_guard);
         self.housekeeping_one(repair_sweep(repair), budget)
     }
 }
