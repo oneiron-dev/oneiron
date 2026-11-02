@@ -46,6 +46,15 @@ pub(super) struct Log {
 }
 
 impl Log {
+    /// A log holding no frame: what a span's own frame appends to when the
+    /// chunk index answers instead of a load (FIX 8531).
+    pub(super) fn empty() -> Self {
+        Self {
+            frames: Vec::new(),
+            index: BTreeMap::new(),
+        }
+    }
+
     pub(super) fn load_in_txn(
         store: &Store,
         txn: &heed::RoTxn<'_>,

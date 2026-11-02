@@ -176,7 +176,11 @@ pub(super) fn collect_queued(
             sources_truncated: false,
         };
         preparations.insert(*attempt.id.as_bytes(), AttemptPreparation::Ready(prepared));
-        if attempt.retry_of.is_some() && effective_scope.is_none() {
+        // A selection retry: a retried try, or one a deferral requeued as
+        // itself (FIX 3863).
+        let selection_retry =
+            attempt.retry_of.is_some() || crate::dreamer_runner::selection_deferred(&attempt);
+        if selection_retry && effective_scope.is_none() {
             // Each part widens over its own conversation's TURNs.
             let mut peers = Vec::with_capacity(branch.parts.len());
             for conversation in branch.conversations() {

@@ -26,7 +26,8 @@
 //! back as one of the pieces (FIX 2063). A sealed vault's pages unlock before
 //! its machine id can be read, so there the pieces the host's keystore keeps
 //! for each install a carried device wrap names join the pieces given (FIX
-//! 11976).
+//! 11976), and so does the piece of the install the vault id alone names as
+//! keeping one, with no device wrap carried for it (FIX 12054).
 
 use std::sync::Arc;
 
@@ -39,6 +40,7 @@ use crate::error::Result;
 use crate::recovery::{
     KitError, KitIssue, KitManifest, KitPassphrase, KitPiece, KitPiecePair, KitPieceStore,
     KitSecretKind, RestoredKitSecret, issue_vault_key_kit, join_kept_piece, restore_kit,
+    vault_key_piece_install,
 };
 use crate::world_keys::kit::{kit_refused, resolve_homes};
 use crate::world_keys::kit_piece::keep_this_machine_piece;
@@ -98,26 +100,40 @@ pub(super) fn open_kit(
 /// The pieces of data-key kits `keystore` keeps for the vault `vault_id` (FIX
 /// 11976): a sealed vault's machine id is read only once its pages open, so
 /// the slots read are those of each install a device wrap in `carried` names,
-/// each one's current pair: a data-key kit has no pending pair (FIX 12046).
-/// And whether a pair held a piece that did not read: it is logged and left
-/// out.
+/// then of the install the vault id alone names as keeping a piece, when no
+/// carried wrap names it (FIX 12054), each one's current pair: a data-key kit
+/// has no pending pair (FIX 12046). And whether a slot held a piece or a name
+/// that did not read: it is logged and left out.
 fn kept_pieces(
     keystore: &Arc<dyn DeviceKeystore>,
     vault_id: &[u8; 32],
     carried: &CarriedVaultKey,
 ) -> (Vec<KitPiece>, bool) {
-    let installs: Vec<crate::EntityId> = carried
+    let mut installs: Vec<[u8; 16]> = carried
         .wrap_infos()
         .into_iter()
         .filter_map(|info| match &info.kind {
             VaultKeyWrapKind::Device { install } => crate::EntityId::from_hex(install).ok(),
             _ => None,
         })
+        .map(|install| *install.as_bytes())
         .collect();
     let mut kept = Vec::new();
     let mut unreadable = false;
+    match vault_key_piece_install(&**keystore, vault_id) {
+        Ok(Some(install)) if !installs.contains(&install) => installs.push(install),
+        Ok(_) => {}
+        Err(error) => {
+            tracing::warn!(
+                kind = ?keystore_error(error).kind(),
+                "the vault id's name of the install keeping this machine's data-key kit \
+                 piece did not read; unlocking with the pieces the device wraps find"
+            );
+            unreadable = true;
+        }
+    }
     for install in &installs {
-        let store = KitPieceStore::new(Arc::clone(keystore), *vault_id, *install.as_bytes());
+        let store = KitPieceStore::new(Arc::clone(keystore), *vault_id, *install);
         match store.get(KitPiecePair::Current(KitSecretKind::VaultKey)) {
             Ok(Some(piece)) => kept.push(piece),
             Ok(None) => {}
