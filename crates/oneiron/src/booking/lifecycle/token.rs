@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::claim::{booking_event_type_in, read_booking_facts_to_cancel};
 use super::storage::{HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused};
-use super::types::{LifecycleTokenScope, SoftHoldRow};
+use super::types::{DEFAULT_HOLD_TTL_SECS, LifecycleTokenScope, SoftHoldRow};
 use super::{LifecycleTokenRow, TOKEN};
 use crate::booking::{BookingError, EventTypeKey};
 use crate::{EntityId, Vault};
@@ -280,6 +280,49 @@ pub fn confirm_event_type(
         return Err(refused("hold token does not match this session's hold"));
     }
     Ok(hold.event_type)
+}
+
+/// When this session took the live hold a confirm names, in Unix seconds:
+/// the server-recorded start of the visitor's booking form.
+///
+/// An ordinary hold lives exactly [`DEFAULT_HOLD_TTL_SECS`], so its start is
+/// read from its expiry. A checkout-extended hold, a token that matches no
+/// live hold of this session, and a confirm that already booked give `None`:
+/// the form's start is not known there.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read.
+pub fn confirm_hold_taken_at(
+    vault: &Vault,
+    session_key: &SessionKey,
+    hold_token: &OpaqueLifecycleToken,
+    now_utc: u64,
+) -> Result<Option<u64>, BookingError> {
+    let rtxn = read_txn(vault)?;
+    Ok(
+        live_hold_in_txn(vault, &rtxn, session_key, hold_token, now_utc)?
+            .filter(|hold| hold.checkout_lease_hash.is_none())
+            .map(|hold| hold.expires_at.saturating_sub(DEFAULT_HOLD_TTL_SECS)),
+    )
+}
+
+/// This session's live hold, when `hold_token` is its token.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] when committed state cannot be read.
+pub(in crate::booking) fn live_hold_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    session_key: &SessionKey,
+    hold_token: &OpaqueLifecycleToken,
+    now_utc: u64,
+) -> Result<Option<SoftHoldRow>, BookingError> {
+    let hold: Option<SoftHoldRow> = HOLD
+        .get(&vault.store, txn, &hold_digest(session_key))
+        .map_err(|error| engine_failure("meta read", error))?;
+    Ok(hold.filter(|hold| hold.is_live_at(now_utc) && hold.token_hash == token_digest(hold_token)))
 }
 
 /// The event type of the booking a reschedule or cancel token belongs to.

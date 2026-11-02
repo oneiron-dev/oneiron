@@ -147,8 +147,10 @@ pub(crate) fn route_in_txn(
     if session.state.handed.contains(&span.id) {
         return Ok(false);
     }
-    let mut log = Log::load_in_txn(&vault.store, txn, &session)?;
-    let routed = log::frame_span_in_txn(vault, txn, &mut session, &mut log, span)?.is_some();
+    // The span's chunk is found by key (FIX 8531), never by loading every
+    // frame; only a chunk not yet framed appends one.
+    let routed = state::framed_span_in_txn(&vault.store, txn, &session, span)?.is_some()
+        || log::frame_span_in_txn(vault, txn, &mut session, &mut Log::empty(), span)?.is_some();
     if !routed {
         session.state.handed.push(span.id);
     }

@@ -7,7 +7,7 @@ use std::path::Path;
 
 use super::MergeFile;
 use crate::code_document::CodeFileMetadataEdit;
-use crate::contract_oracle::{invalid, safe_path};
+use crate::contract_oracle::{invalid, safe_entry_path};
 use crate::error::{Error, Result};
 use crate::repo_mutation::{ReceivedTreeEdit, stage_received_tree_edits};
 
@@ -51,7 +51,8 @@ pub(super) fn materialize_received_merge_files(root: &Path, files: &[MergeFile])
             .metadata_edit
             .as_ref()
             .ok_or_else(|| invalid("a received bundle file carries its state change"))?;
-        let (bytes, mode) = entry_state(&safe_path(root, &file.path)?)?;
+        // Parents never follow a link; a final symlink is read as itself (FIX 9977).
+        let (bytes, mode) = entry_state(&safe_entry_path(root, &file.path)?)?;
         if bytes != file.expected || mode != edit.expected.mode {
             return Err(Error::ConcurrentWrite(
                 "proposal bytes overlap or base is stale",

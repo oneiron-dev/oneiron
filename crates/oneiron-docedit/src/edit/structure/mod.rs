@@ -133,6 +133,15 @@ pub struct NewPicture<'a> {
     pub seed: &'a [u8],
 }
 
+/// How a connector end names its shape: its native id, or its
+/// `a16:creationId`, so a caller can pick an ambiguous-endpoint candidate by
+/// the creation id the refusal named (FIX 10386).
+#[derive(Debug, Clone, Copy)]
+pub enum ShapeId<'a> {
+    Native(u32),
+    Creation(&'a str),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct NewConnector<'a> {
     pub preset: ConnectorPreset,
@@ -142,10 +151,10 @@ pub struct NewConnector<'a> {
     pub extent: (i64, i64),
     pub flip_h: bool,
     pub flip_v: bool,
-    /// The native id of the shape the start is glued to, and its connection
-    /// site index.
-    pub start: Option<(u32, u32)>,
-    pub end: Option<(u32, u32)>,
+    /// The shape the start is glued to, by native id or creation id, and its
+    /// connection site index.
+    pub start: Option<(ShapeId<'a>, u32)>,
+    pub end: Option<(ShapeId<'a>, u32)>,
     pub high_water: u32,
     pub seed: &'a [u8],
 }

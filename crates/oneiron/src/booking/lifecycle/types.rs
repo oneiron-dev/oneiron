@@ -6,7 +6,9 @@ use serde::{Deserialize, Serialize};
 
 use super::storage::refused;
 use super::token::{HoldLeaseSpec, OpaqueLifecycleToken, SessionKey, TOKEN_RAW_BYTES};
-use super::{digest_serde, entity_ref_serde, opt_digest_serde, time_range_serde};
+use super::{
+    digest_serde, entity_ref_serde, entity_refs_serde, opt_digest_serde, time_range_serde,
+};
 use crate::EntityId;
 use crate::booking::constraint::validate_visitor_tz;
 use crate::booking::{BookingError, ConstraintObject, EventTypeKey, RankedSlot};
@@ -338,12 +340,21 @@ pub struct ConfirmReceipt {
     /// confirm stands either way. Absent otherwise.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approval_digest: Option<String>,
+    /// The rows the confirm writer read (FIX 5483): every row its
+    /// availability re-solve listed. A replay returns the first pass's.
+    #[serde(default, with = "entity_refs_serde")]
+    pub reads: Vec<EntityId>,
 }
 
 /// What a successful reschedule or cancel returns.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RevisionReceipt {
     pub calendar: CalendarRevision,
+    /// The rows the writer read (FIX 5483): the booking EVENT and every claim
+    /// on it, and for a move every row its re-solve listed. A replay returns
+    /// the first pass's.
+    #[serde(default, with = "entity_refs_serde")]
+    pub reads: Vec<EntityId>,
 }
 
 /// The closed receipt union.

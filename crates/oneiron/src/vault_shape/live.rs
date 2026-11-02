@@ -10,7 +10,7 @@ use super::world_facet::withhold_facets_of_hidden_worlds;
 use super::{ShapeGrantBound, ShapeMemberRole, ShapeRow, ShapeTarget, invalid};
 use crate::agent_def::decode_agent_definition;
 use crate::channel_identity::{
-    ChannelIdentityState, channel_identity_fact_head_ids_in_txn,
+    ChannelIdentityState, channel_identity_fact_head_ids_in_txn, channel_identity_facts_in_txn,
     channel_identity_send_holder_in_txn, decode_channel_identity_body,
 };
 use crate::edge::EdgeKind;
@@ -364,6 +364,11 @@ impl Vault {
                 ) {
                     continue;
                 }
+                // A claim correction owns the channel and the address (FIX
+                // 2564), so the shape shows them from the identity's facts.
+                let facts = channel_identity_facts_in_txn(&self.store, &txn, &id)?.ok_or(
+                    crate::error::Error::CorruptedIndex("channel identity claim heads"),
+                )?;
                 // The reach reads each identity's heads, hidden or not.
                 sources.list(id);
                 if sources.listing() {
@@ -379,8 +384,8 @@ impl Vault {
                     reach.senders.push(ReachSender {
                         entity: id,
                         actor,
-                        channel: identity.channel().to_owned(),
-                        address: identity.address_or_handle().to_owned(),
+                        channel: facts.channel.clone(),
+                        address: facts.address_or_handle.clone(),
                         may_send,
                     });
                 }
@@ -403,8 +408,8 @@ impl Vault {
                 };
                 rows.push((
                     ShapeRow::Channel {
-                        channel: identity.channel().to_owned(),
-                        address: identity.address_or_handle().to_owned(),
+                        channel: facts.channel.clone(),
+                        address: facts.address_or_handle.clone(),
                         provision,
                     },
                     Some(id),
