@@ -503,7 +503,7 @@ pub(super) fn query(
         None => Vec::new(),
     };
     let head = body.read(0, SHAPE_HEAD_BYTES)?;
-    let shape = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+    let shape = shape::shape_of(body, head)?;
     let table = match shape["format"].as_str() {
         Some("json") => None,
         Some("jsonl") => Some(None),

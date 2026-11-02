@@ -303,7 +303,7 @@ impl ResultRead {
             let cut = floor_boundary(&head, RANGE_PREVIEW_BYTES);
             card["preview"] = json!(String::from_utf8_lossy(&head[..cut]));
         }
-        card["shape"] = shape::shape(&head, body.kind(), head.len() as u64 == body.len());
+        card["shape"] = shape::shape_of(body, head)?;
         if let Some(reason) = unmarked_secret(&json!([card["preview"], card["shape"]])) {
             card["preview"] = json!(CODE_RUN_OUTPUT_PREVIEW_WITHHELD);
             card["taint"] = json!({

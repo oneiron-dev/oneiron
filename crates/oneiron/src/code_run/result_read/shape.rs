@@ -1,8 +1,12 @@
 //! The shape a result's head shows of its format, for its card and for the
-//! way `query` reads it. It is sniffed from the first 64 KiB alone, so it
-//! costs one ranged read whatever the body's size.
+//! way `query` reads it. It is sniffed from the first 64 KiB, extended to
+//! 1 MiB when that head is not the whole body and shows fewer than two
+//! whole nonblank lines, so the card and `query` cannot disagree; the
+//! sniff stays uncharged.
 
 use super::query::split_fields;
+use super::{READ_PIECE_BYTES, ResultBody};
+use crate::Result;
 use crate::code_run::CodeRunOutputKind;
 use serde::Deserializer as _;
 use serde::de::{IgnoredAny, MapAccess, Visitor};
@@ -10,6 +14,39 @@ use serde_json::{Value, json};
 
 /// Top-level keys of a JSON object a shape lists at most.
 const SHAPE_KEYS: usize = 64;
+
+/// The shape of `body` from its initial `head`, the bytes of
+/// `body.read(0, SHAPE_HEAD_BYTES)`, extended forward to `READ_PIECE_BYTES`
+/// in total when that head is not the whole body and shows fewer than two
+/// whole nonblank lines (FIX 1187). The card and `query` share it, so they
+/// cannot disagree. Binary answers at once with no extension; a whole body
+/// or a head that already shows two lines reads nothing more. The sniff
+/// stays uncharged, and past the ceiling the existing [`shape`] fallback
+/// answers.
+pub(super) fn shape_of(body: &dyn ResultBody, mut head: Vec<u8>) -> Result<Value> {
+    let kind = body.kind();
+    let len = body.len();
+    if kind == CodeRunOutputKind::Binary {
+        return Ok(shape(&head, kind, head.len() as u64 == len));
+    }
+    if head.len() as u64 == len {
+        return Ok(shape(&head, kind, true));
+    }
+    let text = match std::str::from_utf8(&head) {
+        Ok(text) => text,
+        Err(error) => std::str::from_utf8(&head[..error.valid_up_to()]).unwrap_or_default(),
+    };
+    if first_lines(text, false).len() >= 2 {
+        return Ok(shape(&head, kind, false));
+    }
+    let want = READ_PIECE_BYTES.saturating_sub(head.len());
+    if want > 0 {
+        let extra = body.read(head.len() as u64, want)?;
+        head.extend_from_slice(&extra);
+    }
+    let whole = head.len() as u64 == len;
+    Ok(shape(&head, kind, whole))
+}
 
 /// The shape of a body whose first bytes are `head`, all of it when
 /// `whole`: JSON with its top type and first keys, JSON lines or a CSV/TSV
