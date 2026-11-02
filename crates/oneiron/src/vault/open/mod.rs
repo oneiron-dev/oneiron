@@ -677,6 +677,10 @@ impl Vault {
         // refuses every write from here on (`Store::swap_out`).
         vault.store.seal_if_archived()?;
         vault.resolve_pending_credential_restores_logged();
+        // A crashed lease holder's journaled spends land first (FIX 12023
+        // W0, P1-a=B), on an open that took the writer lease alone, so a
+        // replay after the open meets its committed row.
+        vault.spent_nonces.replay_journal_at_open(&vault);
         // The second this handle opened at: a slip minted after it spends its
         // nonces in memory (FIX 12023 W0). Read last, so every slip minted
         // while it opened takes the writer.
