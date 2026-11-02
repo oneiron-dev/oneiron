@@ -116,7 +116,8 @@ impl ManagedState {
         let at_freeze = self.freeze_counted()?;
         // Device sync is not counted; its last write lands before the
         // export, or it reads as live.
-        self.device_sync_paused(tokio::time::Instant::now() + DEVICE_SYNC_PAUSE_WAIT).await;
+        self.device_sync_paused(tokio::time::Instant::now() + DEVICE_SYNC_PAUSE_WAIT)
+            .await;
         self.drain_export(at_freeze, true, None).await
     }
 

@@ -143,6 +143,10 @@ side_tables! {
     /// (FIX 10434): `draft_source_rows`. Key: id16(source) + id16(actor) + u8(signal) +
     /// id16(task).
     COACH_AGENT_HEALTH_CARD_BY_SOURCE: VaultMeta b"coach:agent_health_card_by_source:v1:" Raw;
+    /// Each live agent-health card under every reviewer revision it names
+    /// (FIX 10434): `reviewer_revisions`. Key: id16(revision) + id16(actor) + u8(signal) +
+    /// id16(task).
+    COACH_AGENT_HEALTH_CARD_BY_REVIEWER: VaultMeta b"coach:agent_health_card_by_reviewer:v1:" Raw;
     /// An agent's `self.report_blocked` receipt waiting for the Coach's Issues job. Key: id16 of
     /// the receipt.
     COACH_BLOCKED_ISSUE: VaultMeta b"coach:blocked_issue:v1:" Named;
