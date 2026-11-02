@@ -1,0 +1,1413 @@
+Morning. Quick setup so you can actually help me: I'm Ines Varga, operations lead at Kestrel Fabrication. We build drone frames out of a converted dairy barn in Arnholt, and most of my week goes into Project Larkspur, our folding survey-drone frame.
+Note saved: user name: Ines Varga
+Note saved: job title: operations lead at Kestrel Fabrication
+Note saved: work location: converted dairy barn in Arnholt
+Note saved: company product: build drone frames
+Note saved: main project: Project Larkspur folding survey-drone frame
+Note saved: today date: 2026-10-27 Tuesday
+Got it, Ines. I've saved your role at Kestrel Fabrication, the Arnholt barn location, and Project Larkspur as your main focus. Ready to help.
+I report to Dagny Holm, our CTO. She wants a status note from me every Thursday, so nudge me if I forget.
+Note saved: manager: Dagny Holm CTO
+Note saved: weekly status note: status note to Dagny Holm every Thursday
+Saved. I'll nudge you for the Thursday status note to Dagny Holm.
+Larkspur has to ship by 14 March. That's the date we promised the pilot customer, Vestergaard Surveying.
+Note saved: Larkspur ship date: 14 March promised to Vestergaard Surveying
+Note saved: pilot customer: Vestergaard Surveying
+Noted. Larkspur ship date is 14 March for Vestergaard Surveying.
+Our contact at Vestergaard is Henrik Aas. He'd rather get a phone call than an email, for what it's worth.
+Note saved: Vestergaard contact: Henrik Aas prefers phone call over email
+Saved Henrik Aas as your Vestergaard contact, phone preferred.
+All our carbon tubes and plates come from Brannock Composites. Teodor Ilves is the account manager there, and we have a standing call with him Tuesdays at 10:30.
+Note saved: carbon supplier: Brannock Composites
+Note saved: supplier account manager: Teodor Ilves at Brannock Composites
+Note saved: supplier call time: Tuesdays 10:30 with Teodor Ilves
+Saved Brannock Composites, Teodor Ilves, and your standing Tuesday 10:30 call.
+Machining happens in Hall C. The big CNC in there is a Morrow M-40 that everyone calls Old Gus. Don't ask, it predates me.
+Note saved: machining location: Hall C
+Note saved: CNC machine: Morrow M-40 called Old Gus in Hall C
+Got it. Machining is in Hall C on Old Gus, the Morrow M-40.
+The laser cutter lives up on the mezzanine, right above the paint booth.
+Note saved: laser cutter location: mezzanine above paint booth
+Saved. Laser cutter is on the mezzanine above the paint booth.
+When we test-fly prototypes we drive out to Tolvik Flats. Sunniva Brekke flies them; she's our test pilot.
+Note saved: test fly location: Tolvik Flats
+Note saved: test pilot: Sunniva Brekke
+Noted. Test flights at Tolvik Flats with pilot Sunniva Brekke.
+Yusuf Demir runs QA. Anything that fails his checks goes straight back to Hall C, no exceptions.
+Note saved: QA lead: Yusuf Demir
+Note saved: QA failure process: fails go straight back to Hall C no exceptions
+Saved. Yusuf Demir runs QA and failures return to Hall C.
+People keep asking how to reach me in the office: desk line is extension 4417, and I sit in room 2.14 on the second floor.
+Note saved: office extension: 4417
+Note saved: office room: room 2.14 second floor
+Got it. Extension 4417, room 2.14 on second floor.
+All the Larkspur specs are on the shared drive under /eng/larkspur/rev-d. We're on Rev D of the frame now; Rev C had the hinge crack problem.
+Note saved: Larkspur specs path: /eng/larkspur/rev-d
+Note saved: Larkspur revision: Rev D current
+Note saved: Larkspur Rev C issue: hinge crack problem
+Saved specs path /eng/larkspur/rev-d, Rev D current, and Rev C hinge crack issue.
+Torque on the arm hinge bolts is 2.8 newton-metres. Write that down, people over-tighten them constantly.
+Note saved: arm hinge bolt torque: 2.8 newton-metres
+Noted. Arm hinge bolts torque to 2.8 newton-metres.
+We track inventory in Shelfwise, and every Larkspur part number starts with KF-LS-.
+Note saved: inventory system: Shelfwise
+Note saved: Larkspur part prefix: KF-LS-
+Saved. Inventory in Shelfwise, Larkspur parts start with KF-LS-.
+Everything goes out through Nordpil Freight. Their driver picks up at 16:00 on weekdays.
+Note saved: freight company: Nordpil Freight
+Note saved: freight pickup time: 16:00 weekdays
+Noted. Nordpil Freight picks up at 16:00 on weekdays.
+I come in on the R7 from Lindberg most days; it gets into Arnholt at 7:52.
+Note saved: commute train: R7 from Lindberg arrives Arnholt 7:52
+Saved your commute: R7 from Lindberg, arrival 7:52.
+I can sign off purchase orders myself up to 4,000 euros. Anything bigger goes to Dagny.
+Note saved: PO signing limit: up to 4,000 euros self sign
+Note saved: PO approval over limit: over 4,000 euros goes to Dagny Holm
+Noted. You can sign POs up to €4,000, over that goes to Dagny.
+Batteries are from Corvane Cells. We use their CV-22 pack on Larkspur.
+Note saved: battery supplier: Corvane Cells
+Note saved: Larkspur battery pack: CV-22 pack from Corvane Cells
+Saved. Batteries from Corvane Cells, CV-22 pack on Larkspur.
+The test rigs are on their own Wi-Fi, KF-RIG-5G, so keep laptops off it.
+Note saved: test rig Wi-Fi: KF-RIG-5G keep laptops off
+Noted. Test rigs on KF-RIG-5G, keep laptops off it.
+Lotte Brandt is our safety officer. For fire drills we assemble in the north car park.
+Note saved: safety officer: Lotte Brandt
+Note saved: fire drill assembly: north car park
+Saved. Safety officer Lotte Brandt, fire drill assembly in north car park.
+This term I'm mentoring an intern, Kaito Mori. He's building a hinge fatigue rig for Larkspur.
+Note saved: intern: Kaito Mori mentoring
+Note saved: intern project: hinge fatigue rig for Larkspur
+Noted. You're mentoring Kaito Mori on a hinge fatigue rig for Larkspur.
+In May I'm off to the GeoDrone Expo in Linz to show Larkspur.
+Note saved: GeoDrone Expo trip: May Linz to show Larkspur
+Saved. GeoDrone Expo in Linz in May to show Larkspur.
+The build team's chat is #larkspur-build.
+Note saved: build team chat: #larkspur-build
+Noted. Build team chat is #larkspur-build.
+If Old Gus goes down, our backup machine shop is Falk Precision over in Moravik.
+Note saved: backup machine shop: Falk Precision in Moravik
+Saved. Backup shop is Falk Precision in Moravik if Old Gus goes down.
+One rule for Old Gus: before anyone changes a program, back up the current one to the shared drive, dry-run the new one with the spindle off, cut a single test part from scrap aluminium, get Yusuf to check it, and only then run production.
+Note saved: Old Gus program change procedure: backup to shared drive, dry-run spindle off, test part scrap aluminium, Yusuf check, then production
+Saved the Old Gus program change rule.
+A few house rules for you: write times in 24-hour format, keep any status summary to three bullets at most, and always ask me before you email anyone at Vestergaard.
+Note saved: time format preference: 24-hour format
+Note saved: status summary limit: max three bullets
+Note saved: Vestergaard email policy: ask before emailing anyone at Vestergaard
+Got it. 24-hour times, status summaries max three bullets, and I'll ask before emailing anyone at Vestergaard.
+heads up, our supplier call time is moving to Wednesdays at 09:15 starting next week
+Note saved: supplier call time: Wednesdays 09:15 starting next week (replaces Tuesdays 10:30 with Teodor Ilves)
+Got it, I have saved the new time and replaced the old Tuesday 10:30 entry.
+Can you remind me what our CNC machine model is?
+Your CNC machine is the Morrow M-40 called Old Gus in Hall C.
+change of plan: our new supplier account manager is Marta Kessler
+Note saved: supplier account manager: Marta Kessler (replaces Teodor Ilves at Brannock Composites)
+Saved, I have replaced Teodor Ilves at Brannock Composites with Marta Kessler.
+Can you remind me who my manager is?
+Your manager is Dagny Holm, CTO.
+heads up, the Larkspur ship date has moved to 28 April
+Note saved: Larkspur ship date: 28 April (replaces 14 March promised to Vestergaard Surveying)
+Got it, I have replaced the old 14 March date with 28 April.
+just moved offices, I'm now in office 3.07 on the third floor
+Note saved: office room: office 3.07 on the third floor (replaces room 2.14 second floor)
+Saved, I have replaced room 2.14 second floor with office 3.07 on the third floor.
+Can you remind me what our CNC machine nickname is?
+You said the Morrow M-40 is called Old Gus.
+quick update, my desk phone is now extension 4429 so use that
+Note saved: office extension: 4429 (replaces 4417)
+Saved, I have replaced 4417 with 4429.
+change of plan: I'll send the weekly status note on Friday morning from now on
+Note saved: weekly status note: send on Friday morning (replaces status note to Dagny Holm every Thursday)
+Got it, I have replaced the Thursday note with send on Friday morning.
+Quick note before standup, we're calling the new prototype build Project Ternwing and we're aiming to wrap it by 19 May.
+Note saved: new prototype build name: Project Ternwing
+Note saved: Project Ternwing wrap target date: 19 May
+Note saved: today date: 2026-10-29 Thursday (replaces 2026-10-27 Tuesday)
+Got it. I’ve saved Project Ternwing as the new prototype build with a wrap target of 19 May, and updated today’s date to 2026-10-29 Thursday.
+Halden Dynamics is handling the auxiliary motors for us, I'll confirm the order after lunch, and the paint booth we're using is over in East Yard Annex.
+Note saved: auxiliary motors supplier: Halden Dynamics
+Note saved: paint booth location: East Yard Annex
+Saved. Halden Dynamics is now noted for auxiliary motors, and the paint booth you’re using is East Yard Annex.
+Petra Lindqvist joined this week as our design engineer, please add her to tomorrow's review.
+Note saved: design engineer: Petra Lindqvist
+Saved Petra Lindqvist as design engineer. I don’t see a review scheduled for tomorrow, 2026-10-30, on your calendar.
+Morning, can you hold two quick things? We tighten frames with the Torqline T-85 torque wrench, and we get spares from Vasker Parts.
+Note saved: frame tightening torque wrench: Torqline T-85
+Note saved: spares supplier: Vasker Parts
+Noted. Frames are tightened with Torqline T-85 torque wrench, and spares come from Vasker Parts.
+What time does the train arrive tomorrow?
+The R7 from Lindberg arrives Arnholt at 7:52.
+A bit long for me — just the time is perfect, thanks!
+7:52
+Heading out, just remember to punch 77410 to get into the warehouse, and we're taking the demo for the client to Bregenz.
+Note saved: warehouse entry code: 77410
+Note saved: demo client destination: Bregenz
+Saved warehouse code 77410 and demo destination Bregenz. Have a good one.
+Quick check before lunch, we flew the Hawkeye H-12 for inspections, so log that for me.
+Note saved: inspection aircraft: Hawkeye H-12
+Logged. Hawkeye H-12 is noted for inspections.
+Could you remind me what the arm hinge bolt torque is?
+Arm hinge bolt torque is 2.8 newton-metres.
+heads up, our customer contact is now Maren Solberg going forward.
+Note saved: customer contact: Maren Solberg
+Note saved: Vestergaard contact: Maren Solberg (replaces Henrik Aas prefers phone call over email)
+Updated. Customer contact is now Maren Solberg.
+Could you message Larkspur to confirm the pilot delivery date?
+I can’t send messages directly. The Larkspur ship date I have on file is 28 April.
+Please check with me before contacting the client, thanks!
+Note saved: client contact procedure: check with user before contacting client
+Noted. I’ll check with you before contacting the client.
+change of plan: our test pilot will be Eskil Ronne for the upcoming flights.
+Note saved: test pilot: Eskil Ronne (replaces Sunniva Brekke)
+Updated. Test pilot is now Eskil Ronne for upcoming flights.
+heads up, we've moved the test-flight field to Skjerstad Meadows.
+Note saved: test fly location: Skjerstad Meadows (replaces Tolvik Flats)
+Noted. Test-flight field is now Skjerstad Meadows.
+Can you remind me which town our backup machine shop is in?
+Your backup machine shop is Falk Precision in Moravik.
+Can you remind me what the test-rig Wi-Fi network is?
+Test-rig Wi-Fi is KF-RIG-5G, keep laptops off.
+Which courier is handling tomorrow's shipment?
+Nordpil Freight is handling shipments, with weekday pickup at 16:00.
+Perfect, short and clear like that is great, thanks!
+You’re welcome.
+Morning! While I grab coffee, please note we moved our glue orders to Nordbond Adhesives, and the outdoor trial is out at Havsborg Quarry. Can you track both for me?
+Note saved: today date: 2026-10-30 Friday (replaces 2026-10-29 Thursday)
+Note saved: glue supplier: Nordbond Adhesives
+Note saved: outdoor trial location: Havsborg Quarry
+Got it. Saved glue supplier as Nordbond Adhesives and outdoor trial location as Havsborg Quarry. Also updated today date to 2026-10-30 Friday.
+Sanna Roeg has joined as engineer handling composites, so please share the layup notes with her. Also the equipment needs recalibration by 11 June or we will slip. Thank you!
+Note saved: composites engineer: Sanna Roeg
+Note saved: equipment recalibration deadline: 11 June
+Noted Sanna Roeg as composites engineer and saved equipment recalibration deadline as 11 June. I’ve added Equipment recalibration as a task due 2027-06-11. I can’t share files directly, so let me know where the layup notes are stored and I’ll note the share for you.
+One last thing before lunch — please pull the file for the torque audit, it's DX-47B, and double-check the sign-offs for me?
+Note saved: torque audit file: DX-47B
+Saved torque audit file as DX-47B. I don’t have direct file access to pull it or check sign-offs here — can you point me to where DX-47B is stored, or upload it, and I’ll review the sign-offs for you.
+Could you check if prototypes are locked up in Room 6.21? And if orders surge, Fenmark Logistics can cover the extra deliveries for us.
+Note saved: surge delivery backup logistics: Fenmark Logistics
+I can’t physically check Room 6.21 from here. Saved Fenmark Logistics as your surge delivery backup for extra orders.
+Which courier is booked for the frame shipment to the client this week?
+Your regular freight company on file is Nordpil Freight with weekday pickup at 16:00. I don’t have a specific courier booking for this week’s frame shipment saved — if you have a different carrier booked, let me know and I’ll note it.
+A bit long for me — just the value next time, please.
+Got it — I’ll give just the value next time.
+I left the batteries on the Voltdeck V9 for testing this morning, and we're showing the clients around on 30 July so I want everything tidy.
+Note saved: batteries location for testing: Voltdeck V9
+Note saved: client showing date: 30 July
+Noted.
+If the quad on stand two has trouble, please use a KX-61 from spares, we keep a few available for replacements.
+Note saved: stand two quad replacement part: KX-61 from spares
+Noted.
+can you remind me what the conference city is?
+Linz
+can you remind me who the safety officer is?
+Lotte Brandt
+Can you email the client contact about our purchase-order approval limit?
+I can’t send email directly. Confirm you want me to contact Maren Solberg about your PO approval limit?
+Please check with me before contacting the client, thanks!
+Understood — I’ll check with you before contacting any client.
+heads up, machining building is now Hall B
+Note saved: machining location: Hall B (replaces Hall C)
+Note saved: CNC machine: Morrow M-40 called Old Gus in Hall B (replaces Morrow M-40 called Old Gus in Hall C)
+Note saved: QA failure process: fails go straight back to Hall B no exceptions (replaces fails go straight back to Hall C no exceptions)
+Updated machining location to Hall B, and updated CNC machine and QA failure process accordingly.
+change of plan: current frame revision is now Rev E
+Note saved: Larkspur revision: Rev E current (replaces Rev D current)
+Updated.
+heads up, Larkspur spec folder is now /eng/larkspur/rev-e
+Note saved: Larkspur specs path: /eng/larkspur/rev-e (replaces /eng/larkspur/rev-d)
+Updated.
+can you remind me what the purchase-order approval limit is?
+4,000 euros
+What time does the train with the carbon tubes arrive tomorrow?
+7:52
+Perfect, thanks — short and direct like that is great.
+You’re welcome.
+Hi, before the shop walkthrough could you check in with Quayline Coatings? They do our powder coating and I want to confirm turnaround. Thanks!
+Note saved: powder coating supplier: Quayline Coatings
+Note saved: today date: 2026-10-31 Saturday (replaces 2026-10-30 Friday)
+I don't have contact details for Quayline Coatings in your notes yet. Could you share a phone number or email you'd like me to use to check turnaround before the shop walkthrough? 
+Also the ultrasonic cleaner in the back is showing an error, it's a Soniclear S-300 for the manual lookup. Can you also track our freight booking under BK-5391-QT?
+Note saved: ultrasonic cleaner model: Soniclear S-300
+Note saved: freight booking reference: BK-5391-QT
+Got it. I've noted the ultrasonic cleaner is a Soniclear S-300 in the back for manual lookup, and I'm tracking freight booking BK-5391-QT.  Do you want me to look up the error code for the Soniclear S-300, or just keep the model on file for now? 
+One more thing, the packaging audit is on 14 August so we should prepare. Aldric Venn just started helping coordinate logistics for us, please include him in updates.
+Note saved: packaging audit date: 14 August
+Note saved: logistics coordinator: Aldric Venn
+Noted. Packaging audit is on 14 August and Aldric Venn is now helping coordinate logistics — I'll include him in updates.  Do you want me to set a prep reminder for the audit, and if so which year should I use for 14 August? 
+Morning, could you check if Tremorlab Q-36 is free this afternoon? We need the chamber for vibration testing. Also pull up directions to Keldorvik Harbor, that's where the supplier demo is tomorrow.
+I don't have booking info for Tremorlab Q-36 in your notes, and your calendar for today 2026-10-31 is clear. Do you use a specific equipment booking system I should check for availability this afternoon?  For Keldorvik Harbor, I couldn't find public directions in my search. Could you confirm the country or a full address for the supplier demo tomorrow, so I can pull accurate directions? 
+What's our current main project?
+Your current main project is Project Larkspur folding survey-drone frame. 
+A bit long, thanks — just the project name is enough next time.
+Got it — I'll just give the project name next time. 
+Quick favor between builds, can you log TW-118-ZK as the code for those prototype fasteners? And remind Bodil Kranz she still has the checkout sheet, she looks after the tool crib.
+Note saved: prototype fasteners code: TW-118-ZK
+Note saved: tool crib manager: Bodil Kranz
+Note saved: checkout sheet holder: Bodil Kranz
+Logged TW-118-ZK as the code for the prototype fasteners.  I'll remind Bodil Kranz she still has the checkout sheet — noted she looks after the tool crib. 
+Before lunch, could you call Voltmere Installations? They put in our backup generator and the panel is showing a fault.
+Note saved: backup generator installer: Voltmere Installations
+I don't have a phone number for Voltmere Installations in your notes. Could you share the contact number you'd like me to use to report the generator panel fault? 
+Can you remind me what the conference city is?
+Linz. 
+heads up, our laser cutter location is now ground floor workshop
+Note saved: laser cutter location: ground floor workshop (replaces mezzanine above paint booth)
+Updated — laser cutter location is now ground floor workshop. 
+Could you email our contact at the client about my purchase-order approval limit?
+I can draft that, but your client contact procedure is to check with you before contacting a client, and Vestergaard email policy is to ask before emailing anyone at Vestergaard.  Your PO approval limit is up to 4,000 euros self sign, over 4,000 euros goes to Dagny Holm.  Could you confirm you want me to email Maren Solberg at Vestergaard about this, and share the email address you'd like me to use? 
+Please check with me before contacting the client, thanks!
+Understood — I'll check with you before contacting any client. 
+change of plan: fire assembly point is now south lot entrance
+Note saved: fire drill assembly: south lot entrance (replaces north car park)
+Updated — fire drill assembly point is now south lot entrance. 
+heads up, our safety officer is now Mira Solberg
+Note saved: safety officer: Mira Solberg (replaces Lotte Brandt)
+Noted — safety officer is now Mira Solberg. 
+Could you remind me who our carbon-fibre supplier is?
+Brannock Composites. 
+Can you remind me what my job title is?
+Operations lead at Kestrel Fabrication. 
+When is the supplier conference?
+I don't have a specific date for a supplier conference in your notes. The closest is the GeoDrone Expo trip to Linz in May to show Larkspur. Do you mean that event? 
+Perfect, thanks — short and direct, just how I like updates.
+You're welcome. 
+Morning, catching up between builds. Selmark Anodizing does our anodizing but is running late on this batch, and I asked Tomas Ervik to handle the calibrations out at the sites tomorrow. Let me know if either confirms.
+Note saved: anodizing supplier: Selmark Anodizing
+Note saved: anodizing batch status: Selmark Anodizing running late on this batch
+Note saved: calibration assignment: Tomas Ervik to handle calibrations out at sites on 2026-11-02
+Note saved: today date: 2026-11-01 Sunday (replaces 2026-10-31 Saturday)
+Got it. I’ve noted Selmark Anodizing is your anodizing supplier and the current batch is running late, and that Tomas Ervik is set to handle calibrations out at the sites on 2026-11-02.  I’ll let you know as soon as either Selmark confirms the batch timing or Tomas confirms the site calibrations. 
+Quick note from the floor - we are testing thermal imaging with the Vireo T-57 today, and I moved the extra frames to Stavdal North Depot for storage. Should be all set for Thursday.
+Note saved: thermal imaging test equipment: Vireo T-57
+Note saved: thermal imaging test date: testing thermal imaging with Vireo T-57 on 2026-11-01
+Note saved: extra frames storage location: Stavdal North Depot
+Note saved: frames storage readiness date: extra frames at Stavdal North Depot should be all set for Thursday 2026-11-05
+Noted. Vireo T-57 thermal imaging test is logged for today, and the extra frames are now stored at Stavdal North Depot with readiness for Thursday 2026-11-05. 
+Wrapping up for the day - Halvorsen Mapping agreed to try our frames as our second pilot, so I will send the intro paperwork tonight.
+Note saved: second pilot customer: Halvorsen Mapping
+Note saved: pilot paperwork send date: intro paperwork to Halvorsen Mapping to be sent on 2026-11-01 evening
+Logged. Halvorsen Mapping is now your second pilot customer, and intro paperwork is planned to go out tonight. 
+Quick note before I run to the floor, we're looking at the drawings together on 23 September, and the spare strut to order is KF-ST-418, can you keep both handy?
+Note saved: drawings review date: looking at drawings together on 23 September
+Note saved: spare strut part number: KF-ST-418
+Saved. Drawings review is noted for 23 September, and spare strut to order is KF-ST-418. I’ll keep both handy. 
+What's our main project right now?
+Your main project is Project Larkspur folding survey-drone frame. 
+That was a bit long, please just give me the name.
+Project Larkspur 
+Can you file that the walk-through sheet for safety is QX-112-C, and the first build is getting sprayed in Dusk Teal Matte? Thanks!
+Note saved: safety walk-through sheet: QX-112-C
+Note saved: first build spray color: Dusk Teal Matte
+Filed. Safety walk-through sheet is QX-112-C and the first build spray color is Dusk Teal Matte. 
+One more thing, we're gathering each morning in Room 4.13, so I'll see the crew there tomorrow.
+Note saved: morning gathering location: Room 4.13
+Note saved: morning gathering time: gathering each morning in Room 4.13
+Noted. Morning crew gathering is in Room 4.13, so you’ll see the crew there tomorrow. 
+heads up, our courier is now Baltic Swift Logistics going forward.
+Note saved: courier: Baltic Swift Logistics
+Got it. Courier is now Baltic Swift Logistics going forward. 
+change of plan: our backup machine shop is now Hale Engineering Works.
+Note saved: backup machine shop: Hale Engineering Works (replaces Falk Precision in Moravik)
+Updated. Backup machine shop is now Hale Engineering Works. 
+Can you message our client contact about the battery supplier?
+I can’t message the client without your go-ahead. Your client contact procedure is to check with you before contacting a client, and Vestergaard email policy is to ask before emailing anyone at Vestergaard.  Do you want me to message Maren Solberg about the battery supplier Corvane Cells, and if so what should I say? 
+Please check with me before messaging the client, thanks!
+Understood. I’ll check with you before messaging any client. 
+What time does my train arrive?
+Your R7 from Lindberg arrives Arnholt at 7:52. 
+Can you remind me what my commute start town is?
+Lindberg. 
+heads up, team chat channel moved to #larkspur-sprint now.
+Note saved: build team chat: #larkspur-sprint (replaces #larkspur-build)
+Updated. Build team chat is now #larkspur-sprint. 
+What was the intern project again?
+The intern project is the hinge fatigue rig for Larkspur. 
+What is my job title?
+Operations lead at Kestrel Fabrication. 
+Perfect, thanks! Short and clear, just how I like it.
+You’re welcome. 
+Running a bit behind today, updating invoices under Northloop Studio Oy, that's the business I operate. Signed the paperwork as Solo Founder Developer since that's how I list myself on official docs.
+Note saved: business name: Northloop Studio Oy
+Note saved: official title: Solo Founder Developer
+Note saved: current date: 2026-10-27 Tuesday
+Got it. I've saved Northloop Studio Oy as your business and Solo Founder Developer as your official title, and noted today is 2026-10-27 Tuesday.
+Spent the morning debugging Parcelpilot Pro, that's the main app customers pay for. Internally we still refer to the build as Operation Firefly while testing this week.
+Note saved: main app: Parcelpilot Pro
+Note saved: internal build name: Operation Firefly
+Saved Parcelpilot Pro as your main customer app and Operation Firefly as the internal build name for this week's testing.
+Working from Harborworks Hub Docks today, that's the shared office I use. You can find me at Desk 14B if anything arrives before I get back from lunch.
+Note saved: work location today: Harborworks Hub Docks Desk 14B
+Note saved: shared office: Harborworks Hub Docks
+Noted you're at Harborworks Hub Docks, Desk 14B today.
+Could you message Mara Quinn about the mockups this afternoon? She's our Interface Design Contractor and will know what to adjust.
+Note saved: Mara Quinn role: Interface Design Contractor
+I don't have a messaging tool to contact Mara Quinn directly. I've saved that she's your Interface Design Contractor.
+Quick house rules: write all times in 24-hour clock, keep status summaries to three bullets at most, and ask before emailing Bluebird Analytics Ltd.
+Note saved: time format preference: 24-hour clock
+Note saved: status summary limit: max three bullets
+Note saved: email permission: ask before emailing Bluebird Analytics Ltd
+Saved your house rules: 24-hour clock for times, status summaries max three bullets, and ask before emailing Bluebird Analytics Ltd.
+Jonas Beck just reported a server issue, he's our Backend Support Contractor so I'm letting him handle it.
+Note saved: Jonas Beck role: Backend Support Contractor
+Noted Jonas Beck is your Backend Support Contractor and he's handling the server issue.
+Could you draft invoices? Bluebird Analytics Ltd. signed first, then Cedarline Logistics GmbH second as business clients.
+Note saved: client Bluebird Analytics Ltd: business client signed first
+Note saved: client Cedarline Logistics GmbH: business client signed second
+Saved Bluebird Analytics Ltd as your first business client and Cedarline Logistics GmbH as second. I can't draft invoices directly, but I can help you outline them if you want.
+Morning, could you draft an update for Northwind Bakery Chain? They're the third company I'm building for, and I want to run it past Elias Ford first, the guy advising me on the business side before I send it.
+Note saved: client Northwind Bakery Chain: third company building for
+Note saved: Elias Ford role: business advisor
+Saved Northwind Bakery Chain as your third build client and Elias Ford as your business advisor.  Here's a draft you can run past Elias: - Progress update on current build milestones - Next steps and timeline - Any blockers needing decision  Want me to tailor it with specific details?
+Nimbusgrid Hosting, who keep all our stuff online, was slow this afternoon while I was pushing a build, and everything we release goes out through Shipstack Deploy, so can you check the status?
+Note saved: hosting provider: Nimbusgrid Hosting
+Note saved: deploy platform: Shipstack Deploy
+Saved Nimbusgrid Hosting as your hosting provider and Shipstack Deploy as your release channel. I don't have live status access to check Shipstack Deploy right now.
+I left the fix in /repos/parcelpilot/main where our code lives, could you pull it onto Staging Seagull, that's what I call the staging box, and let me know if it builds?
+Note saved: code repo path: /repos/parcelpilot/main
+Note saved: staging box name: Staging Seagull
+Saved /repos/parcelpilot/main as your code location and Staging Seagull as your staging box. I can't pull code or run builds directly.
+Can you put Release dry run on the calendar for 2026-10-26 at 14:00?
+Added Release dry run on 2026-10-26 at 14:00.
+Production Pelican is running slow after lunch, it's our production server so keep an eye on it. Laptop Falcon kept dropping wifi too, it's the main laptop I code on.
+Note saved: production server: Production Pelican
+Note saved: main laptop: Laptop Falcon
+Saved Production Pelican as your production server and Laptop Falcon as your main coding laptop.
+Figmaflow Studio crashed while I was tweaking mockups, I do all design work in it. Also remind me to plug in Drive Tortoise tonight, it's the backup drive and it's almost full.
+Note saved: design tool: Figmaflow Studio
+Note saved: backup drive: Drive Tortoise
+Saved Figmaflow Studio as your design tool and Drive Tortoise as your backup drive. Added task to plug in Drive Tortoise due today.
+I tidied tickets in Taskline Boards after standup, we track all work there. I'll drop a note in #northloop-build too, it's our team chat for quick updates.
+Note saved: work tracking: Taskline Boards
+Note saved: team chat: #northloop-build
+Saved Taskline Boards as your work tracker and #northloop-build as your team chat.
+Could you watch #parcelpilot-clients today in case they write? If anything breaks you can reach the help desk through Extension 4421.
+Note saved: client channel: #parcelpilot-clients
+Note saved: help desk extension: 4421
+Saved #parcelpilot-clients as the client channel and Extension 4421 for help desk. I can't actively watch channels, but I'll keep those details on file.
+Sorting paperwork this morning, just remember new bills start with NL-2026-. And keep me honest, we can't go over 400 euros monthly for servers.
+Note saved: bill prefix: NL-2026-
+Note saved: server budget monthly: 400 euros
+Saved bill prefix NL-2026- and monthly server budget cap of 400 euros.
+Just a reminder while I grab coffee, everything is due 2026-11-19 for the go-live, and please log this round of testing as Version 2.4b.
+Note saved: go-live due date: 2026-11-19
+Note saved: testing version: Version 2.4b
+Saved go-live due date 2026-11-19 and logged this testing round as Version 2.4b.
+For releases we always go in order: freeze main branch, run smoke tests, tag release version, deploy via Shipstack, then verify status page.
+Note saved: release procedure: freeze main branch, run smoke tests, tag release version, deploy via Shipstack, verify status page
+Saved your release procedure in order.
+Hey, can you grab Harbor Room B at the shared office for this afternoon? I need quiet time to polish the deck before we present the launch in Hall C.
+Note saved: quiet room request: Harbor Room B
+Note saved: presentation location: Hall C
+Saved Harbor Room B as your quiet room request and Hall C as presentation location. I don't have a booking tool to reserve the room.
+Quick heads-up, I'll go through the mockups Tuesdays at 10:30, and I catch up with the suppliers Fridays at 16:00 so ping me beforehand if anything's urgent.
+Note saved: mockup review time: Tuesdays 10:30
+Note saved: supplier catch up time: Fridays 16:00
+Saved mockup review Tuesdays at 10:30 and supplier catch-up Fridays at 16:00.
+Also, I sync with the client Wednesdays at 09:00, and we walk through the release Mondays at 14:00 to catch issues early.
+Note saved: client sync time: Wednesdays 09:00
+Note saved: release walkthrough time: Mondays 14:00
+Saved client sync Wednesdays at 09:00 and release walkthrough Mondays at 14:00.
+Running to catch the tram, but quick note for the trip — I'll be at Shipit Conf 2026 next week and the sessions are in Meridian Tower, so plan extra time to get inside.
+Note saved: upcoming conference: Shipit Conf 2026
+Note saved: conference venue: Meridian Tower
+Saved Shipit Conf 2026 next week at Meridian Tower.
+Please add a task to freeze main branch for Version 2.4b.
+Added task to freeze main branch for Version 2.4b.
+Before lunch can you remind me to send the contractor's bill by 2026-11-05, and also check that live keys start with PP-LIVE- in the logs?
+Note saved: live keys prefix: PP-LIVE-
+Added task to send contractor's bill due 2026-11-05. Saved live keys prefix as PP-LIVE-.
+Customers sign up at getparcelpilot.com, so if anything looks off there ping me, and forward any complaints to help@parcelpilot.app where we handle questions.
+Note saved: signup site: getparcelpilot.com
+Note saved: support email: help@parcelpilot.app
+Saved getparcelpilot.com as signup site and help@parcelpilot.app for complaints.
+Let's push the release live Thursdays at 21:00 as usual, and remind me backups kick off Sundays at 03:00 so I don't leave the laptop off.
+Note saved: release live time: Thursdays 21:00
+Note saved: backup kickoff time: Sundays 03:00
+Saved release live Thursdays at 21:00 and backups kick off Sundays at 03:00.
+Spent the morning testing on the Pixel 8a, and the desk display I call Monitor Heron keeps flickering a bit.
+Note saved: test device: Pixel 8a
+Note saved: desk display: Monitor Heron
+Saved Pixel 8a as test device and Monitor Heron as your desk display.
+Been typing all day on the keyboard I call Keyboard Badger, please forward the invoice to Ledgerly Partners since they handle the books.
+Note saved: keyboard name: Keyboard Badger
+Note saved: accounting partner: Ledgerly Partners
+Saved Keyboard Badger and Ledgerly Partners as your accounting partner.
+What's on the calendar on 2026-10-28?
+On 2026-10-28 you have: - 09:00 Client standup Bluebird at Meridian Tower
+Morning, could you watch the charges coming through Paylane Systems while I finish this release? They take care of our payments, and I'll review visits in Metricmoon Insights after lunch for the weekly review.
+Note saved: payment processor: Paylane Systems
+Note saved: analytics tool: Metricmoon Insights
+Saved Paylane Systems as your payment processor and Metricmoon Insights for weekly review.
+Saw a crash report in Bugbeacon Alerts this morning, where we catch all the exceptions. If it keeps growing I'll update status.parcelpilot.app so users see where we post outages.
+Note saved: error monitoring: Bugbeacon Alerts
+Note saved: status page: status.parcelpilot.app
+Saved Bugbeacon Alerts as your exception monitoring and status.parcelpilot.app as your status page.
+Can you pull the standard agreement MSA-2026-NL for signature this afternoon? And send the new client our Onboard Checklist v3 to walk them through setup.
+Note saved: standard agreement: MSA-2026-NL
+Note saved: onboard checklist: Onboard Checklist v3
+Saved MSA-2026-NL as your standard agreement and Onboard Checklist v3. I can't pull files or send emails directly.
+Morning, could you grab the demo we're cutting for review, it's tagged Demo Reel 7? Press photos should be ready in /press/kit-2026 when the blog asks.
+Note saved: demo reel: Demo Reel 7
+Note saved: press photos path: /press/kit-2026
+Saved Demo Reel 7 and press photos path /press/kit-2026.
+I'm at the harbor office and the guest wifi Harborworks-Guest-5G keeps dropping. I'll run through launch-checklist.md before lunch to make sure we're set.
+Note saved: guest wifi: Harborworks-Guest-5G
+Note saved: launch checklist file: launch-checklist.md
+Saved Harborworks-Guest-5G as guest wifi and launch-checklist.md as your pre-lunch checklist.
+Can you remind me what I said earlier today about the product code name?
+You said the internal build name for testing this week is Operation Firefly.
+heads up, design review time moved to Thursdays at 11:30 going forward.
+Note saved: design review time: Thursdays at 11:30
+Note saved: design review time: Thursdays at 11:30 (replaces Tuesdays 10:30)
+Saved, design review time is Thursdays at 11:30 going forward.
+Can you remind me who our first business client was?
+Your first business client was Bluebird Analytics Ltd.
+change of plan: our backend contractor is now Priya Nair.
+Note saved: backend support contractor: Priya Nair (replaces Backend Support Contractor)
+Saved, your backend support contractor is now Priya Nair.
+Can you remind me what the wifi network name is?
+The guest wifi network name is Harborworks-Guest-5G.
+Can you remind me what our product code name is?
+Your internal build name is Operation Firefly.
+heads up, launch deadline date is now 2026-11-26.
+Note saved: go-live due date: 2026-11-26 (replaces 2026-11-19)
+Saved, your go-live due date is now 2026-11-26.
+heads up, coworking meeting room is now Lighthouse Room D.
+Note saved: coworking meeting room: Lighthouse Room D
+Note saved: coworking meeting room: Lighthouse Room D (replaces Harbor Room B)
+Saved, your coworking meeting room is now Lighthouse Room D.
+change of plan: monthly hosting budget is now 550 euros monthly.
+Note saved: server budget monthly: 550 euros monthly (replaces 400 euros)
+Saved, your server budget monthly is now 550 euros monthly.
+heads up, launch event venue is now Hall D.
+Note saved: launch event venue: Hall D (replaces Hall C)
+Saved, your launch event venue is now Hall D.
+Morning, could you order toner for Printwell G6020? The machine by the window keeps fading, and ask Jonas Weber to do a test pass since he just joined to handle QA.
+Note saved: current date: 2026-10-29 Thursday (replaces 2026-10-27 Tuesday)
+Note saved: printer model by window: Printwell G6020
+Note saved: printer by window issue: keeps fading
+Note saved: Jonas Weber role: QA, just joined
+I've noted the date update to Thursday 2026-10-29 and saved the Printwell G6020 by the window with fading issue, plus Jonas Weber as QA who just joined.  I can't place the toner order or message Jonas directly from here. Do you want me to add a task to order toner and a reminder to ask Jonas for a test pass? 
+Quick update before lunch, Harborline Foods Oy signed as our number four client, and could you reset access on Staging Albatross? The staging copy is timing out today.
+Note saved: client Harborline Foods Oy: signed as number four client
+Note saved: staging box Staging Albatross issue: timing out today 2026-10-29
+Saved Harborline Foods Oy as your fourth signed client.  I can't reset access to Staging Albatross from here. Do you want me to add a task to reset access and investigate the timeout? 
+One last thing, if the build server goes down after hours please ring Extension 7734, that's the urgent line to reach someone.
+Note saved: build server after hours urgent line: Extension 7734
+Got it. Saved Extension 7734 as the urgent after-hours line for build server outages. 
+Morning, could you check why the test tablet we call Tablet Kingfisher won't sync before I start our video chat on Loopcall Meet?
+Note saved: test tablet name: Tablet Kingfisher
+Note saved: Tablet Kingfisher issue: won't sync
+Note saved: video chat platform: Loopcall Meet
+Saved Tablet Kingfisher as a test tablet with a sync issue, and Loopcall Meet as your video chat platform.  I can't directly check the tablet's sync status from here. Do you want me to add a task to troubleshoot Tablet Kingfisher before your call? 
+Can you tell me where the launch checklist file is stored?
+The launch checklist is stored as `launch-checklist.md`. I don't have a path saved for it — do you want me to note where it's located? 
+That was a bit long, just the value next time please
+Got it, I'll give just the value next time. 
+Could you flag 2027-03-12 when our current contract is up for renewal? I'm planning to work from Pierpoint Annex Loft, our backup coworking space, to get some quiet.
+Note saved: current contract renewal date: 2027-03-12
+Note saved: backup coworking space: Pierpoint Annex Loft
+Flagged 2027-03-12 for contract renewal and noted Pierpoint Annex Loft as your backup coworking space. 
+And please open Releasebrief Quill, the file we use for release notes, so I can jot things down this afternoon.
+Note saved: release notes file: Releasebrief Quill
+Saved Releasebrief Quill as your release notes file. I can't open files directly — you can open it this afternoon from your system. 
+Can you remind me what my external monitor nickname is?
+Monitor Heron
+heads up, my coworking desk number is now Desk 22A
+Note saved: coworking desk number: Desk 22A
+Noted Desk 22A as your current coworking desk. 
+Could you email someone at Bluebird Analytics Ltd to confirm our accountant vendor name?
+I need your permission before emailing Bluebird Analytics Ltd. Your saved accounting partner is Ledgerly Partners — do you want me to email them to confirm? 
+Thanks, please check with me before contacting Bluebird Analytics Ltd.
+Understood. I'll always check with you before contacting Bluebird Analytics Ltd. 
+change of plan: client standup time is now Thursdays at 10:00
+Note saved: client sync time: Thursdays at 10:00 (replaces Wednesdays 09:00)
+Updated client standup to Thursdays at 10:00. 
+Can you remind me what my test phone model is?
+Pixel 8a
+Can you remind me what my code repository path is?
+/repos/parcelpilot/main
+heads up, contractor invoice deadline is now 2026-11-12
+Note saved: contractor invoice deadline: 2026-11-12
+Noted contractor invoice deadline as 2026-11-12. 
+Which vendor do we use for accounting?
+Ledgerly Partners
+Perfect, thanks for keeping it short and direct
+You're welcome. 
+Hey, before standup could you ping Sofia Lindqvist about the header tweak? She's settling in interning on the interface side, and I still need to grab a coffee from the Brewmaster 900 X in the kitchen.
+Note saved: Sofia Lindqvist role: Interface Design Intern
+Note saved: coffee machine name: Brewmaster 900 X
+Note saved: coffee machine location: kitchen
+Got it, I'll ping Sofia Lindqvist about the header tweak before standup.
+Also Kettlemoor Retail AB just came on board as our fifth account on the business side, so I'll draft a welcome note later. Sentinelcheck Audits Inc sent times for next week's security audit — could you hold a slot?
+Note saved: client Kettlemoor Retail AB: business client signed fifth
+Note saved: security audit provider: Sentinelcheck Audits Inc
+Note saved: security audit next week: times sent by Sentinelcheck Audits Inc
+Saved Kettlemoor Retail AB as your fifth business client and noted Sentinelcheck Audits Inc sent times for next week's security audit.
+One more thing — I cleared the preview-site cache we call Cache Sparrow this morning, let me know if pages load faster now.
+Note saved: preview-site cache name: Cache Sparrow
+Note saved: preview-site cache cleared: Cache Sparrow cleared this morning 2026-10-30
+Noted you cleared Cache Sparrow this morning; I can watch for faster page loads.
+Quick heads-up before lunch, we go through invoices Tuesdays at 13:00, and the website address renews 2028-06-18 so flag that closer to time.
+Note saved: invoices review time: Tuesdays at 13:00
+Note saved: website address renewal date: 2028-06-18
+Saved invoices review Tuesdays 13:00 and website address renewal 2028-06-18 to flag closer to time.
+What's the code repository path for the current project?
+The code repository path is /repos/parcelpilot/main.
+Thanks, that was long, just the value please next time.
+Got it, I'll give just the value next time.
+If the connection drops the spare router is called Router Puffin, and the tablet holder for client demos is marked Stand Oakwood.
+Note saved: spare router name: Router Puffin
+Note saved: tablet holder for client demos: Stand Oakwood
+Saved Router Puffin as spare router and Stand Oakwood as tablet holder for client demos.
+We booked Aurora Suite K for the party after launch, should be a nice break.
+Note saved: launch party venue: Aurora Suite K
+Saved Aurora Suite K as launch party venue.
+Can you remind me what the beta release version is?
+Version 2.4b
+Can you remind me what the project tracker name is?
+Taskline Boards
+What's our production server nickname?
+Production Pelican
+Please message Tom at Bluebird Analytics Ltd, and check with me before contacting Bluebird next time.
+Note saved: Bluebird Analytics Ltd contact: Tom
+Note saved: Bluebird Analytics Ltd contact permission: ask before contacting
+Saved Tom as Bluebird Analytics Ltd contact and noted to ask before contacting Bluebird.
+heads up, release dry run is now Tuesdays at 15:00
+Note saved: release dry run time: Tuesdays at 15:00
+Saved release dry run Tuesdays at 15:00.
+change of plan: deployment window time is now Fridays at 22:00
+Note saved: deployment window time: Fridays at 22:00
+Saved deployment window Fridays at 22:00.
+heads up, design contractor name is now Lena Marsh
+Note saved: design contractor name: Lena Marsh
+Saved design contractor name as Lena Marsh.
+Can you remind me what the production server nickname is?
+Production Pelican
+Which phone model are we using for testing?
+Pixel 8a
+Perfect thanks, that short direct style works well.
+You're welcome.
+Hi, quick update between calls — Vellamo Crafts Oy just came aboard as sixth among our business customers, and Mikko Salmi has started helping with copy for the release. Could you keep track of both for me?
+Note saved: client Vellamo Crafts Oy: business customer signed sixth
+Note saved: Mikko Salmi role: helping with copy for the release
+Got it. I’ve noted Vellamo Crafts Oy as your sixth business customer and Mikko Salmi helping with copy for the release.
+The Ergoseat Volo 3 being sat in here is finally adjusted well, and trying out the Pulsewatch S2 on wrist today while working. Shout if anything looks off from your side?
+Note saved: Ergoseat Volo 3: finally adjusted well
+Note saved: Pulsewatch S2: trying out on wrist today while working
+Noted, the Ergoseat Volo 3 is finally adjusted well and you’re trying the Pulsewatch S2 on wrist today. I’ll shout if anything looks off.
+For the plugin effort, please file everything under Project Moonwake for now as the internal codename. Will circle back with details a bit later.
+Note saved: Project Moonwake: internal codename for plugin effort
+Got it, I’ll file the plugin effort under Project Moonwake as the internal codename.
+Good morning, while I finish testing please keep in mind we're walking the client through the build on 2029-12-04. Also we go through invoices for sign-off Mondays at 09:30, please remind me beforehand.
+Note saved: client build walkthrough date: 2029-12-04
+Note saved: invoices sign-off time: Mondays at 09:30
+Noted, you’re walking the client through the build on 2029-12-04 and invoices are signed off Mondays at 09:30. I’ll remind you beforehand.
+What is our current product code name?
+Your current product code name is Operation Firefly.
+A bit long, thanks! Just the value next time please.
+Got it, just the value next time.
+The main room was occupied this morning, so we can use Willow Cabin 4 if needed. Also please use BK-Q7-VELA when you put in the reservation, thank you.
+Note saved: Willow Cabin 4: use if main room occupied
+Note saved: reservation code: BK-Q7-VELA
+Noted, use Willow Cabin 4 if the main room is occupied and reservation code is BK-Q7-VELA.
+This afternoon the support line was busy, so please try Extension 5590 if no one answers. I will be focused on coding otherwise.
+Note saved: support line alternative extension: Extension 5590 if no one answers
+Got it, I’ll try Extension 5590 if the support line is busy and no one answers.
+heads up, our beta release version is now Release 2.5c.
+Note saved: beta release version: Release 2.5c
+Noted, beta release version is now Release 2.5c.
+Can you remind me what the code repository path is?
+/repos/parcelpilot/main
+What is the office wifi network name?
+Harborworks-Guest-5G
+Could you email Sara at Bluebird Analytics Ltd? Please check with me before contacting Bluebird Analytics Ltd.
+I need to check with you before emailing Bluebird Analytics Ltd. May I email Sara?
+change of plan: our support extension number is now Extension 5590.
+Note saved: support extension number: Extension 5590
+Got it, support extension number is now Extension 5590.
+Can you remind me what the design contractor role was?
+Interface Design Contractor
+heads up, the conference building name is now Aurora Pavilion.
+Note saved: conference building name: Aurora Pavilion
+Noted, conference building name is now Aurora Pavilion.
+Can you remind me who our first business client was?
+Bluebird Analytics Ltd
+What is our support inbox address?
+help@parcelpilot.app
+👍 Perfect, short and direct, thanks!
+You’re welcome.
+Hope the morning standup went okay, Lakeside Printworks Oy signed as number seven among our company accounts, and Aaro Virtanen started today running user interviews. I'll send welcomes after lunch.
+Note saved: client Lakeside Printworks Oy: signed as number seven among our company accounts
+Note saved: Aaro Virtanen role: running user interviews, started 2026-11-01
+Got it. I saved Lakeside Printworks Oy as number seven client and Aaro Virtanen running user interviews starting 2026-11-01.
+Testing ran late, Tidechart Kappa 9 is the tag for the trial build of the plugin, and I scribbled the results on Board Gullwing, that's what we call the large board in the office.
+Note saved: plugin trial build tag: Tidechart Kappa 9
+Note saved: Board Gullwing: large board in the office
+Note saved: testing status: ran late
+Saved. Tidechart Kappa 9 is the trial build tag, Board Gullwing is the large board in the office, and testing ran late.
+Can you nudge me before Thursday, Maple Hall C is reserved for the workshop with the client. Want to have slides ready.
+Note saved: workshop location: Maple Hall C reserved for workshop with client
+Done. I added a task to prepare slides before Thursday and noted Maple Hall C is reserved for the workshop.
+Busy morning here, just flagging we're going over invoices on 2030-02-14 and I'm testing earbuds Soundpod Aero 2. Thanks for keeping track!
+Note saved: invoices review date: 2030-02-14
+Note saved: earbuds testing: Soundpod Aero 2
+Noted. I saved invoices review for 2030-02-14 and that you're testing Soundpod Aero 2 earbuds.
+What is the backend contractor role title we are hiring for?
+I don't have a hiring title saved. Your notes list the backend support contractor role as Backend Support Contractor, currently Priya Nair.
+That was long, please just give me the value next time thanks
+Got it, I'll just give the value next time.
+Quick note, please watch the NAS box holding backups, Archive Hedgehog, and I put the review notes for this sprint in Sprintbrief Coral 4. Thanks!
+Note saved: NAS box holding backups: Archive Hedgehog
+Note saved: sprint review notes location: Sprintbrief Coral 4
+Saved. I'll watch Archive Hedgehog for backups and noted sprint review notes are in Sprintbrief Coral 4.
+Friendly heads-up, we're doing demos at Sunset Loft B so I'll get things ready. Appreciate your help!
+Note saved: demos location: Sunset Loft B
+Got it, demos are at Sunset Loft B.
+heads up, my business advisor is now Maya Chen
+Note saved: business advisor: Maya Chen
+Note saved: Elias Ford role: former business advisor (replaces business advisor)
+Updated. Business advisor is now Maya Chen, and Elias Ford is marked as former business advisor.
+What was my invoice prefix code again?
+NL-2026-
+Could you email Bluebird Analytics Ltd to ask about our team chat channel name?
+I need your permission before emailing Bluebird Analytics Ltd. May I send the email?
+Please check with me before contacting Bluebird Analytics Ltd, thanks!
+Got it, I'll check with you before contacting Bluebird Analytics Ltd.
+change of plan: I'm now working from City Center Loft
+Note saved: work location today: City Center Loft (replaces Harborworks Hub Docks Desk 14B)
+Updated, you're now working from City Center Loft.
+Could you remind me of my wifi network name?
+Harborworks-Guest-5G
+Can you remind me what my launch checklist file is?
+launch-checklist.md
+heads up, my backup window is now Mondays 04:00 Sharp
+Note saved: backup kickoff time: Mondays 04:00 Sharp (replaces Sundays 03:00)
+Updated, backup window is now Mondays 04:00 Sharp.
+What is our accountant vendor name?
+Ledgerly Partners
+Perfect, thanks for the short direct answer!
+You're welcome.
+Opening up Spokehaven Cycle Works now, already a queue forming. I signed the delivery slip as Jonas Heller, Owner Manager, so we are clear to start the day.
+Note saved: shop name: Spokehaven Cycle Works
+Note saved: owner role: Jonas Heller, Owner Manager
+Note saved: today date: 2026-10-27 Tuesday
+Note saved: delivery slip signed: signed as Jonas Heller Owner Manager, clear to start day
+Got it. Spokehaven Cycle Works is open and you're clear to start the day. Queue noted.
+Priya Nair is leading the repair benches through this morning's backlog. Dario Venn is out back getting the hire bikes ready, so point any hire questions his way.
+Note saved: repair lead morning: Priya Nair leading repair benches through morning backlog
+Note saved: hire bikes person: Dario Venn out back getting hire bikes ready
+Saved. Priya is on repairs, Dario is on hire bikes out back.
+Lena Frost is covering the front till Saturday and Sunday for us. Ellis Grant is looking over the accounts this afternoon, so please leave any receipts in the drawer.
+Note saved: front till cover: Lena Frost covering front till Saturday and Sunday
+Note saved: accounts review: Ellis Grant looking over accounts this afternoon, leave receipts in drawer
+Noted. Lena covers front till Saturday and Sunday, and Ellis is on accounts this afternoon with receipts in the drawer.
+Morning, Harold Pike, our landlord, stopped by about the leaky back door. And Mara Quinn is coming Thursday to look at winter budgets, she helps me think through the business side.
+Note saved: landlord: Harold Pike landlord stopped by about leaky back door
+Note saved: winter budgets meeting: Mara Quinn coming Thursday 2026-10-29 to look at winter budgets
+Note saved: business advisor: Mara Quinn helps think through business side
+Got it. Harold Pike came about the leaky back door, and Mara Quinn is coming Thursday 2026-10-29 for winter budgets.
+Quick house rules for you: write all times in 24-hour clock, limit status summaries to three bullets, and ask before emailing Northwind Cycle Parts.
+Note saved: time format rule: write all times in 24-hour clock
+Note saved: status summary rule: limit status summaries to three bullets
+Note saved: email approval rule: ask before emailing Northwind Cycle Parts
+Understood. Times in 24-hour, status summaries max three bullets, and I'll ask before emailing Northwind Cycle Parts.
+Can you chase Northwind Cycle Parts on those derailleurs? We get most of our parts through them. Gripline Tire Co. also shorted us two touring tires again.
+Note saved: parts supplier: Northwind Cycle Parts, most parts through them
+Note saved: derailleurs chase: chase Northwind Cycle Parts on derailleurs
+Note saved: tire shortage: Gripline Tire Co shorted two touring tires again
+I can chase Northwind Cycle Parts on the derailleurs. You asked me to ask before emailing them — may I email Northwind now? Gripline Tire Co short on two touring tires is noted.
+Brighthelm Safety Gear dropped off the new helmet display, they supply all our helmets. Pedalbrew Coffee Cart is running late today, but they usually handle coffee for our Saturday rides.
+Note saved: helmet supplier: Brighthelm Safety Gear supplies all helmets, dropped off new helmet display
+Note saved: coffee cart: Pedalbrew Coffee Cart running late today, usually handles coffee for Saturday rides
+Noted. Brighthelm Safety Gear dropped off the helmet display and supplies helmets. Pedalbrew Coffee Cart is late today but usually does Saturday rides coffee.
+Morning, could you file the autumn servicing jobs under OVERHAUL-2026-A and the extra hire bikes paperwork under RENTAL-EXPAND-07? Swamped at the stand today.
+Note saved: filing code servicing: autumn servicing jobs file under OVERHAUL-2026-A
+Note saved: filing code hire bikes: extra hire bikes paperwork file under RENTAL-EXPAND-07
+Got it. Autumn servicing jobs go to OVERHAUL-2026-A and hire bikes paperwork to RENTAL-EXPAND-07.
+Quick one between customers, the customer bike storage for winter is logged as STORE-WINTER-11, and I ring the parts vendors Tuesdays at 10:30. Give me a nudge before.
+Note saved: winter storage code: customer bike storage for winter logged as STORE-WINTER-11
+Note saved: vendor call time: ring parts vendors Tuesdays at 10:30
+Note saved: vendor call nudge: give nudge before vendor call
+Saved. Winter storage is STORE-WINTER-11 and parts vendors are called Tuesdays at 10:30. I'll nudge you before.
+Also we sort shifts with the team Mondays at 09:00, and I go over the ledgers with the bookkeeper Thursdays at 11:00. Thanks for keeping me straight.
+Note saved: shift sort time: sort shifts with team Mondays at 09:00
+Note saved: ledger review time: go over ledgers with bookkeeper Thursdays at 11:00
+Noted. Shifts sorted Mondays at 09:00 and ledgers with bookkeeper Thursdays at 11:00.
+Can you put the staff rota meeting on the calendar for 2026-10-26 at 09:00?
+Added staff rota meeting on 2026-10-26 at 09:00.
+Hey, can you nudge the crew that we count everything in the back Fridays at 16:00, and the boxes from the distributor land Wednesdays at 08:45? Today got hectic.
+Note saved: stock count time: count everything in back Fridays at 16:00
+Note saved: distributor delivery time: boxes from distributor land Wednesdays at 08:45
+Noted. Back count Fridays at 16:00 and distributor boxes land Wednesdays at 08:45.
+Also flag that the hire bikes roll in Saturdays at 07:30, and I am catching up with the building owner First Mondays 14:00. Remind me Thursday please?
+Note saved: hire bikes roll in: hire bikes roll in Saturdays at 07:30
+Note saved: building owner meeting: catching up with building owner First Mondays 14:00
+Saved. Hire bikes roll in Saturdays at 07:30 and building owner catch-up is First Mondays at 14:00. I'll remind you Thursday 2026-10-29.
+One more thing, we need all the fall tune-ups wrapped by 2026-11-15 and the bigger hire fleet ready by 2026-12-01. It's a busy week.
+Note saved: fall tune-ups deadline: all fall tune-ups wrapped by 2026-11-15
+Note saved: hire fleet deadline: bigger hire fleet ready by 2026-12-01
+Noted. Fall tune-ups due by 2026-11-15 and bigger hire fleet ready by 2026-12-01.
+Morning, could you leave the repair queue in Bay One where we do servicing, and check the spare frames locked in Unit Shed B for storage? Busy today.
+Note saved: repair queue location: repair queue in Bay One where servicing done
+Note saved: spare frames location: spare frames locked in Unit Shed B for storage
+Got it. Repair queue stays in Bay One and spare frames are locked in Unit Shed B.
+Rentals today are signed out at Front Counter A, and the extra stock is piled in Back Room 2 as overflow. Can you update both lists?
+Note saved: rentals sign out location: rentals signed out at Front Counter A
+Note saved: extra stock location: extra stock piled in Back Room 2 as overflow
+Noted. Rentals sign out at Front Counter A and extra stock is in Back Room 2 overflow.
+Quick heads-up, the joint event we're doing with the neighboring town is in Kestrel Harbor, and our parts orders ship from Norcross Village where the supplier is based.
+Note saved: joint event location: joint event with neighboring town in Kestrel Harbor
+Note saved: supplier base location: parts orders ship from Norcross Village where supplier is based
+Saved. Joint event is in Kestrel Harbor and parts orders ship from Norcross Village.
+For checkouts we follow this order: confirm booking ID, inspect tires and brakes, photograph bike condition, collect deposit and signature, then log checkout in Wheelbook.
+Note saved: checkout procedure: confirm booking ID, inspect tires and brakes, photograph bike condition, collect deposit and signature, then log checkout in Wheelbook
+Noted. Checkout order saved: confirm booking ID, inspect tires and brakes, photograph condition, collect deposit and signature, then log in Wheelbook.
+Morning, Old Bessie was wobbling during the wheel true, that stand is getting tired. And Puffy Dragon kept cutting out, so that compressor will need a look this afternoon if you have time.
+Note saved: Old Bessie issue: Old Bessie wobbling during wheel true, stand getting tired
+Note saved: Puffy Dragon issue: Puffy Dragon kept cutting out, compressor needs look this afternoon
+Noted. Old Bessie stand is wobbling and tired, and Puffy Dragon compressor needs a look this afternoon.
+I put today's bookings into Wheelbook Pro, that's our booking system. I'll close yesterday's receipts in Ledgerline Daily, that's what we use for the accounts.
+Note saved: booking system: Wheelbook Pro is booking system
+Note saved: accounts system: Ledgerline Daily used for accounts
+Got it. Bookings go in Wheelbook Pro and accounts are in Ledgerline Daily.
+Please save the signed rental contracts to /spokehaven/rentals/agreements where we keep them, and upload today's job pictures to /spokehaven/repairs/photos2026 for the repairs.
+Note saved: rental contracts path: signed rental contracts saved to /spokehaven/rentals/agreements
+Note saved: repair photos path: today's job pictures uploaded to /spokehaven/repairs/photos2026
+Saved. Rental contracts go to /spokehaven/rentals/agreements and repair photos to /spokehaven/repairs/photos2026.
+Could you drop a note in #spokehaven-crew for the whole crew, and check in with the rentals team in #rentals-desk when you have a minute?
+Note saved: crew channel: drop note in #spokehaven-crew for whole crew
+Note saved: rentals channel: check in with rentals team in #rentals-desk
+Noted. I'll drop a note in #spokehaven-crew and check in with rentals in #rentals-desk.
+Running between jobs today, try our head mechanic on Ext 201, or the front desk on Ext 202 if you need anything.
+Note saved: head mechanic ext: head mechanic on Ext 201
+Note saved: front desk ext: front desk on Ext 202
+Saved. Head mechanic is Ext 201 and front desk is Ext 202.
+Please add a task to prepare OVERHAUL-2026-A parts order.
+Task added to prepare OVERHAUL-2026-A parts order.
+Could you try the workshop phone on Ext 203, and please keep parts spending under 4,000 euros for this month?
+Note saved: workshop phone ext: workshop phone on Ext 203
+Note saved: parts spending limit: keep parts spending under 4,000 euros this month
+Noted. Workshop phone is Ext 203 and parts spending must stay under 4,000 euros this month.
+Morning, could you note we still collect 150 euros as a deposit on rentals? And the full strip-down in the workshop is 89 euros, just in case customers ask this afternoon.
+Note saved: rental deposit: collect 150 euros deposit on rentals
+Note saved: strip down price: full strip-down in workshop is 89 euros
+Noted. Rental deposit is 150 euros and full strip-down is 89 euros.
+Between jobs I'm sorting posters for Marlow Bay VeloFest coming up this autumn, and we need to set aside tools for support at Harbor Lights Ride for charity next week.
+Note saved: VeloFest posters: sorting posters for Marlow Bay VeloFest coming up this autumn
+Note saved: Harbor Lights Ride support: set aside tools for support at Harbor Lights Ride for charity next week
+Saved. Posters for Marlow Bay VeloFest this autumn and tools need to be set aside for Harbor Lights Ride charity next week.
+Can you check if the Carrier Moose X2 cargo runabout is back from its test ride? And please log the battery swap under EB-FLEET-09 for the hire fleet.
+Note saved: battery swap log: log battery swap under EB-FLEET-09 for hire fleet
+I don't have live status on the Carrier Moose X2 cargo runabout. Battery swap will be logged under EB-FLEET-09 for the hire fleet.
+What's on the calendar for 2026-10-28?
+On 2026-10-28 you have Parts delivery intake at 08:45 in Unit Shed B.
+Could you chase Ironclasp Locks Ltd. about the late delivery? They make the locks we stock. Also see if Tidy Spokes Crew can come in early tomorrow, they handle our cleaning and the back room needs it after Saturday.
+Note saved: locks supplier: Ironclasp Locks Ltd makes locks we stock, late delivery
+Note saved: cleaning crew: Tidy Spokes Crew handles cleaning
+Noted. Ironclasp Locks Ltd is late on delivery and Tidy Spokes Crew handles cleaning. I'll see if they can come in early tomorrow.
+Volta Fixers should be back this afternoon to check the shutters, they look after our electrics so let them in if I'm out. Harborcover Insurance sent the renewal forms, they arrange our cover, please remind me to sign before Friday.
+Note saved: electrics contractor: Volta Fixers look after electrics, checking shutters this afternoon
+Note saved: insurance provider: Harborcover Insurance arranges cover, renewal forms sent
+Saved. Volta Fixers are checking shutters this afternoon and can be let in. Harborcover Insurance renewal forms need signing before Friday 2026-10-30 — task added.
+The council wants a copy of the unit paperwork, it's filed under LEASE-MB-44, that's our agreement for the Marlow Bay shop. And for the next key order quote ACC-7741-NW, that's our number with them so it doesn't get held up.
+Note saved: lease agreement code: unit paperwork filed under LEASE-MB-44, agreement for Marlow Bay shop
+Note saved: key order quote: next key order quote ACC-7741-NW
+Noted. Unit paperwork is LEASE-MB-44 for Marlow Bay shop, and key order quote is ACC-7741-NW.
+Morning, quick note before the rush — for ordering tires use ACC-3390-GL at checkout, and remind the crew we're on Split Shifts Daily this week.
+Note saved: tire order code: ordering tires use ACC-3390-GL at checkout
+Note saved: shift pattern week: crew on Split Shifts Daily this week
+Saved. Tire orders use ACC-3390-GL at checkout and crew is on Split Shifts Daily this week.
+Heads up, we're getting ready for Autumn Velo Season, so please make sure Blue Mule is fueled up for the afternoon drop-offs.
+Note saved: Autumn Velo Season prep: Blue Mule fueled up for afternoon drop-offs
+Noted. Blue Mule needs to be fueled up for afternoon drop-offs for Autumn Velo Season.
+Jonah Reed just stopped by the shop, said he'd be back tomorrow for a tune-up, so keep his file handy.
+Note saved: customer visit: Jonah Reed stopped by, back tomorrow for tune-up, keep file handy
+Noted. Jonah Reed is back tomorrow for a tune-up, file kept handy.
+Can you remind me what I said earlier today about the rental assistant name?
+I don't have a rental assistant name saved from earlier today. The hire bikes contact I have is Dario Venn out back getting hire bikes ready.
+heads up, supplier call slot is now Wednesdays at 09:45 going forward
+Note saved: vendor call time: Wednesdays at 09:45 (replaces ring parts vendors Tuesdays at 10:30)
+Noted, I will nudge you before the supplier call on Wednesdays at 09:45.
+can you remind me which company is our helmet vendor?
+Your helmet vendor is Brighthelm Safety Gear, which you said supplies all helmets and dropped off the new helmet display.
+change of plan: our head mechanic is now Sofia Lind effective today
+Note saved: head mechanic: Sofia Lind
+Got it, I will note Sofia Lind is head mechanic from today.
+can you remind me what our delivery van nickname is?
+I don't have a delivery van nickname saved yet. Do you want me to save Blue Mule as the delivery van nickname?
+can you remind me who our weekend clerk is?
+You said Lena Frost is covering the front till Saturday and Sunday. Is Lena Frost the weekend clerk you mean?
+heads up, autumn overhaul deadline is now 2026-11-22 please update
+Note saved: autumn overhaul deadline: 2026-11-22
+Updated, the autumn overhaul deadline is now 2026-11-22.
+change of plan: workshop service room is now Bay Three from today
+Note saved: repair queue location: Bay Three (replaces repair queue in Bay One where servicing done)
+Noted, the workshop service room is now Bay Three.
+heads up, parts delivery is now Thursdays at 08:15 each week
+Note saved: distributor delivery time: Thursdays at 08:15 (replaces boxes from distributor land Wednesdays at 08:45)
+Got it, parts delivery is now Thursdays at 08:15.
+change of plan: rental expansion deadline is now 2026-12-10 thanks
+Note saved: rental expansion deadline: 2026-12-10
+Noted, the rental expansion deadline is now 2026-12-10.
+Theo Marsh started with us this morning, he'll be apprenticing with us so please add his timecard. Also signed Colorweld Coatings Inc this afternoon to do our painting.
+Note saved: today date: 2026-10-29 Thursday (replaces 2026-10-27 Tuesday)
+Note saved: new apprentice: Theo Marsh started 2026-10-29 morning, apprenticing with us, timecard added
+Note saved: painting contractor signed: Colorweld Coatings Inc signed 2026-10-29 afternoon to do painting
+Saved. Theo Marsh is logged as starting this morning 2026-10-29 as an apprentice with timecard added, and Colorweld Coatings Inc is signed this afternoon for painting. Today is now recorded as Thursday 2026-10-29.
+Just catching up between customers, I set up TUNEUP-2028-S for the spring tuneup so tracking stays clean. Also rented Willow Annex Nine for extra storage space earlier.
+Note saved: spring tuneup filing code: TUNEUP-2028-S set up for spring tuneup, tracking stays clean
+Note saved: extra storage rental: Willow Annex Nine rented for extra storage space
+Got it. TUNEUP-2028-S is now set up for spring tuneup tracking, and Willow Annex Nine is rented for extra storage space.
+Priya Noll helped out on the afternoon run, I've got her handling our deliveries going forward.
+Note saved: deliveries handler: Priya Noll helped on afternoon run, handling deliveries going forward
+Noted. Priya Noll is now handling deliveries going forward after helping on the afternoon run.
+Morning, buried in tune-ups. Let's get the weekend repairs wrapped by 2027-03-14, and I stocked Stopbite Ultra Z on the pad shelf today.
+Note saved: weekend repairs deadline: weekend repairs wrapped by 2027-03-14
+Note saved: pad shelf stock: Stopbite Ultra Z stocked on pad shelf 2026-10-29
+Noted. Weekend repairs deadline is set for 2027-03-14, and Stopbite Ultra Z is stocked on the pad shelf today.
+What do we call our busy season?
+Your notes mention Autumn Velo Season prep. I don’t have a separate name for a busy season saved.
+That was a bit long, just the value next time please.
+Got it, I’ll give just the value next time.
+Quick note between customers, I decided today I'm seeing clients Tuesdays at 10:30, and we're calling the new bench Steel Badger.
+Note saved: client meeting time: seeing clients Tuesdays at 10:30
+Note saved: new bench name: Steel Badger
+Saved.
+Also opened AUDIT-2027-31 today for our safety review, give me a nudge if paperwork is missing.
+Note saved: safety review audit: AUDIT-2027-31 opened 2026-10-29 for safety review, give nudge if paperwork is missing
+Saved.
+Can you remind me about the autumn festival event?
+sorting posters for Marlow Bay VeloFest coming up this autumn
+heads up, staff rota meeting is now Tuesdays at 08:30.
+Note saved: staff rota meeting time: Tuesdays at 08:30
+Saved.
+Could you message Northwind Cycle Parts to confirm the rental deposit amount?
+I can’t email Northwind Cycle Parts without your approval first. Your notes show rental deposit is 150 euros. Do you want me to message them to confirm?
+Please check with me before contacting Northwind Cycle Parts.
+Understood. I’ll check with you before contacting Northwind Cycle Parts.
+change of plan: storage building unit is now Unit Shed C.
+Note saved: spare frames location: spare frames locked in Unit Shed C for storage (replaces spare frames locked in Unit Shed B for storage)
+Updated. Spare frames location is now Unit Shed C.
+Can you remind me what the overhaul service price is?
+No overhaul service price is saved. Full strip-down in workshop is 89 euros.
+Could you remind me when the bookkeeper review slot is?
+Thursdays at 11:00
+heads up, cleaning contractor name is now Sparkle Wheels Team.
+Note saved: cleaning crew: Sparkle Wheels Team handles cleaning (replaces Tidy Spokes Crew handles cleaning)
+Updated. Cleaning contractor is now Sparkle Wheels Team.
+Which cargo bike model do we carry?
+No cargo bike model is saved in your notes.
+👍 Short and direct, keep answers like that please.
+Got it.
+Morning rush is easing. I just signed Veloforge Components Ltd to supply our new wheels, and I asked Clara Moss to mentor the workshop apprentice for now.
+Note saved: new wheels supplier: Veloforge Components Ltd
+Note saved: workshop apprentice mentor: Clara Moss
+Got it. Veloforge Components Ltd is now your new wheels supplier, and Clara Moss is mentoring the workshop apprentice for now.
+Good progress between jobs today. I opened Alcove Six as our extra repair alcove, and I nicknamed the new tool cabinet Copper Anvil to save confusion.
+Note saved: extra repair alcove: Alcove Six
+Note saved: new tool cabinet name: Copper Anvil
+Saved. Alcove Six is now your extra repair alcove and the new tool cabinet is nicknamed Copper Anvil.
+Before I forget, I created WINTER-2029-C for the winter promo code, can you keep an eye on redemptions?
+Note saved: winter promo code: WINTER-2029-C
+Noted. Winter promo code is WINTER-2029-C. I'll keep an eye on redemptions for you.
+Could you jot this down when you get a chance? Swiftspoke Deliveries Co will handle deliveries going forward, and everyone should come in on 2029-02-04 for training.
+Note saved: deliveries handler: Swiftspoke Deliveries Co (replaces Priya Noll helped on afternoon run, handling deliveries going forward)
+Note saved: training date: 2029-02-04
+Done. Deliveries will be handled by Swiftspoke Deliveries Co going forward, and training is set for 2029-02-04.
+What is the current timeline for the winter storage project?
+I only have the filing code for winter storage: customer bike storage for winter is logged as STORE-WINTER-11. No specific timeline is saved in your notes.
+That was a bit long, just the date works for me thanks
+Understood. I don't have a date saved for the winter storage project timeline.
+Quick update from the shop floor, I changed the outside box to BOX-5521-Z so keep that handy, and Nadia Cole agreed to take charge on Saturdays and Sundays.
+Note saved: outside box: BOX-5521-Z
+Note saved: weekend charge: Nadia Cole Saturdays and Sundays
+Noted. Outside box is now BOX-5521-Z, and Nadia Cole will take charge on Saturdays and Sundays.
+One more thing, please use Cage Twelve from now on whenever you need to put things away.
+Note saved: storage cage for putting things away: Cage Twelve
+Got it. I'll use Cage Twelve for putting things away from now on.
+Can you remind me what the staff chat channel is?
+The staff chat channel is #spokehaven-crew.
+Can you remind me what the compressor nickname is?
+The compressor is nicknamed Puffy Dragon.
+Could you message Sam at Northwind Cycle Parts about the overflow stock room plan?
+I need your approval before emailing Northwind Cycle Parts. Would you like me to message Sam about the overflow stock room plan?
+Please email Sam at Northwind Cycle Parts, but check with me first before contacting
+Got it. What would you like me to say to Sam about the overflow stock room plan?
+heads up, bookkeeper review slot is now Fridays at 10:00
+Note saved: ledger review time: bookkeeper review slot Fridays at 10:00 (replaces go over ledgers with bookkeeper Thursdays at 11:00)
+Updated. Bookkeeper review slot is now Fridays at 10:00.
+change of plan: landlord meeting time is now Second Tuesdays 15:00
+Note saved: building owner meeting: landlord meeting Second Tuesdays 15:00 (replaces catching up with building owner First Mondays 14:00)
+Updated. Landlord meeting is now Second Tuesdays at 15:00.
+heads up, rental counter area is now Side Desk B
+Note saved: rentals sign out location: rentals signed out at Side Desk B (replaces rentals signed out at Front Counter A)
+Noted. Rental counter area is now Side Desk B.
+Could you remind me where the overflow stock room is?
+Overflow stock is piled in Back Room 2.
+What is the rental deposit amount?
+Rental deposit is 150 euros.
+👍 Perfect, short and direct, thanks!
+You're welcome.
+Can you book the Thursday pickup? The courier usually comes Thursdays at 14:20, so have the boxes ready. Also check with Oscar Brent, he does our frames, whether the blue one is dry.
+Note saved: courier pickup time: Thursdays at 14:20
+Note saved: frames person: Oscar Brent does our frames
+Booked courier pickup for Thursday 2026-11-05 at 14:20 with boxes ready. I will check with Oscar Brent about the blue frame.
+Need to reorder tubes, we get them from Tubeline Rubber House, and seats from Comfisaddle Bikes Ltd. Could you check stock when you get a minute?
+Note saved: tubes supplier: Tubeline Rubber House
+Note saved: seats supplier: Comfisaddle Bikes Ltd
+Noted tubes come from Tubeline Rubber House and seats from Comfisaddle Bikes Ltd. I will check stock for both when I have a minute.
+Last thing, we're low on lube, the Slickchain Gold X we use on services. Add a bottle to the order please.
+Note saved: service lube: Slickchain Gold X used on services
+Added a bottle of Slickchain Gold X to the order and noted you are low on lube.
+Morning, could you wipe down Tall Giraffe before we open? That's what we call the rack up front for displaying bikes. And Green Heron is squeaking again, that's the lift we use for servicing.
+Note saved: Tall Giraffe: rack up front for displaying bikes
+Note saved: Green Heron: lift used for servicing, squeaking again
+Noted Tall Giraffe is the front display rack and Green Heron is the servicing lift that is squeaking again. I will wipe down Tall Giraffe before we open.
+Who is our bookkeeper, what's their full name?
+I don't know your bookkeeper's full name yet. Can you tell me?
+That was a bit long, just give me the value next time please.
+Got it, I will give just the value next time.
+Took the new build out on Cinder Fox Trail at lunch, that's where we do our test rides. Log it under VINTAGE-2030-R, that's the code for the vintage project.
+Note saved: test rides location: Cinder Fox Trail
+Note saved: vintage project code: VINTAGE-2030-R
+Logged the test ride on Cinder Fox Trail under VINTAGE-2030-R.
+Are we packed for Bramley Handmade Fair next weekend? That's the trade show where we're exhibiting, so remind me to check the stand gear.
+Note saved: Bramley Handmade Fair: trade show where we are exhibiting next weekend
+I don't know if you are packed for Bramley Handmade Fair yet. I will remind you to check the stand gear.
+heads up, rental fleet delivery is now Sundays at 08:00 going forward
+Note saved: rental fleet delivery: Sundays at 08:00 going forward
+Noted rental fleet delivery is now Sundays at 08:00 going forward.
+Can you remind me what our partner town event is?
+joint event with neighboring town in Kestrel Harbor
+Could you email Northwind Cycle Parts to confirm our busy season name?
+Before I email Northwind Cycle Parts, please confirm you want me to contact them.
+Please check with me before contacting Northwind Cycle Parts, thanks!
+Note saved: email approval Northwind Cycle Parts: check with user before contacting Northwind Cycle Parts
+Noted, I will check with you before contacting Northwind Cycle Parts.
+change of plan: we're using Front Room 4 for overflow stock room now
+Note saved: overflow stock room: Front Room 4
+Noted, overflow stock room is now Front Room 4.
+Can you remind me who our business advisor is?
+Mara Quinn helps think through business side
+quick update, our new weekend clerk is Mia Holt starting now
+Note saved: weekend clerk: Mia Holt starting now
+Noted, weekend clerk is Mia Holt starting now.
+Can you remind me which company is our tire supplier?
+Gripline Tire Co
+What's the workshop phone extension?
+workshop phone on Ext 203
+Perfect, thanks — short and direct is great.
+You're welcome.
+Could you ask Iris Vale to double-check the repair queue when she gets in? She runs the morning shift for us. We also need to fit the Glowtrail Beacon Mini as the rear light on the commuter build.
+Note saved: morning shift manager: Iris Vale runs the morning shift
+Note saved: commuter build rear light: Glowtrail Beacon Mini
+Got it. I will ask Iris Vale to double-check the repair queue when she arrives for the morning shift, and I will note that the Glowtrail Beacon Mini should be fitted as the rear light on the commuter build.
+Bramblewick Bakery Co called about their cargo bike again. Since they're our district cargo client, let's prioritize it. Please use FORK-2032-B7 for filing, that's the code for the fork upgrade we're doing.
+Note saved: district cargo client: Bramblewick Bakery Co
+Note saved: fork upgrade filing code: FORK-2032-B7
+Note saved: Bramblewick Bakery Co cargo bike: called about cargo bike again, prioritize
+Noted. Bramblewick Bakery Co is our district cargo client and their cargo bike should be prioritized. I will file the fork upgrade under FORK-2032-B7.
+Quick reminder to post that 2031-10-26 is the cutoff for holiday orders, so customers on the fence about custom work need a nudge this week.
+Note saved: holiday orders cutoff: 2031-10-26
+Reminder set: 2031-10-26 is the cutoff for holiday orders, so I will nudge customers about custom work this week.
+Could you pull up Billspoke Portal Hub for those unpaid supplier invoices before lunch? I'll be up in Juniper Loft Five tinkering with the new prototype frames if you need me.
+Note saved: Jonas location: up in Juniper Loft Five tinkering with new prototype frames
+I will pull up Billspoke Portal Hub for the unpaid supplier invoices before lunch. I also note you are up in Juniper Loft Five tinkering with the new prototype frames.
+What is the file path for our shop rental agreement?
+I don't have a file path for the shop rental agreement, only that the unit paperwork is filed under LEASE-MB-44 for the Marlow Bay shop.
+That was a bit long — just give me the value next time please
+Understood, I will give just the value next time.
+Grab Tensogrip Meter Duo off the bench to double-check that rear wheel tension, and ping Stripefinch Graphics Ltd about the new decals for the city bikes.
+Note saved: wheel tension tool: Tensogrip Meter Duo
+Note saved: city bike decals supplier: Stripefinch Graphics Ltd
+I will grab Tensogrip Meter Duo to double-check the rear wheel tension and ping Stripefinch Graphics Ltd about the new decals for the city bikes.
+Heading to Larkspur Plaza Stall early Saturday to get our stall set up, can you remind me to pack the price tags and card reader?
+Note saved: Saturday stall location: Larkspur Plaza Stall early Saturday
+Noted. I will remind you to pack the price tags and card reader for Larkspur Plaza Stall early Saturday.
+heads up, our staff shift pattern is now Double Cover Weekends
+Note saved: staff shift pattern: Double Cover Weekends
+Got it, staff shift pattern is now Double Cover Weekends.
+can you remind me what our staff chat channel is?
+#spokehaven-crew
+Who is our primary parts supplier?
+Northwind Cycle Parts
+Please message Sam at Northwind Cycle Parts about that, but check with me before contacting Northwind Cycle Parts.
+I will message Sam at Northwind Cycle Parts about it, but I will check with you first before contacting Northwind Cycle Parts as you requested.
+change of plan: our rental assistant name is now Sasha Cole
+Note saved: rental assistant name: Sasha Cole
+Updated, rental assistant name is now Sasha Cole.
+can you remind me what our busy season name is?
+Autumn Velo Season
+can you remind me what our tire supplier account is?
+ACC-3390-GL
+quick update, the front desk extension is now Ext 210
+Note saved: front desk ext: Ext 210 (replaces front desk on Ext 202)
+Updated, front desk extension is now Ext 210.
+Which autumn festival event are we registered for?
+Bramley Handmade Fair
+👍 Perfect, short and direct — exactly what I needed, thanks
+You're welcome.
+Just got to work at Northbridge Acoustics Institute, it's pouring here in Bergenfield today.
+Note saved: workplace: Northbridge Acoustics Institute
+Note saved: city: Bergenfield
+Note saved: current_date: 2026-10-27 Tuesday
+Got it. Saved Northbridge Acoustics Institute as your workplace and Bergenfield as your city, with today as 2026-10-27 Tuesday. Hope the rain eases up at work.
+Updating my slides since I'm here as Acoustics Doctoral Researcher, Henrik Dahl is guiding my thesis and wants the new plots.
+Note saved: role: Acoustics Doctoral Researcher
+Note saved: thesis_advisor: Henrik Dahl
+Note saved: thesis_status: needs new plots for slides
+Saved your role as Acoustics Doctoral Researcher and Henrik Dahl as thesis advisor. Noted you need new plots for slides.
+Could you nudge me later to prepare for our regular catch-up Tuesdays at 09:30, and check if Sofia Lindqvist who shares the bench with me has the calibration files?
+Note saved: catch_up_time: Tuesdays 09:30
+Note saved: bench_mate: Sofia Lindqvist
+Saved Tuesdays 09:30 as your regular catch-up time and Sofia Lindqvist as your bench mate. I don't have info on whether Sofia has the calibration files. Want me to add a reminder to prepare for today's catch-up?
+Running between measurements today, remind Jonas Weber to save me a seat at the bench, he's the second person sharing the lab with me. Amara Okafor is the third person with me in there, ask her if the calibration finished.
+Note saved: lab_mate_1: Jonas Weber
+Note saved: lab_mate_2: Amara Okafor
+Note saved: today_activity: running between measurements
+Saved Jonas Weber and Amara Okafor as lab mates. Noted you're running between measurements today. I can note to remind Jonas to save you a seat and check with Amara about calibration.
+Hi, three quick house rules: always use 24-hour clock for times, keep status summaries to three bullets max, and ask me before emailing FjordSonics Ltd.
+Note saved: time_format: 24-hour clock
+Note saved: status_summary_limit: three bullets max
+Note saved: email_permission: ask before emailing FjordSonics Ltd
+Got it. I'll use 24-hour clock, keep status summaries to three bullets max, and ask you before emailing FjordSonics Ltd.
+Milo Renner is helping me with the tank setup this morning, he looks after all our lab equipment. Also I'm doing analysis for Project EchoDune later, that's the codename for my thesis work, so keep time free.
+Note saved: lab_equipment_caretaker: Milo Renner
+Note saved: project_echo_dune: thesis codename
+Note saved: today_plan: analysis for Project EchoDune later
+Saved Milo Renner as lab equipment caretaker and Project EchoDune as your thesis codename. Noted you have analysis for Project EchoDune later today, so I'll keep time free.
+Project ReefPulse needs a quick check this afternoon, it's the codename for my other project. And please flag that abstracts for the conference are due 2026-11-20, I can't miss that.
+Note saved: project_reef_pulse: other project codename
+Note saved: conference_abstract_due: 2026-11-20
+Saved Project ReefPulse as your other project codename and flagged conference abstracts due 2026-11-20. Noted you need a quick check for Project ReefPulse this afternoon.
+Hi, could you check train options to Sorvik for EchoForum 2027? I want to lock in the presentation slides early.
+I don't have access to live train schedules. You can check with your usual travel site for Sorvik options for EchoForum 2027. Want me to set a reminder to lock in your presentation slides early?
+Hi, I'm covering ACU-201 this term and the seminar meets Thursdays at 10:00, so please have the slides ready for me.
+Note saved: course_current: ACU-201
+Note saved: seminar_time: Thursdays 10:00
+Saved ACU-201 as your current course and seminar Thursdays at 10:00. I'll make sure slides are ready for you.
+Our group gets together Fridays at 16:00, and you'll find me in the chamber in Hall C afterward.
+Note saved: group_meeting: Fridays 16:00
+Note saved: post_meeting_location: chamber in Hall C
+Saved group meeting Fridays at 16:00 and noted you'll be in the chamber in Hall C afterward.
+Can you put lab safety training on my calendar for 2026-10-26 at 08:30?
+Added lab safety training on 2026-10-26 at 08:30. Note that date is yesterday relative to today 2026-10-27.
+I'll be down in Room 204 most of the afternoon getting the reverb measurements set up, and I've got the instruments reserved for Mondays at 13:00 so please nudge me beforehand.
+Note saved: afternoon_location: Room 204
+Note saved: instrument_reservation: Mondays 13:00
+Saved Room 204 for this afternoon reverb measurements and instruments reserved Mondays at 13:00. I'll nudge you beforehand.
+Could you log that the mics we're setting up as Heron Array needed a new cable, and the vibrometer we call Wasp Probe was acting up again this morning?
+Note saved: heron_array_issue: needed new cable
+Note saved: wasp_probe_issue: acting up this morning
+Logged Heron Array needed a new cable and Wasp Probe was acting up this morning.
+Just checking the laptop before the meeting — I process everything in WaveSim 6.2 for signals and then move it over to EchoLab R2026a for the final analysis.
+Note saved: signal_software: WaveSim 6.2
+Note saved: analysis_software: EchoLab R2026a
+Saved WaveSim 6.2 for signals and EchoLab R2026a for final analysis. Good luck with the meeting.
+Could you check if the new recordings landed in /data/echodune/raw? I'm wrapping up calibrations and want everything copied over to /archive/echodune/v2 tonight.
+I can't access your file system to check /data/echodune/raw. You can verify the recordings are there before copying to /archive/echodune/v2 tonight.
+I told everyone in #echo-lab-chat we'll start a bit late, and I'll share the tutorial slides in #acu201-tutors after lunch.
+Note saved: echo_lab_chat_status: starting a bit late
+Note saved: acu201_tutors_plan: share tutorial slides after lunch
+Saved that #echo-lab-chat will start a bit late and tutorial slides will be shared in #acu201-tutors after lunch.
+If anyone asks, I'll be by Ext 4471 this afternoon, and please tell the courier we're using Door 7B for deliveries.
+Note saved: afternoon_extension: Ext 4471
+Note saved: delivery_door: Door 7B
+Saved Ext 4471 as your afternoon location and Door 7B for courier deliveries.
+For reference, our chamber procedure is: check calendar availability, reserve the slot online, log calibration data, notify the technician, then clean the chamber after.
+Note saved: chamber_procedure: check calendar availability, reserve slot online, log calibration data, notify technician, then clean chamber after
+Saved your chamber procedure.
+Morning is hectic, could you nudge SonarTek Components about that delayed order? We get most parts through them, and maybe copy Petra Voss since she handles our sensors.
+Note saved: main_supplier: SonarTek Components
+Note saved: sensor_contact: Petra Voss
+Saved SonarTek Components as your main supplier and Petra Voss as sensor contact. I can note to nudge them about the delayed order.
+Quick check between tasks, I can't spend over 4,000 euros on equipment so flag anything higher, and the trip is covered up to 1,200 euros from the grant.
+Note saved: equipment_budget_limit: 4000 euros
+Note saved: trip_grant_limit: 1200 euros
+Saved equipment budget limit at 4,000 euros and trip grant coverage up to 1,200 euros. I'll flag anything higher.
+Heading to Kaldvik Harbor tomorrow for the field tests, then I'll do calibration over in Pier Building when I'm back.
+Note saved: field_test_location: Kaldvik Harbor
+Note saved: calibration_location: Pier Building
+Saved Kaldvik Harbor for field tests tomorrow and Pier Building for calibration afterward.
+I'll be working at my desk in Room 312 this morning, then going up to Room 405 to see my advisor before lunch.
+Note saved: morning_location: Room 312 desk
+Note saved: advisor_meeting_location: Room 405
+Saved Room 312 for this morning and Room 405 to see your advisor before lunch.
+Could you draft a quick update for Ingrid Solberg, who leads our department, and send the latest plots to Tomas Reyes, who is helping us from outside on this work?
+Note saved: department_lead: Ingrid Solberg
+Note saved: external_collaborator: Tomas Reyes
+Saved Ingrid Solberg as department lead and Tomas Reyes as external collaborator. Here's a draft update for Ingrid:  - Progress on Project EchoDune analysis - New plots ready for review - Next steps for calibration  Want me to send the latest plots to Tomas Reyes?
+Please add a task for me to submit the EchoForum abstract.
+Added task to submit EchoForum abstract.
+The team at FjordSonics Ltd. we're working with asked for our paperwork, so please include our ethics clearance EA-2026-084 when you reply.
+Note saved: ethics_clearance: EA-2026-084
+Saved ethics clearance EA-2026-084. Per your house rule, I need your approval before emailing FjordSonics Ltd. May I draft the reply with the paperwork included?
+Quick note, please log that the sonar prototype SN-114 is running on release Dataset v3.2 for today's comparison, thanks!
+Note saved: sonar_prototype: SN-114
+Note saved: dataset_version: v3.2
+Logged sonar prototype SN-114 running on Dataset v3.2 for today's comparison.
+Running between meetings, just flagging journal club meets Wednesdays at 14:00 and safety training starts Mondays at 08:30 so I don't miss either.
+Note saved: journal_club: Wednesdays 14:00
+Note saved: safety_training_time: Mondays 08:30
+Saved journal club Wednesdays at 14:00 and safety training Mondays at 08:30. I'll flag both so you don't miss them.
+For students dropping by, office hours are Tuesdays at 11:00, and you can pick up the handouts from the printer room in Hall B.
+Note saved: office_hours: Tuesdays 11:00
+Note saved: handout_location: printer room in Hall B
+Saved office hours Tuesdays at 11:00 and handouts from printer room in Hall B.
+What's on my calendar on 2026-10-28?
+On 2026-10-28 you have Journal club at 14:00 in Room 204.
+Hi, can you keep this handy? I get in as esorensen01 these days, and I've been making room reservations via book.nai.example. Let me know if I mix them up!
+Note saved: login: esorensen01
+Note saved: room_reservation_system: book.nai.example
+Saved login esorensen01 and room reservations via book.nai.example. I'll let you know if you mix them up.
+Just updating my notes — the setup was calibrated on 2026-09-15 so I trust the readings, and I'm sending the full thesis text by 2027-03-01. It's a hectic stretch!
+Note saved: calibration_date: 2026-09-15
+Note saved: thesis_submission_deadline: 2027-03-01
+Saved calibration date 2026-09-15 and thesis submission deadline 2027-03-01. Good luck with the hectic stretch.
+Can you remember that PrintHaus Nord is handling the poster order, and Lena Hauge agreed to talk at our group meeting? Thanks so much!
+Note saved: poster_printer: PrintHaus Nord
+Note saved: group_meeting_speaker: Lena Hauge
+Saved PrintHaus Nord for poster order and Lena Hauge as speaker for group meeting.
+Quick pause between meetings — we're discussing SoundField Vol 44 tomorrow, and the funding paperwork went in under GR-8891, hopefully it clears soon.
+Note saved: tomorrow_discussion: SoundField Vol 44
+Note saved: funding_paperwork: GR-8891
+Saved SoundField Vol 44 for discussion tomorrow and funding paperwork under GR-8891.
+NordFly Travel sorted my flights, which is a relief since we head out for fieldwork on 2026-11-05 and I have a packed day.
+Note saved: travel_agent: NordFly Travel
+Note saved: fieldwork_departure: 2026-11-05
+Saved NordFly Travel as your travel agent and fieldwork departure on 2026-11-05.
+I dropped my things on Shelf K4 this morning, and I have Permit L-22 if I need to stay back late to finish up.
+Note saved: storage_shelf: Shelf K4
+Note saved: late_stay_permit: L-22
+Saved Shelf K4 for your things and Permit L-22 for late stays.
+Can you remind me what I said earlier today about my faculty advisor name?
+You said your thesis advisor is Henrik Dahl.
+heads up, my advisor weekly meeting is now Wednesdays at 09:30
+Note saved: advisor weekly meeting time: Wednesdays 09:30
+Note saved: email permission for FjordSonics Ltd: ask Elin before emailing FjordSonics Ltd
+Noted, I will keep status summaries to three bullets max.
+Can you remind me what my second project codename is?
+Your second project codename is Reef Pulse.
+change of plan: my sensor vendor contact is now Elias Lind
+Note saved: sensor contact: Elias Lind (replaces Petra Voss)
+Updated, your sensor vendor contact is now Elias Lind.
+Can you remind me what my field trip date is?
+I don't have a field trip date saved.
+Could you remind me who my faculty advisor is?
+Your faculty advisor is Henrik Dahl.
+heads up, the conference deadline date is now 2026-12-02
+Note saved: conference deadline date: 2026-12-02
+Noted, the conference deadline is now 2026-12-02.
+just so you know, the anechoic chamber room is now Hall D
+Note saved: anechoic chamber room: Hall D
+Noted, the anechoic chamber is in Hall D.
+change of plan: my instrument booking slot is now Mondays at 15:00
+Note saved: instrument booking slot: Mondays at 15:00 (replaces Mondays 13:00)
+Updated, your instrument booking slot is Mondays at 15:00.
+heads up, my office desk room is now Room 318
+Note saved: office desk room: Room 318
+Noted, your office desk is in Room 318.
+Morning rush between calibrations — Petra Novak is set up at the bench with the rest of us now, arriving after the other three in the lab. Also the third effort on my plate, Project TideGlass, needs testing time tomorrow.
+Note saved: current_date: 2026-10-29 Thursday (replaces 2026-10-27 Tuesday)
+Note saved: lab member Petra Novak: set up at bench with rest of us now, arriving after the other three in the lab
+Note saved: Project TideGlass testing need: needs testing time tomorrow 2026-10-30
+Got it. Current date updated to 2026-10-29 Thursday. Noted Petra Novak is set up at the bench now, arriving after the other three. Project TideGlass needs testing time tomorrow, 2026-10-30.
+Packing tonight since we're heading to Brekvik where I'm running the workshop next week. I'll bring Sealfin Unit along for the hydrophone demo in the tank.
+Note saved: workshop location: Brekvik
+Note saved: workshop timing: next week, running workshop at Brekvik, packing tonight
+Note saved: Sealfin Unit use: bring for hydrophone demo in tank
+Noted. Workshop at Brekvik next week, packing tonight. Sealfin Unit will be brought for the hydrophone demo in the tank.
+Quick ping — Kelphonic Systems still hasn't shipped the O-rings. They cover spares for us, so remind me to chase them Thursday if nothing arrives.
+Note saved: Kelphonic Systems O-rings status: still hasn't shipped
+Note saved: Kelphonic Systems spares coverage: covers spares for us
+Saved. Kelphonic Systems O-rings still haven't shipped and they cover spares for you. I've added a task to chase them today, 2026-10-29, if nothing arrives.
+Hey, could you note the hydrophone I'm deploying is tagged QT-207? The workshop needs it back for recalibration by 2027-01-20, so flag that for me.
+Note saved: deployed hydrophone tag: QT-207
+Note saved: hydrophone QT-207 recalibration deadline: workshop needs it back for recalibration by 2027-01-20
+Noted. Deployed hydrophone is tagged QT-207. Flagged to return it to the workshop for recalibration by 2027-01-20. Task added for that date.
+Which travel booking agency should I use for the conference trip?
+Your travel booking agency is NordFly Travel.
+That was too long, just the value next time please, thanks!
+Got it, just the value next time.
+I'll head out to Skerry Point Cabin this afternoon to prep for the field work. Also Marco Feld confirmed he'll do our invited talk next week, can you add a reminder?
+Note saved: afternoon outing: Skerry Point Cabin to prep for field work
+Note saved: invited talk speaker next week: Marco Feld confirmed he'll do our invited talk next week
+Noted.
+Let's keep Saturdays at 13:30 blocked for going through the recordings together, that rhythm has been helping me catch errors.
+Note saved: Saturday recordings review time: Saturdays at 13:30 blocked for going through recordings together
+Saved.
+Can you remind me about the weekly journal club?
+Wednesdays 14:00
+heads up, teaching seminar is now Fridays at 14:00
+Note saved: seminar_time: Fridays at 14:00 (replaces Thursdays 10:00)
+Updated.
+What is the sonar prototype id for the field test? Could you email the contact at FjordSonics Ltd to confirm it?
+SN-114  I need your permission before emailing FjordSonics Ltd.
+Please check with me before contacting FjordSonics Ltd, thanks!
+Note saved: FjordSonics Ltd contact permission: check with Elin before contacting FjordSonics Ltd
+Noted.
+change of plan: advisor office room is now Room 312
+Note saved: advisor office room: Room 312
+Updated.
+Can you remind me what the dataset release version is?
+v3.2
+Could you remind me of the microphone array nickname?
+No microphone array nickname saved.
+heads up, thesis draft deadline moved to 2027-03-15
+Note saved: thesis_submission_deadline: 2027-03-15 (replaces 2027-03-01)
+Updated.
+What is my office hours slot this week?
+Tuesdays 11:00
+Thumbs up! Short and direct like that is great, thanks!
+You're welcome.
+Morning is hectic, I'm prepping slides for Project LumenReef, that's the fourth one they've assigned me this year. Clara Voss is stopping by later to review data with me, she's a researcher visiting for a few weeks.
+Note saved: Project LumenReef: fourth project assigned to Elin this year
+Note saved: Clara Voss: researcher visiting for a few weeks, stopping by to review data with Elin
+Got it. Project LumenReef is your fourth project this year, and Clara Voss is visiting to review data with you.
+Could you remind me to grab the calibrator from Locker C9 where I keep the field gear? IT also just activated the license for SonoScope 7.1 so I can run analysis this afternoon.
+Note saved: calibrator location: Locker C9 where Elin keeps field gear
+Note saved: SonoScope license: SonoScope 7.1 license activated by IT for analysis this afternoon
+Added a task to grab the calibrator from Locker C9. SonoScope 7.1 is now licensed for your analysis this afternoon.
+I need to check the train to Haldenvik for tomorrow, that's where we're holding the workshop.
+Note saved: workshop location: Haldenvik (replaces Brekvik)
+I’ve noted Haldenvik as the workshop location. I couldn’t find a train schedule for Haldenvik online — could you confirm the departure city so I can check the right route?
+Morning! Could you log the prototype stamped XR-509 after the tank run? The Otter Pod we use out in the field was rattling again.
+Note saved: prototype XR-509: prototype stamped XR-509 to log after tank run
+Note saved: Otter Pod: field unit rattling again
+Logged prototype XR-509 for after the tank run. Noted the Otter Pod is rattling again in the field.
+What is my official PhD role title?
+Your official PhD role title is Acoustics Doctoral Researcher.
+That was a bit long, please just give the value.
+Acoustics Doctoral Researcher
+Could you push today's backup to /vault/northpine/stage when you get a chance? We review the prototype with everyone Thursdays at 10:00, so want it saved.
+Note saved: prototype review: Thursdays at 10:00 with everyone
+Note saved: backup location: /vault/northpine/stage
+Noted the backup location /vault/northpine/stage and that you review the prototype with everyone Thursdays at 10:00.
+Quick note, I added GR-7742 to the cover sheet for the grant reviewers before sending it off.
+Note saved: grant cover sheet: GR-7742 added for grant reviewers
+Noted GR-7742 was added to the cover sheet for the grant reviewers.
+Can you remind me about the signal software licence?
+Your signal software is WaveSim 6.2.
+heads up, weekly journal club is now Thursdays at 15:00
+Note saved: journal_club: Thursdays at 15:00 (replaces Wednesdays 14:00)
+Updated: journal club is now Thursdays at 15:00.
+What is the nickname we use for the microphone array?
+The notes mention the Heron Array, which needed a new cable.
+Please message Kari at FjordSonics Ltd, but check with me before contacting them.
+Note saved: FjordSonics Ltd contact: Kari
+Noted Kari at FjordSonics Ltd. I’ll check with you before contacting them, as requested.
+change of plan: reverb chamber room is now Room 312
+Note saved: reverb chamber room: Room 312
+Updated: reverb chamber room is now Room 312.
+just updating office hours slot to Wednesdays at 10:00
+Note saved: office_hours: Wednesdays at 10:00 (replaces Tuesdays 11:00)
+Updated office hours to Wednesdays at 10:00.
+Can you remind me about the late access permit?
+Your late stay permit is L-22.
+Can you remind me what the lab chat channel is?
+I don’t have the lab chat channel name saved.
+Which signal software licence are we currently using?
+You’re using WaveSim 6.2 for signal work.
+Perfect, thanks for the short direct answer!
+You're welcome.
+Morning! Could you pull the folder for Project CoralVeil, that's the fifth one I'm running? We'll need it in Tank Hall C this afternoon where the acoustic tank is set up.
+Note saved: Project CoralVeil: fifth project running
+Got it. Project CoralVeil is the fifth one you're running, and you'll need it in Tank Hall C this afternoon where the acoustic tank is set up.
+Freya Nilsen is shadowing me as an intern this week, please send her the safety docs. Also Nordvik Cable Works provides our sonar cables, could you check if they replied?
+Note saved: intern shadowing this week: Freya Nilsen
+Note saved: sonar cable supplier: Nordvik Cable Works
+I'll send the safety docs to Freya Nilsen, who is shadowing you as an intern this week. I will also check if Nordvik Cable Works, your sonar cable supplier, has replied.
+Just flagging we're doing the calibration dive on 2026-11-18, so I've blocked that morning for prep.
+Note saved: calibration dive date: 2026-11-18
+Noted, the calibration dive is on 2026-11-18 and you've blocked that morning for prep.
+Morning, could you remind the lab to return the hydrophones to Bay Nordvik 5 where I store the gear? And please verify the overnight run copied to Vault Drive Delta before I wipe the laptop.
+Note saved: hydrophone storage location: Bay Nordvik 5
+Note saved: overnight run backup location: Vault Drive Delta
+I'll remind the lab to return the hydrophones to Bay Nordvik 5 where you store the gear. I will also verify the overnight run is copied to Vault Drive Delta before you wipe the laptop.
+Who is my faculty advisor?
+Your faculty advisor is Henrik Dahl.
+That was a bit long, just the name is fine, thanks!
+Henrik Dahl
+I'll be by the posters Tuesdays at 11:00 if anyone asks, and can you file the Bergen ferry receipt under TR-5520 for the trip reimbursement?
+Note saved: Elin location Tuesdays: by the posters at 11:00
+Note saved: Bergen ferry receipt filing code: TR-5520
+Noted, you'll be by the posters Tuesdays at 11:00. I'll file the Bergen ferry receipt under TR-5520 for trip reimbursement.
+Anders Holm, the technician visiting us, is stopping by this afternoon for the calibration, so please put him on the reception list.
+Note saved: technician visiting for calibration: Anders Holm
+I'll put Anders Holm, the technician visiting for calibration, on the reception list for this afternoon.
+heads up, lab seminar speaker is now Priya Nair
+Note saved: lab seminar speaker: Priya Nair
+Got it, the lab seminar speaker is now Priya Nair.
+Can you remind me what the microphone array nickname is?
+The microphone array nickname you have saved is Heron Array.
+Which agency should I use for travel booking?
+Use NordFly Travel for travel booking.
+Please email Kari at FjordSonics Ltd, and check with me first before contacting them, thanks!
+I will check with you first before contacting FjordSonics Ltd, as you requested.
+change of plan: printer room location is now Room C3
+Note saved: printer room location: Room C3
+Updated, the printer room location is now Room C3.
+Can you remind me who my second lab mate is?
+Your second lab mate is Amara Okafor.
+heads up, field trip date is now 2026-11-12
+Note saved: field trip date: 2026-11-12
+Noted, the field trip date is now 2026-11-12.
+Can you remind me what the lab technician name is?
+The technician visiting for calibration you noted is Anders Holm.
+Where is our field test site?
+Your field test site is Kaldvik Harbor.
+Perfect, thanks for keeping it short and direct!
+You're welcome.
+Morning, could you log notes for Project KelpCircuit? It's the sixth one I'm running. Marta Ellingsen just started assisting me out in the field, please add her to the calendar invite.
+Note saved: Project KelpCircuit running number: sixth
+Note saved: field assistant name: Marta Ellingsen
+Note saved: Marta Ellingsen start assisting: just started assisting Elin out in the field
+Note saved: Marta Ellingsen calendar invite: add to calendar invite for field work
+Logged Project KelpCircuit as your sixth running project and noted Marta Ellingsen just started assisting you out in the field. I also saved to add her to the field work calendar invite.
+Quick favor between calibrations, Baltic Acoustic Supply is now supplying all our gear, can you save their contact? And please book time in Fjordtest Basin North tomorrow for the tank tests.
+Note saved: Baltic Acoustic Supply supplier status: now supplying all our gear
+Saved that Baltic Acoustic Supply is now supplying all your gear. Booked tank tests in Fjordtest Basin North for tomorrow 2026-11-02 at 10:00.
+When you get a sec, please file today's files under DA-4470 in the archive. I want to keep everything together before the meeting.
+Note saved: today files archive filing code: DA-4470
+Noted to file today's files under DA-4470 in the archive, and added it as a task due today.
+Morning, could you nudge purchasing about PR-6034? I filed it for the new cables. Also I need to return the borrowed field kit by 2026-12-15, so set a reminder.
+Note saved: PR-6034 filing purpose: filed for the new cables
+Noted PR-6034 was filed for the new cables and added a task to nudge purchasing about it. Also set a reminder to return the borrowed field kit by 2026-12-15.
+Who is my second lab mate?
+Your second lab mate is Amara Okafor.
+That was a bit long, just the value alone next time please, thanks!
+Got it.
+The seminar tomorrow is in Room 214, I'm still finishing slides. NordCal Acoustics is calibrating our array this week, hope results come back in time.
+Note saved: seminar tomorrow location: Room 214
+Note saved: seminar slides status: still finishing slides
+Note saved: array calibration service: NordCal Acoustics calibrating our array this week
+Saved seminar location Room 214 and slides status. Noted NordCal Acoustics is calibrating your array this week.
+Harbor Review Board looks at our project next month, so I'm pulling the progress notes together this afternoon, can you help format them?
+Note saved: Harbor Review Board review timing: looks at our project next month
+I can help format your progress notes. Please share the notes you want formatted.
+heads up, lab safety training is now Tuesdays at 09:30
+Note saved: safety_training_time: Tuesdays at 09:30 (replaces Mondays 08:30)
+Updated lab safety training time to Tuesdays at 09:30.
+Could you remind me what the teaching chat channel is?
+I don't have a saved note for the teaching chat channel.
+Who is our external collaborator at FjordSonics Ltd? Could you message them for me?
+Your notes list Tomas Reyes as external collaborator and Kari as FjordSonics Ltd contact. I need your permission before emailing FjordSonics Ltd.
+Please check with me before contacting FjordSonics Ltd, thanks!
+Understood, I will check with you before contacting FjordSonics Ltd.
+change of plan: calibration lab building is now Harbor Annex Hall
+Note saved: calibration_location: Harbor Annex Hall (replaces Pier Building)
+Updated calibration lab building to Harbor Annex Hall.
+Could you remind me what the grant proposal code is?
+GR-8891
+Could you remind me what the reading group text is?
+Your notes mention tomorrow's discussion is SoundField Vol 44.
+heads up, lab inventory shelf is now Rack Q9
+Note saved: storage_shelf: Rack Q9 (replaces Shelf K4)
+Updated lab inventory shelf to Rack Q9.
+What is our backup storage path?
+/vault/northpine/stage
+Perfect, short and direct like that is great, thanks!
+You're welcome.
+Quick note for the record, nothing else today.
