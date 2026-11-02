@@ -206,10 +206,9 @@ pub(crate) fn reviewer_policy_seeds(bytes: &[u8]) -> BTreeMap<&'static str, f64>
 /// JSON object whose keys are detector dial keys, each a finite number
 /// inside its dial's bounds. A dial left out or out of bounds, and a key
 /// that names no dial, is a fallback of that key alone; bytes that are not
-/// one object fall back whole.
+/// one object, or that name any key twice, fall back whole (FIX 10882).
 fn decode(bytes: &[u8]) -> (BTreeMap<&'static str, f64>, Vec<PolicyFallback>) {
-    let Ok(serde_json::Value::Object(entries)) = serde_json::from_slice::<serde_json::Value>(bytes)
-    else {
+    let Some(entries) = object_without_duplicates(bytes) else {
         return (BTreeMap::new(), vec![PolicyFallback::Invalid]);
     };
     let mut fallbacks: Vec<PolicyFallback> = entries
@@ -227,4 +226,50 @@ fn decode(bytes: &[u8]) -> (BTreeMap<&'static str, f64>, Vec<PolicyFallback>) {
         }
     }
     (seeds, fallbacks)
+}
+
+/// One JSON object with no key named twice, in file order: the duplicate
+/// rejection `TripwireBounds::decode` reads its map with (FIX 10882), where
+/// a key that appears twice fails the whole object instead of the last
+/// write winning. `None` when `bytes` are not one JSON object, or any
+/// top-level key repeats. Keys nested inside a value are that value's own
+/// shape, as before.
+fn object_without_duplicates(bytes: &[u8]) -> Option<serde_json::Map<String, serde_json::Value>> {
+    struct Unique(serde_json::Map<String, serde_json::Value>);
+
+    struct UniqueVisitor;
+
+    impl<'de> serde::de::Visitor<'de> for UniqueVisitor {
+        type Value = Unique;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            formatter.write_str("one JSON object with no duplicate key")
+        }
+
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> std::result::Result<Unique, A::Error> {
+            let mut entries = serde_json::Map::new();
+            while let Some(key) = map.next_key::<String>()? {
+                let value = map.next_value::<serde_json::Value>()?;
+                if entries.insert(key, value).is_some() {
+                    return Err(serde::de::Error::custom("a policy.json key is named twice"));
+                }
+            }
+            Ok(Unique(entries))
+        }
+    }
+
+    impl<'de> serde::Deserialize<'de> for Unique {
+        fn deserialize<D: serde::Deserializer<'de>>(
+            deserializer: D,
+        ) -> std::result::Result<Unique, D::Error> {
+            deserializer.deserialize_map(UniqueVisitor)
+        }
+    }
+
+    serde_json::from_slice::<Unique>(bytes)
+        .ok()
+        .map(|found| found.0)
 }

@@ -14191,7 +14191,7 @@
      "path": "src/claim/scoped_read/claim_admission.rs",
      "purpose": "Claim admission on the scoped lane: the lane's claim-status mode, then the reader, credential, ceiling…",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 7,
       "fn": 1
      }
     },
@@ -31492,7 +31492,7 @@
      "path": "src/edit_distance/publisher/mod.rs",
      "purpose": "ED-08 (ONE-1764, ARCH-0056 §9 · OF-401): the publisher loop's engine substrate — content-free issue…",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 5,
       "enum": 1,
       "re-export": 7,
       "type": 1
@@ -31543,7 +31543,7 @@
      "purpose": "Publisher comm transport: send states and the send door",
      "surface": {
       "const": 2,
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 4,
       "struct": 1
@@ -35715,7 +35715,7 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ReportDeliveryHold",
@@ -35748,7 +35748,7 @@
      "path": "src/feedback/report/delivery/counterparty.rs",
      "purpose": "The publisher ACTOR a report's signature channel runs to (FIX 7829)",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 2
      }
     },
     {
@@ -35833,7 +35833,7 @@
      "path": "src/feedback/report/disclosure.rs",
      "purpose": "A report's text and its publisher (FIX 8747; DEC-0006)",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "enum": 1,
       "fn": 1,
       "struct": 1
@@ -35864,7 +35864,7 @@
      "path": "src/feedback/report/store.rs",
      "purpose": "Durable issue identity, entity-local review, and the arrival index",
      "surface": {
-      "crate-vis": 4,
+      "crate-vis": 6,
       "fn": 3
      }
     },
@@ -37143,6 +37143,16 @@
      "purpose": "The whole policy-manifest fold; `manifest_fold` re-exports it",
      "surface": {
       "crate-vis": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/gate/resolution/manifest_fold/snapshot_cache.rs",
+     "purpose": "The policy manifest resolved once per committed snapshot: the fold is a pure function of the snapshot it…",
+     "surface": {
+      "crate-vis": 2
      }
     },
     {
@@ -64883,7 +64893,7 @@
      "purpose": "OF-397/OF-540: the execution context a host binds on a leased agent run, so its pack receipt closes attributed",
      "surface": {
       "crate-vis": 2,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -68608,6 +68618,16 @@
      "surface": {
       "crate-vis": 25,
       "struct": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/handle/policy_fold.rs",
+     "purpose": "The policy manifest's fold of one committed snapshot, kept on the vault between resolutions: a light recall…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -85475,7 +85495,7 @@
     "feedback": {
      "files": 51,
      "impl_vault": true,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "dir",
      "purpose": "Engine feedback channel: bundle wire contract, consent, dispatch, export"
     },
@@ -85487,7 +85507,7 @@
      "purpose": "Score fusion kernels, defined in `oneiron-retrieval`"
     },
     "gate": {
-     "files": 167,
+     "files": 168,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86152,7 +86172,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 194,
+     "files": 195,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -86390,9 +86410,9 @@
      "purpose": "Write-path stamping: `WriteActor`/`WriteProvenance`/`WriteEnvelope`/`ClaimCandidate` + evidence stamping"
     }
    },
-   "over_bar": 105,
+   "over_bar": 106,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 5852,
+   "source_files": 5854,
    "test_files": 902
   },
   "oneiron-android": {
@@ -102209,7 +102229,7 @@
      }
     },
     {
-     "bucket": "L",
+     "bucket": "XL",
      "kind": "src",
      "notable": [],
      "path": "src/ai_host/dreamer.rs",
@@ -119518,7 +119538,7 @@
     "ai_host": {
      "files": 105,
      "impl_vault": false,
-     "largest_src_bucket": "L",
+     "largest_src_bucket": "XL",
      "layout": "dir",
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
