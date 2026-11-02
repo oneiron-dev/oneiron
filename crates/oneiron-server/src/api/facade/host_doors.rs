@@ -228,6 +228,8 @@ pub(crate) use super::hyde_doors::*;
 pub(crate) use super::research_doors::*;
 pub(crate) use super::retrieval_doors::*;
 pub(crate) use super::vector_doors::*;
+// The owner's list of refused stream seeds (FIX 11933), likewise.
+pub(crate) use super::stream_recovery_doors::*;
 // The owner's project-card tap door (OF-501), likewise.
 pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.

@@ -8,11 +8,26 @@
 //! erased actor and for a restored image's replay, and a saved Weave copy
 //! runs it too. An answer that lands after such an erase is checked against
 //! its rows first and lands without its draft's text.
+//!
+//! A skill erase also clears what names that revision as the reviewer
+//! (FIX 10881): the `reviewer_revision` on every card and review receipt
+//! that names it, and each such receipt's rule-outcome row in the skill
+//! reliability ledger. Unrelated cards, receipts, source history and
+//! learning evidence stay as they are.
 use super::ask::AgentHealthCoachAnswer;
-use super::{AgentHealthCard, CARDS};
+use super::{AgentHealthCard, CARDS, HEALTH_REVIEW_RECEIPT_PREFIX};
 use crate::ports::TombstoneStoreRead;
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Result, Vault};
+
+/// The reviewer's rule-outcome rows as the reliability ledger keeps them
+/// (FIX 10881): the same `SKILL_RELIABILITY_OUTCOME` rows
+/// `skill_reliability::rule_outcome` keys `(skill, receipt)`, named here by
+/// exact key only. The erase deletes; it never decodes a value, so the
+/// value type is bytes it never reads.
+const REVIEWER_RULE_OUTCOME: SideTable<(EntityId, String), Vec<u8>, Raw> =
+    SideTable::new(&side_table::SKILL_RELIABILITY_OUTCOME);
 
 impl AgentHealthCoachAnswer {
     /// Clears the draft's diagnosis and proposal and marks the answer
@@ -51,14 +66,39 @@ impl AgentHealthCard {
 
 /// Clears the Coach draft text of every live card whose draft was written
 /// from the erased `id`, in the erase's own transaction. A no-op for an id
-/// no standing draft names.
+/// no standing draft names. An erased reviewer revision (FIX 10881) also
+/// leaves every card and review receipt that names it: each such
+/// `reviewer_revision` is cleared, and each such receipt's rule-outcome row
+/// goes with it. A card or receipt that names another revision, and a
+/// receipt a revision never seeded, stay as they are.
 pub(crate) fn erase_sources_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
     for (key, mut card) in CARDS.scan(store, txn)? {
+        let mut changed = false;
         if card.draft_source_rows().contains(id) && card.scrub_coach_draft() {
+            changed = true;
+        }
+        if card.reviewer_revision == Some(*id) {
+            card.reviewer_revision = None;
+            changed = true;
+        }
+        for held in &mut card.review_outcomes {
+            if held.reviewer_revision != Some(*id) {
+                continue;
+            }
+            held.reviewer_revision = None;
+            changed = true;
+            // The bridge keys the receipt's rule-outcome row by this same
+            // `(skill, receipt)` pair; a receipt id of another shape names
+            // no row of ours.
+            if held.receipt.starts_with(HEALTH_REVIEW_RECEIPT_PREFIX) {
+                REVIEWER_RULE_OUTCOME.delete(store, txn, &(*id, held.receipt.clone()))?;
+            }
+        }
+        if changed {
             CARDS.put(store, txn, &key, &card)?;
         }
     }
