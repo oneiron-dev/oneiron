@@ -44,6 +44,7 @@ mod repo_import;
 pub(crate) use repo_import::{ImportedCodeRepo, ServedImportSource};
 mod repo_manifest;
 pub use repo_manifest::{REPO_MANIFEST_VERSION, RepoManifest, RepoPortableId};
+pub(crate) use repo_manifest::RepoManifestMerge;
 pub mod residence;
 pub mod secret_manifest;
 pub(crate) mod secret_marks;

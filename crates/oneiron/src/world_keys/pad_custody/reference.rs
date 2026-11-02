@@ -160,6 +160,7 @@ mod window {
         "note_proposals",
         "peer_origins",
         "pins",
+        "repo_manifests",
         "retained_claim_worlds",
         "room_facts",
         "room_turns",

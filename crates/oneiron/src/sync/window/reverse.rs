@@ -226,6 +226,7 @@ fn reverse_rematerialize_scan(
     let mut wrote_any = false;
     let mut mirror_sources = BTreeMap::new();
     let mut messages = Vec::new();
+    let mut code_rows = Vec::new();
     let entities_in_range_set: HashSet<EntityId> = entities_in_range.iter().copied().collect();
     let mut protected_tombstones = HashSet::new();
     let mut entity_tombstones = Vec::new();
@@ -511,6 +512,14 @@ fn reverse_rematerialize_scan(
             {
                 messages.push(*id);
             }
+            // FIX 6870: a CODE row's portable manifest rides beside it,
+            // mirrored after this pass commits, wherever its carrier rides.
+            if EntityMetadataHeader::parse(&raw).is_some_and(|header| {
+                header.entity_type == crate::registry::ENTITY_TYPE_CODE_ARTIFACT
+            }) && map_contains_binary(&entities_map, &hex_id)
+            {
+                code_rows.push(*id);
+            }
         }
 
         backfill_sources.push(*id);
@@ -649,6 +658,7 @@ fn reverse_rematerialize_scan(
         crate::sync::message_docs::mirror_message_document(vault, doc, id, window_key)?;
         crate::sync::document_pins::mirror_document_pins(vault, doc, id, window_key)?;
     }
+    crate::sync::repo_manifests::mirror_repo_manifests(vault, doc, &code_rows)?;
     Ok(count)
 }
 
