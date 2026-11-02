@@ -96,13 +96,23 @@ impl Vault {
                     continue;
                 };
                 let body = raw[ENTITY_METADATA_HEADER_LEN..].to_vec();
-                if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
+                // A claim republishes the text its commit indexed, never the
+                // generic string leaves: a non-string value would otherwise
+                // lose its postings at the first idle pass (FIX 12368).
+                let fields = if raw[0] == crate::registry::ENTITY_TYPE_CLAIM {
                     let claim = crate::claim::decode_claim_body(&body, true)?;
                     if !crate::claim::claim_surfaceable(&claim) {
                         continue;
                     }
-                }
-                let fields = revision_text_fields(&self.store, &txn, &id, current.live, &body)?;
+                    let text = crate::claim::claim_value_index_text(&claim.value);
+                    if text.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![("val".to_owned(), text)]
+                    }
+                } else {
+                    revision_text_fields(&self.store, &txn, &id, current.live, &body)?
+                };
                 candidates.push(super::repo_projection::project_revision_input_in_txn(
                     self,
                     &txn,
