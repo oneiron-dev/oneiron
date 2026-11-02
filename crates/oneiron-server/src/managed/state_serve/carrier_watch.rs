@@ -1,4 +1,5 @@
-//! A vault VM's live look at its outbox carrier (FIX 6683, FIX 6684).
+//! Live looks at a vault VM's outbox carrier and a process host's argv recipients
+//! (FIX 6683, FIX 6684, FIX 11852).
 //!
 //! The companion's revision is read once at boot. This watch asks the
 //! companion again at each look, so `Ping` reports the carrier as it stands:
@@ -26,20 +27,26 @@
 //! standing.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron_vault_contract::restore::{EscrowRole, FreshRecipient};
+#[cfg(target_os = "linux")]
 use oneiron_vault_contract::vm_outbox::VM_GUEST_OUTBOX_DIR;
+#[cfg(target_os = "linux")]
 use tokio::task::JoinHandle;
 
+#[cfg(target_os = "linux")]
 use self::diverged_ask::DivergedAsks;
 use super::admission::WriteKind;
 use super::boot_keys::{escrow_unspooled, seal_escrow_recipient, spool_escrow_capsules};
 use super::{ManagedArgs, ManagedShutdown, ManagedState};
 use crate::managed::restore::fresh_authorizes;
 
+#[cfg(target_os = "linux")]
 mod diverged_ask;
 
 /// How often the engine looks at its outbox companion and at the escrow
@@ -49,6 +56,7 @@ const LOOK_EVERY: Duration = Duration::from_secs(5);
 /// The file a VM's carrier delivers `role`'s escrow recipient in, as the
 /// companion lays the recipients out under its outbox's `recipients/`:
 /// read as it stands at each look, and by a cold restore's check.
+#[cfg(target_os = "linux")]
 pub(in crate::managed) fn carrier_recipient(role: EscrowRole) -> PathBuf {
     let file = match role {
         EscrowRole::Managed => "managed.pub",
@@ -66,6 +74,7 @@ enum RecipientSource {
 }
 
 /// How the outbox companion stands, as the engine last heard.
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CompanionState {
     /// It answered with its carrier's wire revision.
@@ -74,6 +83,7 @@ enum CompanionState {
     Down,
 }
 
+#[cfg(target_os = "linux")]
 impl CompanionState {
     fn of(revision: Option<u32>) -> Self {
         revision.map_or(Self::Down, |revision| Self::Up { revision })
@@ -104,6 +114,7 @@ struct Recipients {
 /// fresh recipients: the first look seals only to those (FIX 11851);
 /// `None` without a restore, and the first look is then unplanned as
 /// every later one is.
+#[cfg(target_os = "linux")]
 pub(super) fn spawn(
     state: Arc<ManagedState>,
     vault: Arc<oneiron::Vault>,
@@ -207,6 +218,7 @@ pub(super) fn spawn_argv_watch(
 /// Takes the companion's answer to the question in flight once it came, and
 /// asks again; while it is still in flight, the last answer stands and no
 /// second question goes.
+#[cfg(target_os = "linux")]
 async fn look_at_companion(
     state: &ManagedState,
     asking: Option<JoinHandle<Option<u32>>>,
@@ -221,6 +233,7 @@ async fn look_at_companion(
 
 /// Takes the diverged copies' look in flight once it ended, and starts the
 /// next; while it is still in flight, no second one starts.
+#[cfg(target_os = "linux")]
 async fn look_at_diverged(
     state: &Arc<ManagedState>,
     vault: &Arc<oneiron::Vault>,
@@ -237,6 +250,7 @@ async fn look_at_diverged(
 
 /// Keeps the companion's answer for `Ping`, and says when it went down or
 /// came up.
+#[cfg(target_os = "linux")]
 fn note_companion(state: &ManagedState, revision: Option<u32>) {
     let was = CompanionState::of(state.set_vm_outbox_revision(revision));
     match CompanionState::of(revision) {
