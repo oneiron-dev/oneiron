@@ -240,7 +240,11 @@ impl Vault {
                     .ok_or(Error::EntityNotFound)?,
             )
         };
-        Ok(Some(ExportSpan { frontier, bytes, version }))
+        Ok(Some(ExportSpan {
+            frontier,
+            bytes,
+            version,
+        }))
     }
 
     /// Whether a folder answer's file, which moved off the version `source`
