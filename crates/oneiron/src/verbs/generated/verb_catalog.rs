@@ -102,6 +102,7 @@ pub enum AgentVerb {
     VaultFinalizeStream,
     VaultCancelStream,
     VaultMessageStreamPartial,
+    VaultMessageStreamsRefused,
     VaultMessagesDurability,
     VaultWitness,
     VaultClaimsUpsert,
@@ -1343,6 +1344,7 @@ impl AgentVerb {
         Self::VaultFinalizeStream,
         Self::VaultCancelStream,
         Self::VaultMessageStreamPartial,
+        Self::VaultMessageStreamsRefused,
         Self::VaultMessagesDurability,
         Self::VaultWitness,
         Self::VaultClaimsUpsert,
@@ -2587,6 +2589,7 @@ impl AgentVerb {
             Self::VaultFinalizeStream => "vault.finalize_stream",
             Self::VaultCancelStream => "vault.cancel_stream",
             Self::VaultMessageStreamPartial => "vault.message_stream_partial",
+            Self::VaultMessageStreamsRefused => "vault.message_streams.refused",
             Self::VaultMessagesDurability => "vault.messages.durability",
             Self::VaultWitness => "vault.witness",
             Self::VaultClaimsUpsert => "vault.claims.upsert",
@@ -3860,6 +3863,7 @@ impl AgentVerb {
                 | Self::VaultFinalizeStream
                 | Self::VaultCancelStream
                 | Self::VaultMessageStreamPartial
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -5130,6 +5134,7 @@ impl AgentVerb {
                 | Self::VaultFinalizeStream
                 | Self::VaultCancelStream
                 | Self::VaultMessageStreamPartial
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultClaimsUpsert
@@ -6274,6 +6279,7 @@ impl AgentVerb {
                 | Self::SelfInboxList
                 | Self::VaultShapeGroups
                 | Self::Describe
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultRetrievalHydePending
                 | Self::VaultRetrievalRuns
                 | Self::VaultRetrievalTurn
@@ -6555,6 +6561,7 @@ impl AgentVerb {
                 | Self::VaultFinalizeStream
                 | Self::VaultCancelStream
                 | Self::VaultMessageStreamPartial
+                | Self::VaultMessageStreamsRefused
                 | Self::VaultMessagesDurability
                 | Self::VaultWitness
                 | Self::VaultRetrievalAgingGet
@@ -8486,6 +8493,7 @@ impl AgentVerb {
             Self::VaultFinalizeStream => &["spec"],
             Self::VaultCancelStream => &["spec"],
             Self::VaultMessageStreamPartial => &["spec"],
+            Self::VaultMessageStreamsRefused => &["spec"],
             Self::VaultMessagesDurability => &["spec"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -9728,6 +9736,7 @@ impl AgentVerb {
             Self::VaultFinalizeStream => &["spec"],
             Self::VaultCancelStream => &["spec"],
             Self::VaultMessageStreamPartial => &["spec"],
+            Self::VaultMessageStreamsRefused => &["spec"],
             Self::VaultMessagesDurability => &["spec"],
             Self::VaultWitness => &["spec"],
             Self::VaultClaimsUpsert => &["spec"],
@@ -11160,6 +11169,9 @@ impl AgentVerb {
             }
             Self::VaultMessageStreamPartial => {
                 "Reads only this actor's accepted in-memory partial using its generation-bound stream handle."
+            }
+            Self::VaultMessageStreamsRefused => {
+                "Lists the stream seeds the vault's last open could not replay and still keeps, each with the typed refusal its replay met, under the owner's proof; every open tries them again."
             }
             Self::VaultMessagesDurability => {
                 "Reads a MESSAGE's completion, terminal-generation receipts and retained document history through the caller's own read lane."
@@ -12968,7 +12980,7 @@ impl AgentVerb {
                 "Find Rust symbol definitions by exact name within one pinned code snapshot. Owner only. Definitions only: no calls, imports or refs relation, and no other language."
             }
             Self::VaultCodeMergeQueueEnqueue => {
-                "Queue stored repository proposals as one batch on the queue green commit, one to six per call, with no batching window. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
+                "Queue stored repository proposals as one batch on the queue green commit, any number up to 63 per call, speculated six at a time. Owner only. The proposals keep their own bytes and reviews; nothing is checked or landed."
             }
             Self::VaultCodeMergeQueueStage => {
                 "Materialize every nonempty subset of one queued batch as a journaled detached speculative worktree. Owner only. Head and green do not move."

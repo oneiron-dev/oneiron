@@ -25,6 +25,7 @@ use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::{Callback, ManifestDbs, Rows, active_write_txn_depth};
 
 mod engine_scan;
+mod engine_scan_table;
 pub use engine_scan::EngineScan;
 
 /// Rows one engine scan reads past which it asks whether everything is
