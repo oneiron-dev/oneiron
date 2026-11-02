@@ -667,7 +667,7 @@ pub struct SubscriptionPutArgs {
     #[arg(long)]
     pub agent: String,
 
-    /// `slack` or `line`.
+    /// `slack`, `line` or `email`.
     #[arg(long)]
     pub channel: String,
 
