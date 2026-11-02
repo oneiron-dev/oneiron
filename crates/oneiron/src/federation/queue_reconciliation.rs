@@ -153,7 +153,7 @@ impl QueueReconciliationAdmission {
         let target = RepoTarget {
             repo: self.repo,
             git_ref: self.full_ref.clone(),
-            paths: self.paths.clone(),
+            paths: self.paths.iter().cloned().collect(),
         };
         Ok(vault
             .admit_repo_edit_in_txn(txn, creator, class, self.repo, &target)?

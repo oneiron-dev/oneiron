@@ -120,9 +120,9 @@ impl ClaimTransitionProjection {
     /// This state joined with every state in `branches`, its approval read
     /// from the union of their grants once all are joined, so the order of
     /// the branches never changes the result or whether it is a fork.
-    fn joined<'a>(
+    fn joined(
         mut self,
-        branches: impl IntoIterator<Item = &'a Self>,
+        branches: impl IntoIterator<Item = &Self>,
     ) -> Result<Self, TransitionFoldError> {
         for branch in branches {
             self.join(branch)?;

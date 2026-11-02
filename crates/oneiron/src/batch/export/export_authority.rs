@@ -270,9 +270,9 @@ fn authority_identity_of_fold(fold: AuthorityFold) -> Option<AuthorityChainIdent
 /// passes an ordered set (a `BTreeSet` or the fold's `ValidEntries`), never a
 /// list or a hash set's iterator, so two devices that folded the same chain
 /// agree byte-for-byte regardless of arrival order.
-pub(super) fn authority_valid_entries_digest<'a>(
+pub(super) fn authority_valid_entries_digest(
     vault_id: &AuthorityVaultId,
-    valid_entries: impl IntoIterator<Item = &'a AuthorityEntryHash>,
+    valid_entries: impl IntoIterator<Item = &AuthorityEntryHash>,
 ) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(EXPORT_AUTHORITY_DIGEST_DOMAIN);

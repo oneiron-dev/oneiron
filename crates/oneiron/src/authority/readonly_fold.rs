@@ -131,10 +131,10 @@ impl AuthorityContinuation {
 
     /// [`Self::of`] for `base`, resumed from `baseline` past `tail`: only
     /// the tail's rows map anew (FIX 12282), into the baseline's shared map.
-    fn past<'a>(
+    fn past(
         baseline: &Self,
         base: super::fold_resume::FoldBase,
-        tail: impl IntoIterator<Item = &'a AuthorityEntryHash>,
+        tail: impl IntoIterator<Item = &AuthorityEntryHash>,
     ) -> Option<Self> {
         let mut ids = baseline.ids.clone();
         for hash in tail {
