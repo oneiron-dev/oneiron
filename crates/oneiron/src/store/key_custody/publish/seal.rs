@@ -1,8 +1,8 @@
 //! Sealing one lineage's batch at its local log position (KS-4): every
 //! member group behind it gets a head of the live entries and retirement
-//! facts its recipients admit, every erased credential's fact and the world
-//! pad compartments a restore here left unopened (PAD-3), all from one census
-//! under the read guard.
+//! facts its recipients admit, every erased credential's fact, every holder
+//! debt (FIX 11206) and the world pad compartments a restore here left
+//! unopened (PAD-3), all from one census under the read guard.
 
 use crate::error::Result;
 use crate::store::Store;
@@ -45,6 +45,9 @@ impl Store {
         // Every member's head carries every erased credential's fact,
         // outside key eligibility (FIX 10584 item 3).
         let evidence = custody.erase_evidence()?;
+        // And every holder debt standing here, whatever its key's state, so
+        // a landing keeps each copy owed (FIX 11206).
+        let holders = custody.holder_debts()?;
         let mut sealed = Vec::with_capacity(groups.len());
         for (recipients, behind) in groups.iter().zip(behind(&position)) {
             if !behind {
@@ -74,8 +77,8 @@ impl Store {
             let history = journal.head_history(&control, &position, &census)?;
             sealed.push(Some(
                 seal_head(
-                    &position, &control, entries, retired, released, &history, &evidence, &carried,
-                    recipients,
+                    &position, &control, entries, retired, released, &history, &evidence, &holders,
+                    &carried, recipients,
                 )
                 .map(|head| CustodyBatch {
                     position,

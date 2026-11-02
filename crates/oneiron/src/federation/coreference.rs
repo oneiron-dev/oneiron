@@ -17,6 +17,12 @@ use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::WriteActor;
 
+mod consolidated;
+pub use consolidated::unlink_consolidated_same_as;
+pub(crate) use consolidated::{
+    ConsolidatedSameAs, check_consolidated_same_as, put_consolidated_same_as_in_txn,
+};
+
 // ---------------------------------------------------------------------------
 // Cross-vault coreference (FED-07, ONE-1414).
 //
