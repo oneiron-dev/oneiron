@@ -113,6 +113,7 @@ fn read_kit(
     secret_file: Option<&Path>,
     kept: bool,
 ) -> anyhow::Result<(Vec<KitPiece>, Option<KitPassphrase>)> {
+    anyhow::ensure!(!files.is_empty() || kept, "a kit reads its pieces: --piece");
     let pieces = files
         .iter()
         .map(|file| read_piece(file))
