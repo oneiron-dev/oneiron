@@ -137,6 +137,10 @@ pub struct ScopedRead<'a> {
     /// `ScopedRead::with_artifact_records_cover`). Empty unless a typed
     /// artifact door opts in.
     records_cover: records_cover::ArtifactRecordsCover,
+    /// When this read judges a claim's time-bound standing: a recall's
+    /// `as_of`, or `None` for now (FIX 12226). See
+    /// `ScopedRead::with_judged_at`.
+    judged_at: Option<u64>,
 }
 
 mod admission;

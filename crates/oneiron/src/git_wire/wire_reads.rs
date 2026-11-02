@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use super::argv::FrozenGitArgv;
+use super::config::GIT_WIRE_MAX_PUBLICATIONS;
 use super::execution_context::GitCommandSpec;
 use super::failure::{classify_failure, invalid};
 use super::objects::parse_tree_entries;
@@ -42,6 +43,12 @@ impl<'a> GitWire<'a> {
             process_env,
             checkout_door: None,
         }
+    }
+
+    /// The vault this wire journals into, whose scan checks its walks count
+    /// against.
+    pub(crate) const fn vault(&self) -> &'a Vault {
+        self.vault
     }
 }
 
@@ -238,7 +245,9 @@ impl GitWire<'_> {
     // -- reads -------------------------------------------------------------
 
     /// Reads several full refs at once. A ref that does not exist is reported
-    /// as absent from a successful command, never as an exit status.
+    /// as absent from a successful command, never as an exit status. Names
+    /// go to Git a bounded batch per read, so argv stays inside the OS bound
+    /// however many refs one transaction names (FIX 8784).
     pub fn read_refs(
         &self,
         repo: &GitWireRepo,
@@ -247,8 +256,11 @@ impl GitWire<'_> {
         if names.is_empty() {
             return Ok(Vec::new());
         }
-        let output = self.run_read(repo, &FrozenGitArgv::read_refs(names))?;
-        let present = parse_ref_listing(&output.stdout)?;
+        let mut present = HashMap::new();
+        for batch in names.chunks(GIT_WIRE_MAX_PUBLICATIONS) {
+            let output = self.run_read(repo, &FrozenGitArgv::read_refs(batch))?;
+            present.extend(parse_ref_listing(&output.stdout)?);
+        }
         let mut observed = Vec::with_capacity(names.len());
         for name in names {
             observed.push(ObservedGitRef {

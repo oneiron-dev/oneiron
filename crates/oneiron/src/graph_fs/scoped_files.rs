@@ -45,6 +45,7 @@ impl GraphFsResolver<'_, '_> {
                                 &self.scoped_read.vault().store,
                                 txn,
                                 body.clone(),
+                                None,
                                 crate::secret_custody::SecretSight::Masked,
                             )?;
                         } else {
