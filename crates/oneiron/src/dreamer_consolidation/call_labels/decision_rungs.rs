@@ -44,8 +44,8 @@ impl<'a> LabelledRungs<'a> {
         }
     }
 
-    /// `ladder` with these rungs in its model slots; its rule rung, person
-    /// queue, questions, route and correlation as they are.
+    /// `ladder` with these rungs in its model slots; every other field as it
+    /// is, a field L06 adds later included (FIX 7638).
     pub(in crate::dreamer_consolidation) fn ladder(
         &'a self,
         ladder: &DecisionLadder<'a>,
@@ -56,18 +56,11 @@ impl<'a> LabelledRungs<'a> {
                 .map(|shown| shown as &'a dyn DecisionProvider)
         };
         DecisionLadder {
-            rule: ladder.rule,
             local: slot(&self.local),
             system_one: slot(&self.system_one),
             escalation: slot(&self.escalation),
             big: slot(&self.big),
-            human: ladder.human,
-            human_pin: ladder.human_pin.clone(),
-            ask_to: ladder.ask_to,
-            paired: ladder.paired,
-            person: ladder.person,
-            presence: ladder.presence,
-            correlation: ladder.correlation,
+            ..ladder.clone()
         }
     }
 }

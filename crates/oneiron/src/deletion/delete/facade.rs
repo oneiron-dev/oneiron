@@ -92,13 +92,19 @@ impl Vault {
         gate: Option<GatedDeletion<'_>>,
         due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false, due)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false, due);
+        // A fence its erase committed reaches key custody now (FIX 11211).
+        self.store.journal_staged_fence_facts();
+        let outcome = outcome?;
         // The dependents past the first batch go before the delete returns.
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         // A masked Git copy whose sources this delete moved is retired once
         // nothing owns it (FIX 7608, FIX 9107); a failure is logged.
         crate::origin::secret_projection::disposal::collect_after_delete(self);
+        // A working view of an erased source goes with its unshared blobs
+        // (FIX 9722); a failure is logged and the next pass retries.
+        crate::code_view::collect_after_delete(self);
         #[cfg(unix)]
         self.collect_released_result_bodies(256)?;
         self.finish_gate_decision_retirements_after_commit();

@@ -2,6 +2,7 @@
 //! contract the run doors share (CALLS "FIX 6867 run-only ref contract"),
 //! and the resolution of a run's own work.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -187,8 +188,8 @@ impl Memory<'_> {
     /// admitted repo's full ref names now, from the folder the stored anchor
     /// names, through the importer's own writer. Only the paths the Grant
     /// reads reach the snapshot, its blobs and its symbols, and the run is
-    /// admitted again in that writer. The snapshot keeps the anchor's own
-    /// project key.
+    /// admitted again in that writer, on every kept path. The snapshot keeps
+    /// the anchor's own project key.
     pub fn repo_snapshots_ingest_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -207,8 +208,17 @@ impl Memory<'_> {
         let Some(anchor) = self.vault.get_codebase_snapshot(&input.repo)? else {
             return Err(refusal_error(RepoAccessRefusal::NoMembership));
         };
-        let bounds = membership.bounds.clone();
-        let select = move |path: &str| bounds.admits_path(RepoAccessIntent::Read, path);
+        // The paths kept are the selection; the final writer admits each of
+        // them again, so a Grant narrowed since keeps none it no longer
+        // reads (FIX 8799).
+        let kept = RefCell::new(Vec::<String>::new());
+        let select = |path: &str| {
+            let admits = membership.bounds.admits_path(RepoAccessIntent::Read, path);
+            if admits {
+                kept.borrow_mut().push(path.to_owned());
+            }
+            admits
+        };
         let at = self.vault.store.clock.now_recorded_at();
         let imported = self.vault.ingest_local_repo_for_run(
             anchor.project_id,
@@ -217,11 +227,12 @@ impl Memory<'_> {
             (TimeRange { start: at, end: at }, at),
             &select,
             |txn| {
+                let selected = repo_target(input.repo, &input.git_ref, kept.borrow().iter());
                 Ok(
                     match self.vault.admit_repo_run_in_txn(
                         txn,
                         binding,
-                        &target,
+                        &selected,
                         RepoAccessIntent::Read,
                     )? {
                         Ok(again) if again.same_lease(&admitted) => Ok(()),
@@ -248,8 +259,8 @@ impl Memory<'_> {
     /// `self.code.work.open` for a run: a fresh private view of the files
     /// the Grant reads, from the immutable tree of the green commit of the
     /// queue the run's ref is attached to. The receipt's own writer admits
-    /// the run again and binds its stamp, under the view's fresh id: two
-    /// opens, even by the same agent, are two works.
+    /// the run again, on every selected path, and binds its stamp, under the
+    /// view's fresh id: two opens, even by the same agent, are two works.
     pub fn repo_work_open_for_run(
         &self,
         binding: &RepoRunBinding,
@@ -274,6 +285,8 @@ impl Memory<'_> {
         // mark covers (FIX 7608); its stamp keeps the canonical green.
         let selected = materialize_masked_repo(self.vault, selected, &RepoSecretAudience::Masked)?
             .into_contents();
+        // The final writer admits every selected path again (FIX 8799).
+        let selected_target = repo_target(input.repo, &input.git_ref, selected.keys());
         let entries = selected
             .iter()
             .map(|(path, bytes)| {
@@ -300,7 +313,7 @@ impl Memory<'_> {
                     match self.vault.admit_repo_run_in_txn(
                         txn,
                         binding,
-                        &target,
+                        &selected_target,
                         RepoAccessIntent::Read,
                     )? {
                         Ok(again) if again.same_lease(&admitted) => Ok(again.stamp(

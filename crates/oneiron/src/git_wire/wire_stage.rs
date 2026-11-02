@@ -13,6 +13,7 @@ use super::{
     GitWireReceipt, GitWireRecordState, GitWireRepo, GitWireResult, lock_repository,
 };
 use crate::error::Result;
+use crate::scan_check::{EngineScan, ScanCount};
 
 impl GitWire<'_> {
     /// Write and pin objects without preparing any served-ref publication.
@@ -29,6 +30,7 @@ impl GitWire<'_> {
                 "object-only plan requires objects and no publications",
             ));
         }
+        self.count_wire_rows(repo, EngineScan::GitWirePlanObjects, plan.objects.len())?;
         let _guard = lock_repository(&repo.common_dir)?;
         let mut written = Vec::with_capacity(plan.objects.len());
         for object in &plan.objects {
@@ -58,6 +60,16 @@ impl GitWire<'_> {
         now: u64,
     ) -> GitWireResult<GitWirePrepared> {
         plan.validate()?;
+        self.count_wire_rows(
+            repo,
+            EngineScan::GitWirePlanObjects,
+            plan.objects.len().saturating_add(plan.existing.len()),
+        )?;
+        self.count_wire_rows(
+            repo,
+            EngineScan::GitWirePublications,
+            plan.publications.len(),
+        )?;
         let _guard = lock_repository(&repo.common_dir)?;
         let key = stage_record_key(repo.identity(), &plan.plan_hash()?);
         if let Some(stored) = self.load_record(repo, &key)? {
@@ -121,6 +133,30 @@ impl GitWire<'_> {
             }),
             GitWireRecordState::Prepared => self.finish_record(repo, stored, now),
         }
+    }
+
+    /// Counts `rows` of one plan or ref transaction of `repo` against the
+    /// scan's row (rule 5, FIX 8784): past it the work raises a check and
+    /// runs on, one Git call per object and one transaction for the refs.
+    /// The caller holds no read transaction.
+    pub(super) fn count_wire_rows(
+        &self,
+        repo: &GitWireRepo,
+        scan: EngineScan,
+        rows: usize,
+    ) -> Result<()> {
+        let mut count = {
+            let rtxn = self.vault.store.env.read_txn()?;
+            ScanCount::start(
+                &self.vault.store,
+                &rtxn,
+                scan,
+                repo.identity().as_hex().as_bytes(),
+            )?
+        };
+        count.rows(rows);
+        count.finish(self.vault);
+        Ok(())
     }
 
     fn write_plan_objects(&self, repo: &GitWireRepo, plan: &GitWirePlan) -> Result<Vec<GitOid>> {

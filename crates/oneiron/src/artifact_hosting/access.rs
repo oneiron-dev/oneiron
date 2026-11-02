@@ -375,6 +375,7 @@ impl Vault {
             &self.store,
             txn,
             bytes,
+            Some(hash),
             crate::secret_custody::SecretSight::Masked,
         )
     }

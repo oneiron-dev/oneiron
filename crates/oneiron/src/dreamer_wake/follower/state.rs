@@ -32,6 +32,10 @@ pub(super) const STATE: SideTable<SessionKey, FollowerState, Named> =
     SideTable::new(&side_table::DREAMER_FOLLOWER_STATE);
 pub(super) const FRAMES: SideTable<(SessionKey, u64), FollowerFrame, Named> =
     SideTable::new(&side_table::DREAMER_FOLLOWER_FRAME);
+/// Each chunk's first frame after the session's keyframe, and its place in
+/// it (FIX 8531): what the loaded log's index answers, read by key.
+const CHUNKS: SideTable<(SessionKey, (EntityId, EntityId), [u8; 32]), (u64, u32), Named> =
+    SideTable::new(&side_table::DREAMER_FOLLOWER_CHUNK);
 pub(super) const RESULTS: SideTable<ResultKey, FollowerResult, Named> =
     SideTable::new(&side_table::DREAMER_FOLLOWER_RESULT);
 
@@ -309,7 +313,9 @@ pub(super) fn frames_in_txn(
         .collect()
 }
 
-/// Appends `frame` under the session's next ordinal and returns it.
+/// Appends `frame` under the session's next ordinal and returns it. Each
+/// chunk it holds that no live frame after the keyframe holds yet is
+/// indexed to it in the same write (FIX 8531).
 pub(super) fn append_frame_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -318,8 +324,49 @@ pub(super) fn append_frame_in_txn(
 ) -> Result<u64> {
     let ordinal = session.state.next_frame;
     FRAMES.put(store, txn, &(session.key, ordinal), frame)?;
+    for (chunk, held) in frame.chunks.iter().enumerate() {
+        let key = (session.key, (frame.turn, held.source), held.digest);
+        let stale = match CHUNKS.get(store, txn, &key)? {
+            None => true,
+            Some((at, _)) => {
+                at <= session.state.covered_through
+                    || !FRAMES.contains(store, txn, &(session.key, at))?
+            }
+        };
+        if stale {
+            CHUNKS.put(store, txn, &key, &(ordinal, chunk as u32))?;
+        }
+    }
     session.state.next_frame = ordinal.saturating_add(1);
     Ok(ordinal)
+}
+
+/// The frame and chunk holding `span`'s words at its digest among the
+/// session's frames after its keyframe, by one keyed read (FIX 8531): what
+/// the loaded log's `find` answers. An index row whose frame is covered,
+/// gone or holds other words there reads as none.
+pub(super) fn framed_span_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    session: &Session,
+    span: &SieveSpan,
+) -> Result<Option<(u64, u32)>> {
+    let key = (session.key, (span.turn, span.source), span.source_digest);
+    let Some((ordinal, chunk)) = CHUNKS.get(store, txn, &key)? else {
+        return Ok(None);
+    };
+    if ordinal <= session.state.covered_through {
+        return Ok(None);
+    }
+    let Some(frame) = FRAMES.get(store, txn, &(session.key, ordinal))? else {
+        return Ok(None);
+    };
+    let holds = frame.turn == span.turn
+        && usize::try_from(chunk)
+            .ok()
+            .and_then(|at| frame.chunks.get(at))
+            .is_some_and(|held| held.source == span.source && held.digest == span.source_digest);
+    Ok(holds.then_some((ordinal, chunk)))
 }
 
 pub(super) fn result_in_txn(
@@ -360,6 +407,7 @@ pub(super) fn erase_sessions_in_txn(
             (Some(key), Ok(state)) => sessions.push(Session { key, state }),
             _ => {
                 FRAMES.delete_from(store, txn, &raw)?;
+                CHUNKS.delete_from(store, txn, &raw)?;
                 STATE.delete_from(store, txn, &raw)?;
             }
         }
@@ -368,14 +416,20 @@ pub(super) fn erase_sessions_in_txn(
 }
 
 /// Takes the erased TURNs' frames out of `key`'s session, in the erasing
-/// transaction, and any row there that no longer reads as a frame. Returns
-/// the ordinals that went; a row whose key does not read counts as 0.
+/// transaction, and any row there that no longer reads as a frame, with
+/// every chunk index row of those TURNs (FIX 8531). Returns the ordinals
+/// that went; a row whose key does not read counts as 0.
 pub(super) fn forget_frames_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
     key: &SessionKey,
     turns: &[EntityId],
 ) -> Result<Vec<u64>> {
+    for turn in turns {
+        let mut prefix = key.to_vec();
+        prefix.extend_from_slice(turn.as_bytes());
+        CHUNKS.delete_from(store, txn, &prefix)?;
+    }
     let rows = FRAMES
         .iter_raw_from(store, txn, key)?
         .collect::<Result<Vec<_>>>()?;
