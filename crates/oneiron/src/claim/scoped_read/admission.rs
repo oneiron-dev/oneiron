@@ -20,6 +20,7 @@ impl crate::vault::Vault {
             room_peer: false,
             own_owner_authority: false,
             records_cover: Default::default(),
+            judged_at: None,
         }
     }
 
@@ -61,6 +62,7 @@ impl crate::vault::Vault {
             room_peer: false,
             own_owner_authority: false,
             records_cover: Default::default(),
+            judged_at: None,
         }
     }
 }
@@ -289,7 +291,8 @@ impl<'a> ScopedRead<'a> {
             return Ok(false);
         }
         for peer in &self.peer_reads {
-            let peer = self.vault.scoped_read(peer.clone());
+            let mut peer = self.vault.scoped_read(peer.clone());
+            peer.judged_at = self.judged_at;
             match peer.owner_live_in(txn) {
                 Ok(()) => {}
                 Err(Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(_))) => {

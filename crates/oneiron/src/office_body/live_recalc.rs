@@ -97,7 +97,12 @@ impl Vault {
         export_at: u64,
         export_zone: &OfficeRecalcZone,
     ) {
-        self.live_recalc_at(artifact, sheet, bodies, &[(at, zone), (export_at, export_zone)]);
+        self.live_recalc_at(
+            artifact,
+            sheet,
+            bodies,
+            &[(at, zone), (export_at, export_zone)],
+        );
     }
 
     /// [`Self::live_recalc`] with each read's own clock: `clocks` runs
@@ -170,9 +175,7 @@ impl Vault {
             let (bytes, recalc) =
                 match self.project_xlsx_body(artifact, &head, &base, body, at, zone)? {
                     Some((bytes, _, recalc, _)) => (bytes, recalc),
-                    None => {
-                        recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?
-                    }
+                    None => recalc_xlsx(&self.body_source(artifact, &head)?, limits, at, zone)?,
                 };
             if recalc.is_none() {
                 return Err(invalid(
@@ -181,11 +184,11 @@ impl Vault {
             }
             let book = read_xlsx_cells(&bytes, limits, &crate::office_body::document_resources())
                 .map_err(|error| {
-                    document_error(
-                        error.resource(),
-                        "the recalculated workbook could not be read",
-                    )
-                })?;
+                document_error(
+                    error.resource(),
+                    "the recalculated workbook could not be read",
+                )
+            })?;
             books.push(book);
         }
         Ok(books)

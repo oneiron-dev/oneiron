@@ -68,12 +68,12 @@ pub(crate) fn spawn(
 
 fn round(server: &SyncServer, resurface: bool) -> oneiron::Result<()> {
     let vault = server.vault();
+    let now = vault.now_recorded_at();
     // The Dreamer's own lane, which every ask is read through; none while no
-    // ask is open, so an idle round opens no write.
-    let Some(read) = identity::maintenance_reader(vault)? else {
+    // identity work can be due, so an idle round opens no write.
+    let Some(read) = identity::maintenance_reader(vault, now, resurface)? else {
         return Ok(());
     };
-    let now = vault.now_recorded_at();
     let due = vault.identity_asks_due(&read, now, ROUND)?;
     if !due.is_empty() {
         let principal = vault.ensure_embedded_owner_actor().map_err(|error| {
