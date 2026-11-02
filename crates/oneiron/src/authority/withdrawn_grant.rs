@@ -142,9 +142,8 @@ impl crate::Vault {
         issuer: &HostSlipIssuer,
         grant: EntityId,
     ) -> Result<bool> {
-        if super::slip_vault::require_host(&self.authority_view_readonly_in_txn(txn)?, issuer)
-            .is_err()
-        {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        if super::slip_vault::require_host(&fold, issuer).is_err() {
             return Ok(false);
         }
         self.append_slip_op_in_txn(
