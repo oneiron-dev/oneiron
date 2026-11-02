@@ -19,10 +19,11 @@ pub use notifications::{
 pub use secret_scan_switch::SecretScanReceipt;
 pub use world_privacy_switch::WorldPrivacyReceipt;
 pub use world_privacy_will::{
-    WORLD_PRIVACY_ROW_REF, WidenUnanimity, WidenUnanimityOffRequest, WidenUnanimityOutcome,
-    WorldPrivacyAnswer, WorldPrivacyOutcome, WorldPrivacyRequest, WorldPrivacyRequestKind,
-    WorldPrivacyRequestStatus, WorldPrivacySetInput, WorldPrivacySetOutput, WorldReadInput,
-    WorldSealedInput,
+    ForeignWorldPrivacyCarry, ForeignWorldPrivacyDelivery, ForeignWorldPrivacyExportRequest,
+    ForeignWorldPrivacyLeg, ForeignWorldPrivacyLink, WORLD_PRIVACY_ROW_REF, WidenUnanimity,
+    WidenUnanimityOffRequest, WidenUnanimityOutcome, WorldPrivacyAnswer, WorldPrivacyOutcome,
+    WorldPrivacyRequest, WorldPrivacyRequestKind, WorldPrivacyRequestStatus, WorldPrivacySetInput,
+    WorldPrivacySetOutput, WorldReadInput, WorldSealedInput,
 };
 
 use crate::consent::AuthenticatedOwner;
